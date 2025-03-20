@@ -1,0 +1,1154 @@
+/* Styles for the login page */
+
+body {
+    font-family: 'Poppins', sans-serif;
+    padding: 0;
+    box-sizing: border-box;
+    background-color: white;
+    color: #293E4C;
+}
+
+.button {
+    display: inline-block;
+    padding: 10px 20px;
+    background-color: #488C9A;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 5px;
+}
+
+
+    /* Styling for the Back Icon */
+    .back-icon {
+        display: inline-flex;
+        align-items: center;
+        cursor: pointer;
+        color: #293E4C; /* Primary Blue */
+        font-size: 18px;
+        text-decoration: none;
+    }
+
+    .back-icon svg {
+        width: 24px; /* Adjust size as needed */
+        height: 24px;
+        fill: #293E4C; /* Primary Blue */
+        margin-right: 8px;
+        transition: fill 0.3s;
+    }
+
+    a.back-icon:hover {
+        color:#488C9A;
+    }
+
+    a.back-icon svg:hover {
+        fill: #488C9A; /* Primary Blue */
+    }
+/* General table styles */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    text-align: center;
+}
+
+th {
+    background-color: #488C9A;
+    padding: 10px;
+    text-align: center;
+    border-bottom: 2px solid #ddd;
+    color: #ffffff;
+}
+
+table thead tr {
+    background-color: #488C9A;
+    color: #ffffff;
+    text-align: center;
+}
+
+table th, table td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    word-wrap: break-word; /* Allow text to wrap within cells */
+    vertical-align: center; /* Align cell content to the top */
+}
+
+table thead th {
+    background-color: #488C9A;
+    padding: 10px;
+    text-align: center;
+    border-bottom: 2px solid #ddd;
+    font-weight: bold;
+}
+
+table tbody td {
+    padding: 8px;
+    border-bottom: 1px solid #ddd;
+}
+
+/* General ToolTip Styles*/
+.info-tooltip {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    background-color: #488C9A; /* Secondary blue color */
+    color: white;
+    border-radius: 50%;
+    font-weight: bold;
+    cursor: pointer;
+    margin-left: 5px;
+    position: relative;
+}
+.info-tooltip:hover {
+    background-color: #293E4C; /* Darker shade on hover */
+}
+.info-tooltip .tooltip-text {
+    visibility: hidden;
+    width: 220px;
+    background-color: #fff;
+    color: #293E4C;
+    text-align: left;
+    border-radius: 4px;
+    padding: 8px;
+    position: absolute;
+    z-index: 1;
+    top: 25px;
+    left: -100px;
+    box-shadow: 0 0 5px rgba(0,0,0,0.3);
+    font-weight: normal;
+}
+.info-tooltip:hover .tooltip-text {
+    visibility: visible;
+}
+
+/* Styles for the sorting and filtering dropdown */
+.sort-dropdown {
+    position: relative;
+    display: inline-block;
+    cursor: pointer;
+}
+
+.sort-dropdown-content {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: #f9f9f9;
+    min-width: 200px; /* Adjusted to accommodate filter options */
+    max-height: 300px; /* Added to limit height */
+    overflow-y: auto;  /* Added to enable scrolling if content exceeds max height */
+    box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+    z-index: 1;
+}
+
+.sort-dropdown-content a, .sort-dropdown-content div {
+    color: black;
+    padding: 8px 12px;
+    text-decoration: none;
+    display: block;
+}
+
+.sort-dropdown-content a:hover, .sort-dropdown-content div:hover {
+    background-color: #f1f1f1;
+}
+
+.sort-dropdown.open .sort-dropdown-content {
+    display: block;
+}
+
+.sort-icon {
+    margin-left: 5px;
+}
+
+
+
+section {
+    margin-bottom: 40px;
+}
+
+
+.navbar {
+    background-color: white;
+    margin-bottom: 10px;
+}
+
+.login-section {
+    margin-top: -50px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background-color: white
+}
+
+.login-container {
+    text-align: center;
+    background-color: white;
+    padding: 40px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    border-radius: 10px;
+}
+
+.logo img {
+    height: 120px;
+}
+.login-logo {
+    width: 150px;
+    margin-bottom: 20px;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+}
+
+.login-btn {
+    background-color: #488C9A;
+    color: white;
+    padding: 10px 20px;
+    font-size: 16px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.login-btn:hover {
+    background-color: #293E4C;
+}
+
+
+
+/* Styles for Main Dashboard */
+
+
+h1, h2, h3, p {
+    color: #293E4C;
+}
+
+/* Header and Navigation */
+header {
+    display: flex;
+    align-items: center;
+    background-color: white;
+    padding: 10px 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    position: relative; /* Add this line */
+}
+
+.header_logo img {
+    height: 120px;
+}
+
+nav {
+    flex-grow: 1;
+}
+
+/* Dropdown Menu Styles */
+nav ul.menu {
+    position: relative;
+}
+
+nav ul.menu li {
+    position: relative;
+    text-align: left;
+}
+
+nav ul.menu li.dropdown {
+    display: inline-block;
+}
+
+nav ul.menu li.dropdown .dropbtn {
+    cursor: pointer;
+}
+
+nav ul.menu li .dropdown-content {
+    display: none;
+    position: absolute;
+    background-color: white;
+    min-width: 200px;
+    box-shadow: 0px 8px 16px rgba(0,0,0,0.2);
+    z-index: 1;
+}
+
+nav ul.menu li .dropdown-content a {
+    color: #293E4C;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+}
+
+nav ul.menu li .dropdown-content a:hover {
+    background-color: #f1f1f1;
+}
+
+nav ul.menu li.dropdown:hover .dropdown-content {
+    display: block;
+}
+
+nav ul {
+    list-style: none;
+    display: flex;
+    justify-content: flex-end;
+    margin: 0;
+    padding: 0;
+}
+
+nav li {
+    margin: 0 15px;
+}
+
+nav a {
+    color: #293E4C; /* Primary blue color */
+    text-decoration: none;
+    font-size: 1em;
+}
+
+nav a:hover {
+    color: #488C9A;
+}
+
+.logout {
+    background-color: #488C9A;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+.logout:hover {
+    color: white;
+    background-color: #293E4C;
+}
+
+.menu-toggle {
+    display: none;
+    background-color: transparent;
+    border: none;
+    font-size: 2em;
+    color: #293E4C;
+    cursor: pointer;
+    position: absolute;
+    right: 20px;
+    z-index: 2;
+    bottom: 35px;
+}
+
+/* Main Content */
+main {
+    padding: 20px;
+}
+
+/* Projects Section */
+/* Projects Container */
+
+
+/* Projects Section */
+.projects-container {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.project-item {
+    background-color: #f9f9f9;
+    margin: 40px; /* Increased margin */
+    width: calc(25% - 60px); /* Reduced width to account for larger margins */
+    overflow: hidden;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: all 0.3s ease;
+}
+
+.project-item h3 {
+    margin: 15px 15px 10px; /* Adjusted margins */
+    font-size: 1.5em;
+    color: #293E4C;
+    text-align: center; /* Center the text */
+}
+
+.project-item h3 a {
+    color: #293E4C;
+    text-decoration: none;
+}
+
+.project-item h3 a:hover {
+    text-decoration: underline;
+}
+
+.project-image {
+    width: 100%; /* Full width */
+}
+
+.project-image img {
+    width: 100%;
+    height: auto;
+    object-fit: cover;
+    display: block;
+}
+
+.project-details {
+    padding: 10px;
+    color: #293E4C;
+    text-align: left; /* Left-align text */
+    width: 100%; /* Full width */
+}
+
+.project-details p {
+    margin: 5px 0;
+}
+
+
+/* Table Styles */
+.styled-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Poppins', sans-serif;
+    margin-bottom: 20px;
+}
+
+.styled-table th, .styled-table td {
+    padding: 12px 15px;
+    border: 1px solid #ddd;
+    text-align: left;
+}
+
+.styled-table thead tr {
+    background-color: #488C9A;
+    color: #ffffff;
+}
+
+.styled-table tbody tr:nth-child(even) {
+    background-color: #f3f3f3;
+}
+
+.styled-table tbody tr:hover {
+    background-color: #f1f1f1;
+}
+
+@media screen and (max-width: 1085px) {
+    /* Hide the main menu by default */
+    nav ul {
+        display: none;
+    }
+
+    /* Show the toggle button */
+    nav .menu-toggle {
+        display: block;
+    }
+
+    /* When menu is visible */
+    nav ul.menu.show {
+        display: flex;
+        flex-direction: column;
+        position: absolute; /* Use fixed so it doesn't get cut off */
+        top: 115px; /* Below header */
+        left: 0; /* Start at left edge */
+        right: 0; /* Span full width */
+        background-color: white;
+        width: 100%;
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+        z-index: 9999;
+        max-height: 75vh; /* Limit height so it doesn't overflow entire screen */
+        overflow-y: auto; /* Scroll if content is too long */
+    }
+
+    nav ul.menu.show li {
+        border-bottom: 1px solid #293E4C;
+        position: static; 
+        margin: 0;
+        padding: 0 20px;
+    }
+
+    nav ul.menu.show li:last-child {
+        border-bottom: none;
+    }
+
+    nav ul.menu.show li a {
+        color: #293E4C;
+        padding: 15px 0;
+        text-decoration: none;
+        text-align: left;
+        display: block;
+        font-size: 1em; /* Adjust for readability on mobile */
+    }
+
+    /* Nicer styling for Sign Out button */
+    nav ul.menu.show li a.logout {
+        background-color: #488C9A;
+        color: #fff;
+        padding: 12px 20px;
+        border-radius: 4px;
+        font-weight: bold;
+        margin-top: 10px; 
+        text-align: center;
+    }
+
+    /* Dropdown handling on mobile: show/hide submenus on click */
+    nav ul.menu.show li.dropdown .dropdown-content {
+        display: none; 
+        position: static; 
+        background: none;
+        box-shadow: none;
+        padding-left: 20px; 
+        border-bottom: none;
+    }
+
+    nav ul.menu.show li.dropdown.open .dropdown-content {
+        display: block;
+    }
+
+    nav ul.menu.show li.dropdown .dropdown-content a {
+        padding: 10px 0;
+        font-size: 0.95em; 
+        border-bottom: 1px solid #eee; 
+    }
+
+    .header_logo img {
+        height: 100px;
+    }
+
+    .projects-container {
+        flex-direction: column;
+        align-items: center;
+        margin: 0;
+    }
+
+    .project-item {
+        width: 100%;
+        margin: 10px 0;
+    }
+
+    .project-content {
+        flex-direction: column;
+    }
+
+    .project-image,
+    .project-details {
+        width: 100%;
+    }
+
+    .project-image img {
+        height: auto;
+    }
+}
+
+/* For very small screens */
+@media only screen and (max-width: 480px) {
+    .header_logo img {
+        height: 90px;
+    }
+}
+
+/* Styles for Project Overview */
+
+.project-info button {
+    background-color: #488C9A; /* Secondary blue color */
+    color: white;
+    padding: 10px 20px;
+    margin: 10px 0;
+    border: none;
+    border-radius: 4px;
+    font-size: 1em;
+    cursor: pointer;
+    font-weight: bold;
+    width: 140px;
+}
+
+.project-info button:hover {
+    background-color: #367480; /* Darker shade on hover */
+}
+
+
+/* Specific styles for the tables and layout */
+.tables-and-charts {
+    display: flex;
+    border: 1px solid #293E4C;
+    background-color: #f9f9f9;
+    padding: 20px;
+    margin: 20px;
+    width: calc(100% - 40px);
+    box-sizing: border-box;
+    gap: 40px; /* Space between left and right sides */
+}
+
+.left-side, .right-side {
+    flex: 1;
+    min-width: 300px;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+/* Table Styles */
+
+
+/* Responsive Table */
+@media (max-width: 1000px) {
+    .tables-and-charts {
+        flex-direction: column;
+        padding: 0px;
+        margin: 0px;
+        width: 100%;
+        gap: 20px;
+    }
+
+    .left-side, .right-side {
+        padding: 10px;
+    }
+
+    table tbody {
+        width: auto;
+        position: relative;
+        overflow-x: auto;
+    }
+
+    table th, table td {
+        /* Adjust padding and font size for mobile */
+        padding: 10px;
+        font-size: 0.9em;
+    }
+
+    /* Remove fixed heights */
+    .left-side table,
+    .right-side table {
+        height: auto;
+    }
+
+}
+
+/* Chart Container */
+.chart-container {
+    position: relative;
+    width: 100%;
+    max-width: 400px;
+    height: 350px;
+    margin: 0 auto;
+    margin-top: 20px;
+}
+
+.chart-container canvas {
+    width: 100%;
+    height: 100%;
+}
+
+/* Filter Form Styles */
+#filter-form {
+    width: 100%;
+    margin-bottom: 20px;
+}
+
+#filter-form label {
+    margin-right: 20px;
+    font-weight: bold;
+}
+
+#filter-form input[type="radio"] {
+    margin-right: 5px;
+}
+
+/* Project Overview Container */
+.project-overview-container {
+    display: flex;
+    align-items: center;
+    margin: 20px;
+    flex-wrap: wrap; /* Allow wrapping on smaller screens */
+}
+
+.project-overview-image img {
+    max-width: 350px;
+    height: 200px;
+    margin-top: 15px;
+}
+
+.project-info {
+    margin-left: 20px;
+    flex: 1;
+}
+
+/* Optional: Adjust font sizes for smaller screens */
+@media (max-width: 480px) {
+
+    .project-info button {
+        font-size: 0.9em;
+        padding: 8px 16px;
+    }
+}
+
+
+/* Styles for Documents */
+
+.filter-input {
+    margin: 20px 0;
+    padding: 10px;
+    width: 100%;
+    max-width: 400px;
+    font-size: 16px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+.folder-list {
+    list-style-type: none;
+    padding: 0;
+}
+.folder-list li {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.folder-list img {
+    margin-right: 10px;
+}
+.folder-list a {
+    text-decoration: none;
+    font-size: 18px;
+    color: #333;
+}
+.folder-list a:hover {
+    text-decoration: underline;
+}
+
+/* Styles for Project Warehouse */
+.warehouse-info {
+    display: flex;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+.warehouse-image img {
+    max-width: 300px;
+    height: auto;
+}
+
+.warehouse-details h2 {
+    margin-top: 0;
+}
+
+
+.cost-summary {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 50px;
+}
+
+.cost-summary th, .cost-summary td {
+    border: 1px solid #ccc;
+    padding: 10px;
+}
+
+.cost-summary th{
+    background-color: #488C9A;
+    color: white;
+}
+
+/* Warehouses Page Styles */
+.warehouse-actions {
+    margin-bottom: 20px;
+}
+
+.warehouse-actions .button {
+    display: inline-block;
+    padding: 10px 20px;
+    margin-right: 10px;
+    background-color: #488C9A;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 5px;
+}
+
+.warehouses-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.warehouse-card {
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    width: calc(33% - 20px);
+    overflow: hidden;
+}
+
+.warehouse-image img {
+    width: 100%;
+    height: auto;
+}
+
+.warehouse-info {
+        padding: 15px;
+        display: flex;
+        flex-direction: column;
+}
+
+.warehouse-info h2 {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.warehouse-info p {
+    display: block;
+    margin: 5px 0;
+}
+
+.warehouse-info .button {
+    margin-top: 10px;
+    padding: 8px 15px;
+    background-color: #488C9A;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 5px;
+}
+
+.warehouse-info .delete-button {
+    background-color: #DC3545;
+}
+
+@media screen and (max-width: 1085px) {
+    .warehouse-card {
+        width: 100%;
+    }
+}
+
+/* Warehousing Overview Page */
+/* Key Figures Styles */
+.key-figures {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    margin: 20px 0;
+}
+
+.key-figures .figure {
+    background-color: #f9f9f9;
+    padding: 20px;
+    flex: 1 1 30%;
+    margin: 10px;
+    text-align: center;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.key-figures .figure h2 {
+    color: #293E4C;
+    margin-bottom: 10px;
+}
+
+.key-figures .figure p {
+    font-size: 24px;
+    color: #293E4C;
+    margin: 0;
+}
+
+
+.project-details .button {
+    margin-top: 15px;
+    display: inline-block;
+    padding: 10px 20px;
+    background-color: #488C9A;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 5px;
+    margin-top: 10px;
+}
+
+
+.project-details .button:hover {
+    margin-top: 15px;
+}
+
+
+/* Module Assignments*/
+
+/* Modal Styles */
+.module-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 15px
+}
+
+
+.module-form input,
+.module-form select {
+    flex: 1 1 25px;
+    padding: 5px;
+}
+
+.module-form button {
+    padding: 10px 20px;
+    background-color: #488C9A;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+.module-form button:hover {
+    background-color: #367480;
+}
+
+/* Additional styles for modal forms, if needed */
+.modal .module-form {
+    flex-direction: column;
+}
+
+.modal .module-form label,
+.modal .module-form input,
+.modal .module-form select {
+    width: 100%;
+}
+
+.modal .module-form button {
+    align-self: flex-end;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 100;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background-color: #fff;
+    margin: 5% auto;
+    padding: 20px;
+    width: 50%;
+    border-radius: 5px;
+}
+
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+/* Module Cost Analysis */
+.cost-overview {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-around;
+    margin-bottom: 20px;
+}
+
+.cost-metric {
+    background-color: #f8f8f8;
+    padding: 20px;
+    margin: 10px;
+    border-radius: 5px;
+    text-align: center;
+    flex: 1 1 200px;
+    box-sizing: border-box;
+}
+
+.cost-metric h3 {
+    margin-bottom: 10px;
+}
+
+.view-details-button{
+    background-color: #488C9A;
+    color: white;
+    padding: 5px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.view-details-button:hover{
+    background-color: #367480;  
+}
+
+/* Manage Deliveries Freight Table*/
+.top-container {
+    display: flex;
+    align-items: flex-start;
+}
+.left-section {
+    flex: 1;
+}
+.right-section {
+    width: 30%; /* Adjust as needed */
+    margin-left: 20px;
+}
+
+table.freight-costs th {
+    background-color: #488C9A;
+    padding: 10px;
+    text-align: center;
+    border-bottom: 2px solid #ddd;
+    color: #ffffff;
+}
+
+
+/* Styles for the manage users table */
+
+.action-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.action-buttons form {
+    display: inline;
+}
+
+.success-message {
+    color: green;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.error-message {
+    color: red;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.role-select {
+    padding: 5px;
+}
+
+.submit-button {
+    background-color: #488C9A;
+    color: white;
+    padding: 5px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 1em;
+}
+
+.submit-button:hover {
+    background-color: #367480;
+}
+
+.delete-button {
+    background-color: #E4572E;
+    color: white;
+    padding: 5px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 1em;
+}
+
+.delete-button:hover {
+    background-color: #C13C24;
+}
+
+
+/* Questions */
+.contact-info {
+    margin-bottom: 20px;
+}
+
+.contact-info h2 {
+    margin-bottom: 10px;
+}
+
+.contact-info p {
+    margin: 5px 0;
+}
+
+.contact-form {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.contact-form form {
+    display: flex;
+    flex-direction: column;
+}
+
+.contact-form label {
+    margin-top: 10px;
+}
+
+.contact-form input[type="text"],
+.contact-form input[type="email"],
+.contact-form textarea {
+    padding: 8px;
+    margin-top: 5px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.contact-form textarea {
+    resize: vertical;
+    min-height: 150px;
+}
+
+.contact-form input[type="submit"] {
+    margin-top: 15px;
+    background-color: #488C9A;
+    color: white;
+    padding: 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.contact-form input[type="submit"]:hover {
+    background-color: #367480;
+}
+
+.success-message,
+.error-message {
+    font-weight: bold;
+    margin-top: 20px;
+}
+
+.success-message {
+    color: green;
+}
+
+.error-message {
+    color: red;
+}
+
+
+/* Cost Estimate Calculator */
+
+#cost-calculator-table{
+    width: 35%;
+}
+
+.delete-estimate {
+    color: red;
+    text-decoration: none;
+    margin-left: 10px;
+    font-size: 16px;
+}
+
+/* Change color on hover */
+.delete-estimate:hover {
+    color: darkred;
+}
+
+@media screen and (max-width: 1085px) {
+    #cost-calculator-table{
+        width: 100%;
+    }
+}
