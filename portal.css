@@ -365,16 +365,41 @@ nav a:hover {
     cursor: pointer;
     font-size: 16px;
     padding: 0;
-    margin: 0;
+    margin-top: -5px;
 }
 
 .profile-dropdown .dropdown-content {
+    position: absolute;
     right: 0;
-    left: auto;
     min-width: 200px;
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     margin-top: 8px;
+    background-color: white;
+    z-index: 1000;
+    /* Ensure dropdown stays in viewport */
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+}
+
+/* Position the dropdown relative to viewport edge */
+@media screen and (min-width: 1086px) {
+    .profile-dropdown {
+        position: relative;
+    }
+    
+    .profile-dropdown .dropdown-content {
+        right: 0;
+        left: auto;
+        /* Adjust position if too close to right edge */
+        transform: translateX(0);
+    }
+    
+    /* If dropdown would go off-screen, shift it left */
+    .profile-dropdown:last-child .dropdown-content {
+        right: 0;
+        left: auto;
+    }
 }
 
 .profile-dropdown .dropdown-content::before {
@@ -395,6 +420,7 @@ nav a:hover {
     text-decoration: none;
     display: block;
     transition: background-color 0.2s;
+    white-space: nowrap;
 }
 
 .profile-dropdown .dropdown-content a:hover {
@@ -402,13 +428,14 @@ nav a:hover {
 }
 
 .profile-dropdown .dropdown-content a.logout {
-    color: #E4572E;
+    color: white;
     border-top: 1px solid #eee;
     margin-top: 4px;
+    text-align: center;
 }
 
 .profile-dropdown .dropdown-content a.logout:hover {
-    background-color: #fff5f5;
+    background-color: #293E4C;
 }
 
 @media screen and (max-width: 1085px) {
@@ -417,6 +444,7 @@ nav a:hover {
         box-shadow: none;
         margin-top: 0;
         border-radius: 0;
+        max-height: none;
     }
 
     .profile-dropdown .dropdown-content::before {
@@ -424,9 +452,61 @@ nav a:hover {
     }
 
     .profile-dropdown .profile-avatar {
-        width: 35px;
-        height: 35px;
-        font-size: 14px;
+        width: auto;
+        height: auto;
+        background-color: transparent;
+        color: #293E4C;
+        border-radius: 0;
+        font-size: 1em;
+        padding: 15px 0;
+    }
+
+    .profile-dropdown .profile-avatar::before {
+        content: 'Profile';
+    }
+
+    .profile-dropdown .profile-avatar::after {
+        display: none;
+    }
+}
+
+.profile-dropdown .profile-avatar .profile-initials {
+    display: block;
+}
+
+@media screen and (max-width: 1085px) {
+    .profile-dropdown .profile-avatar .profile-initials {
+        display: none;
+    }
+    
+    .profile-dropdown .dropdown-content {
+        position: static;
+        box-shadow: none;
+        margin-top: 0;
+        border-radius: 0;
+        max-height: none;
+    }
+
+    .profile-dropdown .dropdown-content::before {
+        display: none;
+    }
+
+    .profile-dropdown .profile-avatar {
+        width: auto;
+        height: auto;
+        background-color: transparent;
+        color: #293E4C;
+        border-radius: 0;
+        font-size: 1em;
+        padding: 15px 0;
+    }
+
+    .profile-dropdown .profile-avatar::before {
+        content: 'Profile';
+    }
+
+    .profile-dropdown .profile-avatar::after {
+        display: none;
     }
 }
 
