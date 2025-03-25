@@ -31,6 +31,7 @@ if ($conn->connect_error) {
 // Fetch project details and ensure the user has access
 $project_name = "";
 if ($role == 'admin') {
+    // If admin, just check if project exists
     $stmt = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
     $stmt->bind_param("i", $project_id);
     $stmt->execute();
@@ -42,6 +43,7 @@ if ($role == 'admin') {
         die("Project not found.");
     }
 } else {
+    // If regular user, check if they own this project (or account-based logic)
     $stmt = $conn->prepare("SELECT project_name FROM projects WHERE id = ? AND user_id = ?");
     $stmt->bind_param("ii", $project_id, $user_id);
     $stmt->execute();
@@ -54,9 +56,7 @@ if ($role == 'admin') {
     }
 }
 
-// -------------------------------------------
 // Fetch the Solterra Fee from the projects table
-// -------------------------------------------
 $stmt2 = $conn->prepare("SELECT solterra_fee FROM projects WHERE id=?");
 $stmt2->bind_param("i", $project_id);
 $stmt2->execute();
@@ -66,10 +66,8 @@ $stmt2->close();
 
 $solterra_fee = floatval($solterra_fee_from_db ?? 0);
 
-// -------------------------------------------
-// TIME FILTER LOGIC (like view_project.php)
-// -------------------------------------------
-$filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)"; 
+// TIME FILTER LOGIC
+$filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)";
 $time_filter  = isset($_GET['time_filter']) ? $_GET['time_filter'] : 'all';
 $ref_date     = isset($_GET['ref_date']) ? $_GET['ref_date'] : date('Y-m-d');
 
@@ -77,7 +75,6 @@ $dateCondition = "";
 $paramTypes    = "i"; // for project_id
 $params        = [$project_id];
 
-// For labeling and date-navigation
 $dateLabel = "All Deliveries";
 $prev_date = "";
 $next_date = "";
@@ -120,10 +117,8 @@ if ($time_filter === 'day') {
     $next_date = date('Y-m-d', strtotime($startOfMonth . " +1 month"));
 }
 
-// -------------------------------------------
 // STATUS FILTER
-// -------------------------------------------
-$status_filter = isset($_GET['status_filter']) ? $_GET['status_filter'] : '';
+$status_filter   = isset($_GET['status_filter']) ? $_GET['status_filter'] : '';
 $statusCondition = "";
 if (!empty($status_filter)) {
     $statusCondition = " AND status_of_delivery = ?";
@@ -131,24 +126,18 @@ if (!empty($status_filter)) {
     $params[]        = $status_filter;
 }
 
-// -------------------------------------------
-// Additional "filter" logic from your code:
-//   - total, ytd, price_per_watt, price_per_module
-// -------------------------------------------
+// Additional "filter" logic
 $filter        = $_GET['filter'] ?? 'total';
 $current_year  = date('Y');
 $ytdCondition  = "";
 
 if ($filter == 'ytd') {
-    // This uses created_at's year, as in your original code
     $ytdCondition = " AND YEAR(created_at) = ?";
     $paramTypes  .= "i";
     $params[]     = $current_year;
 }
 
-// -------------------------------------------
-// Build final deliveries query 
-// -------------------------------------------
+// Build final deliveries query
 $sql_deliveries = "
     SELECT *
     FROM deliveries
@@ -165,9 +154,7 @@ $stmt_deliveries->execute();
 $deliveries_result = $stmt_deliveries->get_result();
 $stmt_deliveries->close();
 
-// -------------------------------------------
-// Fetch warehouse info for warehousing cost
-// -------------------------------------------
+// Fetch warehouse info
 $stmt = $conn->prepare("
     SELECT w.id AS warehouse_id, w.in_fee, w.out_fee, w.monthly_storage_fee
     FROM warehouses w
@@ -183,9 +170,7 @@ $warehouse = $warehouse_result->num_rows > 0
     ? $warehouse_result->fetch_assoc()
     : null;
 
-// -------------------------------------------
-// Helper function to calculate warehousing cost
-// -------------------------------------------
+// Helper function for warehousing cost
 function calculateDeliveryWarehousingCost($delivery, $warehouse) {
     if (!$warehouse || empty($delivery['warehouse_arrival_date'])) {
         return 0;
@@ -198,16 +183,14 @@ function calculateDeliveryWarehousingCost($delivery, $warehouse) {
                     ? new DateTime($delivery['left_warehouse_date'])
                     : new DateTime();
 
-    $interval         = $start_date->diff($end_date);
-    $days_in_storage  = $interval->days + 1; 
+    $interval = $start_date->diff($end_date);
+    $days_in_storage = $interval->days + 1;
     $daily_storage_fee= $warehouse['monthly_storage_fee'] / 30;
 
     return $in_fee + ($daily_storage_fee * $days_in_storage) + $out_fee;
 }
 
-// -------------------------------------------
 // Calculate Totals
-// -------------------------------------------
 $total_freight_cost      = 0;
 $total_accessorial_costs = 0;
 $total_warehousing_cost  = 0;
@@ -218,9 +201,6 @@ $total_quantity         = 0;
 $total_wattage_quantity = 0;
 
 $deliveries = [];
-$supplier_values = [];
-$wattage_values  = [];
-$status_values   = [];
 
 while ($delivery = $deliveries_result->fetch_assoc()) {
     $freight_cost      = (float)$delivery['freight_cost'];
@@ -238,7 +218,7 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $warehousing_cost = calculateDeliveryWarehousingCost($delivery, $warehouse);
     $total_warehousing_cost += $warehousing_cost;
 
-    // Solterra fee only if actually delivered
+    // Solterra fee if actually delivered
     if (!empty($delivery['actual_delivery_date'])) {
         $solterraFeeForThisDelivery = $solterra_fee * ($wattage * $quantity);
     } else {
@@ -247,12 +227,13 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $total_solterra_fee += $solterraFeeForThisDelivery;
 
     // Summation
-    $total_logistics_cost += ($freight_cost + $accessorial_costs + $warehousing_cost + $solterraFeeForThisDelivery);
+    $line_total = $freight_cost + $accessorial_costs + $warehousing_cost + $solterraFeeForThisDelivery;
+    $total_logistics_cost += $line_total;
 
     // Store line-item details
-    $delivery['warehousing_cost'] = $warehousing_cost;
-    $delivery['solterra_fee']     = $solterraFeeForThisDelivery;
-    $delivery['total_logistics_cost'] = $freight_cost + $accessorial_costs + $warehousing_cost + $solterraFeeForThisDelivery;
+    $delivery['warehousing_cost']     = $warehousing_cost;
+    $delivery['solterra_fee']         = $solterraFeeForThisDelivery;
+    $delivery['total_logistics_cost'] = $line_total;
 
     // Format date fields
     $delivery['warehouse_arrival_date_formatted'] = !empty($delivery['warehouse_arrival_date'])
@@ -262,17 +243,10 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
         ? htmlspecialchars($delivery['actual_delivery_date'])
         : 'N/A';
 
-    // For filtering checkboxes
-    $supplier_values[] = $delivery['supplier'];
-    $wattage_values[]  = $delivery['wattage'];
-    $status_values[]   = $delivery['status_of_delivery'];
-
     $deliveries[] = $delivery;
 }
 
-// -------------------------------------------
 // Price per Watt / Price per Module
-// -------------------------------------------
 if ($filter == 'price_per_watt') {
     if ($total_wattage_quantity > 0) {
         $price_per_watt = $total_logistics_cost / $total_wattage_quantity;
@@ -287,22 +261,15 @@ if ($filter == 'price_per_watt') {
     }
 }
 
-// Unique filter values
-$supplier_values = array_unique($supplier_values);
-$wattage_values  = array_unique($wattage_values);
-$status_values   = array_unique($status_values);
-
-// -------------------------------------------
-// Handle CSV Export (same time/status conditions)
-// -------------------------------------------
+// Handle CSV Export
 if (isset($_GET['export']) && $_GET['export'] == 1) {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename=cost_details.csv');
     $output = fopen('php://output', 'w');
 
-    // CSV headers
+    // CSV headers (Supplier -> removed, BOL# -> added)
     fputcsv($output, array(
-        'Supplier',
+        'BOL#',
         'Wattage',
         'Quantity',
         'Status of Delivery',
@@ -317,10 +284,10 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     // Rows
     foreach ($deliveries as $d) {
         fputcsv($output, array(
-            $d['supplier'],
-            $d['wattage'],
-            $d['quantity'],
-            $d['status_of_delivery'],
+            $d['bol_number'] ?? '',                     // BOL# instead of Supplier
+            $d['wattage'] ?? '',
+            $d['quantity'] ?? '',
+            $d['status_of_delivery'] ?? '',
             $d['warehouse_arrival_date_formatted'],
             $d['actual_delivery_date_formatted'],
             number_format($d['warehousing_cost'], 2),
@@ -346,10 +313,9 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
-        /* Cost overview styling (unchanged) */
         .cost-overview {
             display: flex;
-            flex-direction: column; 
+            flex-direction: column;
             align-items: center;
             width: 100%;
             margin-bottom: 50px;
@@ -369,19 +335,10 @@ $conn->close();
             text-align: center;
             min-width: 180px;
         }
-        .cost-metric h3 {
-            margin: 0;
-            font-weight: bold;
-        }
-        .cost-metric p {
-            margin: 0;
-            font-size: 1.2rem;
-        }
-        .cost-metric--total {
-            max-width: 400px;
-        }
+        .cost-metric h3 { margin: 0; font-weight: bold; }
+        .cost-metric p { margin: 0; font-size: 1.2rem; }
+        .cost-metric--total { max-width: 400px; }
 
-        /* Time Filter Header */
         .time-filter-header {
             display: flex;
             justify-content: space-between;
@@ -417,13 +374,8 @@ $conn->close();
             padding: 5px 10px;
             border-radius: 4px;
         }
-        .nav-arrow:hover {
-            background: #ccc;
-        }
-        .date-label {
-            font-weight: bold;
-            font-size: 1.1em;
-        }
+        .nav-arrow:hover { background: #ccc; }
+        .date-label { font-weight: bold; font-size: 1.1em; }
         .right-filters {
             display: flex;
             flex-direction: column;
@@ -436,7 +388,6 @@ $conn->close();
             }
         }
 
-        /* Table container & styling */
         .table-container {
             overflow-x: auto;
             width: 100%;
@@ -453,17 +404,13 @@ $conn->close();
             padding: 8px;
             white-space: nowrap;
         }
-        tr:hover {
-            background: #f1f1f1;
-        }
+        tr:hover { background: #f1f1f1; }
 
-        /* Legacy filter form for total, ytd, etc. */
         .legacy-filter-form {
             margin-left: 20px;
             margin-bottom: 10px;
         }
 
-        /* Back icon link */
         .back-icon {
             display: inline-flex;
             align-items: center;
@@ -508,7 +455,8 @@ $conn->close();
     </a>
 
     <h1>Cost Details for <?php echo htmlspecialchars($project_name); ?></h1>
-        <!-- Legacy filter form (Total / YTD / Price per Watt / Price per Module) -->
+
+    <!-- Legacy filter form (Total/YTD/Price per Watt/Price per Module) -->
     <form method="GET" class="legacy-filter-form">
         <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
         <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
@@ -540,7 +488,8 @@ $conn->close();
             Price Per Module
         </label>
     </form>
-    <!-- COST OVERVIEW (directly below header) -->
+
+    <!-- COST OVERVIEW -->
     <div class="cost-overview">
         <?php if ($filter == 'price_per_watt'): ?>
             <div class="cost-row">
@@ -557,14 +506,12 @@ $conn->close();
                 </div>
             </div>
         <?php else: ?>
-            <!-- Row 1: Total Logistics Cost alone -->
             <div class="cost-row">
                 <div class="cost-metric cost-metric--total">
                     <h3>Total Logistics Cost<?php echo ($filter == 'ytd') ? ' (YTD)' : ''; ?></h3>
                     <p>$<?php echo number_format($total_logistics_cost, 2); ?></p>
                 </div>
             </div>
-            <!-- Row 2: Other cost breakdowns -->
             <div class="cost-row">
                 <div class="cost-metric">
                     <h3>Freight Cost<?php echo ($filter == 'ytd') ? ' (YTD)' : ''; ?></h3>
@@ -586,9 +533,8 @@ $conn->close();
         <?php endif; ?>
     </div>
 
-    <!-- TIME FILTER HEADER (directly above table) -->
+    <!-- TIME FILTER HEADER -->
     <div class="time-filter-header">
-        <!-- Left: All/Day/Week/Month -->
         <div class="time-filters">
             <a href="?project_id=<?php echo $project_id; ?>&time_filter=all&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>"
                class="<?php echo ($time_filter === 'all') ? 'active' : ''; ?>">
@@ -608,7 +554,6 @@ $conn->close();
             </a>
         </div>
 
-        <!-- Center: Date Navigation -->
         <div class="date-navigation">
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
@@ -625,14 +570,12 @@ $conn->close();
             <?php endif; ?>
         </div>
 
-        <!-- Right: Table search & Status Filter & Export -->
         <div class="right-filters">
             <div style="display: flex; gap: 10px;" class="mobile-hide">
                 <label for="searchInput" style="align-self: center;">Search in Table:</label>
                 <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
             </div>
             <form method="get" action="" style="display: flex; gap: 10px;">
-                <!-- Keep project/time/ref_date/filter so we don’t lose them on status change -->
                 <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
                 <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
                 <input type="hidden" name="ref_date" value="<?php echo $ref_date; ?>">
@@ -648,7 +591,6 @@ $conn->close();
                     <!-- Add others as needed -->
                 </select>
 
-                <!-- Export to CSV (hidden on mobile) -->
                 <span class="mobile-hide">
                     <button type="submit" name="export" value="1">Export to CSV</button>
                 </span>
@@ -661,7 +603,8 @@ $conn->close();
         <table id="deliveriesTable">
             <thead>
             <tr>
-                <th>Supplier</th>
+                <!-- (1) Removed Supplier, (2) Added BOL# -->
+                <th>BOL#</th>
                 <th>Wattage</th>
                 <th>Quantity</th>
                 <th>Status of Delivery</th>
@@ -676,7 +619,8 @@ $conn->close();
             <?php if (!empty($deliveries)): ?>
                 <?php foreach ($deliveries as $d): ?>
                     <tr>
-                        <td><?php echo htmlspecialchars($d['supplier'] ?? ''); ?></td>
+                        <!-- BOL# -->
+                        <td><?php echo htmlspecialchars($d['bol_number'] ?? ''); ?></td>
                         <td><?php echo htmlspecialchars($d['wattage'] ?? ''); ?></td>
                         <td><?php echo htmlspecialchars($d['quantity'] ?? ''); ?></td>
                         <td><?php echo htmlspecialchars($d['status_of_delivery'] ?? ''); ?></td>
@@ -698,15 +642,12 @@ $conn->close();
 </main>
 
 <script>
-    // Client-side table search (like in view_project.php)
     function searchTable() {
         var input = document.getElementById("searchInput");
-        if (!input) return; 
-
+        if (!input) return;
         var filter = input.value.toLowerCase();
         var table  = document.getElementById("deliveriesTable");
         var trs    = table.getElementsByTagName("tr");
-        // Skip header row
         for (var i = 1; i < trs.length; i++) {
             var tds = trs[i].getElementsByTagName("td");
             var show = false;

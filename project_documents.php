@@ -8,7 +8,6 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-
 if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
     die("Project ID is missing.");
 }
@@ -19,7 +18,7 @@ $user_id = $_SESSION['user_id'];
 // Database connection
 $servername = "localhost";
 $db_username = "SolterraSolutions"; // Replace with your actual database username
-$db_password = "CompanyAdmin!"; // Replace with your actual database password
+$db_password = "CompanyAdmin!";    // Replace with your actual database password
 $dbname = "solterra_portal";
 
 $conn = new mysqli($servername, $db_username, $db_password, $dbname);
@@ -60,16 +59,20 @@ $folders = [
 <body>
 <?php include 'header.php'; ?>
 <main>
-<a href="#" onclick="if(document.referrer) { window.location = document.referrer; } else { window.history.back(); }" class="back-icon" style="margin:20px;">
-    <!-- SVG for Back Arrow -->
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-        <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-    </svg>
-    Back
-</a>
+    <!-- Simple breadcrumb trail -->
+    <nav class="breadcrumb" style="margin: 10px 20px;">
+        <a href="documents.php">Documents</a> &gt; 
+        <a href="project_overview.php?id=<?php echo $project_id; ?>">
+            <?php echo htmlspecialchars($project_name); ?>
+        </a> &gt; 
+        <span>Documents</span>
+    </nav>
+
     <h1>Documents for <?php echo htmlspecialchars($project_name); ?></h1>
+
     <!-- Filter Input -->
     <input type="text" id="folderFilter" class="filter-input" placeholder="Search Folders...">
+
     <!-- Folders List -->
     <ul class="folder-list" id="folderList">
         <?php foreach ($folders as $folder): ?>

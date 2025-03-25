@@ -347,6 +347,89 @@ nav a:hover {
     bottom: 35px;
 }
 
+.profile-dropdown {
+    position: relative;
+}
+
+.profile-dropdown .profile-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background-color: #488C9A;
+    color: white;
+    text-decoration: none;
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0;
+    margin: 0;
+}
+
+.profile-dropdown .dropdown-content {
+    right: 0;
+    left: auto;
+    min-width: 200px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    margin-top: 8px;
+}
+
+.profile-dropdown .dropdown-content::before {
+    content: '';
+    position: absolute;
+    top: -8px;
+    right: 16px;
+    width: 16px;
+    height: 16px;
+    background: white;
+    transform: rotate(45deg);
+    box-shadow: -2px -2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.profile-dropdown .dropdown-content a {
+    padding: 12px 16px;
+    color: #293E4C;
+    text-decoration: none;
+    display: block;
+    transition: background-color 0.2s;
+}
+
+.profile-dropdown .dropdown-content a:hover {
+    background-color: #f5f5f5;
+}
+
+.profile-dropdown .dropdown-content a.logout {
+    color: #E4572E;
+    border-top: 1px solid #eee;
+    margin-top: 4px;
+}
+
+.profile-dropdown .dropdown-content a.logout:hover {
+    background-color: #fff5f5;
+}
+
+@media screen and (max-width: 1085px) {
+    .profile-dropdown .dropdown-content {
+        position: static;
+        box-shadow: none;
+        margin-top: 0;
+        border-radius: 0;
+    }
+
+    .profile-dropdown .dropdown-content::before {
+        display: none;
+    }
+
+    .profile-dropdown .profile-avatar {
+        width: 35px;
+        height: 35px;
+        font-size: 14px;
+    }
+}
+
 /* Main Content */
 main {
     padding: 20px;

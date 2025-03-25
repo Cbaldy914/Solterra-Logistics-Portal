@@ -369,9 +369,9 @@ $conn->close();
                         <select name="status_filter" id="status_filter" onchange="this.form.submit()">
                             <option value="">All</option>
                             <option value="Pending"    <?php if($status_filter === 'Pending')    echo 'selected'; ?>>Pending</option>
-                            <option value="Produced" <?php if($status_filter === 'Produced') echo 'selected'; ?>>In Transit</option>
-                            <option value="In Warehouse"  <?php if($status_filter === 'In Warehouse')  echo 'selected'; ?>>Delivered</option>
-                            <option value="Delivered"   <?php if($status_filter === 'Delivered')   echo 'selected'; ?>>Complete</option>
+                            <option value="Produced" <?php if($status_filter === 'Produced') echo 'selected'; ?>>Produced</option>
+                            <option value="In Warehouse"  <?php if($status_filter === 'In Warehouse')  echo 'selected'; ?>>In Warehouse</option>
+                            <option value="Delivered"   <?php if($status_filter === 'Delivered')   echo 'selected'; ?>>Delivered</option>
                         </select>
 
                         <!-- Export to CSV (hidden on mobile) -->
