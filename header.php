@@ -94,8 +94,13 @@ if (isset($_SESSION['role'])) {
                         <a href="manage_accounts">Manage Accounts</a>
                     </div>
                 </li>
-
-                <li><a href="add_invoice">Invoices</a></li>
+                <li class="dropdown">
+                    <a href="#" class="dropbtn">Invoices</a>
+                    <div class="dropdown-content">
+                        <a href="add_invoice">Add Invoice</a>
+                        <a href="generate_invoice">Generate Invoice</a>
+                    </div>
+                </li>
                 <li><a href="logout" class="logout">Sign Out</a></li>
 
             <?php elseif ($role === 'admin'): ?>
@@ -124,10 +129,16 @@ if (isset($_SESSION['role'])) {
 
                 <li><a href="freight_estimate">Freight</a></li>
                 <li><a href="documents">Documents</a></li>
-                <li><a href="questions">Questions</a></li>
-                <li><a href="logout" class="logout">Sign Out</a></li>
+                <li class="dropdown profile-dropdown">
+                <!-- Avatar or icon that opens the dropdown -->
+                    <a href="#" class="dropbtn profile-avatar"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></a>
+                    <div class="dropdown-content">
+                        <a href="account_settings.php">Account Settings</a>
+                        <a href="questions">Questions & Support</a>
+                        <a href="logout" class="logout">Sign Out</a>
                     </div>
                 </li>
+
 
             
             <?php elseif ($role === 'DDPm'): ?>
