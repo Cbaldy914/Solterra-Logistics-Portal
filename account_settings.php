@@ -161,6 +161,164 @@ $conn->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .settings-container {
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 30px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .settings-container h1 {
+            color: #293E4C;
+            margin-bottom: 30px;
+            font-size: 24px;
+        }
+
+        .info-group {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 6px;
+            border: 1px solid #eee;
+        }
+
+        .info-group label {
+            flex: 1;
+            font-weight: 500;
+            color: #293E4C;
+        }
+
+        .info-group .value {
+            flex: 2;
+            color: #666;
+        }
+
+        .info-group .edit-icon {
+            color: #488C9A;
+            cursor: pointer;
+            padding: 5px;
+            margin-left: 10px;
+            transition: color 0.3s;
+        }
+
+        .info-group .edit-icon:hover {
+            color: #293E4C;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #293E4C;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .form-group input:focus {
+            border-color: #488C9A;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(72, 140, 154, 0.1);
+        }
+
+        .password-section {
+            display: none;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+
+        .password-section.show {
+            display: block;
+        }
+
+        .error-messages {
+            background-color: #fff3f3;
+            border: 1px solid #ffcdd2;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .error-messages ul {
+            margin: 0;
+            padding-left: 20px;
+            color: #d32f2f;
+        }
+
+        .success-message {
+            background-color: #e8f5e9;
+            border: 1px solid #c8e6c9;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: #2e7d32;
+        }
+
+        button[type="submit"] {
+            background-color: #488C9A;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: background-color 0.3s;
+        }
+
+        button[type="submit"]:hover {
+            background-color: #367480;
+        }
+
+        .cancel-edit {
+            background-color: #f5f5f5;
+            color: #666;
+            padding: 12px 24px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            margin-left: 10px;
+            transition: all 0.3s;
+        }
+
+        .cancel-edit:hover {
+            background-color: #e0e0e0;
+        }
+
+        .add-email-btn {
+            background-color: #488C9A;
+            color: white;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .add-email-btn:hover {
+            background-color: #367480;
+        }
+    </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
@@ -184,73 +342,105 @@ $conn->close();
         </div>
     <?php endif; ?>
 
-    <!-- The Form -->
-    <form action="" method="post">
-        <div class="form-group">
-            <label for="username">Username:</label>
-            <input 
-                type="text" 
-                name="username" 
-                id="username" 
-                value="<?php echo htmlspecialchars($existingUsername); ?>"
-                required
-            >
+    <form action="" method="post" id="accountForm">
+        <div class="info-group">
+            <label for="username">Username</label>
+            <div class="value" id="usernameDisplay"><?php echo htmlspecialchars($existingUsername); ?></div>
+            <input type="text" name="username" id="username" value="<?php echo htmlspecialchars($existingUsername); ?>" style="display: none;" required>
+            <span class="edit-icon" onclick="toggleEdit('username')">✎</span>
         </div>
 
-        <div class="form-group">
-            <label for="email">Email (Optional):</label>
-            <input 
-                type="email" 
-                name="email" 
-                id="email"
-                value="<?php echo htmlspecialchars($existingEmail ?? ''); ?>"
-                placeholder="Enter email or leave blank"
-            >
+        <div class="info-group">
+            <label>Password</label>
+            <div class="value">••••••••</div>
+            <span class="edit-icon" onclick="togglePasswordSection()">✎</span>
         </div>
 
-        <hr>
-
-        <div class="form-group">
-            <label for="current_password">Current Password (required if changing):</label>
-            <input 
-                type="password" 
-                name="current_password" 
-                id="current_password"
-                placeholder="Enter current password to change it"
-            >
+        <div class="info-group">
+            <label for="email">Email</label>
+            <div class="value" id="emailDisplay"><?php echo htmlspecialchars($existingEmail ?? 'Not set'); ?></div>
+            <input type="email" name="email" id="email" value="<?php echo htmlspecialchars($existingEmail ?? ''); ?>" style="display: none;" placeholder="Enter email or leave blank">
+            <?php if (empty($existingEmail)): ?>
+                <button type="button" class="add-email-btn" onclick="toggleEdit('email')">Add Email</button>
+            <?php else: ?>
+                <span class="edit-icon" onclick="toggleEdit('email')">✎</span>
+            <?php endif; ?>
         </div>
 
-        <div class="form-group">
-            <label for="new_password">New Password (optional):</label>
-            <input 
-                type="password" 
-                name="new_password" 
-                id="new_password"
-                placeholder="Leave blank to keep existing password"
-            >
+        <div class="password-section" id="passwordSection">
+            <div class="form-group">
+                <label for="current_password">Current Password</label>
+                <input type="password" name="current_password" id="current_password" required>
+            </div>
+
+            <div class="form-group">
+                <label for="new_password">New Password</label>
+                <input type="password" name="new_password" id="new_password" required>
+            </div>
+
+            <div class="form-group">
+                <label for="confirm_new_password">Confirm New Password</label>
+                <input type="password" name="confirm_new_password" id="confirm_new_password" required>
+            </div>
         </div>
 
-        <div class="form-group">
-            <label for="confirm_new_password">Confirm New Password:</label>
-            <input 
-                type="password" 
-                name="confirm_new_password" 
-                id="confirm_new_password"
-                placeholder="Re-enter new password if changing"
-            >
-        </div>
-
-        <div class="form-group">
+        <div class="form-group" style="margin-top: 30px;">
             <button type="submit">Save Changes</button>
+            <button type="button" class="cancel-edit" onclick="cancelEdit()" style="display: none;">Cancel</button>
         </div>
     </form>
-
-    <div>
-        <p>
-            Need to see your invoices?
-            <a href="invoices.php">View Invoices</a>
-        </p>
-    </div>
 </div>
+
+<script>
+function toggleEdit(field) {
+    const display = document.getElementById(field + 'Display');
+    const input = document.getElementById(field);
+    const cancelButton = document.querySelector('.cancel-edit');
+    
+    if (display.style.display !== 'none') {
+        display.style.display = 'none';
+        input.style.display = 'block';
+        cancelButton.style.display = 'inline-block';
+    } else {
+        display.style.display = 'block';
+        input.style.display = 'none';
+        cancelButton.style.display = 'none';
+    }
+}
+
+function togglePasswordSection() {
+    const section = document.getElementById('passwordSection');
+    const cancelButton = document.querySelector('.cancel-edit');
+    
+    if (section.classList.contains('show')) {
+        section.classList.remove('show');
+        cancelButton.style.display = 'none';
+    } else {
+        section.classList.add('show');
+        cancelButton.style.display = 'inline-block';
+    }
+}
+
+function cancelEdit() {
+    // Reset all fields to display mode
+    document.querySelectorAll('.info-group').forEach(group => {
+        const display = group.querySelector('.value');
+        const input = group.querySelector('input');
+        if (display && input) {
+            display.style.display = 'block';
+            input.style.display = 'none';
+        }
+    });
+    
+    // Hide password section
+    document.getElementById('passwordSection').classList.remove('show');
+    
+    // Hide cancel button
+    document.querySelector('.cancel-edit').style.display = 'none';
+    
+    // Reset form
+    document.getElementById('accountForm').reset();
+}
+</script>
 </body>
 </html>
