@@ -11,21 +11,16 @@ if (!isset($_SESSION['user_id'])) {
 // Optional: get the user's role from the session if needed
 $role = $_SESSION['role'] ?? 'user';
 
-// Database connection parameters
-$servername = "localhost";
-$db_username = "SolterraSolutions"; // Replace with your actual database username
-$db_password = "CompanyAdmin!";     // Replace with your actual database password
-$dbname     = "solterra_portal";    // Replace with your actual database name
-
 // Enable error reporting for debugging (remove in production)
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-// Create a new database connection
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+// Include configuration file and get database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 // Fetch the current user's record
