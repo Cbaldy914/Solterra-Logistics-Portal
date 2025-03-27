@@ -2,10 +2,10 @@
 session_name("logistics_session");
 session_start();
 
-
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
+
 // Check if the user is an admin
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'global_admin') {
     header("Location: unauthorized");
@@ -24,15 +24,13 @@ if (!$project_id) {
     die("Project ID is missing.");
 }
 
-// Database connection
-$servername   = "localhost";
-$db_username  = "SolterraSolutions";
-$db_password  = "CompanyAdmin!";
-$dbname       = "solterra_portal";
+// Include configuration file
+require_once '../config.php';
 
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+// Get database connection using the new function
+$conn = getDBConnection();
+if (!$conn) {
+    die("Unable to connect to database. Please try again later.");
 }
 
 // Fetch the project name for the header

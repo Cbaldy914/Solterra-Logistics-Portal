@@ -18,14 +18,11 @@ if (!isset($_GET['id']) || empty($_GET['id'])) {
 
 $project_id = intval($_GET['id']);
 
-$servername = "localhost";
-$db_username = "SolterraSolutions";
-$db_password = "CompanyAdmin!";
-$dbname     = "solterra_portal";
-
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 // We'll still support the "mw" vs "modules" toggle for the Overview tab
@@ -338,9 +335,9 @@ foreach ($weeks as $ix => $wobj) {
 // --- New Section for Warranty/Safety Metrics ---
 
 // Open a new connection for these queries
-$conn2 = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn2->connect_error) {
-    die("Connection failed: " . $conn2->connect_error);
+$conn2 = getDBConnection();
+if (!$conn2) {
+    die("Connection failed");
 }
 
 // Helper function to get total modules rejected from a JSON string

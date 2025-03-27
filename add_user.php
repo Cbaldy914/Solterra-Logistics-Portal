@@ -8,21 +8,16 @@ if ($_SESSION['role'] !== 'global_admin') {
     exit();
 }
 
-// Database credentials
-$servername = "localhost";
-$db_username = "SolterraSolutions";
-$db_password = "CompanyAdmin!";
-$dbname     = "solterra_portal";
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
+}
 
 // Initialize feedback messages
 $success_message = '';
 $error_message = '';
-
-// Connect to DB (we’ll keep this open the entire script)
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
 
 // 1) Fetch all accounts for the dropdown
 $accounts = [];

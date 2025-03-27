@@ -3,17 +3,18 @@
 session_name("logistics_session");
 session_start();
 
-// If you’ve already started storing 'global_admin', you could allow that too
+// If you've already started storing 'global_admin', you could allow that too
 if ($_SESSION['role'] !== 'admin' && $_SESSION['role'] !== 'global_admin') {
     header("Location: unauthorized");
     exit();
 }
 
-// Database connection parameters
-$servername = "localhost";
-$db_username = "SolterraSolutions";
-$db_password = "CompanyAdmin!";
-$dbname     = "solterra_portal";
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
+}
 
 // Initialize any feedback messages
 $success_message = '';
@@ -41,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         try {
             // 3) Create a new account row
-            //    (You might check if $account_name already exists if you don’t want duplicates)
+            //    (You might check if $account_name already exists if you don't want duplicates)
             $stmtAcc = $conn->prepare("
                 INSERT INTO customer_accounts (name)
                 VALUES (?)
@@ -64,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $row = $result->fetch_assoc();
                 $user_id = $row['id'];
                 // You could decide whether to ignore the submitted password or update it
-                // For now, let’s RE‐hash (overwrite) if they provided a new password
+                // For now, let's RE-hash (overwrite) if they provided a new password
                 $hashed_password = password_hash($password, PASSWORD_DEFAULT);
 
                 $stmtUpdateUser = $conn->prepare("

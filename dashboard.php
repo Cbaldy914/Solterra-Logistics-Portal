@@ -11,22 +11,17 @@ if (!isset($_SESSION['user_id'])) {
 // We'll need the user's role to decide which page to link to
 $role = isset($_SESSION['role']) ? $_SESSION['role'] : 'user'; // default to 'user' if not set
 
-// Database connection parameters
-$servername = "localhost";
-$db_username = "SolterraSolutions"; // Replace with your actual database username
-$db_password = "CompanyAdmin!";     // Replace with your actual database password
-$dbname     = "solterra_portal";    // Replace with your actual database name
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
+}
 
 // Enable error reporting for debugging (remove in production)
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
-
-// Create a new database connection
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
 
 // 1) Determine which account(s) the user belongs to
 $user_id = $_SESSION['user_id'];

@@ -6,6 +6,13 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'global_admin') {
     header("Location: unauthorized");
     exit();
 }
+
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
