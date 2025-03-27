@@ -2,23 +2,19 @@
 session_name("logistics_session");
 session_start();
 
+// Include configuration file
+require_once '../config.php';
+
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: login");
     exit();
 }
 
-// -----------------------------------------------------------
-// Database connection
-// -----------------------------------------------------------
-$servername = "localhost";
-$db_username = "SolterraSolutions";
-$db_password = "CompanyAdmin!";
-$dbname = "solterra_portal";
-
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+// Get database connection using the new function
+$conn = getDBConnection();
+if (!$conn) {
+    die("Unable to connect to database. Please try again later.");
 }
 
 $user_id = $_SESSION['user_id'];
