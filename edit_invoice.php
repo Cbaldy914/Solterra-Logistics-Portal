@@ -20,16 +20,11 @@ $invoice_id = intval($_GET['id']);
 $success_message = '';
 $error_message = '';
 
-// Database connection parameters
-$servername = "localhost";
-$db_username = "SolterraSolutions";
-$db_password = "CompanyAdmin!";
-$dbname = "solterra_portal";
-
-// Create database connection
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 // Fetch invoice details

@@ -15,7 +15,11 @@ $forecast_id = intval($_GET['id']);
 $user_id = $_SESSION['user_id'];
 
 // Database connection
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
+}
 
 // Fetch forecast project details
 $stmt = $conn->prepare("SELECT name, estimated_start_date, modules_data, created_at FROM forecast_projects WHERE id = ? AND user_id = ?");

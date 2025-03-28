@@ -16,18 +16,11 @@ $wattage = intval($_POST['wattage']);
 $quantity = intval($_POST['quantity']);
 $current_location = trim($_POST['current_location']);
 
-// Database connection parameters
-$servername = "localhost";
-$db_username = "SolterraSolutions"; // Replace with your actual database username
-$db_password = "CompanyAdmin!";     // Replace with your actual database password
-$dbname = "solterra_portal";        // Replace with your actual database name
-
-// Create a new database connection
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-
-// Check the connection
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 // Update the module

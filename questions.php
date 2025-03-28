@@ -8,12 +8,6 @@ header("Location: login");
 exit();
 }
 
-// Database connection
-$servername = "localhost";
-$db_username = "SolterraSolutions"; // Your database username
-$db_password = "CompanyAdmin!";     // Your database password
-$dbname = "solterra_portal";
-
 // Initialize variables
 $name = '';
 $email = '';
@@ -21,6 +15,13 @@ $subject = '';
 $message = '';
 $success_message = '';
 $error_message = '';
+
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Sanitize and validate form inputs

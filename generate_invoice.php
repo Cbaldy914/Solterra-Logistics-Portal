@@ -14,14 +14,10 @@ if ($_SESSION['role'] !== 'global_admin') {
 }
 
 // 3) Connect to DB
-$servername   = "localhost";
-$db_username  = "SolterraSolutions";
-$db_password  = "CompanyAdmin!";
-$dbname       = "solterra_portal";
-
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 // -----------------------------------------------------------
@@ -181,9 +177,9 @@ $selectedRows     = [];
 
 if (isset($_POST['create_invoice']) && !empty($_POST['selected_ids'])) {
     // Re-open connection for the update
-    $conn = new mysqli($servername, $db_username, $db_password, $dbname);
-    if ($conn->connect_error) {
-        die("Connection failed: " . $conn->connect_error);
+    $conn = getDBConnection();
+    if (!$conn) {
+        die("Connection failed");
     }
 
     // Typically, generate a unique invoice number

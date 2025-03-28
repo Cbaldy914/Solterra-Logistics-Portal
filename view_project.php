@@ -22,14 +22,10 @@ $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role']; // Assuming you have role information stored in the session
 
 // Database connection
-$servername = "localhost";
-$db_username = "SolterraSolutions";
-$db_password = "CompanyAdmin!";
-$dbname = "solterra_portal";
-
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 // Verify that the user has access to this project
@@ -359,7 +355,7 @@ $conn->close();
 
                     <!-- Filter by Status + Export form -->
                     <form method="get" action="" style="display: flex; gap: 10px;">
-                        <!-- Keep project/time/ref_date so we don’t lose them on status change -->
+                        <!-- Keep project/time/ref_date so we don't lose them on status change -->
                         <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
                         <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
                         <input type="hidden" name="ref_date" value="<?php echo $ref_date; ?>">
