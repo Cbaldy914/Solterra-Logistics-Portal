@@ -12,9 +12,7 @@ if (!isset($_SESSION['user_id'])) {
 $role = $_SESSION['role'] ?? 'user';
 
 // Enable error reporting for debugging (remove in production)
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+
 
 // Include configuration file and get database connection
 require_once '../config.php';
