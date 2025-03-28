@@ -20,14 +20,11 @@ $user_role = isset($_SESSION['role']) ? $_SESSION['role'] : '';
 // Get user ID
 $user_id = $_SESSION['user_id'];
 
-$servername = "localhost";
-$db_username = "SolterraSolutions"; 
-$db_password = "CompanyAdmin!";    
-$dbname = "solterra_portal";        
-
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 // Initialize variables

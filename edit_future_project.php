@@ -18,14 +18,10 @@ if (!isset($_GET['id'])) {
 $project_id = intval($_GET['id']);
 
 // Database connection
-$servername = "localhost";
-$db_username = "SolterraSolutions";
-$db_password = "CompanyAdmin!";
-$dbname = "solterra_portal";
-
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 // Fetch project details

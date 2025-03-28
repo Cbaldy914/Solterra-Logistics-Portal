@@ -12,7 +12,7 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// Grab the user’s role from the session
+// Grab the user's role from the session
 $role = $_SESSION['role'] ?? 'user';
 
 if (!isset($_GET['id']) || empty($_GET['id'])) {
@@ -21,20 +21,17 @@ if (!isset($_GET['id']) || empty($_GET['id'])) {
 
 $project_id = intval($_GET['id']);
 
-$servername = "localhost";
-$db_username = "SolterraSolutions";
-$db_password = "CompanyAdmin!";
-$dbname     = "solterra_portal";
-
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 $view_mode = isset($_GET['view_mode']) ? $_GET['view_mode'] : 'mw';
 
 /**
- * Calculate a quantity based on the user’s chosen view mode:
+ * Calculate a quantity based on the user's chosen view mode:
  *   - modules => raw quantity
  *   - mw => (quantity * wattage) / 1,000,000
  */

@@ -9,22 +9,18 @@ if ($_SESSION['role'] !== 'admin' && $_SESSION['role'] !== 'global_admin') {
 }
 
 // Database connection
-$servername = "localhost";
-$db_username = "SolterraSolutions";
-$db_password = "CompanyAdmin!";
-$dbname     = "solterra_portal";
-
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 // Handle account delete (optional)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_account'])) {
     $account_id = intval($_POST['account_id']);
 
-    // Basic safety check: maybe you can’t delete an account with active users, etc.
-    // For now, let’s just do it:
+    // Basic safety check: maybe you can't delete an account with active users, etc.
+    // For now, let's just do it:
     $stmtDel = $conn->prepare("DELETE FROM customer_accounts WHERE id = ?");
     $stmtDel->bind_param("i", $account_id);
     $stmtDel->execute();
@@ -45,7 +41,7 @@ while ($row = $resultAccounts->fetch_assoc()) {
 }
 $resultAccounts->close();
 
-// We’ll also fetch the user‐list for each account
+// We'll also fetch the user-list for each account
 // Alternatively, you could do a single JOIN query, but let's keep it simple.
 ?>
 <!DOCTYPE html>
@@ -109,7 +105,7 @@ $resultAccounts->close();
             </td>
             <td>
                 <!-- Example: Delete the account. 
-                     (In real life, you’d confirm or handle the bridging rows first.) -->
+                     (In real life, you'd confirm or handle the bridging rows first.) -->
                 <form method="POST" action="manage_accounts" 
                       onsubmit="return confirm('Are you sure you want to delete this account?');">
                     <input type="hidden" name="account_id" value="<?php echo $acc['account_id']; ?>">

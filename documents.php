@@ -13,14 +13,10 @@ if (!isset($_SESSION['user_id'])) {
 $user_id = $_SESSION['user_id'];
 
 // Database connection
-$servername = "localhost";
-$db_username = "SolterraSolutions"; // Replace with your actual database username
-$db_password = "CompanyAdmin!";     // Replace with your actual database password
-$dbname = "solterra_portal";
-
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
 
 // Fetch projects associated with the user

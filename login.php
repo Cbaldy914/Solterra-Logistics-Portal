@@ -3,23 +3,16 @@
 session_name("logistics_session");
 session_start();
 
-// Database connection parameters
-$servername = "localhost";
-$db_username = "SolterraSolutions";
-$db_password = "CompanyAdmin!";
-$dbname     = "solterra_portal";
-
 // Initialize variables
 $error_message = '';
 
 // Check if the form has been submitted
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Create a new database connection
-    $conn = new mysqli($servername, $db_username, $db_password, $dbname);
-
-    // Check the connection
-    if ($conn->connect_error) {
-        die("Connection failed: " . $conn->connect_error);
+    require_once '../config.php';
+    $conn = getDBConnection();
+    if (!$conn) {
+        die("Connection failed");
     }
 
     // Retrieve and sanitize form data
@@ -67,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $role = $dbRole;
             } else {
                 // No entry found in the bridging table, fallback to 'user' or your old `users.role`
-                // (You could also fetch it from `users.role` if you haven’t removed that column.)
+                // (You could also fetch it from `users.role` if you haven't removed that column.)
                 $role = 'user'; 
             }
             $stmt2->close();

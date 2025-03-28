@@ -18,14 +18,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['download_selected'])) 
     }
 
     // Verify that the project belongs to the user
-    $servername = "localhost";
-    $db_username = "SolterraSolutions";
-    $db_password = "CompanyAdmin!";
-    $dbname = "solterra_portal";
-
-    $conn = new mysqli($servername, $db_username, $db_password, $dbname);
-    if ($conn->connect_error) {
-        die("Connection failed: " . $conn->connect_error);
+    require_once '../config.php';
+    $conn = getDBConnection();
+    if (!$conn) {
+        die("Connection failed");
     }
 
     $stmt = $conn->prepare("SELECT id FROM projects WHERE id = ? AND user_id = ?");
