@@ -16,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 
     // Retrieve and sanitize form data
-    $username = mysqli_real_escape_string($conn, $_POST['username']);
+    $username = $_POST['username'];
     $password = $_POST['password']; // password_verify() handles hashing internally
 
     // 1) Find the user in the `users` table to verify password

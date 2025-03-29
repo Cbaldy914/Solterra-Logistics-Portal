@@ -21,18 +21,19 @@ $error_message = '';
 
 // 1) Fetch all accounts for the dropdown
 $accounts = [];
-$sqlAcc = "SELECT id, name FROM customer_accounts";
-$resultAcc = $conn->query($sqlAcc);
+$stmtAcc = $conn->prepare("SELECT id, name FROM customer_accounts");
+$stmtAcc->execute();
+$resultAcc = $stmtAcc->get_result();
 if ($resultAcc && $resultAcc->num_rows > 0) {
     while ($row = $resultAcc->fetch_assoc()) {
         $accounts[] = $row;
     }
 }
-$resultAcc->close();
+$stmtAcc->close();
 
 // 2) If the form is submitted, handle the POST to create a user
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username   = mysqli_real_escape_string($conn, $_POST['username']);
+    $username   = $_POST['username'];
     $password   = $_POST['password'];
     $role       = $_POST['role'];             // e.g. 'user', 'admin', 'DDPm'
     $account_id = intval($_POST['account_id']);

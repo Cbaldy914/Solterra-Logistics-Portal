@@ -13,7 +13,7 @@ if (!$conn) {
     die("Connection failed");
 }
 
-$username = mysqli_real_escape_string($conn, $_POST['username']);
+$username = $_POST['username'];
 $password = $_POST['password'];
 $role = $_POST['role']; // role can be 'user', 'admin', or 'site_user'
 
