@@ -55,8 +55,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_estimate'])) {
 }
 
 // Fetch all estimates
-$sql = "SELECT id, user_id, name, estimate_data, created_at FROM freight_estimates ORDER BY created_at DESC";
-$result = $conn->query($sql);
+$stmt = $conn->prepare("SELECT id, user_id, name, estimate_data, created_at FROM freight_estimates ORDER BY created_at DESC");
+$stmt->execute();
+$result = $stmt->get_result();
 $estimates = [];
 while ($row = $result->fetch_assoc()) {
     $estimates[] = $row;
