@@ -2,6 +2,20 @@
 // Check if admin
 session_name("logistics_session");
 session_start();
+
+// Generate CSRF token if not exists
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Security Constants
+define('MAX_FILE_SIZE', 5 * 1024 * 1024); // 5MB
+define('ALLOWED_MIME_TYPES', [
+    'application/pdf' => 'pdf',
+    'image/jpeg' => 'jpg',
+    'image/png' => 'png'
+]);
+
 if ($_SESSION['role'] != 'global_admin') {
     header("Location: unauthorized");
     exit();
@@ -17,69 +31,96 @@ if (!$conn) {
 // Get delivery ID
 $delivery_id = intval($_GET['delivery_id']);
 
+// Error handling function
+function handleError($message) {
+    error_log("File upload error: " . $message);
+    die("An error occurred while processing your request. Please try again later.");
+}
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // Validate CSRF token
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        handleError("Invalid request. Please try again.");
+    }
+
     if (isset($_FILES['pod_file']) && $_FILES['pod_file']['error'] == 0) {
-        // Validate file type and size
-        $allowedTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
-        $fileType = $_FILES['pod_file']['type'];
-        $fileSize = $_FILES['pod_file']['size'];
-        $maxFileSize = 5 * 1024 * 1024; // 5MB limit
+        try {
+            // Validate file size
+            if ($_FILES['pod_file']['size'] > MAX_FILE_SIZE) {
+                throw new Exception("File size exceeds the maximum limit of 5MB.");
+            }
 
-        if (!in_array($fileType, $allowedTypes)) {
-            die("Invalid file type. Only PDF, JPG, and PNG files are allowed.");
-        }
+            // Validate MIME type
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            $mime_type = finfo_file($finfo, $_FILES['pod_file']['tmp_name']);
+            finfo_close($finfo);
 
-        if ($fileSize > $maxFileSize) {
-            die("File size exceeds the maximum limit of 5MB.");
-        }
+            if (!array_key_exists($mime_type, ALLOWED_MIME_TYPES)) {
+                throw new Exception("Invalid file type. Only PDF, JPG, JPEG, and PNG files are allowed.");
+            }
 
-        // Fetch project and customer info based on delivery_id
-        $stmt = $conn->prepare("
-            SELECT d.project_id, p.user_id, u.username 
-            FROM deliveries d 
-            JOIN projects p ON d.project_id = p.id 
-            JOIN users u ON p.user_id = u.id 
-            WHERE d.id = ?
-        ");
-        $stmt->bind_param("i", $delivery_id);
-        $stmt->execute();
-        $stmt->bind_result($project_id, $user_id, $username);
-        $stmt->fetch();
-        $stmt->close();
+            // Validate file extension matches MIME type
+            $extension = strtolower(pathinfo($_FILES['pod_file']['name'], PATHINFO_EXTENSION));
+            if ($extension !== ALLOWED_MIME_TYPES[$mime_type]) {
+                throw new Exception("File extension does not match file type.");
+            }
 
-        // Define upload directory
-        $upload_dir = "customers/$username/projects/$project_id/documents/pods/";
-
-        // Create directory if it doesn't exist
-        if (!is_dir($upload_dir)) {
-            mkdir($upload_dir, 0777, true);
-        }
-
-        // Sanitize file name to prevent directory traversal attacks
-        $file_name = basename($_FILES['pod_file']['name']);
-        $file_name = preg_replace('/[^A-Za-z0-9\.\-_]/', '_', $file_name);
-        $target_file = $upload_dir . $file_name;
-
-        if (move_uploaded_file($_FILES['pod_file']['tmp_name'], $target_file)) {
-            // Update the database
-            $stmt = $conn->prepare("UPDATE deliveries SET proof_of_delivery = ? WHERE id = ?");
-            $stmt->bind_param("si", $target_file, $delivery_id);
+            // Fetch project and customer info based on delivery_id
+            $stmt = $conn->prepare("
+                SELECT d.project_id, p.user_id, u.username 
+                FROM deliveries d 
+                JOIN projects p ON d.project_id = p.id 
+                JOIN users u ON p.user_id = u.id 
+                WHERE d.id = ?
+            ");
+            $stmt->bind_param("i", $delivery_id);
             $stmt->execute();
+            $stmt->bind_result($project_id, $user_id, $username);
+            $stmt->fetch();
             $stmt->close();
 
-            // Redirect back to manage_deliveries
-            header("Location: manage_deliveries?project_id=$project_id");
-            exit();
-        } else {
-            echo "Failed to upload file.";
+            // Define upload directory with proper permissions
+            $upload_dir = "customers/$username/projects/$project_id/documents/pods/";
+            if (!is_dir($upload_dir)) {
+                if (!mkdir($upload_dir, 0755, true)) {
+                    throw new Exception("Failed to create upload directory.");
+                }
+            }
+
+            // Get original filename and sanitize it
+            $original_filename = pathinfo($_FILES['pod_file']['name'], PATHINFO_FILENAME);
+            // Remove any potentially dangerous characters
+            $sanitized_filename = preg_replace('/[^A-Za-z0-9\-_\.]/', '_', $original_filename);
+            // Limit filename length to prevent issues
+            $sanitized_filename = substr($sanitized_filename, 0, 100);
+            
+            // Generate secure filename with original name
+            $file_extension = ALLOWED_MIME_TYPES[$mime_type];
+            $new_filename = $delivery_id . '_' . $sanitized_filename . '.' . $file_extension;
+            $target_file = $upload_dir . $new_filename;
+
+            if (move_uploaded_file($_FILES['pod_file']['tmp_name'], $target_file)) {
+                // Update the database
+                $stmt = $conn->prepare("UPDATE deliveries SET proof_of_delivery = ? WHERE id = ?");
+                $stmt->bind_param("si", $target_file, $delivery_id);
+                $stmt->execute();
+                $stmt->close();
+
+                // Redirect back to manage_deliveries
+                header("Location: manage_deliveries?project_id=$project_id");
+                exit();
+            } else {
+                throw new Exception("Failed to move uploaded file.");
+            }
+        } catch (Exception $e) {
+            handleError($e->getMessage());
         }
     } else {
-        echo "No file uploaded or an error occurred.";
+        handleError("No file uploaded or an error occurred.");
     }
 }
 $conn->close();
 ?>
-
 
 <!DOCTYPE html>
 <html lang="en">
@@ -95,8 +136,17 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <h1>Upload Proof of Delivery</h1>
-    <form action="upload_pod?delivery_id=<?php echo $delivery_id; ?>" method="post" enctype="multipart/form-data">
-        <input type="file" name="pod_file" accept=".pdf, .jpg, .jpeg, .png" required>
+    <form action="upload_pod?delivery_id=<?php echo htmlspecialchars($delivery_id); ?>" method="post" enctype="multipart/form-data">
+        <!-- CSRF Protection -->
+        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+        
+        <input type="file" 
+               name="pod_file" 
+               accept=".pdf,.jpg,.jpeg,.png" 
+               required>
+        <small style="display: block; margin: 10px 0; color: #666;">
+            Allowed file types: PDF, JPG, JPEG, PNG. Maximum file size: 5MB
+        </small>
         <button type="submit" name="upload_pod">Upload POD</button>
     </form>
 </main>
