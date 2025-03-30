@@ -22,7 +22,7 @@ if (!$conn) {
     die("Connection failed");
 }
 
-// Verify that the project belongs to the user
+// Verify that the project belongs to this user
 $stmt = $conn->prepare("SELECT project_name FROM projects WHERE id = ? AND user_id = ?");
 $stmt->bind_param("ii", $project_id, $user_id);
 $stmt->execute();
@@ -34,11 +34,12 @@ if (!$project_name) {
     die("You do not have access to this project.");
 }
 
-// Fetch PODs for the project
+// Fetch PODs (and BOL numbers) for this project
 $stmt = $conn->prepare("
-    SELECT d.id, d.proof_of_delivery
+    SELECT d.id, d.proof_of_delivery, d.bol_number
     FROM deliveries d
-    WHERE d.project_id = ? AND d.proof_of_delivery IS NOT NULL
+    WHERE d.project_id = ? 
+      AND d.proof_of_delivery IS NOT NULL
 ");
 $stmt->bind_param("i", $project_id);
 $stmt->execute();
@@ -59,24 +60,27 @@ $stmt->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-<a href="#" onclick="if(document.referrer) { window.location = document.referrer; } else { window.history.back(); }" class="back-icon">
-    <!-- SVG for Back Arrow -->
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-        <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-    </svg>
-    Back
+    <a href="#" onclick="if(document.referrer) { window.location = document.referrer; } else { window.history.back(); }" class="back-icon">
+        <!-- SVG for Back Arrow -->
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
+        </svg>
+        Back
     </a>
-<div class="pod_header">
-    <h1>PODs for <?php echo htmlspecialchars($project_name); ?></h1>
-</div>
+    <div class="pod_header">
+        <h1>PODs for <?php echo htmlspecialchars($project_name); ?></h1>
+    </div>
     <?php if ($pods_result->num_rows > 0): ?>
         <form action="download_pods" method="post">
             <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-            <button type="submit" name="download_selected" onclick="return confirm('Download selected PODs?');">Download Selected</button>
+            <button type="submit" name="download_selected" onclick="return confirm('Download selected PODs?');">
+                Download Selected
+            </button>
             <table>
                 <tr>
                     <th><input type="checkbox" id="select-all"></th>
                     <th>POD File</th>
+                    <th>BOL Number</th> <!-- New column header -->
                 </tr>
                 <?php while ($pod = $pods_result->fetch_assoc()): ?>
                     <tr>
@@ -88,6 +92,9 @@ $stmt->close();
                                 <?php echo basename($pod['proof_of_delivery']); ?>
                             </a>
                         </td>
+                        <td>
+                            <?php echo htmlspecialchars($pod['bol_number']); ?>
+                        </td>
                     </tr>
                 <?php endwhile; ?>
             </table>
@@ -95,16 +102,17 @@ $stmt->close();
     <?php else: ?>
         <p>No PODs found for this project.</p>
     <?php endif; ?>
-    </main>
-    <script>
-        // "Select All" functionality
-        document.getElementById('select-all').onclick = function() {
-            var checkboxes = document.getElementsByName('selected_pods[]');
-            for (var checkbox of checkboxes) {
-                checkbox.checked = this.checked;
-            }
-        };
-    </script>
+</main>
+
+<script>
+    // "Select All" functionality
+    document.getElementById('select-all').onclick = function() {
+        var checkboxes = document.getElementsByName('selected_pods[]');
+        for (var checkbox of checkboxes) {
+            checkbox.checked = this.checked;
+        }
+    };
+</script>
 </body>
 </html>
 
