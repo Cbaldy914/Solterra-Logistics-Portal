@@ -2,8 +2,21 @@
 session_name("logistics_session");
 session_start();
 
+// Generate CSRF token if not exists
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Security Constants
+define('MAX_FILE_SIZE', 5 * 1024 * 1024); // 5MB
+define('ALLOWED_MIME_TYPES', [
+    'application/pdf' => 'pdf',
+    'image/jpeg' => 'jpg',
+    'image/png' => 'png'
+]);
+
 // Check if the user is an admin
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'global_admin') {
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] != 'global_admin' && $_SESSION['role'] != 'admin')) {
     header("Location: unauthorized");
     exit();
 }
@@ -23,6 +36,12 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// Error handling function
+function handleError($message) {
+    error_log("File upload error: " . $message);
+    die("An error occurred while processing your request. Please try again later.");
+}
+
 // Fetch delivery details
 $stmt = $conn->prepare("SELECT * FROM deliveries WHERE id = ?");
 $stmt->bind_param("i", $delivery_id);
@@ -37,84 +56,85 @@ if (!$delivery) {
 $current_status = $delivery['status_of_delivery'];
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_delivery'])) {
+    // Validate CSRF token
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        handleError("Invalid request. Please try again.");
+    }
+
     // Retrieve and sanitize input
     $supplier = $_POST['supplier'];
     $wattage = $_POST['wattage'];
     $status_of_delivery = $_POST['status_of_delivery'];
     $quantity = intval($_POST['quantity']);
     $bol_number = $_POST['bol_number'];
-    $anticipated_delivery_date = $_POST['anticipated_delivery_date']; // Required
+    $anticipated_delivery_date = $_POST['anticipated_delivery_date'];
+    
+    // Handle empty dates
+    $warehouse_arrival_date = !empty($_POST['warehouse_arrival_date']) ? $_POST['warehouse_arrival_date'] : null;
+    $actual_delivery_date = !empty($_POST['actual_delivery_date']) ? $_POST['actual_delivery_date'] : null;
+    $left_warehouse_date = !empty($_POST['left_warehouse_date']) ? $_POST['left_warehouse_date'] : null;
+    
+    $freight_cost = floatval($_POST['freight_cost']);
+    $accessorial_costs = floatval($_POST['accessorial_costs']);
+    $proof_of_delivery = $delivery['proof_of_delivery']; // Keep existing POD if no new file uploaded
+    $miles = floatval($_POST['miles']);
 
-    // Optional fields (set to NULL if empty)
-    $warehouse_arrival_date = !empty($_POST['warehouse_arrival_date']) ? $_POST['warehouse_arrival_date'] : NULL;
-    $actual_delivery_date = !empty($_POST['actual_delivery_date']) ? $_POST['actual_delivery_date'] : NULL;
-    $left_warehouse_date = !empty($_POST['left_warehouse_date']) ? $_POST['left_warehouse_date'] : NULL;
-    $freight_cost = isset($_POST['freight_cost']) && $_POST['freight_cost'] !== '' ? $_POST['freight_cost'] : NULL;
-    $accessorial_costs = isset($_POST['accessorial_costs']) && $_POST['accessorial_costs'] !== '' ? $_POST['accessorial_costs'] : NULL;
-    $miles = isset($_POST['miles']) && $_POST['miles'] !== '' ? $_POST['miles'] : NULL;
-
-    // Check if status changed from 'In Warehouse' to 'Delivered'
-    if ($current_status == 'In Warehouse' && $status_of_delivery == 'Delivered') {
-        // Set left_warehouse_date to current date if not already set
-        if (empty($left_warehouse_date)) {
-            $left_warehouse_date = date('Y-m-d');
-        }
-    }
-
-    $proof_of_delivery = $delivery['proof_of_delivery']; // Existing POD
-    $remove_pod = isset($_POST['remove_pod']) ? $_POST['remove_pod'] : 0;
-
-    // Handle POD removal
-    if ($remove_pod) {
-        // Delete the existing POD file from the server
-        if (!empty($proof_of_delivery) && file_exists($proof_of_delivery)) {
-            unlink($proof_of_delivery);
-        }
-        $proof_of_delivery = null; // Set to null in the database
-    }
-
-    // Handle POD upload
-    if (isset($_FILES['proof_of_delivery']) && $_FILES['proof_of_delivery']['error'] == UPLOAD_ERR_OK) {
-        // Validate the uploaded file
-        $allowed_extensions = ['pdf', 'jpg', 'jpeg', 'png'];
-        $file_tmp_path = $_FILES['proof_of_delivery']['tmp_name'];
-        $file_name = $_FILES['proof_of_delivery']['name'];
-        $file_size = $_FILES['proof_of_delivery']['size'];
-        $file_type = $_FILES['proof_of_delivery']['type'];
-        $file_extension = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
-
-        // Check file extension
-        if (!in_array($file_extension, $allowed_extensions)) {
-            echo "<p>Invalid file type. Only PDF, JPG, JPEG, and PNG files are allowed.</p>";
-            exit();
-        }
-
-        // Check file size (e.g., max 5MB)
-        if ($file_size > 5 * 1024 * 1024) {
-            echo "<p>File size exceeds the maximum limit of 5MB.</p>";
-            exit();
-        }
-
-        // Define upload directory
-        $upload_dir = "customers/$username/projects/$project_id/documents/pods/";
-        if (!is_dir($upload_dir)) {
-            mkdir($upload_dir, 0777, true);
-        }
-
-        // Generate a unique file name to prevent overwriting
-        $new_file_name = 'pod_' . $delivery_id . '_' . time() . '.' . $file_extension;
-        $dest_path = $upload_dir . $new_file_name;
-
-        // Move the uploaded file to the destination
-        if (move_uploaded_file($file_tmp_path, $dest_path)) {
-            // Delete the old POD file if it exists and wasn't already deleted
-            if (!$remove_pod && !empty($proof_of_delivery) && file_exists($proof_of_delivery)) {
-                unlink($proof_of_delivery);
+    // Handle POD file upload if provided
+    if (isset($_FILES['pod_file']) && $_FILES['pod_file']['error'] == 0) {
+        try {
+            // Validate file size
+            if ($_FILES['pod_file']['size'] > MAX_FILE_SIZE) {
+                throw new Exception("File size exceeds the maximum limit of 5MB.");
             }
-            $proof_of_delivery = $dest_path; // Update the POD path
-        } else {
-            echo "<p>Error uploading the file. Please try again.</p>";
-            exit();
+
+            // Validate MIME type
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            $mime_type = finfo_file($finfo, $_FILES['pod_file']['tmp_name']);
+            finfo_close($finfo);
+
+            if (!array_key_exists($mime_type, ALLOWED_MIME_TYPES)) {
+                throw new Exception("Invalid file type. Only PDF, JPG, JPEG, and PNG files are allowed.");
+            }
+
+            // Validate file extension matches MIME type
+            $extension = strtolower(pathinfo($_FILES['pod_file']['name'], PATHINFO_EXTENSION));
+            if ($extension !== ALLOWED_MIME_TYPES[$mime_type]) {
+                throw new Exception("File extension does not match file type.");
+            }
+
+            // Get project and user info for directory structure
+            $stmt = $conn->prepare("
+                SELECT p.user_id, u.username 
+                FROM projects p 
+                JOIN users u ON p.user_id = u.id 
+                WHERE p.id = ?
+            ");
+            $stmt->bind_param("i", $project_id);
+            $stmt->execute();
+            $stmt->bind_result($user_id, $username);
+            $stmt->fetch();
+            $stmt->close();
+
+            // Define upload directory with proper permissions
+            $upload_dir = "customers/$username/projects/$project_id/documents/pods/";
+            if (!is_dir($upload_dir)) {
+                if (!mkdir($upload_dir, 0755, true)) {
+                    throw new Exception("Failed to create upload directory.");
+                }
+            }
+
+            // Generate secure filename
+            $file_extension = ALLOWED_MIME_TYPES[$mime_type];
+            $new_filename = $delivery_id . '_' . time() . '.' . $file_extension;
+            $target_file = $upload_dir . $new_filename;
+
+            if (move_uploaded_file($_FILES['pod_file']['tmp_name'], $target_file)) {
+                $proof_of_delivery = $target_file;
+            } else {
+                throw new Exception("Failed to move uploaded file.");
+            }
+        } catch (Exception $e) {
+            handleError($e->getMessage());
         }
     }
 
@@ -237,9 +257,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_delivery'])) {
 <?php include 'header.php'; ?>
 <main>
     <h1>Edit Delivery for Project ID <?php echo $project_id; ?></h1>
-    <form action="edit_delivery?delivery_id=<?php echo $delivery_id; ?>&project_id=<?php echo $project_id; ?>" method="post" enctype="multipart/form-data">
+    <form action="edit_delivery.php?delivery_id=<?php echo htmlspecialchars($delivery_id); ?>&project_id=<?php echo htmlspecialchars($project_id); ?>" method="post" enctype="multipart/form-data">
+        <!-- CSRF Protection -->
+        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+        
         <fieldset>
-            <legend>Delivery Details</legend>
+            <legend>Delivery Information</legend>
             <label for="supplier">Supplier:</label>
             <input type="text" name="supplier" value="<?php echo htmlspecialchars($delivery['supplier']); ?>" required>
 
@@ -296,11 +319,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_delivery'])) {
                     <label><input type="checkbox" name="remove_pod" value="1"> Remove current POD</label>
                 </div>
             <?php endif; ?>
-            <label for="proof_of_delivery">Upload New POD:</label>
-            <input type="file" name="proof_of_delivery" accept=".pdf,.jpg,.jpeg,.png">
+            <div class="form-group">
+                <label for="pod_file">Upload New POD:</label>
+                <input type="file" 
+                       id="pod_file" 
+                       name="pod_file" 
+                       accept=".pdf,.jpg,.jpeg,.png">
+                <small style="display: block; margin: 10px 0; color: #666;">
+                    Allowed file types: PDF, JPG, JPEG, PNG. Maximum file size: 5MB
+                </small>
+            </div>
         </fieldset>
 
-        <input type="submit" name="update_delivery" value="Update Delivery">
+        <button type="submit" name="update_delivery">Update Delivery</button>
     </form>
     <div class="back-link">
         <a href="manage_deliveries?project_id=<?php echo $project_id; ?>">Back to Manage Deliveries</a>

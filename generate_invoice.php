@@ -14,24 +14,24 @@ if ($_SESSION['role'] !== 'global_admin') {
 }
 
 // 3) Connect to DB
-require_once '../config.php';
-$conn = getDBConnection();
-if (!$conn) {
-    die("Connection failed");
+$servername   = "localhost";
+$db_username  = "SolterraSolutions";
+$db_password  = "CompanyAdmin!";
+$dbname       = "solterra_portal";
+
+$conn = new mysqli($servername, $db_username, $db_password, $dbname);
+if ($conn->connect_error) {
+    die("Connection failed: " . $conn->connect_error);
 }
 
 // -----------------------------------------------------------
-// 4) Check if we have project_id in GET
-//    If not, display a simple "Select a Project" form
+// Check if we have project_id in GET. If not, show a selector.
 // -----------------------------------------------------------
 if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
     // We do not have a project_id, so let's display a selection form.
-
-    // Fetch all projects for the dropdown
     $sql    = "SELECT id, project_name FROM projects ORDER BY project_name ASC";
     $result = $conn->query($sql);
 
-    // Close body if we won't continue
     ?>
     <!DOCTYPE html>
     <html lang="en">
@@ -47,7 +47,6 @@ if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
 
     <main style="margin: 40px;">
         <h1>Select a Project to Generate Invoice</h1>
-
         <?php if ($result && $result->num_rows > 0): ?>
             <form method="GET" action="generate_invoice.php">
                 <label for="projectSelect">Project:</label>
@@ -65,16 +64,15 @@ if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
             <p>No projects found or available.</p>
         <?php endif; ?>
     </main>
-
     </body>
     </html>
     <?php
     $conn->close();
-    exit(); // stop here, since we only displayed the project selection form
+    exit(); // stop here, since we only displayed the project-selection form
 }
 
 // -----------------------------------------------------------
-// 5) We do have a project_id. Let's proceed with invoice logic
+// We DO have a project_id, so let's proceed to show deliveries
 // -----------------------------------------------------------
 $project_id = (int) $_GET['project_id'];
 
@@ -96,6 +94,10 @@ $filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)";
 $time_filter  = isset($_GET['time_filter']) ? $_GET['time_filter'] : 'all';
 $ref_date     = isset($_GET['ref_date']) ? $_GET['ref_date'] : date('Y-m-d');
 
+// Filter by invoice number
+$invoiceNumberFilter = isset($_GET['invoice_number_filter']) ? trim($_GET['invoice_number_filter']) : '';
+$invoiceCondition    = "";
+
 $dateCondition = "";
 $paramTypes    = "i"; // for project_id
 $params        = [$project_id];
@@ -104,14 +106,14 @@ $dateLabel = "All Deliveries";
 $prev_date = "";
 $next_date = "";
 
+// Build time filter
 if ($time_filter === 'day') {
     $dateCondition = " AND DATE($filterColumn) = ?";
     $paramTypes   .= "s";
     $params[]      = $ref_date;
-
-    $dateLabel = date('F j, Y', strtotime($ref_date));
-    $prev_date = date('Y-m-d', strtotime($ref_date . " -1 day"));
-    $next_date = date('Y-m-d', strtotime($ref_date . " +1 day"));
+    $dateLabel     = date('F j, Y', strtotime($ref_date));
+    $prev_date     = date('Y-m-d', strtotime($ref_date . " -1 day"));
+    $next_date     = date('Y-m-d', strtotime($ref_date . " +1 day"));
 
 } elseif ($time_filter === 'week') {
     $timestamp   = strtotime($ref_date);
@@ -142,12 +144,20 @@ if ($time_filter === 'day') {
     $next_date = date('Y-m-d', strtotime($startOfMonth . " +1 month"));
 }
 
-// Build final deliveries query (including invoice_number)
+// If user is filtering by invoice number
+if (!empty($invoiceNumberFilter)) {
+    $invoiceCondition = " AND invoice_number LIKE ?";
+    $paramTypes      .= "s";
+    $params[]         = "%" . $invoiceNumberFilter . "%";
+}
+
+// Build final deliveries query
 $sql_deliveries = "
     SELECT *
     FROM deliveries
     WHERE project_id = ?
           $dateCondition
+          $invoiceCondition
     ORDER BY $filterColumn DESC
 ";
 
@@ -157,7 +167,6 @@ $stmt_deliveries->execute();
 $deliveries_result = $stmt_deliveries->get_result();
 $stmt_deliveries->close();
 
-// Collect deliveries in array
 $deliveries = [];
 while ($row = $deliveries_result->fetch_assoc()) {
     $row['actual_delivery_date_formatted'] = !empty($row['actual_delivery_date'])
@@ -165,60 +174,8 @@ while ($row = $deliveries_result->fetch_assoc()) {
         : 'N/A';
     $deliveries[] = $row;
 }
+
 $conn->close();
-
-// =====================================
-// Handle Creating an Invoice
-// =====================================
-$invoiceCreated   = false;
-$newInvoiceNumber = "";
-$selectedCount    = 0;
-$selectedRows     = [];
-
-if (isset($_POST['create_invoice']) && !empty($_POST['selected_ids'])) {
-    // Re-open connection for the update
-    $conn = getDBConnection();
-    if (!$conn) {
-        die("Connection failed");
-    }
-
-    // Typically, generate a unique invoice number
-    $newInvoiceNumber = 'INV_' . date('Ymd_His');
-
-    // selected_ids is a JSON-encoded array
-    $selectedRows = json_decode($_POST['selected_ids'], true);
-    if (!is_array($selectedRows)) {
-        $selectedRows = [];
-    }
-    $selectedCount = count($selectedRows);
-
-    if ($selectedCount > 0) {
-        // Build placeholders for the IN clause
-        $placeholders = rtrim(str_repeat('?,', $selectedCount), ',');
-        // Create param type string
-        $paramTypesIn = str_repeat('i', $selectedCount);
-
-        // Prepare update
-        $sqlUpdate = "UPDATE deliveries
-                      SET invoice_number = ?
-                      WHERE id IN ($placeholders)";
-
-        $stmt = $conn->prepare($sqlUpdate);
-
-        // Merge the invoice_number param + selected IDs
-        $allParams = array_merge([$newInvoiceNumber], $selectedRows);
-        // So total param types = 1 's' + N 'i'
-        $bindTypes = 's' . $paramTypesIn;
-
-        $stmt->bind_param($bindTypes, ...$allParams);
-        $stmt->execute();
-        $stmt->close();
-
-        $invoiceCreated = true;
-    }
-    $conn->close();
-}
-
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -230,11 +187,23 @@ if (isset($_POST['create_invoice']) && !empty($_POST['selected_ids'])) {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
+        /* Basic styles to position elements as requested */
+        .invoice-controls {
+            margin: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        .invoice-controls button {
+            padding: 8px 16px;
+            cursor: pointer;
+        }
+
         .time-filter-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin: 30px 20px 10px 20px;
+            margin: 20px;
             flex-wrap: wrap;
         }
         .time-filters {
@@ -252,6 +221,7 @@ if (isset($_POST['create_invoice']) && !empty($_POST['selected_ids'])) {
             background: #488C9A;
             color: #fff;
         }
+
         .date-navigation {
             display: flex;
             align-items: center;
@@ -265,25 +235,24 @@ if (isset($_POST['create_invoice']) && !empty($_POST['selected_ids'])) {
             padding: 5px 10px;
             border-radius: 4px;
         }
-        .nav-arrow:hover { background: #ccc; }
+        .nav-arrow:hover {
+            background: #ccc;
+        }
         .date-label {
             font-weight: bold;
             font-size: 1.1em;
         }
-        .invoice-controls {
-            margin: 20px;
+
+        .invoice-number-filter {
             display: flex;
-            gap: 15px;
             align-items: center;
+            gap: 8px;
         }
-        .invoice-controls button {
-            padding: 8px 16px;
-            cursor: pointer;
-        }
+
         table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 15px;
+            margin: 20px;
         }
         table, th, td {
             border: 1px solid #ccc;
@@ -293,36 +262,9 @@ if (isset($_POST['create_invoice']) && !empty($_POST['selected_ids'])) {
         tr.selected {
             background-color: #cce5ff; /* highlight color */
         }
-        .invoice-preview {
-            border: 1px solid #ccc;
-            padding: 20px;
-            margin: 20px;
-            background: #fefefe;
-        }
-        .invoice-header {
-            display: flex;
-            justify-content: space-between;
-        }
-        .invoice-header img {
-            max-height: 60px;
-        }
-        .invoice-title {
-            margin-top: 0;
-            text-align: right;
-        }
-        .invoice-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-        }
-        .invoice-table th, .invoice-table td {
-            border: 1px solid #ccc;
-            padding: 8px;
-        }
     </style>
 
     <script>
-        // Keep track of selected row IDs
         let selectedIds = [];
 
         function toggleRowSelection(row, deliveryId) {
@@ -336,74 +278,88 @@ if (isset($_POST['create_invoice']) && !empty($_POST['selected_ids'])) {
             document.getElementById('selectedCount').textContent = selectedIds.length;
         }
 
-        function createInvoice() {
+        function goToInvoice() {
             if (selectedIds.length === 0) {
                 alert('No line items selected to invoice.');
                 return;
             }
+            // Submit them to invoice_info.php
             const form = document.getElementById('invoiceForm');
-            const hiddenInput = document.getElementById('selectedIds');
-            hiddenInput.value = JSON.stringify(selectedIds);
+            document.getElementById('selectedIds').value = JSON.stringify(selectedIds);
             form.submit();
         }
     </script>
-
 </head>
 <body>
 <?php include 'header.php'; ?>
 
 <main>
-    <h1>Generate Invoice - <?php echo htmlspecialchars($project_name); ?></h1>
+    <!-- 1) CREATE INVOICE CONTROLS (Above time filter) -->
+    <div class="invoice-controls">
+        <!-- This form leads to invoice_info.php -->
+        <form id="invoiceForm" method="POST" action="invoice_info.php">
+            <!-- Keep track of project_id so we know which project this is -->
+            <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+            <input type="hidden" id="selectedIds" name="selected_ids" value="">
+        </form>
+        <button onclick="goToInvoice()">Create Invoice</button>
+        <span>Selected Count: <strong id="selectedCount">0</strong></span>
+    </div>
 
-    <!-- TIME FILTER HEADER -->
+    <!-- 2) TIME FILTER HEADER -->
     <div class="time-filter-header">
+        <!-- Time filters on the LEFT -->
         <div class="time-filters">
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=all&ref_date=<?php echo urlencode($ref_date); ?>"
+            <a href="?project_id=<?php echo $project_id; ?>&time_filter=all&ref_date=<?php echo urlencode($ref_date); ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>"
                class="<?php echo ($time_filter === 'all') ? 'active' : ''; ?>">
                 All
             </a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=day&ref_date=<?php echo urlencode($ref_date); ?>"
+            <a href="?project_id=<?php echo $project_id; ?>&time_filter=day&ref_date=<?php echo urlencode($ref_date); ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>"
                class="<?php echo ($time_filter === 'day') ? 'active' : ''; ?>">
                 Day
             </a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=week&ref_date=<?php echo urlencode($ref_date); ?>"
+            <a href="?project_id=<?php echo $project_id; ?>&time_filter=week&ref_date=<?php echo urlencode($ref_date); ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>"
                class="<?php echo ($time_filter === 'week') ? 'active' : ''; ?>">
                 Week
             </a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=month&ref_date=<?php echo urlencode($ref_date); ?>"
+            <a href="?project_id=<?php echo $project_id; ?>&time_filter=month&ref_date=<?php echo urlencode($ref_date); ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>"
                class="<?php echo ($time_filter === 'month') ? 'active' : ''; ?>">
                 Month
             </a>
         </div>
 
+        <!-- Date Navigation in the MIDDLE -->
         <div class="date-navigation">
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>'">
+                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>'">
                     &larr;
                 </button>
             <?php endif; ?>
             <span class="date-label"><?php echo $dateLabel; ?></span>
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>'">
+                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>'">
                     &rarr;
                 </button>
             <?php endif; ?>
         </div>
+
+        <!-- Invoice # filter on the RIGHT -->
+        <div class="invoice-number-filter">
+            <form method="GET" action="generate_invoice.php">
+                <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+                <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
+                <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
+                <label for="invoice_number_filter">Invoice #:</label>
+                <input type="text" id="invoice_number_filter" name="invoice_number_filter"
+                       value="<?php echo htmlspecialchars($invoiceNumberFilter); ?>">
+                <button type="submit">Filter</button>
+            </form>
+        </div>
     </div>
 
-    <!-- "Create Invoice" controls -->
-    <div class="invoice-controls">
-        <form id="invoiceForm" method="POST">
-            <input type="hidden" name="create_invoice" value="1">
-            <input type="hidden" name="selected_ids" id="selectedIds" value="">
-        </form>
-        <button onclick="createInvoice()">Create Invoice</button>
-        <span>Selected Count: <strong id="selectedCount">0</strong></span>
-    </div>
-
-    <!-- TABLE of Deliveries -->
+    <!-- 3) TABLE of Deliveries -->
     <table>
         <thead>
             <tr>
@@ -411,11 +367,10 @@ if (isset($_POST['create_invoice']) && !empty($_POST['selected_ids'])) {
                 <th>Wattage</th>
                 <th>Quantity</th>
                 <th>Status of Delivery</th>
-                <!-- Removed Warehouse Arrival Date -->
+                <!-- Remove Warehouse Arrival Date -->
                 <th>Delivered to Site Date</th>
                 <th>Freight Cost</th>
                 <th>Accessorial Cost</th>
-                <!-- New: Invoice # column -->
                 <th>Invoice #</th>
             </tr>
         </thead>
@@ -440,78 +395,6 @@ if (isset($_POST['create_invoice']) && !empty($_POST['selected_ids'])) {
         <?php endif; ?>
         </tbody>
     </table>
-
-    <!-- If an invoice was created, show a preview -->
-    <?php if ($invoiceCreated && $selectedCount > 0): ?>
-        <div class="invoice-preview">
-            <div class="invoice-header">
-                <img src="pictures/solterra_logo.png" alt="Solterra Solutions Logo">
-                <div>
-                    <h2 class="invoice-title">Invoice #<?php echo $newInvoiceNumber; ?></h2>
-                    <p>Date: <?php echo date('F j, Y'); ?></p>
-                    <p>Due Date: [Due Date Here]</p>
-                </div>
-            </div>
-            <hr>
-
-            <p><strong>Solterra Solutions</strong><br>
-               8801 Fast Park Drive<br>
-               Suite 301 PMB1073<br>
-               Raleigh, NC 27617
-            </p>
-
-            <p><strong>Bill To:</strong><br>
-               [Client Name / Company]<br>
-               [Client Address]</p>
-
-            <table class="invoice-table">
-                <thead>
-                    <tr>
-                        <th>Delivery ID</th>
-                        <th>BOL#</th>
-                        <th>Wattage</th>
-                        <th>Quantity</th>
-                        <th>Freight</th>
-                        <th>Accessorial</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php
-                // Show a basic table of the deliveries that were invoiced
-                foreach ($selectedRows as $rowId) {
-                    foreach ($deliveries as $del) {
-                        if ((int)$del['id'] === (int)$rowId) {
-                            echo "<tr>";
-                            echo "<td>" . (int)$del['id'] . "</td>";
-                            echo "<td>" . htmlspecialchars($del['bol_number'] ?? '') . "</td>";
-                            echo "<td>" . htmlspecialchars($del['wattage'] ?? '') . "</td>";
-                            echo "<td>" . htmlspecialchars($del['quantity'] ?? '') . "</td>";
-                            echo "<td>$" . number_format($del['freight_cost'] ?? 0, 2) . "</td>";
-                            echo "<td>$" . number_format($del['accessorial_costs'] ?? 0, 2) . "</td>";
-                            echo "</tr>";
-                        }
-                    }
-                }
-                ?>
-                </tbody>
-            </table>
-
-            <p><em>Additional invoice details, totals, etc. go here.</em></p>
-            <hr>
-
-            <p>
-                <strong>Payment Instructions:</strong><br>
-                Please make payments to: Solterra Solutions, LLC<br>
-                Routing Number: 083000137<br>
-                Account Number: 605665101
-            </p>
-
-            <p>
-                For any questions regarding this invoice, contact us at
-                <a href="mailto:info@solterrasol.com">info@solterrasol.com</a>.
-            </p>
-        </div>
-    <?php endif; ?>
 </main>
 </body>
 </html>

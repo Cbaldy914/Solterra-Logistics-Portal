@@ -8,6 +8,7 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+// Check for project_id parameter
 if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
     die("Project ID is missing.");
 }
@@ -22,16 +23,33 @@ if (!$conn) {
     die("Connection failed");
 }
 
-// Verify that the project belongs to this user
-$stmt = $conn->prepare("SELECT project_name FROM projects WHERE id = ? AND user_id = ?");
-$stmt->bind_param("ii", $project_id, $user_id);
+// First get the user's account ID
+$stmt = $conn->prepare("
+    SELECT account_id 
+    FROM customer_account_users 
+    WHERE user_id = ?
+");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$stmt->bind_result($account_id);
+$stmt->fetch();
+$stmt->close();
+
+// Verify that the project belongs to the account
+$stmt = $conn->prepare("
+    SELECT p.project_name 
+    FROM projects p 
+    JOIN customer_accounts ca ON p.account_id = ca.id 
+    WHERE p.id = ? AND ca.id = ?
+");
+$stmt->bind_param("ii", $project_id, $account_id);
 $stmt->execute();
 $stmt->bind_result($project_name);
 $stmt->fetch();
 $stmt->close();
 
 if (!$project_name) {
-    die("You do not have access to this project.");
+    die("You do not have access to this project or it does not exist.");
 }
 
 // Fetch PODs (and BOL numbers) for this project
