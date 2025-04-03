@@ -8,8 +8,7 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-
-// Get the user's ID
+// Get the user's ID and account ID
 $user_id = $_SESSION['user_id'];
 
 // Database connection
@@ -19,9 +18,26 @@ if (!$conn) {
     die("Connection failed");
 }
 
-// Fetch projects associated with the user
-$stmt = $conn->prepare("SELECT id, project_name FROM projects WHERE user_id = ?");
+// First get the user's account ID
+$stmt = $conn->prepare("
+    SELECT account_id 
+    FROM customer_account_users 
+    WHERE user_id = ?
+");
 $stmt->bind_param("i", $user_id);
+$stmt->execute();
+$stmt->bind_result($account_id);
+$stmt->fetch();
+$stmt->close();
+
+// Fetch projects associated with the account
+$stmt = $conn->prepare("
+    SELECT p.id, p.project_name 
+    FROM projects p 
+    JOIN customer_accounts ca ON p.account_id = ca.id 
+    WHERE ca.id = ?
+");
+$stmt->bind_param("i", $account_id);
 $stmt->execute();
 $projects_result = $stmt->get_result();
 $stmt->close();

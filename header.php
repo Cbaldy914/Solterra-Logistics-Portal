@@ -133,8 +133,9 @@ if (isset($_SESSION['role'])) {
                 <!-- Avatar or icon that opens the dropdown -->
                     <a href="#" class="dropbtn profile-avatar"><span class="profile-initials"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></span></a>
                     <div class="dropdown-content">
-                        <a href="account_settings.php">Account Settings</a>
+                        <a href="account_settings">Account Settings</a>
                         <a href="questions">Questions & Support</a>
+                        <a href="invoices_all">Invoices</a>
                         <a href="logout" class="logout">Sign Out</a>
                     </div>
                 </li>
@@ -189,8 +190,16 @@ if (isset($_SESSION['role'])) {
 
                 <li><a href="freight_estimate">Freight</a></li>
                 <li><a href="documents">Documents</a></li>
-                <li><a href="questions">Questions</a></li>
-                <li><a href="logout" class="logout">Sign Out</a></li>
+                <li class="dropdown profile-dropdown">
+                <!-- Avatar or icon that opens the dropdown -->
+                    <a href="#" class="dropbtn profile-avatar"><span class="profile-initials"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></span></a>
+                    <div class="dropdown-content">
+                        <a href="account_settings">Account Settings</a>
+                        <a href="questions">Questions & Support</a>
+                        <a href="invoices_all">Invoices</a>
+                        <a href="logout" class="logout">Sign Out</a>
+                    </div>
+                </li>
 
             <?php endif; ?>
 
