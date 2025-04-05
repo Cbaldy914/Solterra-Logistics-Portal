@@ -2,15 +2,14 @@
 session_name("logistics_session");
 session_start();
 
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-
 // Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: login");
     exit();
 }
+
+$user_id = $_SESSION['user_id'];
+$role    = $_SESSION['role'] ?? 'user';
 
 // Validate the project ID
 if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
@@ -18,8 +17,6 @@ if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
 }
 
 $project_id = intval($_GET['project_id']);
-$user_id = $_SESSION['user_id'];
-$role = $_SESSION['role']; // Assuming you have role information stored in the session
 
 // Database connection
 require_once '../config.php';
@@ -28,71 +25,90 @@ if (!$conn) {
     die("Connection failed");
 }
 
-// Verify that the user has access to this project
-if ($role === 'admin') {
-    // Admins have access to all projects
+/**
+ * If role is 'admin' or 'global_admin', user can see any project, 
+ * so we just check if the project exists:
+ */
+if ($role === 'admin' || $role === 'global_admin') {
     $stmt = $conn->prepare("SELECT * FROM projects WHERE id = ?");
     $stmt->bind_param("i", $project_id);
 } else {
-    // Regular users can only access their own projects
-    $stmt = $conn->prepare("SELECT * FROM projects WHERE id = ? AND user_id = ?");
+    /**
+     * Otherwise (regular user role), we check if this user’s account 
+     * matches the project’s account_id by joining projects.account_id 
+     * to customer_account_users.account_id for the same user_id.
+     */
+    $sql = "
+       SELECT p.* 
+       FROM projects p
+       JOIN customer_account_users cau ON p.account_id = cau.account_id
+       WHERE p.id = ? 
+         AND cau.user_id = ?
+       LIMIT 1
+    ";
+    $stmt = $conn->prepare($sql);
     $stmt->bind_param("ii", $project_id, $user_id);
 }
+
 $stmt->execute();
 $result = $stmt->get_result();
 if ($result->num_rows === 0) {
-    die("You do not have access to this project.");
+    // The user is not allowed to see this project
+    die("You do not have access to this project or it does not exist.");
 }
+
 $project = $result->fetch_assoc();
 $stmt->close();
 
 /**
- * TIME FILTER LOGIC
- * We use COALESCE(actual_delivery_date, anticipated_delivery_date) so that if
- * actual_delivery_date is missing, we fall back to anticipated_delivery_date.
+ * TIME FILTER LOGIC 
+ * (We use COALESCE(actual_delivery_date, anticipated_delivery_date) 
+ *  so if actual_delivery_date is missing, we fall back to anticipated_delivery_date.)
  */
-$filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)"; // The date column we'll filter by
-$time_filter = isset($_GET['time_filter']) ? $_GET['time_filter'] : 'all';
-$ref_date = isset($_GET['ref_date']) ? $_GET['ref_date'] : date('Y-m-d');
+$filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)";
+$time_filter  = isset($_GET['time_filter']) ? $_GET['time_filter'] : 'all';
+$ref_date     = isset($_GET['ref_date']) ? $_GET['ref_date'] : date('Y-m-d');
 
 $dateCondition = "";
-$paramTypes = "i";
-$params = [$project_id];
-$dateLabel = "All Deliveries";
-$prev_date = "";
-$next_date = "";
+$paramTypes    = "i";
+$params        = [$project_id];
+$dateLabel     = "All Deliveries";
+$prev_date     = "";
+$next_date     = "";
 
+// Day/Week/Month filter logic
 if ($time_filter === 'day') {
     $dateCondition = " AND DATE($filterColumn) = ?";
-    $paramTypes .= "s";
-    $params[] = $ref_date;
+    $paramTypes   .= "s";
+    $params[]      = $ref_date;
 
     $dateLabel = date('F j, Y', strtotime($ref_date));
     $prev_date = date('Y-m-d', strtotime($ref_date . " -1 day"));
     $next_date = date('Y-m-d', strtotime($ref_date . " +1 day"));
-} elseif ($time_filter === 'week') {
-    $timestamp = strtotime($ref_date);
-    // 0 (Sunday) to 6 (Saturday)
-    $dayOfWeek = date('w', $timestamp);
+}
+elseif ($time_filter === 'week') {
+    $timestamp   = strtotime($ref_date);
+    $dayOfWeek   = date('w', $timestamp); // Sunday=0
     $startOfWeek = date('Y-m-d', strtotime("-{$dayOfWeek} days", $timestamp));
     $endOfWeek   = date('Y-m-d', strtotime("+" . (6 - $dayOfWeek) . " days", $timestamp));
 
     $dateCondition = " AND DATE($filterColumn) BETWEEN ? AND ?";
-    $paramTypes .= "ss";
-    $params[] = $startOfWeek;
-    $params[] = $endOfWeek;
+    $paramTypes   .= "ss";
+    $params[]      = $startOfWeek;
+    $params[]      = $endOfWeek;
 
     $dateLabel = date('M j', strtotime($startOfWeek)) . " - " . date('M j, Y', strtotime($endOfWeek));
     $prev_date = date('Y-m-d', strtotime($startOfWeek . " -7 days"));
     $next_date = date('Y-m-d', strtotime($startOfWeek . " +7 days"));
-} elseif ($time_filter === 'month') {
+}
+elseif ($time_filter === 'month') {
     $startOfMonth = date('Y-m-01', strtotime($ref_date));
     $endOfMonth   = date('Y-m-t', strtotime($ref_date));
 
     $dateCondition = " AND DATE($filterColumn) BETWEEN ? AND ?";
-    $paramTypes .= "ss";
-    $params[] = $startOfMonth;
-    $params[] = $endOfMonth;
+    $paramTypes   .= "ss";
+    $params[]      = $startOfMonth;
+    $params[]      = $endOfMonth;
 
     $dateLabel = date('F Y', strtotime($ref_date));
     $prev_date = date('Y-m-d', strtotime($startOfMonth . " -1 month"));
@@ -100,12 +116,12 @@ if ($time_filter === 'day') {
 }
 
 // STATUS FILTER
-$status_filter = isset($_GET['status_filter']) ? $_GET['status_filter'] : '';
+$status_filter   = isset($_GET['status_filter']) ? $_GET['status_filter'] : '';
 $statusCondition = "";
 if (!empty($status_filter)) {
     $statusCondition = " AND status_of_delivery = ?";
-    $paramTypes .= "s";
-    $params[] = $status_filter;
+    $paramTypes     .= "s";
+    $params[]        = $status_filter;
 }
 
 // Handle CSV Export
@@ -113,7 +129,6 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename=deliveries.csv');
     $output = fopen('php://output', 'w');
-    // Output the column headings
     fputcsv($output, [
         'Supplier',
         'Wattage',
@@ -126,13 +141,12 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         'Proof of Delivery'
     ]);
 
-    // Same filtering logic for CSV
     $sql_export = "
         SELECT *
         FROM deliveries
-        WHERE project_id = ? 
-          $dateCondition
-          $statusCondition
+        WHERE project_id = ?
+              $dateCondition
+              $statusCondition
         ORDER BY $filterColumn DESC
     ";
     $stmt_export = $conn->prepare($sql_export);
@@ -159,13 +173,13 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     exit();
 }
 
-// Retrieve deliveries with the chosen filters, ordering by fallback date
+// Retrieve deliveries with the chosen filters
 $sql = "
     SELECT *
     FROM deliveries
     WHERE project_id = ?
-      $dateCondition
-      $statusCondition
+          $dateCondition
+          $statusCondition
     ORDER BY $filterColumn DESC
 ";
 $stmt = $conn->prepare($sql);
@@ -180,24 +194,18 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
 $stmt->close();
 $conn->close();
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo htmlspecialchars($project['project_name']); ?> - Delivery Tracker</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
     <style>
-
         .container {
             margin: 20px;
         }
-
-        /* Time Filter Header */
         .time-filter-header {
             display: flex;
             justify-content: space-between;
@@ -244,12 +252,10 @@ $conn->close();
         }
         .right-filters {
             display: flex;
-            flex-direction: column; /* So the search input is above the status/export row */
+            flex-direction: column;
             gap: 10px;
-            align-items: flex-start; /* Left-align items in this column layout */
+            align-items: flex-start;
         }
-
-        /* Back icon */
         .back-icon {
             display: inline-flex;
             align-items: center;
@@ -258,12 +264,9 @@ $conn->close();
             color: #333;
         }
         .back-icon svg {
-            width: 24px;
-            height: 24px;
+            width: 24px; height:24px;
             margin-right: 5px;
         }
-
-        /* Table styling */
         table {
             width: 100%;
             border-collapse: collapse;
@@ -272,20 +275,12 @@ $conn->close();
         table, th, td {
             border: 1px solid #ccc;
         }
-        th, td {
-            padding: 10px;
-        }
-        tr:hover {
-            background: #f1f1f1;
-        }
-
-        /* Responsive table container */
+        th, td { padding: 10px; }
+        tr:hover { background: #f1f1f1; }
         .table-responsive {
             width: 100%;
             overflow-x: auto;
         }
-
-        /* Hide Search & Export on screens <= 768px */
         @media screen and (max-width: 768px) {
             .mobile-hide {
                 display: none !important;
@@ -297,104 +292,87 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <a href="project_overview?id=<?php echo $project_id; ?>" class="back-icon" style="margin:20px;">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width:24px;height:24px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
             <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
         </svg>
         Back
     </a>
 
-        <div class="container">
-            <h1>Delivery Tracker for <?php echo htmlspecialchars($project['project_name']); ?></h1>
+    <div class="container">
+        <h1>Delivery Tracker for <?php echo htmlspecialchars($project['project_name']); ?></h1>
 
-            <!-- Time Filter Header (left: All/Day/Week/Month, center: date nav, right: search above status/export) -->
-            <div class="time-filter-header">
-                <!-- Left side: All/Day/Week/Month -->
-                <div class="time-filters">
-                    <a href="?project_id=<?php echo $project_id; ?>&time_filter=all"
-                       class="<?php echo ($time_filter === 'all') ? 'active' : ''; ?>">
-                       All
-                    </a>
-                    <a href="?project_id=<?php echo $project_id; ?>&time_filter=day&ref_date=<?php echo $ref_date; ?>"
-                       class="<?php echo ($time_filter === 'day') ? 'active' : ''; ?>">
-                       Day
-                    </a>
-                    <a href="?project_id=<?php echo $project_id; ?>&time_filter=week&ref_date=<?php echo $ref_date; ?>"
-                       class="<?php echo ($time_filter === 'week') ? 'active' : ''; ?>">
-                       Week
-                    </a>
-                    <a href="?project_id=<?php echo $project_id; ?>&time_filter=month&ref_date=<?php echo $ref_date; ?>"
-                       class="<?php echo ($time_filter === 'month') ? 'active' : ''; ?>">
-                       Month
-                    </a>
-                </div>
-
-                <!-- Center: Date Label and Prev/Next arrows -->
-                <div class="date-navigation">
-                    <?php if ($time_filter !== 'all'): ?>
-                        <button type="button" class="nav-arrow"
-                                onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
-                            &larr;
-                        </button>
-                    <?php endif; ?>
-                    <span class="date-label"><?php echo $dateLabel; ?></span>
-                    <?php if ($time_filter !== 'all'): ?>
-                        <button type="button" class="nav-arrow"
-                                onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
-                            &rarr;
-                        </button>
-                    <?php endif; ?>
-                </div>
-
-                <!-- Right side: Search in Table ABOVE Filter by Status & Export -->
-                <div class="right-filters">
-                    <!-- Client-side search (hidden on mobile) -->
-                    <div style="display: flex; gap: 10px;" class="mobile-hide">
-                        <label for="searchInput" style="align-self: center;">Search in Table:</label>
-                        <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
-                    </div>
-
-                    <!-- Filter by Status + Export form -->
-                    <form method="get" action="" style="display: flex; gap: 10px;">
-                        <!-- Keep project/time/ref_date so we don't lose them on status change -->
-                        <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-                        <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
-                        <input type="hidden" name="ref_date" value="<?php echo $ref_date; ?>">
-
-                        <!-- Filter by Status -->
-                        <label for="status_filter" style="align-self: center;">Filter by Status:</label>
-                        <select name="status_filter" id="status_filter" onchange="this.form.submit()">
-                            <option value="">All</option>
-                            <option value="Pending"    <?php if($status_filter === 'Pending')    echo 'selected'; ?>>Pending</option>
-                            <option value="Produced" <?php if($status_filter === 'Produced') echo 'selected'; ?>>Produced</option>
-                            <option value="In Warehouse"  <?php if($status_filter === 'In Warehouse')  echo 'selected'; ?>>In Warehouse</option>
-                            <option value="Delivered"   <?php if($status_filter === 'Delivered')   echo 'selected'; ?>>Delivered</option>
-                        </select>
-
-                        <!-- Export to CSV (hidden on mobile) -->
-                        <span class="mobile-hide">
-                            <button type="submit" name="export" value="1">Export to CSV</button>
-                        </span>
-                    </form>
-                </div>
+        <!-- Time Filter Header -->
+        <div class="time-filter-header">
+            <div class="time-filters">
+                <a href="?project_id=<?php echo $project_id; ?>&time_filter=all"
+                   class="<?php echo ($time_filter === 'all') ? 'active' : ''; ?>">All</a>
+                <a href="?project_id=<?php echo $project_id; ?>&time_filter=day&ref_date=<?php echo $ref_date; ?>"
+                   class="<?php echo ($time_filter === 'day') ? 'active' : ''; ?>">Day</a>
+                <a href="?project_id=<?php echo $project_id; ?>&time_filter=week&ref_date=<?php echo $ref_date; ?>"
+                   class="<?php echo ($time_filter === 'week') ? 'active' : ''; ?>">Week</a>
+                <a href="?project_id=<?php echo $project_id; ?>&time_filter=month&ref_date=<?php echo $ref_date; ?>"
+                   class="<?php echo ($time_filter === 'month') ? 'active' : ''; ?>">Month</a>
             </div>
 
-            <!-- Deliveries Table -->
-            <div class="table-responsive">
-                <table id="deliveriesTable">
-                    <thead>
-                        <tr>
-                            <th>Supplier</th>
-                            <th>Wattage</th>
-                            <th>Status of Delivery</th>
-                            <th>Quantity</th>
-                            <th>BOL Number</th>
-                            <th>Anticipated Delivery Date</th>
-                            <th>Warehouse Arrival Date</th>
-                            <th>Actual Delivery Date</th>
-                            <th>Proof of Delivery</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+            <div class="date-navigation">
+                <?php if ($time_filter !== 'all'): ?>
+                    <button type="button" class="nav-arrow"
+                            onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
+                        &larr;
+                    </button>
+                <?php endif; ?>
+                <span class="date-label"><?php echo $dateLabel; ?></span>
+                <?php if ($time_filter !== 'all'): ?>
+                    <button type="button" class="nav-arrow"
+                            onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
+                        &rarr;
+                    </button>
+                <?php endif; ?>
+            </div>
+
+            <div class="right-filters">
+                <div style="display: flex; gap: 10px;" class="mobile-hide">
+                    <label for="searchInput" style="align-self: center;">Search in Table:</label>
+                    <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
+                </div>
+                <form method="get" action="" style="display: flex; gap: 10px;">
+                    <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+                    <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
+                    <input type="hidden" name="ref_date" value="<?php echo $ref_date; ?>">
+
+                    <label for="status_filter" style="align-self: center;">Filter by Status:</label>
+                    <select name="status_filter" id="status_filter" onchange="this.form.submit()">
+                        <option value="">All</option>
+                        <option value="Pending"        <?php if($status_filter === 'Pending')        echo 'selected'; ?>>Pending</option>
+                        <option value="Produced"       <?php if($status_filter === 'Produced')       echo 'selected'; ?>>Produced</option>
+                        <option value="In Warehouse"   <?php if($status_filter === 'In Warehouse')   echo 'selected'; ?>>In Warehouse</option>
+                        <option value="Delivered"      <?php if($status_filter === 'Delivered')      echo 'selected'; ?>>Delivered</option>
+                    </select>
+
+                    <span class="mobile-hide">
+                        <button type="submit" name="export" value="1">Export to CSV</button>
+                    </span>
+                </form>
+            </div>
+        </div>
+
+        <!-- Deliveries Table -->
+        <div class="table-responsive">
+            <table id="deliveriesTable">
+                <thead>
+                    <tr>
+                        <th>Supplier</th>
+                        <th>Wattage</th>
+                        <th>Status of Delivery</th>
+                        <th>Quantity</th>
+                        <th>BOL Number</th>
+                        <th>Anticipated Delivery Date</th>
+                        <th>Warehouse Arrival Date</th>
+                        <th>Actual Delivery Date</th>
+                        <th>Proof of Delivery</th>
+                    </tr>
+                </thead>
+                <tbody>
                     <?php if (!empty($deliveries)): ?>
                         <?php foreach ($deliveries as $delivery): ?>
                             <tr>
@@ -412,7 +390,7 @@ $conn->close();
                                             View POD
                                         </a>
                                     <?php else: ?>
-                                        <?php if ($_SESSION['role'] === 'admin'): ?>
+                                        <?php if ($role === 'admin'): ?>
                                             <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>">
                                                 Upload POD
                                             </a>
@@ -428,34 +406,33 @@ $conn->close();
                             <td colspan="9">No delivery entries found.</td>
                         </tr>
                     <?php endif; ?>
-                    </tbody>
-                </table>
-            </div>
+                </tbody>
+            </table>
         </div>
-    </main>
+    </div>
+</main>
 
-    <!-- Simple client-side search -->
-    <script>
-    function searchTable() {
-        var input = document.getElementById("searchInput");
-        var filter = input.value.toLowerCase();
-        var table = document.getElementById("deliveriesTable");
-        var trs = table.getElementsByTagName("tr");
+<script>
+function searchTable() {
+    var input = document.getElementById("searchInput");
+    if (!input) return;
+    var filter = input.value.toLowerCase();
+    var table = document.getElementById("deliveriesTable");
+    var trs = table.getElementsByTagName("tr");
 
-        // Start from i=1 to skip the table header
-        for (var i = 1; i < trs.length; i++) {
-            var tds = trs[i].getElementsByTagName("td");
-            var show = false;
-            for (var j = 0; j < tds.length; j++) {
-                var txtValue = tds[j].textContent || tds[j].innerText;
-                if (txtValue.toLowerCase().indexOf(filter) > -1) {
-                    show = true;
-                    break;
-                }
+    for (var i = 1; i < trs.length; i++) {
+        var tds = trs[i].getElementsByTagName("td");
+        var show = false;
+        for (var j = 0; j < tds.length; j++) {
+            var txtValue = tds[j].textContent || tds[j].innerText;
+            if (txtValue.toLowerCase().indexOf(filter) > -1) {
+                show = true;
+                break;
             }
-            trs[i].style.display = show ? "" : "none";
         }
+        trs[i].style.display = show ? "" : "none";
     }
-    </script>
+}
+</script>
 </body>
 </html>

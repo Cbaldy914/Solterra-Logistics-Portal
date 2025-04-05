@@ -111,6 +111,8 @@ if (isset($_SESSION['role'])) {
                 <li class="dropdown">
                     <a href="dashboard" class="dropbtn">Projects</a>
                     <div class="dropdown-content">
+                        <a href="add_project">Add Project</a>
+                        <a href="manage_projects">Manage Projects</a>
                         <a href="future_projects">Future Projects</a>
                         <a href="module_cost_analysis">Cost Analysis</a>
                         <a href="sustainability_overview">Sustainability</a>
