@@ -8,50 +8,85 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-$delivery_id = intval($_GET['delivery_id']);
+// Basic role check: If user is "global_admin" or "admin," they can see all
+$allowed_admin_roles = ['global_admin', 'admin'];
+$current_role = isset($_SESSION['role']) ? $_SESSION['role'] : 'unknown';
 
-// Database connection
+$delivery_id = isset($_GET['delivery_id']) ? intval($_GET['delivery_id']) : 0;
+
 require_once '../config.php';
 $conn = getDBConnection();
 if (!$conn) {
-    die("Connection failed");
+    die("Database connection failed.");
 }
 
-// Fetch POD path and verify access
-$stmt = $conn->prepare("
-    SELECT d.proof_of_delivery, p.user_id, u.username, p.id as project_id
-    FROM deliveries d 
-    JOIN projects p ON d.project_id = p.id 
-    JOIN users u ON p.user_id = u.id 
-    WHERE d.id = ?
-");
+/**
+ * We'll fetch:
+ *  d.proof_of_delivery,
+ *  p.account_id,
+ *  c.name as account_name,
+ *  p.id as project_id
+ */
+$sql = "
+    SELECT d.proof_of_delivery,
+           p.account_id,
+           c.name       AS account_name,
+           p.id         AS project_id
+      FROM deliveries d
+      JOIN projects p            ON d.project_id = p.id
+      JOIN customer_accounts c   ON p.account_id = c.id
+     WHERE d.id = ?
+";
+$stmt = $conn->prepare($sql);
 $stmt->bind_param("i", $delivery_id);
 $stmt->execute();
-$stmt->bind_result($pod_path, $project_user_id, $username, $project_id);
+$stmt->bind_result($pod_path, $account_id, $account_name, $project_id);
 $stmt->fetch();
 $stmt->close();
 
-// Check if user has access
-if ($_SESSION['role'] === 'customer' && $_SESSION['user_id'] !== $project_user_id) {
-    die("Access denied.");
+// If there's no record, bail out
+if (empty($pod_path) || empty($account_id)) {
+    die("POD file not found or invalid delivery ID.");
 }
 
-// Construct path with Solterra-Logistics-Portal subfolder
+/**
+ * If user is NOT admin/global_admin, we must verify they belong to this same account
+ * so that they have permission to view the POD.
+ */
+if (!in_array($current_role, $allowed_admin_roles)) {
+    // Check if user is in the same account in the bridging table
+    $checkSql = "
+        SELECT COUNT(*)
+          FROM customer_account_users
+         WHERE account_id = ?
+           AND user_id    = ?
+         LIMIT 1
+    ";
+    $checkStmt = $conn->prepare($checkSql);
+    $checkStmt->bind_param("ii", $account_id, $_SESSION['user_id']);
+    $checkStmt->execute();
+    $checkStmt->bind_result($countAccounts);
+    $checkStmt->fetch();
+    $checkStmt->close();
+
+    if ($countAccounts < 1) {
+        // The user does not belong to this account => no access
+        die("Access denied: You do not belong to this account.");
+    }
+}
+
+// Now serve the file if it exists
+// The code below is the same as you had before, adjusted for $pod_path
+$conn->close();
+
+// For the local path, you used "web_root + subfolder + pod_path"
 $web_root  = rtrim($_SERVER['DOCUMENT_ROOT'], '/');
-$subfolder = '/Solterra-Logistics-Portal';
+$subfolder = '/Solterra-Logistics-Portal'; // Adjust if needed
 $full_path = $web_root . $subfolder . '/' . ltrim($pod_path, '/');
 
-// Debug info
-error_log("Attempting to access POD file for Delivery #{$delivery_id}:");
-error_log("  Web root:      " . $web_root);
-error_log("  Subfolder:     " . $subfolder);
-error_log("  POD path (DB): " . $pod_path);
-error_log("  Full path:     " . $full_path);
-error_log("  File exists?   " . (file_exists($full_path) ? 'Yes' : 'No'));
-
-// Serve the file if it exists
+// Serve the file
 if (file_exists($full_path)) {
-    // Clean output buffer to avoid any stray characters
+    // Clean output buffer
     if (ob_get_level()) {
         ob_end_clean();
     }
@@ -75,17 +110,13 @@ if (file_exists($full_path)) {
 
     header('Content-Type: ' . $content_type);
     header('Content-Disposition: inline; filename="' . basename($pod_path) . '"');
-    // Avoid partial data by not using Content-Length
-    // header('Content-Length: ' . filesize($full_path));
-
-    // Read the actual file contents
+    // Optionally skip Content-Length for dynamic or partial content issues
     readfile($full_path);
     exit();
 } else {
     echo "File not found at path: " . htmlspecialchars($full_path);
+    // Log errors if needed
     error_log("POD file not found: " . $full_path);
-    error_log("Current directory: " . getcwd());
-    error_log("Script location:   " . __FILE__);
+    exit();
 }
-
-$conn->close();
+?>

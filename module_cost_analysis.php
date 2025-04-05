@@ -15,215 +15,218 @@ if (!$conn) {
     die("Connection failed");
 }
 
-// Fetch user role and ID
+// Current user info
 $user_id = $_SESSION['user_id'];
-$role    = $_SESSION['role'];
+$role    = $_SESSION['role'] ?? 'user';
 
 /**
- * Calculate warehousing cost for a project (TOTAL or YTD).
+ * Calculate warehousing cost for a project (TOTAL).
  */
 function calculateProjectWarehousingCost($conn, $project_id) {
     // Fetch warehouse info
     $stmt = $conn->prepare("
-        SELECT w.id AS warehouse_id, w.in_fee, w.out_fee, w.monthly_storage_fee
+        SELECT w.id, w.in_fee, w.out_fee, w.monthly_storage_fee
         FROM warehouses w
-        INNER JOIN projects p ON p.warehouse_id = w.id
-        WHERE p.id = ?
+        JOIN projects p ON p.warehouse_id=w.id
+        WHERE p.id=?
     ");
     $stmt->bind_param("i", $project_id);
     $stmt->execute();
-    $warehouse_result = $stmt->get_result();
+    $resWarehouse = $stmt->get_result();
     $stmt->close();
 
-    if ($warehouse_result->num_rows < 1) {
-        return 0; // no warehouse
+    if ($resWarehouse->num_rows < 1) {
+        return 0;
     }
-    $warehouse = $warehouse_result->fetch_assoc();
+    $warehouse = $resWarehouse->fetch_assoc();
 
-    // Count deliveries that arrived at the warehouse
-    $stmt = $conn->prepare("
-        SELECT COUNT(*) AS total_deliveries
+    // Count inbound deliveries
+    $stmt2 = $conn->prepare("
+        SELECT COUNT(*) AS total_in
         FROM deliveries
-        WHERE project_id = ? AND warehouse_arrival_date IS NOT NULL
-    ");
-    $stmt->bind_param("i", $project_id);
-    $stmt->execute();
-    $stmt->bind_result($total_deliveries);
-    $stmt->fetch();
-    $stmt->close();
-
-    // Count deliveries that actually left the warehouse
-    $stmt = $conn->prepare("
-        SELECT COUNT(*) AS total_deliveries_out
-        FROM deliveries
-        WHERE project_id = ? 
-          AND left_warehouse_date IS NOT NULL
+        WHERE project_id=?
           AND warehouse_arrival_date IS NOT NULL
     ");
-    $stmt->bind_param("i", $project_id);
-    $stmt->execute();
-    $stmt->bind_result($total_deliveries_out);
-    $stmt->fetch();
-    $stmt->close();
+    $stmt2->bind_param("i", $project_id);
+    $stmt2->execute();
+    $stmt2->bind_result($total_in);
+    $stmt2->fetch();
+    $stmt2->close();
 
-    $in_fee_cost  = $warehouse['in_fee']  * $total_deliveries;
-    $out_fee_cost = $warehouse['out_fee'] * $total_deliveries_out;
+    // Count outbound deliveries
+    $stmt3 = $conn->prepare("
+        SELECT COUNT(*) AS total_out
+        FROM deliveries
+        WHERE project_id=?
+          AND warehouse_arrival_date IS NOT NULL
+          AND left_warehouse_date IS NOT NULL
+    ");
+    $stmt3->bind_param("i", $project_id);
+    $stmt3->execute();
+    $stmt3->bind_result($total_out);
+    $stmt3->fetch();
+    $stmt3->close();
 
-    // Sum up storage cost for all deliveries that have been to warehouse
-    $stmt = $conn->prepare("
+    $in_fee_cost  = $warehouse['in_fee']  * $total_in;
+    $out_fee_cost = $warehouse['out_fee'] * $total_out;
+
+    // Storage cost for every delivery that arrived
+    $stmt4 = $conn->prepare("
         SELECT warehouse_arrival_date, left_warehouse_date
         FROM deliveries
-        WHERE project_id = ? AND warehouse_arrival_date IS NOT NULL
+        WHERE project_id=?
+          AND warehouse_arrival_date IS NOT NULL
     ");
-    $stmt->bind_param("i", $project_id);
-    $stmt->execute();
-    $all_deliveries_result = $stmt->get_result();
-    $stmt->close();
+    $stmt4->bind_param("i", $project_id);
+    $stmt4->execute();
+    $res4 = $stmt4->get_result();
+    $stmt4->close();
 
-    $total_storage_cost = 0;
-    while ($delivery = $all_deliveries_result->fetch_assoc()) {
-        $start_date = $delivery['warehouse_arrival_date'];
-        if (empty($start_date)) {
+    $storage_cost_total = 0;
+    while ($d = $res4->fetch_assoc()) {
+        $sd = $d['warehouse_arrival_date'];
+        if (empty($sd)) {
             continue;
         }
-        $end_date   = (!empty($delivery['left_warehouse_date'])) 
-                        ? $delivery['left_warehouse_date']
-                        : date('Y-m-d');
-        $sd = new DateTime($start_date);
-        $ed = new DateTime($end_date);
+        $ed = (!empty($d['left_warehouse_date']))
+                ? $d['left_warehouse_date']
+                : date('Y-m-d');
 
-        $interval        = $sd->diff($ed);
-        $days_in_storage = $interval->days + 1;
+        $start = new DateTime($sd);
+        $end   = new DateTime($ed);
 
-        $daily_storage_fee = $warehouse['monthly_storage_fee'] / 30.0;
-        $storage_cost      = $daily_storage_fee * $days_in_storage;
-        $total_storage_cost += $storage_cost;
+        $diff = $start->diff($end);
+        $days = $diff->days + 1;
+
+        $daily_storage_fee = ($warehouse['monthly_storage_fee'] / 30.0);
+        $delivery_storage  = $days * $daily_storage_fee;
+
+        $storage_cost_total += $delivery_storage;
     }
 
-    return $in_fee_cost + $out_fee_cost + $total_storage_cost;
+    return $in_fee_cost + $out_fee_cost + $storage_cost_total;
 }
 
 /**
- * Calculate YTD warehousing cost for a project.
+ * Calculate YTD warehousing cost for a project (this year).
  */
 function calculateProjectYTDWarehousingCost($conn, $project_id, $current_year) {
-    // Fetch warehouse info
+    // Same approach, but restricted to year-based logic
     $stmt = $conn->prepare("
-        SELECT w.id AS warehouse_id, w.in_fee, w.out_fee, w.monthly_storage_fee
+        SELECT w.id, w.in_fee, w.out_fee, w.monthly_storage_fee
         FROM warehouses w
-        INNER JOIN projects p ON p.warehouse_id = w.id
-        WHERE p.id = ?
+        JOIN projects p ON p.warehouse_id=w.id
+        WHERE p.id=?
     ");
     $stmt->bind_param("i", $project_id);
     $stmt->execute();
-    $res = $stmt->get_result();
+    $warehouse_res = $stmt->get_result();
     $stmt->close();
 
-    if ($res->num_rows < 1) {
+    if ($warehouse_res->num_rows<1) {
         return 0;
     }
-    $warehouse = $res->fetch_assoc();
+    $warehouse = $warehouse_res->fetch_assoc();
 
-    // Count deliveries that arrived in the warehouse this year
-    $stmt = $conn->prepare("
-        SELECT COUNT(*) AS total_deliveries
+    // Count inbound deliveries (arrived this year)
+    $stmt2 = $conn->prepare("
+        SELECT COUNT(*) 
         FROM deliveries
-        WHERE project_id = ?
+        WHERE project_id=?
           AND warehouse_arrival_date IS NOT NULL
           AND YEAR(warehouse_arrival_date)=?
     ");
-    $stmt->bind_param("ii", $project_id, $current_year);
-    $stmt->execute();
-    $stmt->bind_result($total_deliveries);
-    $stmt->fetch();
-    $stmt->close();
+    $stmt2->bind_param("ii", $project_id, $current_year);
+    $stmt2->execute();
+    $stmt2->bind_result($total_in);
+    $stmt2->fetch();
+    $stmt2->close();
 
-    // Count deliveries that left warehouse this year
-    $stmt = $conn->prepare("
-        SELECT COUNT(*) AS total_deliveries_out
+    // Count outbound deliveries (left this year)
+    $stmt3 = $conn->prepare("
+        SELECT COUNT(*)
         FROM deliveries
-        WHERE project_id = ?
+        WHERE project_id=?
+          AND warehouse_arrival_date IS NOT NULL
           AND left_warehouse_date IS NOT NULL
           AND YEAR(left_warehouse_date)=?
-          AND warehouse_arrival_date IS NOT NULL
     ");
-    $stmt->bind_param("ii", $project_id, $current_year);
-    $stmt->execute();
-    $stmt->bind_result($total_deliveries_out);
-    $stmt->fetch();
-    $stmt->close();
+    $stmt3->bind_param("ii", $project_id, $current_year);
+    $stmt3->execute();
+    $stmt3->bind_result($total_out);
+    $stmt3->fetch();
+    $stmt3->close();
 
-    $in_fee_cost  = $warehouse['in_fee']  * $total_deliveries;
-    $out_fee_cost = $warehouse['out_fee'] * $total_deliveries_out;
+    $in_fee_cost  = $warehouse['in_fee']  * $total_in;
+    $out_fee_cost = $warehouse['out_fee'] * $total_out;
 
-    // Calculate partial-year storage costs
-    $stmt = $conn->prepare("
+    // Partial-year storage cost
+    $stmt4 = $conn->prepare("
         SELECT warehouse_arrival_date, left_warehouse_date
         FROM deliveries
-        WHERE project_id = ?
+        WHERE project_id=?
           AND warehouse_arrival_date IS NOT NULL
     ");
-    $stmt->bind_param("i", $project_id);
-    $stmt->execute();
-    $resDel = $stmt->get_result();
-    $stmt->close();
+    $stmt4->bind_param("i", $project_id);
+    $stmt4->execute();
+    $res4 = $stmt4->get_result();
+    $stmt4->close();
 
-    $year_start = new DateTime("$current_year-01-01");
-    $year_end   = new DateTime("$current_year-12-31");
-    $total_storage_cost = 0;
-    while ($d = $resDel->fetch_assoc()) {
-        if (empty($d['warehouse_arrival_date'])) continue;
-        $sd = new DateTime($d['warehouse_arrival_date']);
+    $yr_start = new DateTime("$current_year-01-01");
+    $yr_end   = new DateTime("$current_year-12-31");
+    $storage_cost_total=0;
+
+    while($d=$res4->fetch_assoc()){
+        $sd = $d['warehouse_arrival_date'];
+        if (empty($sd)) continue;
         $ed = (!empty($d['left_warehouse_date']))
-                ? new DateTime($d['left_warehouse_date'])
-                : new DateTime();
+                ? $d['left_warehouse_date']
+                : date('Y-m-d');
 
-        // If no overlap with current year, skip
-        if ($sd > $year_end || $ed < $year_start) {
+        $start = new DateTime($sd);
+        $end   = new DateTime($ed);
+
+        // If no overlap with the year, skip
+        if ($start>$yr_end || $end<$yr_start) {
             continue;
         }
-        if ($sd < $year_start) $sd = clone $year_start;
-        if ($ed > $year_end)   $ed = clone $year_end;
+        if ($start<$yr_start) $start=clone $yr_start;
+        if ($end>$yr_end)     $end=clone $yr_end;
 
-        $interval        = $sd->diff($ed);
-        $days_in_storage = $interval->days + 1;
-
-        $daily_storage_fee = $warehouse['monthly_storage_fee']/30.0;
-        $storage_cost      = $daily_storage_fee * $days_in_storage;
-        $total_storage_cost += $storage_cost;
+        $diff = $start->diff($end);
+        $days = $diff->days+1;
+        $daily_storage_fee = ($warehouse['monthly_storage_fee']/30.0);
+        $storage_cost_total += ($days*$daily_storage_fee);
     }
 
-    return $in_fee_cost + $out_fee_cost + $total_storage_cost;
+    return $in_fee_cost + $out_fee_cost + $storage_cost_total;
 }
 
 /**
- * Calculate total (or YTD) freight + accessorial + warehousing + SOLTERRA FEE for a project.
+ * Calculate total (or YTD) freight + accessorial + warehousing + Solterra fee for a project.
  */
 function calculateProjectTotalLogisticsCost($conn, $project_id, $filter) {
-    // Step 1: get the project's solterra_fee from DB
+    // 1) fetch the project's solterra_fee
     $stmt = $conn->prepare("SELECT solterra_fee FROM projects WHERE id=?");
     $stmt->bind_param("i", $project_id);
     $stmt->execute();
     $stmt->bind_result($solterra_fee_db);
     $stmt->fetch();
     $stmt->close();
+
     $solterra_fee = floatval($solterra_fee_db ?? 0);
-
-    // Step 2: gather freight & accessorial (TOTAL or YTD)
     $current_year = date('Y');
-    $project_freight_cost     = 0;
-    $project_accessorial_cost = 0;
 
-    $sql_deliveries = "SELECT freight_cost, accessorial_costs, wattage, quantity 
-                       FROM deliveries
-                       WHERE project_id=?";
-
-    if ($filter == 'ytd') {
-        $sql_deliveries .= " AND YEAR(created_at)=?";
+    // 2) gather freight & accessorial
+    $sql_deliv = "SELECT freight_cost, accessorial_costs, wattage, quantity, actual_delivery_date 
+                  FROM deliveries
+                  WHERE project_id=?";
+    if ($filter==='ytd') {
+        $sql_deliv .= " AND YEAR(created_at)=?";
     }
 
-    $stmt2 = $conn->prepare($sql_deliveries);
-    if ($filter == 'ytd') {
+    $stmt2 = $conn->prepare($sql_deliv);
+    if ($filter==='ytd') {
         $stmt2->bind_param("ii", $project_id, $current_year);
     } else {
         $stmt2->bind_param("i", $project_id);
@@ -232,103 +235,110 @@ function calculateProjectTotalLogisticsCost($conn, $project_id, $filter) {
     $res2 = $stmt2->get_result();
     $stmt2->close();
 
-    $project_solterra_fee = 0; // sum over deliveries
-    while ($row = $res2->fetch_assoc()) {
-        $project_freight_cost     += (float)$row['freight_cost'];
-        $project_accessorial_cost += (float)$row['accessorial_costs'];
+    $proj_freight_cost      = 0;
+    $proj_accessorial_costs = 0;
+    $proj_solterra_fee      = 0;
 
-        // compute solterra fee for this delivery
-        $wattage  = (float)$row['wattage'];
-        $quantity = (float)$row['quantity'];
-        $deliveryFee = $solterra_fee * ($wattage * $quantity);
-        $project_solterra_fee += $deliveryFee;
+    while($r=$res2->fetch_assoc()){
+        $proj_freight_cost      += (float)$r['freight_cost'];
+        $proj_accessorial_costs += (float)$r['accessorial_costs'];
+
+        if (!empty($r['actual_delivery_date'])) {
+            $wattage  = (float)$r['wattage'];
+            $quantity = (float)$r['quantity'];
+            $proj_solterra_fee += ($solterra_fee * ($wattage*$quantity));
+        }
     }
 
-    // Step 3: gather warehousing cost
-    if ($filter == 'ytd') {
-        $project_warehousing_cost = calculateProjectYTDWarehousingCost($conn, $project_id, $current_year);
+    // 3) gather warehousing
+    if ($filter==='ytd') {
+        $proj_warehousing = calculateProjectYTDWarehousingCost($conn, $project_id, $current_year);
     } else {
-        $project_warehousing_cost = calculateProjectWarehousingCost($conn, $project_id);
+        $proj_warehousing = calculateProjectWarehousingCost($conn, $project_id);
     }
 
-    // Step 4: total cost
-    $project_total_logistics_cost = 
-          $project_freight_cost 
-        + $project_accessorial_cost 
-        + $project_warehousing_cost
-        + $project_solterra_fee;
+    // 4) total
+    $proj_total = $proj_freight_cost + $proj_accessorial_costs + $proj_warehousing + $proj_solterra_fee;
 
     return [
-        'freight_cost'       => $project_freight_cost,
-        'accessorial_costs'  => $project_accessorial_cost,
-        'warehousing_cost'   => $project_warehousing_cost,
-        'solterra_fee'       => $project_solterra_fee,   // new
-        'total_logistics_cost' => $project_total_logistics_cost
+        'freight_cost'      => $proj_freight_cost,
+        'accessorial_costs' => $proj_accessorial_costs,
+        'warehousing_cost'  => $proj_warehousing,
+        'solterra_fee'      => $proj_solterra_fee,
+        'total_logistics_cost' => $proj_total
     ];
 }
 
-// Determine user's chosen filter
+// Chosen filter
 $filter = $_GET['filter'] ?? 'total';
 
-// For summation across all user’s projects
-$total_freight_cost       = 0;
-$total_accessorial_costs  = 0;
-$total_warehousing_cost   = 0;
-$total_solterra_fee       = 0;  // new aggregator
-$total_logistics_costs    = 0;
+// We'll sum over all relevant projects
+$total_freight           = 0;
+$total_accessorial       = 0;
+$total_warehousing       = 0;
+$total_solterra_fee      = 0;
+$total_logistics_cost    = 0;
 
-// Fetch projects for the logged-in user
-$sql_projects = "
-    SELECT p.id, p.project_name, p.image_url
-    FROM projects p
-    WHERE p.user_id = ?
-";
-$stmt = $conn->prepare($sql_projects);
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$result_projects = $stmt->get_result();
-$stmt->close();
-
-$project_count = $result_projects->num_rows;
-
-$projects = [];
-while ($pr = $result_projects->fetch_assoc()) {
-    $pid = $pr['id'];
-    // Calc cost
-    $c = calculateProjectTotalLogisticsCost($conn, $pid, $filter);
-
-    // accumulate
-    $total_freight_cost      += $c['freight_cost'];
-    $total_accessorial_costs += $c['accessorial_costs'];
-    $total_warehousing_cost  += $c['warehousing_cost'];
-    $total_solterra_fee      += $c['solterra_fee'];
-    $total_logistics_costs   += $c['total_logistics_cost'];
-
-    // store in project array
-    $pr['freight_cost']      = $c['freight_cost'];
-    $pr['accessorial_costs'] = $c['accessorial_costs'];
-    $pr['warehousing_cost']  = $c['warehousing_cost'];
-    $pr['solterra_fee']      = $c['solterra_fee'];
-    $pr['total_logistics_cost'] = $c['total_logistics_cost'];
-
-    $projects[] = $pr;
+// Step: fetch user’s projects differently if admin/global_admin or normal user
+if ($role === 'admin' || $role === 'global_admin') {
+    // All projects
+    $sql_proj = "SELECT p.id, p.project_name, p.image_url FROM projects p";
+    $paramTypes = "";
+    $params     = [];
+} else {
+    // Only projects from their account
+    $sql_proj = "
+        SELECT p.id, p.project_name, p.image_url
+        FROM projects p
+        JOIN customer_account_users cau ON p.account_id = cau.account_id
+        WHERE cau.user_id=?
+    ";
+    $paramTypes = "i";
+    $params     = [$user_id];
 }
 
-// Decide how to present the top-level cost overview
-if ($filter == 'per_project' && $project_count > 0) {
-    // average per project
-    $display_freight_cost     = $total_freight_cost     / $project_count;
-    $display_accessorial_cost = $total_accessorial_costs / $project_count;
-    $display_warehousing_cost = $total_warehousing_cost  / $project_count;
-    $display_solterra_fee     = $total_solterra_fee      / $project_count;
-    $display_total_logistics  = $total_logistics_costs   / $project_count;
+$stmtProj = $conn->prepare($sql_proj);
+if (!empty($paramTypes)) {
+    $stmtProj->bind_param($paramTypes, ...$params);
+}
+$stmtProj->execute();
+$projects_res = $stmtProj->get_result();
+$stmtProj->close();
+
+$projects = [];
+while ($p = $projects_res->fetch_assoc()) {
+    $pid = $p['id'];
+    $calc = calculateProjectTotalLogisticsCost($conn, $pid, $filter);
+
+    $total_freight      += $calc['freight_cost'];
+    $total_accessorial  += $calc['accessorial_costs'];
+    $total_warehousing  += $calc['warehousing_cost'];
+    $total_solterra_fee += $calc['solterra_fee'];
+    $total_logistics_cost += $calc['total_logistics_cost'];
+
+    $p['freight_cost']      = $calc['freight_cost'];
+    $p['accessorial_costs'] = $calc['accessorial_costs'];
+    $p['warehousing_cost']  = $calc['warehousing_cost'];
+    $p['solterra_fee']      = $calc['solterra_fee'];
+    $p['total_logistics_cost'] = $calc['total_logistics_cost'];
+
+    $projects[] = $p;
+}
+
+$project_count = count($projects);
+
+if ($filter==='per_project' && $project_count>0) {
+    $disp_freight      = $total_freight/$project_count;
+    $disp_accessorial  = $total_accessorial/$project_count;
+    $disp_warehousing  = $total_warehousing/$project_count;
+    $disp_solterra_fee = $total_solterra_fee/$project_count;
+    $disp_total_log    = $total_logistics_cost/$project_count;
 } else {
-    // show totals
-    $display_freight_cost     = $total_freight_cost;
-    $display_accessorial_cost = $total_accessorial_costs;
-    $display_warehousing_cost = $total_warehousing_cost;
-    $display_solterra_fee     = $total_solterra_fee;
-    $display_total_logistics  = $total_logistics_costs;
+    $disp_freight      = $total_freight;
+    $disp_accessorial  = $total_accessorial;
+    $disp_warehousing  = $total_warehousing;
+    $disp_solterra_fee = $total_solterra_fee;
+    $disp_total_log    = $total_logistics_cost;
 }
 
 $conn->close();
@@ -337,11 +347,11 @@ $conn->close();
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Module Cost Analysis</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
     <style>
         h2 {
             margin-top: 50px;
@@ -377,11 +387,29 @@ $conn->close();
             margin: 0;
             font-size: 1.2rem;
         }
-        /* Single "big" block for total */
         .cost-metric--total {
             max-width: 400px;
         }
-
+        .projects-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .project-item {
+            background: #f9f9f9;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .project-item h3 {
+            margin-top: 0;
+        }
+        .project-image img {
+            max-width: 100%;
+            border-radius: 4px;
+        }
+        .project-details p {
+            margin: 4px 0;
+        }
     </style>
 </head>
 <body>
@@ -390,95 +418,85 @@ $conn->close();
     <h1>Cost Overview</h1>
     <form method="GET" id="filter-form">
         <label>
-            <input type="radio" name="filter" value="total"
-                   onchange="this.form.submit();"
-                   <?php if ($filter == 'total') echo 'checked'; ?>>
+            <input type="radio" name="filter" value="total" onchange="this.form.submit();"
+                   <?php if ($filter==='total') echo 'checked'; ?>>
             Total Amounts
         </label>
         <label>
-            <input type="radio" name="filter" value="ytd"
-                   onchange="this.form.submit();"
-                   <?php if ($filter == 'ytd') echo 'checked'; ?>>
+            <input type="radio" name="filter" value="ytd" onchange="this.form.submit();"
+                   <?php if ($filter==='ytd') echo 'checked'; ?>>
             Year-to-Date Amounts
         </label>
         <label>
-            <input type="radio" name="filter" value="per_project"
-                   onchange="this.form.submit();"
-                   <?php if ($filter == 'per_project') echo 'checked'; ?>>
+            <input type="radio" name="filter" value="per_project" onchange="this.form.submit();"
+                   <?php if ($filter==='per_project') echo 'checked'; ?>>
             Average per Project
         </label>
     </form>
 
     <!-- Two-row cost-overview -->
     <div class="cost-overview">
-        <?php if ($filter == 'per_project'): ?>
+        <?php if ($filter==='per_project'): ?>
             <!-- Row 1: single average total cost per project -->
             <div class="cost-row">
                 <div class="cost-metric cost-metric--total">
                     <h3>Average Logistics Cost per Project</h3>
-                    <p>$<?php echo number_format($display_total_logistics, 2); ?></p>
+                    <p>$<?php echo number_format($disp_total_log,2); ?></p>
                 </div>
             </div>
-            <!-- Row 2: Freed up for the other 4 metrics -->
             <div class="cost-row">
                 <div class="cost-metric">
-                    <h3>Average Freight Cost per Project</h3>
-                    <p>$<?php echo number_format($display_freight_cost, 2); ?></p>
+                    <h3>Average Freight Cost</h3>
+                    <p>$<?php echo number_format($disp_freight,2); ?></p>
                 </div>
                 <div class="cost-metric">
-                    <h3>Average Accessorial Cost per Project</h3>
-                    <p>$<?php echo number_format($display_accessorial_cost, 2); ?></p>
+                    <h3>Average Accessorial Cost</h3>
+                    <p>$<?php echo number_format($disp_accessorial,2); ?></p>
                 </div>
                 <div class="cost-metric">
-                    <h3>Average Warehousing Cost per Project</h3>
-                    <p>$<?php echo number_format($display_warehousing_cost, 2); ?></p>
+                    <h3>Average Warehousing Cost</h3>
+                    <p>$<?php echo number_format($disp_warehousing,2); ?></p>
                 </div>
                 <div class="cost-metric">
-                    <h3>Average Solterra Fee per Project</h3>
-                    <p>$<?php echo number_format($display_solterra_fee, 2); ?></p>
+                    <h3>Average Solterra Fee</h3>
+                    <p>$<?php echo number_format($disp_solterra_fee,2); ?></p>
                 </div>
             </div>
-
         <?php else: ?>
             <!-- Row 1: single total cost -->
             <div class="cost-row">
                 <div class="cost-metric cost-metric--total">
-                    <h3><?php echo ($filter == 'ytd') 
-                            ? 'Total Logistics Cost (YTD)' 
-                            : 'Total Logistics Cost'; ?>
-                    </h3>
-                    <p>$<?php echo number_format($display_total_logistics, 2); ?></p>
+                    <h3><?php echo ($filter==='ytd') 
+                            ? 'Total Logistics Cost (YTD)'
+                            : 'Total Logistics Cost'; ?></h3>
+                    <p>$<?php echo number_format($disp_total_log,2); ?></p>
                 </div>
             </div>
-            <!-- Row 2: Freed up for the other 4 metrics -->
+            <!-- Row 2 -->
             <div class="cost-row">
                 <div class="cost-metric">
-                    <h3><?php echo ($filter == 'ytd')
+                    <h3><?php echo ($filter==='ytd')
                             ? 'Freight Cost (YTD)'
-                            : 'Freight Cost'; ?>
-                    </h3>
-                    <p>$<?php echo number_format($display_freight_cost, 2); ?></p>
+                            : 'Freight Cost'; ?></h3>
+                    <p>$<?php echo number_format($disp_freight,2); ?></p>
                 </div>
                 <div class="cost-metric">
-                    <h3><?php echo ($filter == 'ytd')
+                    <h3><?php echo ($filter==='ytd')
                             ? 'Accessorial Cost (YTD)'
-                            : 'Accessorial Cost'; ?>
-                    </h3>
-                    <p>$<?php echo number_format($display_accessorial_cost, 2); ?></p>
+                            : 'Accessorial Cost'; ?></h3>
+                    <p>$<?php echo number_format($disp_accessorial,2); ?></p>
                 </div>
                 <div class="cost-metric">
-                    <h3><?php echo ($filter == 'ytd')
+                    <h3><?php echo ($filter==='ytd')
                             ? 'Warehousing Cost (YTD)'
-                            : 'Warehousing Cost'; ?>
-                    </h3>
-                    <p>$<?php echo number_format($display_warehousing_cost, 2); ?></p>
+                            : 'Warehousing Cost'; ?></h3>
+                    <p>$<?php echo number_format($disp_warehousing,2); ?></p>
                 </div>
                 <div class="cost-metric">
-                    <h3><?php echo ($filter == 'ytd')
+                    <h3><?php echo ($filter==='ytd')
                             ? 'Solterra Fee (YTD)'
-                            : 'Solterra Fee'; ?>
-                    </h3>
-                    <p>$<?php echo number_format($display_solterra_fee, 2); ?></p>
+                            : 'Solterra Fee'; ?></h3>
+                    <p>$<?php echo number_format($disp_solterra_fee,2); ?></p>
                 </div>
             </div>
         <?php endif; ?>
@@ -486,7 +504,7 @@ $conn->close();
 
     <h2>Logistics Costs per Project:</h2>
     <div class="projects-container">
-        <?php if (count($projects) > 0): ?>
+        <?php if (!empty($projects)): ?>
             <?php foreach ($projects as $proj): ?>
                 <div class="project-item">
                     <h3>
@@ -500,46 +518,45 @@ $conn->close();
                         </a>
                     </div>
                     <div class="project-details">
-                        <!-- Show all 5 cost fields including Solterra Fee -->
                         <p>
                             <strong>
-                                <?php echo ($filter == 'ytd') 
-                                        ? 'Total Logistics Cost (YTD)' 
+                                <?php echo ($filter==='ytd')
+                                        ? 'Total Logistics Cost (YTD)'
                                         : 'Total Logistics Cost'; ?>:
-                            </strong> 
-                            $<?php echo number_format($proj['total_logistics_cost'], 2); ?>
+                            </strong>
+                            $<?php echo number_format($proj['total_logistics_cost'],2); ?>
                         </p>
                         <p>
                             <strong>
-                                <?php echo ($filter == 'ytd') 
-                                        ? 'Freight Cost (YTD)' 
+                                <?php echo ($filter==='ytd')
+                                        ? 'Freight Cost (YTD)'
                                         : 'Freight Cost'; ?>:
-                            </strong> 
-                            $<?php echo number_format($proj['freight_cost'], 2); ?>
+                            </strong>
+                            $<?php echo number_format($proj['freight_cost'],2); ?>
                         </p>
                         <p>
                             <strong>
-                                <?php echo ($filter == 'ytd') 
-                                        ? 'Accessorial Cost (YTD)' 
+                                <?php echo ($filter==='ytd')
+                                        ? 'Accessorial Cost (YTD)'
                                         : 'Accessorial Cost'; ?>:
-                            </strong> 
-                            $<?php echo number_format($proj['accessorial_costs'], 2); ?>
+                            </strong>
+                            $<?php echo number_format($proj['accessorial_costs'],2); ?>
                         </p>
                         <p>
                             <strong>
-                                <?php echo ($filter == 'ytd') 
-                                        ? 'Warehousing Cost (YTD)' 
+                                <?php echo ($filter==='ytd')
+                                        ? 'Warehousing Cost (YTD)'
                                         : 'Warehousing Cost'; ?>:
-                            </strong> 
-                            $<?php echo number_format($proj['warehousing_cost'], 2); ?>
+                            </strong>
+                            $<?php echo number_format($proj['warehousing_cost'],2); ?>
                         </p>
                         <p>
                             <strong>
-                                <?php echo ($filter == 'ytd') 
-                                        ? 'Solterra Fee (YTD)' 
+                                <?php echo ($filter==='ytd')
+                                        ? 'Solterra Fee (YTD)'
                                         : 'Solterra Fee'; ?>:
                             </strong>
-                            $<?php echo number_format($proj['solterra_fee'], 2); ?>
+                            $<?php echo number_format($proj['solterra_fee'],2); ?>
                         </p>
                     </div>
                 </div>

@@ -1,19 +1,196 @@
 <?php
+/***********************
+ * Combined add_project.php
+ * (No user_id insertion)
+ ***********************/
+
 session_name("logistics_session");
 session_start();
-// Check if the user is an admin
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'global_admin') {
-    header("Location: unauthorized");
-    exit();
+
+// 1) Turn on error reporting to catch any issues
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// 2) Ensure user has role admin or global_admin
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
+    die("Unauthorized: You must be 'admin' or 'global_admin' to add projects.");
 }
 
 // Database connection
 require_once '../config.php';
 $conn = getDBConnection();
 if (!$conn) {
-    die("Connection failed");
+    die("Database connection failed.");
+}
+
+$role    = $_SESSION['role'];
+$user_id = $_SESSION['user_id'];
+
+// We'll find the admin's single account or list of accounts for a dropdown
+$account_id_for_admin = null;
+$accounts             = [];
+
+// If global_admin, load all accounts for a dropdown
+if ($role === 'global_admin') {
+    $sqlAll = "SELECT id, name FROM customer_accounts ORDER BY name ASC";
+    $resAll = $conn->query($sqlAll);
+    if ($resAll && $resAll->num_rows > 0) {
+        while ($row = $resAll->fetch_assoc()) {
+            $accounts[] = $row;
+        }
+    }
+} else {
+    // If admin, fetch exactly one account_id from bridging table
+    $sqlOne = "
+        SELECT account_id
+        FROM customer_account_users
+        WHERE user_id = ?
+          AND role = 'admin'
+        LIMIT 1
+    ";
+    $stmtOne = $conn->prepare($sqlOne);
+    if (!$stmtOne) {
+        die("Error preparing account lookup: " . $conn->error);
+    }
+    $stmtOne->bind_param("i", $user_id);
+    $stmtOne->execute();
+    $stmtOne->bind_result($acctID);
+    if ($stmtOne->fetch()) {
+        $account_id_for_admin = $acctID;
+    }
+    $stmtOne->close();
+
+    if (!$account_id_for_admin) {
+        die("No valid account found for this admin user.");
+    }
+}
+
+// Prepare variables to hold user messages:
+$successMessage = "";
+$errorMessage   = "";
+
+// If POST, handle form submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        // Determine correct account_id
+        if ($role === 'global_admin') {
+            $account_id = isset($_POST['account_id']) ? intval($_POST['account_id']) : 0;
+            if ($account_id <= 0) {
+                throw new Exception("Please select a valid Account.");
+            }
+        } else {
+            // Admin => single known account
+            $account_id = $account_id_for_admin;
+        }
+
+        // Gather fields
+        $project_name              = trim($_POST['project_name'] ?? '');
+        $project_address           = trim($_POST['project_address'] ?? '');
+        $estimated_completion_date = trim($_POST['estimated_completion_date'] ?? '');
+        $solterra_fee              = isset($_POST['solterra_fee']) ? floatval($_POST['solterra_fee']) : 0.0000;
+
+        if ($project_name === '' || $project_address === '') {
+            throw new Exception("Project Name and Address are required.");
+        }
+
+        // Optional image (default to pictures/test.png if none uploaded)
+        $image_url = "pictures/test.png"; // default
+        if (isset($_FILES['image_file']) && $_FILES['image_file']['error'] !== UPLOAD_ERR_NO_FILE) {
+            if ($_FILES['image_file']['error'] === UPLOAD_ERR_OK) {
+                $allowed_ext = ['jpg','jpeg','png','gif'];
+                $file_name   = $_FILES['image_file']['name'];
+                $file_tmp    = $_FILES['image_file']['tmp_name'];
+                $file_size   = $_FILES['image_file']['size'];
+                $file_ext    = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
+
+                if (!in_array($file_ext, $allowed_ext)) {
+                    throw new Exception("Invalid file type. Only JPG, JPEG, PNG, GIF allowed.");
+                }
+                if ($file_size > 5*1024*1024) {
+                    throw new Exception("File exceeds 5MB limit.");
+                }
+                $unique_name = uniqid('project_', true).'.'.$file_ext;
+                $upload_dir  = 'uploads/';
+                if (!is_dir($upload_dir)) {
+                    mkdir($upload_dir, 0755, true);
+                }
+                if (!move_uploaded_file($file_tmp, $upload_dir.$unique_name)) {
+                    throw new Exception("Error uploading the image file.");
+                }
+                $image_url = $upload_dir.$unique_name;
+            } else {
+                throw new Exception("File upload error code: " . $_FILES['image_file']['error']);
+            }
+        }
+
+        // Insert into projects
+        $stmt = $conn->prepare("
+            INSERT INTO projects (
+                account_id,
+                project_name,
+                project_address,
+                estimated_completion_date,
+                image_url,
+                solterra_fee
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        ");
+        if (!$stmt) {
+            throw new Exception("Error preparing project insert: " . $conn->error);
+        }
+        $stmt->bind_param(
+            "issssd",
+            $account_id,
+            $project_name,
+            $project_address,
+            $estimated_completion_date,
+            $image_url,
+            $solterra_fee
+        );
+        if (!$stmt->execute()) {
+            throw new Exception("Error inserting project: " . $stmt->error);
+        }
+        $project_id = $stmt->insert_id;
+        $stmt->close();
+
+        // Insert wattage+total_orders if provided
+        if (isset($_POST['wattages'], $_POST['total_orders'])) {
+            $wattages     = $_POST['wattages'];
+            $total_orders = $_POST['total_orders'];
+
+            if (count($wattages) !== count($total_orders)) {
+                throw new Exception("Mismatch between wattage[] and total_orders[].");
+            }
+            for ($i=0; $i<count($wattages); $i++) {
+                $w = floatval($wattages[$i]);
+                $t = floatval($total_orders[$i]);
+                if ($w <= 0 || $t <= 0) {
+                    throw new Exception("Wattage and total_order must be > 0.");
+                }
+                $stmt2 = $conn->prepare("
+                    INSERT INTO project_wattage_orders (project_id, wattage, total_order)
+                    VALUES (?, ?, ?)
+                ");
+                if (!$stmt2) {
+                    throw new Exception("Error preparing wattage insert: " . $conn->error);
+                }
+                $stmt2->bind_param("idi", $project_id, $w, $t);
+                if (!$stmt2->execute()) {
+                    throw new Exception("Error inserting wattage: " . $stmt2->error);
+                }
+                $stmt2->close();
+            }
+        }
+
+        // Set a success message to be displayed with the form below
+        $successMessage = "Project added successfully!";
+    } catch (Exception $ex) {
+        // Set the error message to be displayed with the form below
+        $errorMessage = $ex->getMessage();
+    }
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -22,6 +199,93 @@ if (!$conn) {
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif; 
+            margin: 0; 
+            padding: 0;
+            background: #f9f9f9;
+        }
+        main {
+            max-width: 800px;
+            margin: 30px auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        h1 {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        form label {
+            display: block;
+            margin-top: 15px;
+            font-weight: 600;
+        }
+        form input[type="text"],
+        form input[type="number"],
+        form input[type="date"],
+        form input[type="file"],
+        form select {
+            width: 100%;
+            padding: 8px;
+            margin-top: 5px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        .wattage-entry {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .wattage-entry label {
+            margin-top: 0; 
+        }
+        .btn-add-wattage, .wattage-entry button {
+            background: #488C9A;
+            color: #fff;
+            border: none;
+            padding: 8px 14px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .btn-add-wattage:hover, .wattage-entry button:hover {
+            background: #293E4C;
+        }
+        .btn-submit {
+            background: #293E4C;
+            color: #fff;
+            border: none;
+            padding: 12px 20px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 1rem;
+            margin-top: 20px;
+            display: block;
+        }
+        .btn-submit:hover {
+            background: #488C9A;
+        }
+        .section-title {
+            margin-top: 30px;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        /* Message styling */
+        .success-message {
+            color: green;
+            margin: 20px;
+            text-align: center;
+        }
+        .error-message {
+            color: red;
+            margin: 20px;
+            text-align: center;
+        }
+    </style>
     <script>
         function addWattageField() {
             var container = document.getElementById('wattage-container');
@@ -51,6 +315,7 @@ if (!$conn) {
             removeButton.onclick = function() {
                 container.removeChild(div);
             };
+            removeButton.style.marginTop = '0';
 
             div.appendChild(wattageLabel);
             div.appendChild(wattageInput);
@@ -64,40 +329,55 @@ if (!$conn) {
 </head>
 <body>
 <?php include 'header.php'; ?>
-<h1>Add Project</h1>
-<form action="process_add_project" method="POST" enctype="multipart/form-data">
-    <!-- Existing project fields -->
-    <label for="user_id">User ID:</label>
-    <input type="number" name="user_id" required><br><br>
+<main>
+    <h1>Add Project</h1>
 
-    <label for="project_name">Project Name:</label>
-    <input type="text" name="project_name" required><br><br>
+    <!-- Display success or error messages if any -->
+    <?php if (!empty($successMessage)): ?>
+        <div class="success-message"><strong><?php echo htmlspecialchars($successMessage); ?></strong></div>
+    <?php endif; ?>
 
-    <label for="project_address">Project Address:</label>
-    <input type="text" name="project_address" required><br><br>
+    <?php if (!empty($errorMessage)): ?>
+        <div class="error-message"><strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?></div>
+    <?php endif; ?>
 
-    <!-- Image File Upload -->
-    <label for="image_file">Project Image:</label>
-    <input type="file" name="image_file" accept="image/*"><br><br>
+    <!-- The project form -->
+    <form action="" method="POST" enctype="multipart/form-data">
+        <?php if ($role === 'global_admin'): ?>
+            <label for="account_id">Account Name:</label>
+            <select name="account_id" required>
+                <option value="">--Select Account--</option>
+                <?php foreach ($accounts as $acc): ?>
+                    <option value="<?php echo $acc['id']; ?>">
+                        <?php echo htmlspecialchars($acc['name']); ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        <?php else: ?>
+            <input type="hidden" name="account_id" value="<?php echo $account_id_for_admin; ?>">
+        <?php endif; ?>
 
-    <label for="estimated_completion_date">Estimated Completion Date:</label>
-    <input type="date" name="estimated_completion_date"><br><br>
+        <label for="project_name">Project Name:</label>
+        <input type="text" name="project_name" required>
 
-    <!-- New Solterra Fee Field (per watt) -->
-    <label for="solterra_fee">Solterra Fee (per watt):</label>
-    <input type="number" step="0.0001" name="solterra_fee" value="0.0000" required>
-    <br><br>
+        <label for="project_address">Project Address:</label>
+        <input type="text" name="project_address" required>
 
-    <!-- Wattage and Total Order Section -->
-    <h2>Wattage and Total Order Quantities</h2>
-    <div id="wattage-container">
-        <!-- Dynamic wattage-total order fields will be added here -->
-    </div>
-    <button type="button" onclick="addWattageField()">Add Wattage</button><br><br>
+        <label for="image_file">Project Image:</label>
+        <input type="file" name="image_file" accept="image/*">
 
-    <input type="submit" value="Add Project">
-</form>
-<br>
-<a href="admin_dashboard">Back to Admin Dashboard</a>
+        <label for="estimated_completion_date">Estimated Completion Date:</label>
+        <input type="date" name="estimated_completion_date">
+
+        <label for="solterra_fee">Solterra Fee (per watt):</label>
+        <input type="number" step="0.0001" name="solterra_fee" value="0.0000" required>
+
+        <div class="section-title">Wattage and Total Order Quantities</div>
+        <div id="wattage-container"></div>
+        <button type="button" class="btn-add-wattage" onclick="addWattageField()">Add Wattage</button>
+
+        <input type="submit" value="Add Project" class="btn-submit">
+    </form>
+</main>
 </body>
 </html>

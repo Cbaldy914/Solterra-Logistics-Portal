@@ -31,12 +31,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($account_name) || empty($username) || empty($password) || empty($role)) {
         $error_message = "All fields are required.";
     } else {
-        // 2) Connect to the database
-        $conn = new mysqli($servername, $db_username, $db_password, $dbname);
-        if ($conn->connect_error) {
-            die("Connection failed: " . $conn->connect_error);
-        }
-
         // Start a transaction so we can roll back if something fails
         $conn->begin_transaction();
 
@@ -47,8 +41,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 INSERT INTO customer_accounts (name)
                 VALUES (?)
             ");
+            if (!$stmtAcc) {
+                throw new Exception("Error preparing account statement: " . $conn->error);
+            }
             $stmtAcc->bind_param("s", $account_name);
-            $stmtAcc->execute();
+            if (!$stmtAcc->execute()) {
+                throw new Exception("Error executing account statement: " . $stmtAcc->error);
+            }
             $account_id = $stmtAcc->insert_id; 
             $stmtAcc->close();
 
@@ -107,8 +106,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->rollback();
             $error_message = "Error creating account/user: " . $e->getMessage();
         }
-
-        $conn->close();
     }
 }
 ?>
@@ -133,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="error-message"><?php echo htmlspecialchars($error_message); ?></div>
 <?php endif; ?>
 
-<form action="add_account" method="POST">
+<form action="" method="POST">
     <label for="account_name">Account Name:</label><br>
     <input type="text" name="account_name" required><br><br>
 
