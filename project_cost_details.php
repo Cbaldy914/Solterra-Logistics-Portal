@@ -428,14 +428,6 @@ $conn->close();
         }
     </style>
     <script>
-    function goBack() {
-        var backURL = sessionStorage.getItem('backButtonURL');
-        if (backURL && backURL !== window.location.href) {
-            window.location.href = backURL;
-        } else {
-            window.history.back();
-        }
-    }
 
     function searchTable() {
         var input = document.getElementById("searchInput");
@@ -456,6 +448,23 @@ $conn->close();
             trs[i].style.display = show ? "" : "none";
         }
     }
+
+    (function() {
+            var referrer = document.referrer;
+            if (!referrer) return;
+            var refAnchor = document.createElement('a');
+            refAnchor.href = referrer;
+
+            var curAnchor = document.createElement('a');
+            curAnchor.href = window.location.href;
+
+            var refPath = refAnchor.protocol + '//' + refAnchor.host + refAnchor.pathname;
+            var curPath = curAnchor.protocol + '//' + curAnchor.host + curAnchor.pathname;
+            if (refPath !== curPath) {
+                sessionStorage.setItem('backButtonURL', referrer);
+            }
+        })();
+
     </script>
 </head>
 <body>

@@ -7,10 +7,6 @@
 session_name("logistics_session");
 session_start();
 
-// 1) Turn on error reporting to catch any issues
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
 
 // 2) Ensure user has role admin or global_admin
 if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
@@ -200,22 +196,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: 'Poppins', sans-serif; 
-            margin: 0; 
-            padding: 0;
-            background: #f9f9f9;
-        }
+
         main {
             max-width: 800px;
-            margin: 30px auto;
-            background: #fff;
-            padding: 20px;
-            border-radius: 8px;
-        }
-        h1 {
-            margin-bottom: 20px;
-            text-align: center;
         }
         form label {
             display: block;

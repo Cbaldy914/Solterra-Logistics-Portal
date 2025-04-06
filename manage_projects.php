@@ -38,7 +38,6 @@ if ($role === 'global_admin') {
          GROUP BY p.id, p.project_name, c.name
          ORDER BY p.id ASC
     ";
-
 // If the user is admin, they can only see projects for their specific account_id
 } elseif ($role === 'admin') {
     // Look up the admin's single account_id from the customer_account_users table
@@ -110,7 +109,6 @@ $stmt->close();
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manage Projects</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
@@ -128,6 +126,13 @@ $stmt->close();
         th {
             background: #f9f9f9;
         }
+
+        /* Highlight selected row */
+        tr.selected {
+            background-color: #d9edf7; /* highlight color */
+        }
+
+        /* Action buttons */
         .action-button {
             background-color: #488C9A;
             color: #fff;
@@ -142,6 +147,23 @@ $stmt->close();
         .action-button:hover {
             background-color: #293E4C;
         }
+
+        /* Buttons when disabled: lighter color, no hover effect, not-allowed cursor */
+        .action-button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .action-button:disabled:hover {
+            background-color: #ccc;
+        }
+
+        /* Align the top action bar to the right */
+        .top-actions {
+            text-align: right;
+            margin-top: 20px;
+        }
+
+        /* For the deliveries/warehouse forms in the table */
         .action-forms {
             display: flex;
             flex-wrap: wrap;
@@ -158,7 +180,17 @@ $stmt->close();
 <?php include 'header.php'; ?>
 <main>
     <h1>Manage Projects</h1>
-    <table>
+
+    <!-- 
+       A top bar (aligned right) containing Edit & Delete.
+       Initially disabled until the user selects exactly one row.
+    -->
+    <div class="top-actions">
+        <button id="btnEdit" class="action-button" disabled onclick="handleEdit()">Edit</button>
+        <button id="btnDelete" class="action-button" disabled onclick="handleDelete()">Delete</button>
+    </div>
+
+    <table id="projectsTable">
         <thead>
             <tr>
                 <th>Customer Account</th>
@@ -170,35 +202,23 @@ $stmt->close();
         <tbody>
         <?php if ($result && $result->num_rows > 0): ?>
             <?php while ($project = $result->fetch_assoc()): ?>
-                <tr>
+                <tr onclick="selectRow(this, '<?php echo $project['id']; ?>')">
                     <td><?php echo htmlspecialchars($project['account_name']); ?></td>
                     <td><?php echo htmlspecialchars($project['project_name']); ?></td>
                     <td>
                         <?php
-                            $project_size = (float)($project['project_size'] ?? 0);
+                            $project_size    = (float)($project['project_size'] ?? 0);
                             $project_size_mw = $project_size / 1_000_000; // convert watts to MW
                             echo number_format($project_size_mw, 2) . ' MW';
                         ?>
                     </td>
                     <td>
                         <div class="action-forms">
-                            <!-- Edit button -->
-                            <form action="edit_project" method="GET">
-                                <input type="hidden" name="project_id" value="<?php echo $project['id']; ?>">
-                                <button type="submit" class="action-button">Edit</button>
-                            </form>
-                            <!-- Delete button -->
-                            <form action="delete_project" method="GET" 
-                                  onsubmit="return confirm('Are you sure you want to delete this project?');">
-                                <input type="hidden" name="id" value="<?php echo $project['id']; ?>">
-                                <button type="submit" class="action-button">Delete</button>
-                            </form>
-                            <!-- Deliveries button -->
+                            <!-- Keep "Deliveries" and "Warehouse" here, as requested -->
                             <form action="manage_deliveries" method="GET">
                                 <input type="hidden" name="project_id" value="<?php echo $project['id']; ?>">
                                 <button type="submit" class="action-button">Deliveries</button>
                             </form>
-                            <!-- Warehouse info button -->
                             <form action="warehouse_info" method="GET">
                                 <input type="hidden" name="project_id" value="<?php echo $project['id']; ?>">
                                 <button type="submit" class="action-button">Warehouse</button>
@@ -215,5 +235,43 @@ $stmt->close();
         </tbody>
     </table>
 </main>
+
+<script>
+    let selectedRow       = null;
+    let selectedProjectId = null;
+
+    // Called when a row is clicked
+    function selectRow(row, projectId) {
+        // If there's an already-selected row and it's different from this row, unselect it
+        if (selectedRow && selectedRow !== row) {
+            selectedRow.classList.remove('selected');
+        }
+        // Select the new row
+        row.classList.add('selected');
+
+        // Update the global reference
+        selectedRow       = row;
+        selectedProjectId = projectId;
+
+        // Enable the top Edit/Delete buttons
+        document.getElementById('btnEdit').disabled   = false;
+        document.getElementById('btnDelete').disabled = false;
+    }
+
+    function handleEdit() {
+        if (!selectedProjectId) return;
+        // Navigate to edit_project?project_id=...
+        window.location.href = 'edit_project?project_id=' + selectedProjectId;
+    }
+
+    function handleDelete() {
+        if (!selectedProjectId) return;
+        if (!confirm('Are you sure you want to delete this project?')) {
+            return;
+        }
+        // Navigate to delete_project?id=...
+        window.location.href = 'delete_project?id=' + selectedProjectId;
+    }
+</script>
 </body>
 </html>

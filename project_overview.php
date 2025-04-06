@@ -687,7 +687,7 @@ $conn->close();
 
 // Determine the correct link for the "Deliveries" button
 // If user is "admin", go to manage_deliveries.php; else "view_project.php"
-$deliveriesLink = ($role === 'admin')
+$deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     ? "manage_deliveries?project_id={$project_id}"
     : "view_project?project_id={$project_id}";
 ?>
@@ -787,8 +787,13 @@ $deliveriesLink = ($role === 'admin')
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <a href="dashboard" class="back-icon" style="margin:20px;">
-        <!-- Simple Back Arrow -->
+    <?php
+    $backLink = ($role === 'global_admin')
+        ? 'admin_dashboard.php'
+        : 'dashboard.php';
+    ?>
+    <a href="<?php echo $backLink; ?>" class="back-icon" style="margin:20px;">
+       <!-- Simple Back Arrow -->
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width:24px;height:24px;">
             <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
         </svg>
