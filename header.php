@@ -74,9 +74,6 @@ if (isset($_SESSION['role'])) {
                         <a href="admin_warehouse_estimate">Admin Warehouse Quote</a>
                     </div>
                 </li>
-
-                <li><a href="warehouse_optimization">Test</a></li>
-
                 <li class="dropdown">
                     <a href="#" class="dropbtn">Freight</a>
                     <div class="dropdown-content">
