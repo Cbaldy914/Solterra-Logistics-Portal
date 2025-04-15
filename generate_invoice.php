@@ -13,16 +13,13 @@ if ($_SESSION['role'] !== 'global_admin') {
     die("Access denied. You must be a global admin to view this page.");
 }
 
-// 3) Connect to DB
-$servername   = "localhost";
-$db_username  = "SolterraSolutions";
-$db_password  = "CompanyAdmin!";
-$dbname       = "solterra_portal";
-
-$conn = new mysqli($servername, $db_username, $db_password, $dbname);
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+// Database connection
+require_once '../config.php'; 
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
 }
+
 
 // -----------------------------------------------------------
 // Check if we have project_id in GET. If not, show a selector.
@@ -89,24 +86,28 @@ if (!$project_name) {
     die("Project not found.");
 }
 
-// TIME FILTER LOGIC
+// Define the main date column used for filtering
 $filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)";
+
+// ----------------------------------------------------------
+// 1) Existing Time Filter logic (all, day, week, month)
+// ----------------------------------------------------------
 $time_filter  = isset($_GET['time_filter']) ? $_GET['time_filter'] : 'all';
 $ref_date     = isset($_GET['ref_date']) ? $_GET['ref_date'] : date('Y-m-d');
 
-// Filter by invoice number
-$invoiceNumberFilter = isset($_GET['invoice_number_filter']) ? trim($_GET['invoice_number_filter']) : '';
-$invoiceCondition    = "";
+// We'll store partial WHERE clauses in these variables
+$dateCondition    = "";
+$invoiceCondition = "";
 
-$dateCondition = "";
-$paramTypes    = "i"; // for project_id
-$params        = [$project_id];
+$paramTypes = "i"; // We at least have project_id (integer)
+$params     = [$project_id];
 
+// Time-filter label, plus prev/next date logic
 $dateLabel = "All Deliveries";
 $prev_date = "";
 $next_date = "";
 
-// Build time filter
+// DAY
 if ($time_filter === 'day') {
     $dateCondition = " AND DATE($filterColumn) = ?";
     $paramTypes   .= "s";
@@ -115,6 +116,7 @@ if ($time_filter === 'day') {
     $prev_date     = date('Y-m-d', strtotime($ref_date . " -1 day"));
     $next_date     = date('Y-m-d', strtotime($ref_date . " +1 day"));
 
+// WEEK
 } elseif ($time_filter === 'week') {
     $timestamp   = strtotime($ref_date);
     $dayOfWeek   = date('w', $timestamp);
@@ -130,6 +132,7 @@ if ($time_filter === 'day') {
     $prev_date = date('Y-m-d', strtotime($startOfWeek . " -7 days"));
     $next_date = date('Y-m-d', strtotime($startOfWeek . " +7 days"));
 
+// MONTH
 } elseif ($time_filter === 'month') {
     $startOfMonth = date('Y-m-01', strtotime($ref_date));
     $endOfMonth   = date('Y-m-t', strtotime($ref_date));
@@ -144,14 +147,59 @@ if ($time_filter === 'day') {
     $next_date = date('Y-m-d', strtotime($startOfMonth . " +1 month"));
 }
 
-// If user is filtering by invoice number
-if (!empty($invoiceNumberFilter)) {
-    $invoiceCondition = " AND invoice_number LIKE ?";
-    $paramTypes      .= "s";
-    $params[]         = "%" . $invoiceNumberFilter . "%";
+// ----------------------------------------------------------
+// 2) "Advanced Filters" (date range, status, invoice #, no invoice)
+// ----------------------------------------------------------
+$startDate     = isset($_GET['start_date']) ? $_GET['start_date'] : '';
+$endDate       = isset($_GET['end_date'])   ? $_GET['end_date']   : '';
+$statusFilter  = isset($_GET['status_filter']) ? trim($_GET['status_filter']) : '';
+$invoiceNumberFilter = isset($_GET['invoice_number_filter']) ? trim($_GET['invoice_number_filter']) : '';
+$noInvoiceOnly = isset($_GET['no_invoice_only']) ? true : false;
+
+// If user selected a custom date range, override the time filter
+if (!empty($startDate) && !empty($endDate)) {
+    // Force time_filter to "custom"
+    $time_filter = 'custom';
+
+    // Adjust the label to show Custom Range
+    $dateLabel = "Custom Range: "
+        . date('m/d/Y', strtotime($startDate))
+        . " to "
+        . date('m/d/Y', strtotime($endDate));
+
+    // Remove any prev/next
+    $prev_date = "";
+    $next_date = "";
+
+    // Add our custom date condition
+    $dateCondition .= " AND DATE($filterColumn) BETWEEN ? AND ?";
+    $paramTypes    .= "ss";
+    $params[]       = $startDate;
+    $params[]       = $endDate;
 }
 
+// If user provided a status filter
+if (!empty($statusFilter)) {
+    $invoiceCondition .= " AND status_of_delivery LIKE ?";
+    $paramTypes       .= "s";
+    $params[]          = "%".$statusFilter."%";
+}
+
+// If user provided an invoice # filter
+if (!empty($invoiceNumberFilter)) {
+    $invoiceCondition .= " AND invoice_number LIKE ?";
+    $paramTypes       .= "s";
+    $params[]          = "%".$invoiceNumberFilter."%";
+}
+
+// If user only wants deliveries with NO invoice number
+if ($noInvoiceOnly) {
+    $invoiceCondition .= " AND (invoice_number IS NULL OR invoice_number = '')";
+}
+
+// ----------------------------------------------------------
 // Build final deliveries query
+// ----------------------------------------------------------
 $sql_deliveries = "
     SELECT *
     FROM deliveries
@@ -187,7 +235,7 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
-        /* Basic styles to position elements as requested */
+        /* Basic styling */
         .invoice-controls {
             margin: 20px;
             display: flex;
@@ -243,10 +291,39 @@ $conn->close();
             font-size: 1.1em;
         }
 
-        .invoice-number-filter {
+        /* Advanced Filters Dropdown */
+        .advanced-filters {
+            position: relative;
+            display: inline-block;
+        }
+        .advanced-filters button {
+            background: #eee;
+            border: none;
+            padding: 8px 12px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .advanced-filters button:hover {
+            background: #ccc;
+        }
+        #dropdownMenu {
+            display: none;
+            position: absolute;
+            right: 0;
+            background-color: #f9f9f9;
+            min-width: 250px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+            padding: 10px;
+            z-index: 1;
+            border-radius: 4px;
+        }
+        #dropdownMenu form {
             display: flex;
-            align-items: center;
+            flex-direction: column;
             gap: 8px;
+        }
+        #dropdownMenu label {
+            font-weight: 500;
         }
 
         table {
@@ -262,11 +339,16 @@ $conn->close();
         tr.selected {
             background-color: #cce5ff; /* highlight color */
         }
+        tr:hover {
+            background-color: #f0f0f0;
+            cursor: pointer;
+        }
     </style>
 
     <script>
         let selectedIds = [];
 
+        // Toggle highlight on row click
         function toggleRowSelection(row, deliveryId) {
             if (row.classList.contains('selected')) {
                 row.classList.remove('selected');
@@ -278,15 +360,25 @@ $conn->close();
             document.getElementById('selectedCount').textContent = selectedIds.length;
         }
 
+        // Create Invoice (submit to invoice_info.php)
         function goToInvoice() {
             if (selectedIds.length === 0) {
                 alert('No line items selected to invoice.');
                 return;
             }
-            // Submit them to invoice_info.php
             const form = document.getElementById('invoiceForm');
             document.getElementById('selectedIds').value = JSON.stringify(selectedIds);
             form.submit();
+        }
+
+        // Show/hide the Advanced Filters dropdown
+        function toggleDropdown() {
+            const menu = document.getElementById('dropdownMenu');
+            if (menu.style.display === 'block') {
+                menu.style.display = 'none';
+            } else {
+                menu.style.display = 'block';
+            }
         }
     </script>
 </head>
@@ -298,7 +390,6 @@ $conn->close();
     <div class="invoice-controls">
         <!-- This form leads to invoice_info.php -->
         <form id="invoiceForm" method="POST" action="invoice_info.php">
-            <!-- Keep track of project_id so we know which project this is -->
             <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
             <input type="hidden" id="selectedIds" name="selected_ids" value="">
         </form>
@@ -310,19 +401,19 @@ $conn->close();
     <div class="time-filter-header">
         <!-- Time filters on the LEFT -->
         <div class="time-filters">
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=all&ref_date=<?php echo urlencode($ref_date); ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>"
+            <a href="?project_id=<?php echo $project_id; ?>&time_filter=all&ref_date=<?php echo urlencode($ref_date); ?>"
                class="<?php echo ($time_filter === 'all') ? 'active' : ''; ?>">
                 All
             </a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=day&ref_date=<?php echo urlencode($ref_date); ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>"
+            <a href="?project_id=<?php echo $project_id; ?>&time_filter=day&ref_date=<?php echo urlencode($ref_date); ?>"
                class="<?php echo ($time_filter === 'day') ? 'active' : ''; ?>">
                 Day
             </a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=week&ref_date=<?php echo urlencode($ref_date); ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>"
+            <a href="?project_id=<?php echo $project_id; ?>&time_filter=week&ref_date=<?php echo urlencode($ref_date); ?>"
                class="<?php echo ($time_filter === 'week') ? 'active' : ''; ?>">
                 Week
             </a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=month&ref_date=<?php echo urlencode($ref_date); ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>"
+            <a href="?project_id=<?php echo $project_id; ?>&time_filter=month&ref_date=<?php echo urlencode($ref_date); ?>"
                class="<?php echo ($time_filter === 'month') ? 'active' : ''; ?>">
                 Month
             </a>
@@ -330,32 +421,64 @@ $conn->close();
 
         <!-- Date Navigation in the MIDDLE -->
         <div class="date-navigation">
-            <?php if ($time_filter !== 'all'): ?>
+            <?php 
+            // Only show prev/next if time_filter is NOT 'all' or 'custom'
+            if ($time_filter !== 'all' && $time_filter !== 'custom'): ?>
                 <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>'">
+                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>'">
                     &larr;
                 </button>
             <?php endif; ?>
+
             <span class="date-label"><?php echo $dateLabel; ?></span>
-            <?php if ($time_filter !== 'all'): ?>
+
+            <?php if ($time_filter !== 'all' && $time_filter !== 'custom'): ?>
                 <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&invoice_number_filter=<?php echo urlencode($invoiceNumberFilter); ?>'">
+                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>'">
                     &rarr;
                 </button>
             <?php endif; ?>
         </div>
 
-        <!-- Invoice # filter on the RIGHT -->
-        <div class="invoice-number-filter">
-            <form method="GET" action="generate_invoice.php">
-                <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-                <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
-                <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
-                <label for="invoice_number_filter">Invoice #:</label>
-                <input type="text" id="invoice_number_filter" name="invoice_number_filter"
-                       value="<?php echo htmlspecialchars($invoiceNumberFilter); ?>">
-                <button type="submit">Filter</button>
-            </form>
+        <!-- Advanced Filters on the RIGHT -->
+        <div class="advanced-filters">
+            <button type="button" onclick="toggleDropdown()">Advanced Filters</button>
+            <div id="dropdownMenu">
+                <form method="GET" action="generate_invoice.php">
+                    <!-- Keep project_id, time_filter, ref_date so they persist -->
+                    <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+                    <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
+                    <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
+
+                    <label for="start_date">Start Date:</label>
+                    <input type="date" id="start_date" name="start_date"
+                           value="<?php echo htmlspecialchars($startDate); ?>">
+
+                    <label for="end_date">End Date:</label>
+                    <input type="date" id="end_date" name="end_date"
+                           value="<?php echo htmlspecialchars($endDate); ?>">
+
+                    <label for="status_filter">Status of Delivery:</label>
+                    <input type="text" id="status_filter" name="status_filter"
+                           value="<?php echo htmlspecialchars($statusFilter); ?>">
+
+                    <label for="invoice_number_filter">Invoice #:</label>
+                    <input type="text" id="invoice_number_filter" name="invoice_number_filter"
+                           value="<?php echo htmlspecialchars($invoiceNumberFilter); ?>">
+
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="no_invoice_only" name="no_invoice_only"
+                            <?php if ($noInvoiceOnly) echo 'checked'; ?>>
+                        <label for="no_invoice_only" style="margin:0;">Deliveries w/o Invoice #</label>
+                    </div>
+
+                    <!-- Apply button styled to match time-filters color -->
+                    <button type="submit" 
+                            style="background: #488C9A; color: #fff; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">
+                        Apply
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -367,7 +490,6 @@ $conn->close();
                 <th>Wattage</th>
                 <th>Quantity</th>
                 <th>Status of Delivery</th>
-                <!-- Remove Warehouse Arrival Date -->
                 <th>Delivered to Site Date</th>
                 <th>Freight Cost</th>
                 <th>Accessorial Cost</th>
