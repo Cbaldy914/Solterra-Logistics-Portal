@@ -18,40 +18,28 @@ if (!$conn) {
 $user_id = $_SESSION['user_id'];
 $role    = $_SESSION['role'];
 
-// We will set up different queries based on user role
-$sql        = "";
-$paramTypes = "";
-$params     = [];
+// --- Fetch Projects --- 
+$sqlProjects        = "";
+$paramTypesProjects = "";
+$paramsProjects     = [];
+$account_id_for_admin = null; // Define it here for potential reuse
 
 // If the user is global_admin, they can see all projects
 if ($role === 'global_admin') {
-    $sql = "
-        SELECT p.id,
-               p.project_name,
-               c.name AS account_name,
+    $sqlProjects = "
+        SELECT p.id, p.project_name, c.name AS account_name,
                SUM(pwo.wattage * pwo.total_order) AS project_size
           FROM projects p
-          JOIN customer_accounts c
-               ON p.account_id = c.id
-          LEFT JOIN project_wattage_orders pwo
-               ON p.id = pwo.project_id
+          JOIN customer_accounts c ON p.account_id = c.id
+          LEFT JOIN project_wattage_orders pwo ON p.id = pwo.project_id
          GROUP BY p.id, p.project_name, c.name
-         ORDER BY p.id ASC
+         ORDER BY c.name ASC, p.project_name ASC
     ";
-// If the user is admin, they can only see projects for their specific account_id
 } elseif ($role === 'admin') {
-    // Look up the admin's single account_id from the customer_account_users table
-    $sqlOne = "
-        SELECT account_id
-        FROM customer_account_users
-        WHERE user_id = ?
-          AND role = 'admin'
-        LIMIT 1
-    ";
+    // Look up the admin's single account_id
+    $sqlOne = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
     $stmtOne = $conn->prepare($sqlOne);
-    if (!$stmtOne) {
-        die("Error preparing statement: " . $conn->error);
-    }
+    if (!$stmtOne) die("Error preparing account lookup: " . $conn->error);
     $stmtOne->bind_param("i", $user_id);
     $stmtOne->execute();
     $stmtOne->bind_result($account_id_for_admin);
@@ -59,57 +47,103 @@ if ($role === 'global_admin') {
     $stmtOne->close();
 
     if (empty($account_id_for_admin)) {
-        // If we cannot find an account for this admin, treat it as unauthorized or no results
-        header("Location: unauthorized");
-        exit();
+        // Handle case where admin has no assigned account - maybe show message or redirect
+        // For now, we'll let the project query return empty results.
+         $sqlProjects = "SELECT NULL LIMIT 0"; // No projects if no account
+    } else {
+        $sqlProjects = "
+            SELECT p.id, p.project_name, c.name AS account_name,
+                   SUM(pwo.wattage * pwo.total_order) AS project_size
+              FROM projects p
+              JOIN customer_accounts c ON p.account_id = c.id
+              LEFT JOIN project_wattage_orders pwo ON p.id = pwo.project_id
+             WHERE p.account_id = ?
+             GROUP BY p.id, p.project_name, c.name
+             ORDER BY p.project_name ASC
+        ";
+        $paramTypesProjects = "i";
+        $paramsProjects     = [$account_id_for_admin];
     }
-
-    // Now build the query filtering by that account_id
-    $sql = "
-        SELECT p.id,
-               p.project_name,
-               c.name AS account_name,
-               SUM(pwo.wattage * pwo.total_order) AS project_size
-          FROM projects p
-          JOIN customer_accounts c
-               ON p.account_id = c.id
-          LEFT JOIN project_wattage_orders pwo
-               ON p.id = pwo.project_id
-         WHERE p.account_id = ?
-         GROUP BY p.id, p.project_name, c.name
-         ORDER BY p.id ASC
-    ";
-
-    // We'll bind the admin's account_id
-    $paramTypes = "i";
-    $params     = [$account_id_for_admin];
-
 } else {
-    // Fallback if somehow user is neither admin nor global_admin
     header("Location: unauthorized");
     exit();
 }
 
-// Prepare and execute the final query
-$stmt = $conn->prepare($sql);
-if (!$stmt) {
-    die("Error preparing query: " . $conn->error);
+// Prepare and execute the projects query
+$stmtProjects = $conn->prepare($sqlProjects);
+if (!$stmtProjects) die("Error preparing projects query: " . $conn->error);
+if (!empty($paramTypesProjects)) {
+    $stmtProjects->bind_param($paramTypesProjects, ...$paramsProjects);
+}
+$stmtProjects->execute();
+$resultProjects = $stmtProjects->get_result();
+$stmtProjects->close();
+
+
+// --- Fetch Unassigned Modules --- 
+$sqlUnassigned        = "";
+$paramTypesUnassigned = "";
+$paramsUnassigned     = [];
+
+if ($role === 'global_admin') {
+    $sqlUnassigned = "
+        SELECT um.id, um.vendor_name, um.initial_location, c.name AS account_name
+        FROM unassigned_modules um
+        JOIN customer_accounts c ON um.account_id = c.id
+        ORDER BY c.name ASC, um.vendor_name ASC
+    ";
+} elseif ($role === 'admin' && !empty($account_id_for_admin)) {
+     $sqlUnassigned = "
+        SELECT um.id, um.vendor_name, um.initial_location, c.name AS account_name
+        FROM unassigned_modules um
+        JOIN customer_accounts c ON um.account_id = c.id
+        WHERE um.account_id = ?
+        ORDER BY um.vendor_name ASC
+    ";
+    $paramTypesUnassigned = "i";
+    $paramsUnassigned     = [$account_id_for_admin];
+} else {
+    // Admin with no account or other roles see no unassigned modules
+     $sqlUnassigned = "SELECT NULL LIMIT 0";
 }
 
-if (!empty($paramTypes)) {
-    $stmt->bind_param($paramTypes, ...$params);
+$stmtUnassigned = $conn->prepare($sqlUnassigned);
+if (!$stmtUnassigned) die("Error preparing unassigned modules query: " . $conn->error);
+if (!empty($paramTypesUnassigned)) {
+    $stmtUnassigned->bind_param($paramTypesUnassigned, ...$paramsUnassigned);
 }
+$stmtUnassigned->execute();
+$resultUnassigned = $stmtUnassigned->get_result();
+$unassignedModulesData = [];
 
-$stmt->execute();
-$result = $stmt->get_result();
-$stmt->close();
+// Fetch items for each unassigned module batch
+$stmtItems = $conn->prepare("SELECT wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id = ?");
+if (!$stmtItems) die("Error preparing item query: " . $conn->error);
+
+while ($batch = $resultUnassigned->fetch_assoc()) {
+    $batch_id = $batch['id'];
+    $batch['items'] = [];
+    $batch['total_quantity'] = 0;
+
+    $stmtItems->bind_param("i", $batch_id);
+    $stmtItems->execute();
+    $resultItems = $stmtItems->get_result();
+    while ($item = $resultItems->fetch_assoc()) {
+        $batch['items'][] = $item;
+        $batch['total_quantity'] += $item['quantity'];
+    }
+    $unassignedModulesData[] = $batch;
+}
+$stmtItems->close();
+$stmtUnassigned->close();
+$conn->close();
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Manage Projects</title>
+    <title>Manage Projects & Unassigned Modules</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
@@ -160,7 +194,7 @@ $stmt->close();
         /* Align the top action bar to the right */
         .top-actions {
             text-align: right;
-            margin-top: 20px;
+            margin: 20px 0;
         }
 
         /* For the deliveries/warehouse forms in the table */
@@ -179,29 +213,31 @@ $stmt->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <h1>Manage Projects</h1>
+    <h1>Manage Projects & Unassigned Modules</h1>
 
     <!-- 
-       A top bar (aligned right) containing Edit & Delete.
-       Initially disabled until the user selects exactly one row.
+       A top bar (aligned right) containing Add/Edit/Delete actions.
     -->
     <div class="top-actions">
-        <button id="btnEdit" class="action-button" disabled onclick="handleEdit()">Edit</button>
-        <button id="btnDelete" class="action-button" disabled onclick="handleDelete()">Delete</button>
+        <button class="action-button" onclick="window.location.href='add_project.php'">Add Project</button>
+        <button class="action-button" onclick="window.location.href='add_unassigned_module.php'">Add Unassigned Modules</button>
+        <button id="btnEdit" class="action-button" disabled onclick="handleEdit()">Edit Project</button>
+        <button id="btnDelete" class="action-button" disabled onclick="handleDelete()">Delete Project</button>
     </div>
 
+    <h2>Active Projects</h2>
     <table id="projectsTable">
         <thead>
             <tr>
                 <th>Customer Account</th>
                 <th>Project Name</th>
                 <th>Project Size (MW)</th>
-                <th>Actions</th>
+                <th>Project Actions</th>
             </tr>
         </thead>
         <tbody>
-        <?php if ($result && $result->num_rows > 0): ?>
-            <?php while ($project = $result->fetch_assoc()): ?>
+        <?php if ($resultProjects && $resultProjects->num_rows > 0): ?>
+            <?php while ($project = $resultProjects->fetch_assoc()): ?>
                 <tr onclick="selectRow(this, '<?php echo $project['id']; ?>')">
                     <td><?php echo htmlspecialchars($project['account_name']); ?></td>
                     <td><?php echo htmlspecialchars($project['project_name']); ?></td>
@@ -214,7 +250,6 @@ $stmt->close();
                     </td>
                     <td>
                         <div class="action-forms">
-                            <!-- Keep "Deliveries" and "Warehouse" here, as requested -->
                             <form action="manage_deliveries" method="GET">
                                 <input type="hidden" name="project_id" value="<?php echo $project['id']; ?>">
                                 <button type="submit" class="action-button">Deliveries</button>
@@ -234,6 +269,56 @@ $stmt->close();
         <?php endif; ?>
         </tbody>
     </table>
+
+    <hr style="margin: 40px 0;">
+
+    <h2>Unassigned Modules</h2>
+     <table id="unassignedModulesTable">
+        <thead>
+            <tr>
+                <th>Customer Account</th>
+                <th>Vendor Name</th>
+                <th>Initial Location</th>
+                <th>Total Quantity</th>
+                <th>Module Details</th>
+                <th>Batch Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php if (!empty($unassignedModulesData)): ?>
+            <?php foreach ($unassignedModulesData as $batch): ?>
+                <tr>
+                    <td><?php echo htmlspecialchars($batch['account_name']); ?></td>
+                    <td><?php echo htmlspecialchars($batch['vendor_name']); ?></td>
+                    <td><?php echo htmlspecialchars($batch['initial_location']); ?></td>
+                    <td><?php echo number_format($batch['total_quantity']); ?></td>
+                    <td>
+                        <?php
+                            $details = [];
+                            foreach ($batch['items'] as $item) {
+                                $details[] = htmlspecialchars((int)$item['wattage']) . 'W: ' . number_format($item['quantity']);
+                            }
+                            echo implode(', ', $details);
+                        ?>
+                    </td>
+                    <td>
+                        <div class="action-forms">
+                            <button class="action-button" onclick="window.location.href='unassigned_module_overview.php?batch_id=<?php echo $batch['id']; ?>'">View Details</button>
+                            <button class="action-button" onclick="window.location.href='edit_unassigned_module.php?batch_id=<?php echo $batch['id']; ?>'">Edit Batch</button>
+                            <button class="action-button" onclick="alert('Movement tracking page not yet implemented')" title="View detailed movement history (Not Implemented)">View Movements</button>
+                            <button class="action-button" onclick="if(confirm('Delete this batch?')) { alert('Implement delete_unassigned_batch.php?id=<?php echo $batch['id']; ?>') }">Delete Batch</button>
+                        </div>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+        <?php else: ?>
+            <tr>
+                <td colspan="6">No unassigned module batches found.</td>
+            </tr>
+        <?php endif; ?>
+        </tbody>
+    </table>
+
 </main>
 
 <script>

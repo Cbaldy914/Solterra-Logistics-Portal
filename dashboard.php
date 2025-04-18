@@ -8,6 +8,9 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 // We'll need the user's role to decide which page to link to
 $role = isset($_SESSION['role']) ? $_SESSION['role'] : 'user'; // default to 'user' if not set
 
@@ -133,17 +136,6 @@ if (count($accountIds) > 0) {
 } 
 // else, no accounts => no projects
 
-// 4) "Unassigned Modules" still based on user_id
-$stmt = $conn->prepare("
-    SELECT *
-    FROM unassigned_modules
-    WHERE user_id = ?
-");
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$unassigned_modules = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-$stmt->close();
-
 // close DB
 $conn->close();
 ?>
@@ -205,32 +197,3 @@ $conn->close();
         <?php endif; ?>
     </div>
 
-    <!-- Unassigned Modules Section -->
-    <h2>Unassigned Modules:</h2>
-    <?php if (!empty($unassigned_modules)): ?>
-        <table class="styled-table">
-            <thead>
-                <tr>
-                    <th>Vendor</th>
-                    <th>Wattage</th>
-                    <th>Quantity</th>
-                    <th>Current Location</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($unassigned_modules as $module): ?>
-                    <tr>
-                        <td><?php echo htmlspecialchars($module['vendor']); ?></td>
-                        <td><?php echo htmlspecialchars(number_format($module['wattage'])); ?> W</td>
-                        <td><?php echo htmlspecialchars(number_format($module['quantity'])); ?></td>
-                        <td><?php echo htmlspecialchars($module['current_location']); ?></td>
-                    </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-    <?php else: ?>
-        <p>No unassigned modules.</p>
-    <?php endif; ?>
-</main>
-</body>
-</html>

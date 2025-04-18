@@ -59,7 +59,7 @@ if (isset($_SESSION['role'])) {
                     <div class="dropdown-content">
                         <a href="add_project">Add Project</a>
                         <a href="manage_projects">Manage Projects</a>
-                        <a href="manage_unassigned_modules">Unassigned Modules</a>
+                        <a href="add_unassigned_module">Add Unassigned Modules</a>
                         <a href="module_assignments">Module Assignments</a>
                         <a href="module_cost_analysis">Module Cost Analysis</a>
                         <a href="admin_project_forecast">Forecast Costs</a>

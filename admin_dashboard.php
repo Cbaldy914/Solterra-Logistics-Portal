@@ -127,13 +127,51 @@ while ($row = $result->fetch_assoc()) {
 $stmt->close();
 
 // Fetch ALL Unassigned Modules
-$stmt_unassigned = $conn->prepare("
-    SELECT *
-    FROM unassigned_modules
-"); 
+$sqlUnassigned = "
+    SELECT um.id, um.account_id, um.vendor_name, um.initial_location, c.name as account_name
+    FROM unassigned_modules um
+    JOIN customer_accounts c ON um.account_id = c.id
+    ORDER BY c.name ASC, um.vendor_name ASC
+";
+$stmt_unassigned = $conn->prepare($sqlUnassigned);
 if($stmt_unassigned === false) die("Prepare failed: (unassigned) " . $conn->error);
 $stmt_unassigned->execute();
-$unassigned_modules = $stmt_unassigned->get_result()->fetch_all(MYSQLI_ASSOC);
+$result_unassigned = $stmt_unassigned->get_result();
+
+$unassigned_modules_data = [];
+$stmt_items = $conn->prepare("SELECT wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id = ? ORDER BY wattage ASC");
+if (!$stmt_items) die("Prepare failed: (unassigned items) " . $conn->error);
+
+while ($batch = $result_unassigned->fetch_assoc()) {
+    $batch_id = $batch['id'];
+    $batch['items'] = [];
+    $batch['total_quantity'] = 0;
+    $wattages = [];
+
+    $stmt_items->bind_param("i", $batch_id);
+    $stmt_items->execute();
+    $result_items = $stmt_items->get_result();
+    while ($item = $result_items->fetch_assoc()) {
+        $batch['items'][] = $item;
+        $batch['total_quantity'] += $item['quantity'];
+        $wattages[] = (int)$item['wattage']; // Cast as int
+    }
+
+    // Calculate wattage range
+    if (count($wattages) > 0) {
+        $min_w = min($wattages);
+        $max_w = max($wattages);
+        $batch['wattage_range'] = ($min_w == $max_w) ? $min_w . 'W' : $min_w . 'W - ' . $max_w . 'W';
+    } else {
+        $batch['wattage_range'] = 'N/A';
+    }
+    
+    // Store details as JSON for modal
+    $batch['details_json'] = htmlspecialchars(json_encode($batch['items']), ENT_QUOTES, 'UTF-8');
+
+    $unassigned_modules_data[] = $batch;
+}
+$stmt_items->close();
 $stmt_unassigned->close();
 
 // Close DB
@@ -189,24 +227,28 @@ $conn->close();
     </div>
 
     <!-- Unassigned Modules Section -->
-    <h2>Unassigned Modules:</h2>
-    <?php if (!empty($unassigned_modules)): ?>
-        <table class="styled-table">
+    <h2 style="margin-top: 40px;">Unassigned Modules:</h2>
+    <?php if (!empty($unassigned_modules_data)): ?>
+        <table>
             <thead>
                 <tr>
+                    <th>Account</th>
                     <th>Vendor</th>
-                    <th>Wattage</th>
-                    <th>Quantity</th>
-                    <th>Current Location</th>
+                    <th>Wattage Range</th>
+                    <th>Total Quantity</th>
+                    <th>Initial Location</th>
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($unassigned_modules as $module): ?>
-                    <tr>
-                        <td><?php echo htmlspecialchars($module['vendor']); ?></td>
-                        <td><?php echo htmlspecialchars(number_format($module['wattage'])); ?> W</td>
-                        <td><?php echo htmlspecialchars(number_format($module['quantity'])); ?></td>
-                        <td><?php echo htmlspecialchars($module['current_location']); ?></td>
+                <?php foreach ($unassigned_modules_data as $batch): ?>
+                    <tr style="cursor: pointer;" 
+                        onclick="openDetailsModal(<?php echo $batch['id']; ?>, '<?php echo htmlspecialchars($batch['vendor_name'], ENT_QUOTES, 'UTF-8'); ?>', this.dataset.details)" 
+                        data-details='<?php echo $batch['details_json']; ?>'>
+                        <td><?php echo htmlspecialchars($batch['account_name']); ?></td>
+                        <td><?php echo htmlspecialchars($batch['vendor_name']); ?></td>
+                        <td><?php echo htmlspecialchars($batch['wattage_range']); ?></td>
+                        <td><?php echo number_format($batch['total_quantity']); ?></td>
+                        <td><?php echo htmlspecialchars($batch['initial_location']); ?></td>
                     </tr>
                 <?php endforeach; ?>
             </tbody>
@@ -215,6 +257,124 @@ $conn->close();
         <p>No unassigned modules found.</p>
     <?php endif; ?>
 </main>
+
+<!-- Module Details Modal -->
+<div id="moduleDetailsModal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <span class="close-button" onclick="closeDetailsModal()">&times;</span>
+        <h2 id="modalTitle">Module Batch Details</h2>
+        <div id="modalBody">
+            <!-- Details will be populated here -->
+        </div>
+        <div style="text-align: right; margin-top: 20px;">
+            <button id="modalEditButton" class="action-button">Edit Batch</button>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Basic Modal Styling */
+.modal {
+  position: fixed; 
+  z-index: 1000; 
+  left: 0;
+  top: 0;
+  width: 100%; 
+  height: 100%; 
+  overflow: auto; 
+  background-color: rgba(0,0,0,0.4); 
+}
+.modal-content {
+  background-color: #fefefe;
+  margin: 15% auto; 
+  padding: 20px;
+  border: 1px solid #888;
+  width: 80%; 
+  max-width: 500px;
+  border-radius: 5px;
+  position: relative;
+}
+.close-button {
+  color: #aaa;
+  position: absolute;
+  top: 10px;
+  right: 20px;
+  font-size: 28px;
+  font-weight: bold;
+}
+.close-button:hover,
+.close-button:focus {
+  color: black;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+</style>
+
+<script>
+function openDetailsModal(batchId, vendorName, detailsJson) {
+    const modal = document.getElementById('moduleDetailsModal');
+    const title = document.getElementById('modalTitle');
+    const body = document.getElementById('modalBody');
+    const editButton = document.getElementById('modalEditButton');
+    
+    title.textContent = vendorName + ' - Batch Details';
+    body.innerHTML = ''; // Clear previous content
+
+    try {
+        const items = JSON.parse(detailsJson);
+        if (items && items.length > 0) {
+            let tableHTML = '<table><thead><tr><th>Wattage</th><th>Quantity</th></tr></thead><tbody>';
+            items.forEach(item => {
+                // Ensure wattage is treated as a whole number for display
+                tableHTML += `<tr><td>${escapeHTML(parseInt(item.wattage))}W</td><td>${escapeHTML(item.quantity)}</td></tr>`; 
+            });
+            tableHTML += '</tbody></table>';
+            body.innerHTML = tableHTML;
+        } else {
+            body.innerHTML = '<p>No specific items found for this batch.</p>';
+        }
+    } catch (e) {
+        body.innerHTML = '<p>Error loading details.</p>';
+        console.error("Error parsing details JSON:", e);
+    }
+
+    // Set up edit button link
+    editButton.onclick = function() {
+        window.location.href = `edit_unassigned_module.php?batch_id=${batchId}`;
+    };
+
+    modal.style.display = 'block';
+}
+
+function closeDetailsModal() {
+    document.getElementById('moduleDetailsModal').style.display = 'none';
+}
+
+// Close modal if user clicks outside of it
+window.onclick = function(event) {
+    const modal = document.getElementById('moduleDetailsModal');
+    if (event.target == modal) {
+        closeDetailsModal();
+    }
+}
+
+// Basic HTML escaping function
+function escapeHTML(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>'"/]/g, function (s) {
+        const entityMap = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+            '/': '&#x2F;'
+        };
+        return entityMap[s];
+    });
+}
+</script>
 
 </body>
 </html>
