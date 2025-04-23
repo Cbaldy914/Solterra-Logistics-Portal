@@ -2,271 +2,214 @@
 session_name("logistics_session");
 session_start();
 
-
-
-// Check if the user is an admin
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] != 'global_admin' && $_SESSION['role'] != 'admin')) {
+/* ─────────────────────────────────────────  SECURITY  ───────────────────────────────────────── */
+if (!isset($_SESSION['user_id']) ||
+    !in_array($_SESSION['role'], ['global_admin', 'admin'])) {
     header("Location: unauthorized");
     exit();
 }
 
-// Retrieve project_id either from GET or POST
+/* ──────────────────────────────────────  PROJECT CONTEXT  ───────────────────────────────────── */
 $project_id = null;
-if (isset($_GET['project_id']) && !empty($_GET['project_id'])) {
-    $project_id = intval($_GET['project_id']);
-} elseif (isset($_POST['project_id']) && !empty($_POST['project_id'])) {
-    $project_id = intval($_POST['project_id']);
-}
+if (!empty($_GET['project_id']))      $project_id = (int)$_GET['project_id'];
+if (!$project_id && !empty($_POST['project_id'])) $project_id = (int)$_POST['project_id'];
+if (!$project_id)  die("Project ID is missing.");
 
-if (!$project_id) {
-    die("Project ID is missing.");
-}
-
-// Include configuration file
+/* ─────────────────────────────────────  DB CONNECTION  ─────────────────────────────────────── */
 require_once '../config.php';
-
-// Get database connection using the new function
 $conn = getDBConnection();
-if (!$conn) {
-    die("Unable to connect to database. Please try again later.");
-}
+if (!$conn) die("Unable to connect to database.");
 
-// Fetch the project name for the header
+/* Fetch project name for heading */
 $stmt = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
 $stmt->bind_param("i", $project_id);
 $stmt->execute();
 $stmt->bind_result($project_name);
-if (!$stmt->fetch()) {
-    die("Project not found.");
-}
+if (!$stmt->fetch()) die("Project not found.");
 $stmt->close();
 
-// Process form submission (combined add_delivery & process_add_delivery)
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_delivery'])) {
-    // Retrieve and sanitize input
-    $supplier = mysqli_real_escape_string($conn, $_POST['supplier']);
-    $wattage = mysqli_real_escape_string($conn, $_POST['wattage']);
-    $status_of_delivery = mysqli_real_escape_string($conn, $_POST['status_of_delivery']);
-    $quantity = intval($_POST['quantity']);
-    $bol_number = mysqli_real_escape_string($conn, $_POST['bol_number']);
-    $anticipated_delivery_date = $_POST['anticipated_delivery_date'];
-    $warehouse_arrival_date = !empty($_POST['warehouse_arrival_date']) ? $_POST['warehouse_arrival_date'] : NULL;
-    $actual_delivery_date = !empty($_POST['actual_delivery_date']) ? $_POST['actual_delivery_date'] : NULL;
-    $left_warehouse_date = !empty($_POST['left_warehouse_date']) ? $_POST['left_warehouse_date'] : NULL;
-    $freight_cost = (isset($_POST['freight_cost']) && $_POST['freight_cost'] !== '') ? floatval($_POST['freight_cost']) : NULL;
-    $accessorial_costs = (isset($_POST['accessorial_costs']) && $_POST['accessorial_costs'] !== '') ? floatval($_POST['accessorial_costs']) : NULL;
-    $miles = (isset($_POST['miles']) && $_POST['miles'] !== '') ? floatval($_POST['miles']) : NULL;
-    
-    // Handle Proof of Delivery (POD) file upload
-    $proof_of_delivery = NULL;
-    if (isset($_FILES['proof_of_delivery']) && $_FILES['proof_of_delivery']['error'] == UPLOAD_ERR_OK) {
-        $allowed_extensions = ['pdf', 'jpg', 'jpeg', 'png'];
-        $file_tmp_path = $_FILES['proof_of_delivery']['tmp_name'];
-        $file_name = $_FILES['proof_of_delivery']['name'];
-        $file_size = $_FILES['proof_of_delivery']['size'];
-        $file_extension = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
+/* ───────────────────────────────  FORM SUBMISSION (ADD)  ───────────────────────────────────── */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
 
-        // Validate file extension
-        if (!in_array($file_extension, $allowed_extensions)) {
-            echo "<p>Invalid file type. Only PDF, JPG, JPEG, and PNG files are allowed.</p>";
-            exit();
-        }
+    /* ── sanitize basics ─────────────────────────────────────────────────────────────────────── */
+    $supplier           = $conn->real_escape_string($_POST['supplier']          ?? '');
+    $wattage            = $conn->real_escape_string($_POST['wattage']           ?? '');
+    $status_of_delivery = $conn->real_escape_string($_POST['status_of_delivery']?? '');
+    $quantity           = (int)$_POST['quantity'];
+    $bol_number         = $conn->real_escape_string($_POST['bol_number']        ?? '');
 
-        // Validate file size (max 5MB)
-        if ($file_size > 5 * 1024 * 1024) {
-            echo "<p>File size exceeds the maximum limit of 5MB.</p>";
-            exit();
-        }
+    $anticipated_delivery_date = $_POST['anticipated_delivery_date']            ?? null;
+    $warehouse_arrival_date    = $_POST['warehouse_arrival_date']               ?: null;
+    $actual_delivery_date      = $_POST['actual_delivery_date']                 ?: null;
+    $left_warehouse_date       = $_POST['left_warehouse_date']                  ?: null;
 
-        // Define the upload directory (ensure it exists and is writable)
+    $freight_cost        = ($_POST['freight_cost']        !== '') ? (float)$_POST['freight_cost']        : null;
+    $accessorial_paid    = ($_POST['accessorial_costs_paid'] !== '') ? (float)$_POST['accessorial_costs_paid'] : 0.0;
+    $accessorial_charged = ($_POST['accessorial_costs']     !== '') ? (float)$_POST['accessorial_costs']     : 0.0;
+    $miles               = ($_POST['miles']               !== '') ? (float)$_POST['miles']               : null;
+
+    /* ── POD upload (unchanged) ─────────────────────────────────────────────────────────────── */
+    $proof_of_delivery = null;
+    if (isset($_FILES['proof_of_delivery']) && $_FILES['proof_of_delivery']['error'] === UPLOAD_ERR_OK) {
+
+        $allowed_ext = ['pdf','jpg','jpeg','png'];
+        $tmp   = $_FILES['proof_of_delivery']['tmp_name'];
+        $name  = $_FILES['proof_of_delivery']['name'];
+        $size  = $_FILES['proof_of_delivery']['size'];
+        $ext   = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+
+        if (!in_array($ext,$allowed_ext))  die("Invalid file type.");
+        if ($size > 5*1024*1024)           die("File larger than 5 MB.");
+
         $upload_dir = 'uploads/pods/';
-        if (!is_dir($upload_dir)) {
-            mkdir($upload_dir, 0755, true);
-        }
+        if (!is_dir($upload_dir)) mkdir($upload_dir,0755,true);
 
-        // Generate a unique file name to avoid collisions
-        $new_file_name = 'pod_' . time() . '_' . uniqid() . '.' . $file_extension;
-        $dest_path = $upload_dir . $new_file_name;
+        $new_name = 'pod_'.time().'_'.uniqid().'.'.$ext;
+        $dest     = $upload_dir.$new_name;
+        if (!move_uploaded_file($tmp,$dest)) die("File upload failed.");
 
-        // Move the uploaded file
-        if (move_uploaded_file($file_tmp_path, $dest_path)) {
-            $proof_of_delivery = $dest_path;
-        } else {
-            echo "<p>Error uploading the file. Please try again.</p>";
-            exit();
-        }
+        $proof_of_delivery = $dest;
     }
 
-    // Prepare and execute the INSERT statement
-    // The fields are: project_id, supplier, wattage, status_of_delivery, quantity, bol_number, anticipated_delivery_date,
-    // warehouse_arrival_date, actual_delivery_date, left_warehouse_date, freight_cost, accessorial_costs, proof_of_delivery, miles
-    $stmt = $conn->prepare("INSERT INTO deliveries 
-        (project_id, supplier, wattage, status_of_delivery, quantity, bol_number, anticipated_delivery_date, warehouse_arrival_date, actual_delivery_date, left_warehouse_date, freight_cost, accessorial_costs, proof_of_delivery, miles)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    if (!$stmt) {
-        die("Prepare failed: " . $conn->error);
-    }
-    // Bind parameters:
-    // "i" for integer, "s" for string, "d" for double.
-    // The type string below corresponds to: i, s, s, s, i, s, s, s, s, s, d, d, s, d
-    $stmt->bind_param("isssisssssddsd", 
-        $project_id, 
-        $supplier, 
-        $wattage, 
-        $status_of_delivery, 
-        $quantity, 
-        $bol_number, 
-        $anticipated_delivery_date, 
-        $warehouse_arrival_date, 
-        $actual_delivery_date, 
-        $left_warehouse_date, 
-        $freight_cost, 
-        $accessorial_costs, 
-        $proof_of_delivery, 
-        $miles
+    /* ── insert row ─────────────────────────────────────────────────────────────────────────── */
+    $sql = "INSERT INTO deliveries
+            (project_id, supplier, wattage, status_of_delivery, quantity, bol_number,
+             anticipated_delivery_date, warehouse_arrival_date, actual_delivery_date,
+             left_warehouse_date, freight_cost, accessorial_costs_paid,
+             accessorial_costs, proof_of_delivery, miles)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+
+    $stmt = $conn->prepare($sql) or die("Prepare failed: ".$conn->error);
+    /* type string: i s s s i s s s s s d d d s d  →  iss s i s s s s s d d d s d */
+    $stmt->bind_param(
+        "isssisssssdddsd",
+        $project_id,               // i
+        $supplier,                 // s
+        $wattage,                  // s
+        $status_of_delivery,       // s
+        $quantity,                 // i
+        $bol_number,               // s
+        $anticipated_delivery_date,// s
+        $warehouse_arrival_date,   // s
+        $actual_delivery_date,     // s
+        $left_warehouse_date,      // s
+        $freight_cost,             // d
+        $accessorial_paid,         // d
+        $accessorial_charged,      // d
+        $proof_of_delivery,        // s
+        $miles                     // d
     );
 
     if ($stmt->execute()) {
-        header("Location: manage_deliveries?project_id=" . $project_id);
+        header("Location: manage_deliveries?project_id=".$project_id);
         exit();
-    } else {
-        echo "<p>Error adding delivery: " . htmlspecialchars($stmt->error) . "</p>";
     }
+    echo "<p>Error: ".htmlspecialchars($stmt->error)."</p>";
     $stmt->close();
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Add Delivery for <?php echo htmlspecialchars($project_name); ?></title>
-    <link rel="stylesheet" href="portal.css">
-    <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
-    <!-- Include Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        form {
-            max-width: 600px;
-        }
-        form fieldset {
-            border: 1px solid #ddd;
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 5px;
-        }
-        form fieldset legend {
-            font-weight: bold;
-            padding: 0 10px;
-        }
-        form label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: 500;
-        }
-        form input[type="text"],
-        form input[type="number"],
-        form input[type="date"],
-        form select,
-        form input[type="file"] {
-            width: 95%;
-            padding: 8px;
-            margin-bottom: 15px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-        }
-        form input[type="checkbox"] {
-            margin-right: 5px;
-        }
-        form button,
-        form input[type="submit"] {
-            background-color: #488C9A;
-            color: #fff;
-            padding: 10px 15px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        form button:hover,
-        form input[type="submit"]:hover {
-            background-color: #3A6E7F;
-        }
-        .back-link {
-            text-align: center;
-            margin-top: 20px;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Add Delivery – <?php echo htmlspecialchars($project_name);?></title>
+<link rel="stylesheet" href="portal.css">
+<link rel="icon" href="pictures/favicon.png">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+    form{max-width:600px}
+    fieldset{border:1px solid #ddd;padding:15px;margin-bottom:20px;border-radius:5px}
+    legend{font-weight:bold}
+    label{display:block;margin-bottom:5px;font-weight:500}
+    input[type=text],input[type=number],input[type=date],select,input[type=file]
+        {width:95%;padding:8px;margin-bottom:15px;border:1px solid #ccc;border-radius:4px}
+    button,input[type=submit]{background:#488C9A;color:#fff;padding:10px 15px;border:none;border-radius:4px;cursor:pointer}
+    button:hover,input[type=submit]:hover{background:#3A6E7F}
+</style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <h1>Add Delivery for <?php echo htmlspecialchars($project_name); ?></h1>
-    <form action="add_delivery.php?project_id=<?php echo $project_id; ?>" method="post" enctype="multipart/form-data">
-        <!-- Include a hidden field so project_id is preserved in POST -->
-        <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-        <fieldset>
-            <legend>Delivery Details</legend>
-            <label for="supplier">Supplier:</label>
-            <input type="text" name="supplier" required>
+<h1>Add Delivery – <?php echo htmlspecialchars($project_name);?></h1>
 
-            <label for="wattage">Wattage:</label>
-            <input type="text" name="wattage" required>
+<form action="add_delivery.php?project_id=<?php echo $project_id;?>" method="post" enctype="multipart/form-data">
+<input type="hidden" name="project_id" value="<?php echo $project_id;?>">
 
-            <label for="status_of_delivery">Status of Delivery:</label>
-            <select name="status_of_delivery" required>
-                <option value="Produced">Produced</option>
-                <option value="In Warehouse">In Warehouse</option>
-                <option value="Delivered">Delivered</option>
-                <option value="Canceled">Canceled</option>
-            </select>
+<!-- Delivery details -->
+<fieldset>
+ <legend>Delivery Details</legend>
+ <label>Supplier:<input type="text" name="supplier" required></label>
+ <label>Wattage:<input type="text" name="wattage" required></label>
+ <label>Status of Delivery:
+   <select name="status_of_delivery" required>
+     <option value="Produced">Produced</option>
+     <option value="In Warehouse">In Warehouse</option>
+     <option value="Delivered">Delivered</option>
+     <option value="Canceled">Canceled</option>
+   </select>
+ </label>
+ <label>Quantity:<input type="number" name="quantity" required></label>
+ <label>BOL Number:<input type="text" name="bol_number" required></label>
+</fieldset>
 
-            <label for="quantity">Quantity:</label>
-            <input type="number" name="quantity" required>
+<!-- Dates -->
+<fieldset>
+ <legend>Dates</legend>
+ <label>Anticipated Delivery Date:<input type="date" name="anticipated_delivery_date" required></label>
+ <label>Warehouse Arrival Date:<input type="date" name="warehouse_arrival_date"></label>
+ <label>Actual Delivery Date:<input type="date" name="actual_delivery_date"></label>
+ <label>Left Warehouse Date:<input type="date" name="left_warehouse_date"></label>
+</fieldset>
 
-            <label for="bol_number">BOL Number:</label>
-            <input type="text" name="bol_number" required>
-        </fieldset>
+<!-- Costs -->
+<fieldset>
+ <legend>Costs</legend>
 
-        <fieldset>
-            <legend>Dates</legend>
-            <label for="anticipated_delivery_date">Anticipated Delivery Date:</label>
-            <input type="date" name="anticipated_delivery_date" required>
+ <label>Freight Cost:<input type="number" step="0.01" name="freight_cost"></label>
 
-            <label for="warehouse_arrival_date">Warehouse Arrival Date:</label>
-            <input type="date" name="warehouse_arrival_date">
+ <label>Accessorial Cost (what we pay carrier):
+   <input type="number" step="0.01" id="accessorial_costs_paid" name="accessorial_costs_paid">
+ </label>
 
-            <label for="actual_delivery_date">Actual Delivery Date:</label>
-            <input type="date" name="actual_delivery_date">
+ <label style="display:flex;align-items:center;margin-bottom:15px">
+   <input type="checkbox" id="charge_customer_ckb">
+   Charge Customer?
+ </label>
 
-            <label for="left_warehouse_date">Left Warehouse Date:</label>
-            <input type="date" name="left_warehouse_date">
-        </fieldset>
+ <!-- hidden customer‑facing amount -->
+ <input type="hidden" id="accessorial_costs" name="accessorial_costs" value="0">
 
-        <fieldset>
-            <legend>Costs</legend>
-            <label for="freight_cost">Freight Cost:</label>
-            <input type="number" step="0.01" name="freight_cost">
+ <label>Miles:<input type="number" step="0.01" name="miles"></label>
+</fieldset>
 
-            <label for="accessorial_costs">Accessorial Costs:</label>
-            <input type="number" step="0.01" name="accessorial_costs">
+<!-- POD -->
+<fieldset>
+ <legend>Proof of Delivery (POD)</legend>
+ <label>Upload POD:<input type="file" name="proof_of_delivery" accept=".pdf,.jpg,.jpeg,.png"></label>
+</fieldset>
 
-            <label for="miles">Miles:</label>
-            <input type="number" step="0.01" name="miles">
-        </fieldset>
+<input type="submit" name="add_delivery" value="Add Delivery Entry">
+</form>
 
-        <fieldset>
-            <legend>Proof of Delivery (POD)</legend>
-            <label for="proof_of_delivery">Upload POD:</label>
-            <input type="file" name="proof_of_delivery" accept=".pdf,.jpg,.jpeg,.png">
-        </fieldset>
-
-        <input type="submit" name="add_delivery" value="Add Delivery Entry">
-    </form>
-    <div class="back-link">
-        <a href="manage_deliveries?project_id=<?php echo $project_id; ?>">Back to Manage Deliveries</a>
-    </div>
+<div class="back-link">
+    <a href="manage_deliveries?project_id=<?php echo $project_id;?>">&larr; Back to Manage Deliveries</a>
+</div>
 </main>
+
+<script>
+/* Copy paid amount to customer field when “Charge Customer?” is toggled */
+const ckb = document.getElementById('charge_customer_ckb');
+const paid = document.getElementById('accessorial_costs_paid');
+const charged = document.getElementById('accessorial_costs');
+
+function syncCustomerField(){
+    charged.value = ckb.checked ? (parseFloat(paid.value)||0) : 0;
+}
+
+ckb.addEventListener('change', syncCustomerField);
+paid.addEventListener('input', ()=>{ if(ckb.checked) syncCustomerField(); });
+</script>
 </body>
 </html>
-<?php
-$conn->close();
-?>
+<?php $conn->close(); ?>

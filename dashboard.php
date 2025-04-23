@@ -8,9 +8,6 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
 // We'll need the user's role to decide which page to link to
 $role = isset($_SESSION['role']) ? $_SESSION['role'] : 'user'; // default to 'user' if not set
 
