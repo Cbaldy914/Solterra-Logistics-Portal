@@ -510,8 +510,8 @@ switch ($overheadView) {
 
   <!-- Quick links -->
   <div class="links-bar">
-    <a href="total_payables.php" target="_blank">View Accounts Payable</a>
-    <a href="add_invoice.php" target="_blank">View Invoices</a>
+    <a href="total_payables.php">View Accounts Payable</a>
+    <a href="add_invoice.php">View Invoices</a>
   </div>
 
   <!-- Summary cards (ANNUAL overhead) -->
