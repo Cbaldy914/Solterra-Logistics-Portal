@@ -22,16 +22,61 @@ if ($batch_id <= 0) {
     die("Invalid Batch ID provided.");
 }
 
+// Handle bulk pallet generation by modules per pallet
+$successMessage = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'generate_pallets') {
+    $itemId           = intval($_POST['item_id']);
+    $modulesPerPallet = max(1, intval($_POST['modules_per_pallet']));
+    // Get wattage and total modules for this item
+    $stmtW = $conn->prepare("SELECT wattage, quantity FROM unassigned_module_items WHERE id = ? LIMIT 1");
+    $stmtW->bind_param("i", $itemId);
+    $stmtW->execute();
+    $stmtW->bind_result($wattage, $totalModules);
+    $stmtW->fetch();
+    $stmtW->close();
+    // Calculate number of pallets and distribution of modules
+    $fullPallets  = intdiv($totalModules, $modulesPerPallet);
+    $remainder    = $totalModules % $modulesPerPallet;
+    $totalPallets = $fullPallets + ($remainder > 0 ? 1 : 0);
+    // Insert full pallets
+    for ($i = 0; $i < $fullPallets; $i++) {
+        insertPallet($itemId, $wattage, $modulesPerPallet);
+    }
+    // Insert last pallet if there's a remainder
+    if ($remainder > 0) {
+        insertPallet($itemId, $wattage, $remainder);
+    }
+    $successMessage = "Created $totalPallets pallets (up to $modulesPerPallet modules each) for item ID $itemId.";
+}
+
+// Helper to insert a pallet row and assign its identifier
+function insertPallet($itemId, $watt, $qty) {
+    global $conn;
+    $stmtIns = $conn->prepare(
+        "INSERT INTO inventory_pallets (pallet_identifier, unassigned_module_item_id, wattage, quantity, status) 
+         VALUES (?, ?, ?, ?, 'At Manufacturer')"
+    );
+    $emptyId = '';
+    $stmtIns->bind_param("siid", $emptyId, $itemId, $watt, $qty);
+    $stmtIns->execute();
+    $newId      = $conn->insert_id;
+    $identifier = 'P' . $newId;
+    $stmtUpd    = $conn->prepare("UPDATE inventory_pallets SET pallet_identifier = ? WHERE id = ?");
+    $stmtUpd->bind_param("si", $identifier, $newId);
+    $stmtUpd->execute();
+    $stmtIns->close();
+    $stmtUpd->close();
+}
+
 // --- Data Fetching --- 
 $batch_data = null;
-$batch_items = [];
-$pallets = [];
-$summary_stats = [
-    'total_ordered' => 0,
-    'pallets_created' => 0,
-    'pallets_quantity' => 0,
+$batch_items = []; // Keep this to store raw items if needed elsewhere, but we'll process into wattage summary
+$pallets = [];     // Keep this raw pallet data
+$summary_stats = [ // Keep overall status counts
     'status_counts' => [],
-]; 
+];
+$wattage_summary = []; // NEW: Array to hold summary data per wattage
+
 $account_id_for_admin = null;
 $errorMessage = '';
 
@@ -69,44 +114,49 @@ try {
         }
     }
 
-    // Fetch batch items (original order)
+    // Fetch batch items and aggregate ordered quantity by wattage
     $stmtItems = $conn->prepare("SELECT id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id = ? ORDER BY wattage ASC");
     if (!$stmtItems) throw new Exception("Prepare items fetch failed: " . $conn->error);
     $stmtItems->bind_param("i", $batch_id);
     $stmtItems->execute();
     $resultItems = $stmtItems->get_result();
-    $item_ids = [];
+    $item_ids = []; // Keep track of item IDs to fetch pallets
     while ($item = $resultItems->fetch_assoc()) {
-        $batch_items[] = $item;
-        $summary_stats['total_ordered'] += $item['quantity'];
-        $item_ids[] = $item['id']; // Collect item IDs to fetch pallets
+        $item_ids[] = $item['id'];
+        $wattage = $item['wattage'];
+        if (!isset($wattage_summary[$wattage])) {
+            $wattage_summary[$wattage] = [
+                'item_id' => $item['id'], // Assumes one item row per wattage
+                'ordered_quantity' => 0,
+                'palletized_quantity' => 0,
+                'remaining_quantity' => 0
+            ];
+        }
+        $wattage_summary[$wattage]['ordered_quantity'] += $item['quantity'];
+        $batch_items[] = $item; // Still store raw items if needed later
     }
     $stmtItems->close();
 
-    // Fetch associated pallets if item IDs were found
+    // Fetch associated pallets and aggregate palletized quantity by wattage
     if (!empty($item_ids)) {
         $placeholders = implode(',', array_fill(0, count($item_ids), '?'));
         $types = str_repeat('i', count($item_ids));
         
-        // Fetch pallets and associated location names
-        $sqlPallets = "
-            SELECT 
-                ip.*, 
-                w.name as warehouse_name, 
-                p.project_name 
-            FROM inventory_pallets ip
-            LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
-            LEFT JOIN projects p ON ip.current_project_id = p.id
-            WHERE ip.unassigned_module_item_id IN ($placeholders)
-            ORDER BY ip.id ASC
-        ";
+        $sqlPallets = "SELECT ip.id, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name as warehouse_name, p.project_name 
+                         FROM inventory_pallets ip
+                         LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+                         LEFT JOIN projects p ON ip.current_project_id = p.id
+                         WHERE ip.unassigned_module_item_id IN ($placeholders) ORDER BY ip.id ASC";
         $stmtPallets = $conn->prepare($sqlPallets);
         if (!$stmtPallets) throw new Exception("Prepare pallets fetch failed: " . $conn->error);
         $stmtPallets->bind_param($types, ...$item_ids);
         $stmtPallets->execute();
         $resultPallets = $stmtPallets->get_result();
-        $pallet_ids = [];
         while ($pallet = $resultPallets->fetch_assoc()) {
+            $wattage = $pallet['wattage'];
+            if (isset($wattage_summary[$wattage])) {
+                $wattage_summary[$wattage]['palletized_quantity'] += $pallet['quantity'];
+            }
             // Determine display location
             if ($pallet['status'] === 'In Warehouse' && $pallet['current_warehouse_id']) {
                 $pallet['display_location'] = 'Warehouse: ' . htmlspecialchars($pallet['warehouse_name'] ?? 'Unknown');
@@ -115,17 +165,21 @@ try {
             } elseif ($pallet['status'] === 'Allocated to Project' && $pallet['current_project_id']){
                  $pallet['display_location'] = 'Project: ' . htmlspecialchars($pallet['project_name'] ?? 'Unknown') . ' (Allocated)';
             } else {
-                $pallet['display_location'] = $pallet['status']; // Default to status if no specific location applies
+                $pallet['display_location'] = $pallet['status'];
             }
-            $pallets[] = $pallet;
-            $pallet_ids[] = $pallet['id'];
-            $summary_stats['pallets_created']++;
-            $summary_stats['pallets_quantity'] += $pallet['quantity'];
+            $pallets[] = $pallet; // Store raw pallet data
+            // Update overall status counts
             $status = $pallet['status'];
             $summary_stats['status_counts'][$status] = ($summary_stats['status_counts'][$status] ?? 0) + 1;
         }
         $stmtPallets->close();
     }
+
+    // Calculate remaining quantity for each wattage
+    foreach ($wattage_summary as $wattage => &$data) { // Use reference to modify directly
+        $data['remaining_quantity'] = $data['ordered_quantity'] - $data['palletized_quantity'];
+    }
+    unset($data); // Unset reference after loop
 
 } catch (Exception $e) {
     $errorMessage = "Error loading data: " . $e->getMessage();
@@ -207,6 +261,59 @@ $conn->close();
         .status-counts li {
             margin-bottom: 5px;
         }
+        .summary-section .wattage-blocks-container {
+            display: flex;
+            flex-wrap: wrap; /* Allow wrapping on smaller screens */
+            gap: 20px; /* Space between blocks */
+            margin-top: 20px;
+        }
+        .wattage-summary-block {
+            border: 1px solid #ccc;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #fff;
+            flex: 1; /* Allow blocks to grow */
+            min-width: 220px; /* Minimum width before wrapping */
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .wattage-summary-block h4 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #293E4C;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .wattage-summary-block p {
+            margin: 4px 0;
+            font-size: 0.9em;
+        }
+        .wattage-summary-block form {
+            margin-top: 15px;
+        }
+        .wattage-summary-block label {
+            display: block;
+            font-size: 0.85em;
+            margin-bottom: 3px;
+        }
+        .wattage-summary-block input[type="number"] {
+            width: 80px; /* Smaller input */
+            padding: 5px;
+            margin-right: 10px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        .wattage-summary-block button {
+            padding: 6px 12px;
+            font-size: 0.9em;
+            background-color: #488C9A;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .wattage-summary-block button:hover {
+            background-color: #3A6E7F;
+        }
     </style>
 </head>
 <body>
@@ -230,13 +337,40 @@ $conn->close();
         </div>
 
         <div class="summary-section">
-            <h2 class="section-title">Summary</h2>
-            <p><strong>Total Modules Ordered:</strong> <?php echo number_format($summary_stats['total_ordered']); ?></p>
-            <p><strong>Total Pallets Created:</strong> <?php echo number_format($summary_stats['pallets_created']); ?></p>
-            <p><strong>Total Modules on Pallets:</strong> <?php echo number_format($summary_stats['pallets_quantity']); ?> 
-                <?php if ($summary_stats['pallets_quantity'] != $summary_stats['total_ordered']) echo "<span style='color:orange;'>(Mismatch with ordered quantity!)</span>"; ?>
-            </p>
-            <h3>Pallet Status Breakdown:</h3>
+            <h2 class="section-title">Summary & Pallet Generation</h2>
+            
+            <!-- Container for wattage blocks -->
+            <div class="wattage-blocks-container">
+                <?php if (!empty($wattage_summary)): ?>
+                    <?php foreach ($wattage_summary as $wattage => $data): ?>
+                        <div class="wattage-summary-block">
+                            <h4><?php echo htmlspecialchars($wattage); ?>W Modules</h4>
+                            <p><strong>Ordered:</strong> <?php echo number_format($data['ordered_quantity']); ?></p>
+                            <p><strong>On Pallets:</strong> <?php echo number_format($data['palletized_quantity']); ?></p>
+                            <p><strong>Remaining:</strong> <?php echo number_format($data['remaining_quantity']); ?></p>
+                            
+                            <?php if ($data['remaining_quantity'] > 0): ?>
+                                <form method="POST">
+                                    <input type="hidden" name="action" value="generate_pallets">
+                                    <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
+                                    <div>
+                                        <label for="modules_per_pallet_<?php echo $wattage; ?>">Modules per Pallet:</label>
+                                        <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $wattage; ?>" min="1" value="1" required>
+                                        <button type="submit">Generate</button>
+                                    </div>
+                                </form>
+                            <?php else: ?>
+                                <p style="color: green; margin-top: 15px;">All modules palletized.</p>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <p>No module items found for this batch.</p>
+                <?php endif; ?>
+            </div>
+
+            <!-- Keep Pallet Status Breakdown -->
+            <h3 style="margin-top: 30px;">Overall Pallet Status Breakdown:</h3>
             <?php if (!empty($summary_stats['status_counts'])): ?>
                 <ul class="status-counts">
                     <?php foreach ($summary_stats['status_counts'] as $status => $count): ?>
@@ -245,6 +379,10 @@ $conn->close();
                 </ul>
             <?php else: ?>
                 <p>No pallets have been created/recorded for this batch yet.</p>
+            <?php endif; ?>
+
+            <?php if (!empty($successMessage)): ?>
+                <div class="success-message" style="margin-top: 15px;"><?php echo htmlspecialchars($successMessage); ?></div>
             <?php endif; ?>
         </div>
 
