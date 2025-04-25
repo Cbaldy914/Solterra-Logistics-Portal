@@ -195,7 +195,6 @@ $conn->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
-    <!-- Styles identical to add_unassigned_module.php -->
     <style>
         main {
             max-width: 800px;
