@@ -60,7 +60,6 @@ if (isset($_SESSION['role'])) {
                         <a href="add_project">Add Project</a>
                         <a href="manage_projects">Manage Projects</a>
                         <a href="add_unassigned_module">Add Unassigned Modules</a>
-                        <a href="module_assignments">Module Assignments</a>
                         <a href="module_cost_analysis">Module Cost Analysis</a>
                         <a href="admin_project_forecast">Forecast Costs</a>
                         <a href="project_site">Link Project to Site</a>
