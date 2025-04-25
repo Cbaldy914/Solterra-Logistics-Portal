@@ -143,12 +143,26 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        .overview-header, .summary-section, .pallets-section, .movements-section {
+        .overview-header {
+            position: relative; /* Needed for absolute positioning of child */
             background-color: #f9f9f9;
             padding: 15px;
             margin-bottom: 20px;
             border: 1px solid #e0e0e0;
             border-radius: 5px;
+        }
+        .overview-header .edit-button {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            /* Inherit action-button styles or define new ones */
+            background-color: #488C9A;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 5px;
+            padding: 5px 10px;
+            border: none;
+            cursor: pointer;
         }
         .overview-header h1 {
             margin-top: 0;
@@ -208,14 +222,11 @@ $conn->close();
             <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($batch_data['initial_location']); ?></p>
             <p><strong>Batch ID:</strong> <?php echo $batch_data['id']; ?></p>
             <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch_data['created_at'])); ?></p>
+            <button class="edit-button" onclick="window.location.href='edit_unassigned_module.php?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
         </div>
 
         <div class="action-buttons">
              <a href="manage_projects.php" class="action-button">Back to Manage List</a>
-             <button class="action-button" onclick="window.location.href='edit_unassigned_module.php?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
-             <!-- Links to pages that need to be created -->
-             <button class="action-button" onclick="window.location.href='record_pallet_arrival.php?batch_id=<?php echo $batch_id; ?>'">Record Pallet Arrival</button>
-             <button class="action-button" onclick="window.location.href='create_pallet_movement.php?batch_id=<?php echo $batch_id; ?>'">Create Pallet Movement</button>
         </div>
 
         <div class="summary-section">
