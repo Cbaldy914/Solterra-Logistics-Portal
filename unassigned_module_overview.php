@@ -26,7 +26,6 @@ if ($batch_id <= 0) {
 $batch_data = null;
 $batch_items = [];
 $pallets = [];
-$movements = [];
 $summary_stats = [
     'total_ordered' => 0,
     'pallets_created' => 0,
@@ -126,50 +125,6 @@ try {
             $summary_stats['status_counts'][$status] = ($summary_stats['status_counts'][$status] ?? 0) + 1;
         }
         $stmtPallets->close();
-
-        // Fetch movements if pallets exist
-        if (!empty($pallet_ids)) {
-            $placeholders_mov = implode(',', array_fill(0, count($pallet_ids), '?'));
-            $types_mov = str_repeat('i', count($pallet_ids));
-            
-            // Fetch movements and related location names
-            $sqlMovements = "
-                SELECT 
-                    m.*, 
-                    GROUP_CONCAT(mp.inventory_pallet_id ORDER BY mp.inventory_pallet_id) as moved_pallet_ids,
-                    w_from.name as from_warehouse_name,
-                    w_to.name as to_warehouse_name,
-                    p_to.project_name as to_project_name
-                FROM module_movements m
-                JOIN movement_pallets mp ON m.id = mp.movement_id
-                LEFT JOIN warehouses w_from ON m.from_location_type = 'Warehouse' AND m.from_location_id = w_from.id
-                LEFT JOIN warehouses w_to ON m.to_location_type = 'Warehouse' AND m.to_location_id = w_to.id
-                LEFT JOIN projects p_to ON m.to_location_type = 'Project' AND m.to_location_id = p_to.id
-                WHERE mp.inventory_pallet_id IN ($placeholders_mov)
-                GROUP BY m.id
-                ORDER BY m.movement_date DESC
-            ";
-            $stmtMovements = $conn->prepare($sqlMovements);
-            if (!$stmtMovements) throw new Exception("Prepare movements fetch failed: " . $conn->error);
-            $stmtMovements->bind_param($types_mov, ...$pallet_ids);
-            $stmtMovements->execute();
-            $resultMovements = $stmtMovements->get_result();
-            while ($movement = $resultMovements->fetch_assoc()) {
-                // Determine From/To display names
-                if ($movement['from_location_type'] === 'Vendor') {
-                    $movement['from_display'] = 'Vendor';
-                } else { // Warehouse
-                    $movement['from_display'] = 'Warehouse: ' . htmlspecialchars($movement['from_warehouse_name'] ?? $movement['from_location_id']);
-                }
-                if ($movement['to_location_type'] === 'Project') {
-                    $movement['to_display'] = 'Project: ' . htmlspecialchars($movement['to_project_name'] ?? $movement['to_location_id']);
-                } else { // Warehouse
-                     $movement['to_display'] = 'Warehouse: ' . htmlspecialchars($movement['to_warehouse_name'] ?? $movement['to_location_id']);
-                }
-                $movements[] = $movement;
-            }
-            $stmtMovements->close();
-        }
     }
 
 } catch (Exception $e) {
@@ -313,40 +268,6 @@ $conn->close();
                 </table>
             <?php else: ?>
                 <p>No pallets created or recorded for this batch yet.</p>
-            <?php endif; ?>
-        </div>
-
-        <div class="movements-section">
-             <h2 class="section-title">Movement History</h2>
-             <?php if (!empty($movements)): ?>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>From</th>
-                            <th>To</th>
-                            <th>Pallet IDs</th>
-                            <th>BOL Number</th>
-                            <th>Carrier</th>
-                            <th>Notes</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                         <?php foreach ($movements as $mov): ?>
-                            <tr>
-                                <td><?php echo date('Y-m-d H:i', strtotime($mov['movement_date'])); ?></td>
-                                <td><?php echo $mov['from_display']; ?></td>
-                                <td><?php echo $mov['to_display']; ?></td>
-                                <td><?php echo htmlspecialchars($mov['moved_pallet_ids']); ?></td>
-                                <td><?php echo htmlspecialchars($mov['bol_number'] ?? 'N/A'); ?></td>
-                                <td><?php echo htmlspecialchars($mov['carrier'] ?? 'N/A'); ?></td>
-                                <td><?php echo nl2br(htmlspecialchars($mov['notes'] ?? '')); ?></td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            <?php else: ?>
-                 <p>No movement history recorded for the pallets of this batch.</p>
             <?php endif; ?>
         </div>
 
