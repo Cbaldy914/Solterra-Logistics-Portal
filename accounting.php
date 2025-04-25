@@ -36,19 +36,41 @@ function overheadFilterFactor(float $amount, int $recurring, ?string $freq, stri
     switch ($targetView) {
         case 'monthly':
             // monthly => monthly=1, quarterly => /3, yearly => /12
+            if ($freq === 'Weekly')    return $amount * (52 / 12); // ~4.33
+            if ($freq === 'Bi-Weekly') return $amount * (26 / 12); // ~2.17
             if ($freq === 'Monthly')   return $amount;
             if ($freq === 'Quarterly') return $amount / 3;
             if ($freq === 'Yearly')    return $amount / 12;
             return $amount; // 'Other'
         case 'quarterly':
             // monthly => *3, quarterly => *1, yearly => /4
+            if ($freq === 'Weekly')    return $amount * (52 / 4); // 13
+            if ($freq === 'Bi-Weekly') return $amount * (26 / 4); // 6.5
             if ($freq === 'Monthly')   return $amount * 3;
             if ($freq === 'Quarterly') return $amount;
             if ($freq === 'Yearly')    return $amount / 4;
             return $amount; // 'Other'
+        case 'weekly':
+            // weekly => 1, bi-weekly => /2, monthly => /(52/12), quarterly => /(52/4), yearly => /52
+            if ($freq === 'Weekly')    return $amount;
+            if ($freq === 'Bi-Weekly') return $amount * (26 / 52); // 0.5
+            if ($freq === 'Monthly')   return $amount / (52 / 12); // ~0.23
+            if ($freq === 'Quarterly') return $amount / (52 / 4);  // ~0.077
+            if ($freq === 'Yearly')    return $amount / 52;        // ~0.019
+            return $amount; // 'Other'
+        case 'bi-weekly':
+            // weekly => *2, bi-weekly => 1, monthly => /(26/12), quarterly => /(26/4), yearly => /26
+            if ($freq === 'Weekly')    return $amount * (52 / 26); // 2
+            if ($freq === 'Bi-Weekly') return $amount;
+            if ($freq === 'Monthly')   return $amount / (26 / 12); // ~0.46
+            if ($freq === 'Quarterly') return $amount / (26 / 4);  // ~0.15
+            if ($freq === 'Yearly')    return $amount / 26;        // ~0.038
+            return $amount; // 'Other'
         case 'yearly':
         default:
             // monthly => *12, quarterly => *4, yearly => *1
+            if ($freq === 'Weekly')    return $amount * 52;
+            if ($freq === 'Bi-Weekly') return $amount * 26;
             if ($freq === 'Monthly')   return $amount * 12;
             if ($freq === 'Quarterly') return $amount * 4;
             return $amount; // 'Yearly' or 'Other' => *1
@@ -82,12 +104,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_overhead'])) {
     $overheadAmount    = isset($_POST['overhead_amount']) ? (float)$_POST['overhead_amount'] : 0;
     $description       = trim($_POST['description'] ?? '');
     $assignedProject   = trim($_POST['assigned_project'] ?? '');
-    $overheadRecurring = isset($_POST['overhead_recurring']) ? 1 : 0;
-    
-    // Only grab frequency if recurring is checked
-    $overheadFrequency = null;
-    if ($overheadRecurring === 1 && !empty($_POST['overhead_frequency'])) {
+    // Determine recurring status based on frequency
+    $overheadRecurring = 0; // Default to not recurring
+    if (!empty($_POST['overhead_frequency'])) {
         $overheadFrequency = trim($_POST['overhead_frequency']);
+        // If frequency is set (and not empty which represents "-- None --"), it's recurring
+        $overheadRecurring = 1; 
     }
 
     // If assignedProject is numeric, we assume a project_id
@@ -155,6 +177,10 @@ function annualizeOverhead(float $amount, int $recurring, ?string $freq): float
         return $amount;
     }
     switch ($freq) {
+        case 'Weekly':
+            return $amount * 52;
+        case 'Bi-Weekly':
+            return $amount * 26;
         case 'Monthly':
             return $amount * 12;
         case 'Quarterly':
@@ -337,6 +363,8 @@ $overheadLabel = '';
 switch ($overheadView) {
     case 'monthly':   $overheadLabel='Monthly Overhead';   break;
     case 'quarterly': $overheadLabel='Quarterly Overhead'; break;
+    case 'weekly':    $overheadLabel='Weekly Overhead';    break;
+    case 'bi-weekly': $overheadLabel='Bi-Weekly Overhead'; break;
     default:          $overheadLabel='Yearly Overhead';    break;
 }
 ?>
@@ -391,7 +419,7 @@ switch ($overheadView) {
     .overhead-section p { margin-bottom:15px; }
 
     .overhead-form {
-      display:flex; flex-wrap:wrap; gap:10px; align-items:center;
+      display:flex; flex-wrap:wrap; gap:15px; align-items:center;
       margin-bottom:15px;
     }
     .overhead-form label {
@@ -544,6 +572,8 @@ switch ($overheadView) {
       <form class="overhead-filter-form" method="GET">
         <label for="overhead_view">Overhead View:</label>
         <select name="overhead_view" id="overhead_view" onchange="this.form.submit()">
+          <option value="weekly"    <?php if($overheadView==='weekly') echo 'selected';?>>Weekly</option>
+          <option value="bi-weekly" <?php if($overheadView==='bi-weekly') echo 'selected';?>>Bi-Weekly</option>
           <option value="monthly"   <?php if($overheadView==='monthly') echo 'selected';?>>Monthly</option>
           <option value="quarterly" <?php if($overheadView==='quarterly') echo 'selected';?>>Quarterly</option>
           <option value="yearly"    <?php if($overheadView==='yearly') echo 'selected';?>>Yearly</option>
@@ -563,11 +593,11 @@ switch ($overheadView) {
 
     <!-- Overhead Form to Add -->
     <form method="POST" class="overhead-form">
-      <label for="overhead_amount">Amount:</label>
-      <input type="number" step="0.01" name="overhead_amount" id="overhead_amount" required>
-
       <label for="description">Description:</label>
       <input type="text" name="description" id="description" placeholder="e.g. Salary, Rent, etc." required>
+
+      <label for="overhead_amount">Amount:</label>
+      <input type="number" step="0.01" name="overhead_amount" id="overhead_amount" required>
 
       <label for="assigned_project">Project:</label>
       <select name="assigned_project" id="assigned_project">
@@ -580,14 +610,11 @@ switch ($overheadView) {
         ?>
       </select>
 
-      <div class="recurring-checkbox">
-        <input type="checkbox" id="overhead_recurring" name="overhead_recurring" value="1">
-        <label for="overhead_recurring" style="margin:0;">Recurring?</label>
-      </div>
-
       <label for="overhead_frequency">Frequency:</label>
       <select name="overhead_frequency" id="overhead_frequency">
         <option value="">-- None --</option>
+        <option value="Weekly">Weekly</option>
+        <option value="Bi-Weekly">Bi-Weekly</option>
         <option value="Monthly">Monthly</option>
         <option value="Quarterly">Quarterly</option>
         <option value="Yearly">Yearly</option>
@@ -602,21 +629,22 @@ switch ($overheadView) {
       <table class="overhead-table">
         <thead>
           <tr>
-            <th>Amount</th>
             <th>Description</th>
+            <th>Amount</th>
             <th>Recurring?</th>
             <th>Frequency</th>
             <th>Project</th>
-            <th>Created At</th>
             <th style="width:80px;">Remove</th>
           </tr>
         </thead>
         <tbody>
         <?php foreach ($overheads as $oh): ?>
           <?php 
-            $ohId       = (int)$oh['id']; // primary key of overhead line
-            $isRecurring= (!empty($oh['overhead_recurring']) && $oh['overhead_recurring']==1) ? 'Yes' : 'No';
-            $freq       = (!empty($oh['overhead_frequency']) && $isRecurring==='Yes')
+            $ohId       = (int)$oh['id']; 
+            $rawFreq    = $oh['overhead_frequency'] ?? null;
+            // Determine recurring status based on frequency having a value
+            $isRecurring= !empty($rawFreq) ? 'Yes' : 'No';
+            $freq       = ($isRecurring === 'Yes')
                             ? htmlspecialchars($oh['overhead_frequency'])
                             : 'N/A';
 
@@ -630,12 +658,11 @@ switch ($overheadView) {
             }
           ?>
           <tr>
-            <td><?php echo '$'.number_format($oh['overhead_amount'], 2); ?></td>
             <td><?php echo htmlspecialchars($oh['description']); ?></td>
+            <td><?php echo '$'.number_format((float)$oh['overhead_amount'], 2); ?></td>
             <td><?php echo $isRecurring; ?></td>
             <td><?php echo $freq; ?></td>
             <td><?php echo $projLabel; ?></td>
-            <td><?php echo htmlspecialchars($oh['created_at']); ?></td>
             <td class="actions-cell">
               <!-- Remove Overhead Button -->
               <form method="GET" onsubmit="return confirm('Are you sure you want to remove this overhead line?');">

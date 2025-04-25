@@ -3,8 +3,8 @@ session_name("logistics_session");
 session_start();
 
 // Check if user is admin
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
-    header("Location: dashboard");
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'global_admin') {
+    header("Location: unauthorized");
     exit();
 }
 
