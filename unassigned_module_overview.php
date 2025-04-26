@@ -7,6 +7,9 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
     die("Unauthorized access.");
 }
 
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 // Database connection
 require_once '../config.php';
 $conn = getDBConnection();
@@ -50,6 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets') {
     // Initialize message variable for this action
     $shipMessage = '';
+    $createdDeliveryIds = []; // To store IDs of created deliveries
     $conn->begin_transaction();
     try {
         // Get data from form
@@ -78,58 +82,82 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         }
         $stmtBn->close();
 
-        // Sum module quantity across selected pallets
+        // Fetch details (id, wattage, quantity) for selected pallets
         $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
         $types        = str_repeat('i', count($palletIds));
-        $stmtSum = $conn->prepare("SELECT SUM(quantity) FROM inventory_pallets WHERE id IN ($placeholders)");
-        if (!$stmtSum) throw new Exception("Failed to prepare quantity sum: " . $conn->error);
-        $stmtSum->bind_param($types, ...$palletIds);
-        $stmtSum->execute();
-        $stmtSum->bind_result($totalQty);
-        $stmtSum->fetch();
-        $stmtSum->close();
+        $stmtFetchPallets = $conn->prepare("SELECT id, wattage, quantity FROM inventory_pallets WHERE id IN ($placeholders)");
+        if (!$stmtFetchPallets) throw new Exception("Failed to prepare pallet fetch: " . $conn->error);
+        $stmtFetchPallets->bind_param($types, ...$palletIds);
+        $stmtFetchPallets->execute();
+        $resultPallets = $stmtFetchPallets->get_result();
 
-        // Insert into deliveries table
-        if ($assignType === 'project') {
-            $sql = "INSERT INTO deliveries (project_id, supplier, quantity, bol_number, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, 'Delivered')"; // Assume Delivered status
-            $stmtD = $conn->prepare($sql);
-            if (!$stmtD) throw new Exception("Failed to prepare project delivery insert: " . $conn->error);
-            $stmtD->bind_param("isiss", $targetId, $vendor_name, $totalQty, $bol, $date);
-        } else { // Warehouse
-            $sql = "INSERT INTO deliveries (warehouse_id, supplier, quantity, bol_number, warehouse_arrival_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, 'In Warehouse')"; // Assume In Warehouse status
-            $stmtD = $conn->prepare($sql);
-            if (!$stmtD) throw new Exception("Failed to prepare warehouse delivery insert: " . $conn->error);
-            $stmtD->bind_param("isiss", $targetId, $vendor_name, $totalQty, $bol, $date);
+        // Group pallets by wattage
+        $palletsByWattage = [];
+        while ($pallet = $resultPallets->fetch_assoc()) {
+            $wattage = $pallet['wattage'];
+            if (!isset($palletsByWattage[$wattage])) {
+                $palletsByWattage[$wattage] = ['quantity' => 0, 'ids' => []];
+            }
+            $palletsByWattage[$wattage]['quantity'] += $pallet['quantity'];
+            $palletsByWattage[$wattage]['ids'][] = $pallet['id'];
         }
-        if (!$stmtD->execute()) throw new Exception("Failed to execute delivery insert: " . $stmtD->error);
-        $deliveryId = $conn->insert_id;
-        $stmtD->close();
+        $stmtFetchPallets->close();
 
-        // Link pallets via delivery_pallets pivot table
+        // Prepare common statements outside the loop
+        // Delivery Insert Statements
+        $sqlProjectDelivery = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, 'Delivered')";
+        $sqlWarehouseDelivery = "INSERT INTO deliveries (warehouse_id, supplier, wattage, quantity, bol_number, warehouse_arrival_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, 'In Warehouse')";
+        $stmtProjectD = $conn->prepare($sqlProjectDelivery);
+        $stmtWarehouseD = $conn->prepare($sqlWarehouseDelivery);
+        if (!$stmtProjectD || !$stmtWarehouseD) throw new Exception("Failed to prepare delivery insert statements: " . $conn->error);
+
+        // Pallet Link Statement
         $stmtLink = $conn->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
         if (!$stmtLink) throw new Exception("Failed to prepare pallet link insert: " . $conn->error);
 
-        // Update status and location for each selected pallet
+        // Pallet Update Statement
         $updateStatus = ($assignType === 'project') ? 'Delivered to Project' : 'In Warehouse';
         $updateColumn = ($assignType === 'project') ? 'current_project_id' : 'current_warehouse_id';
         $sqlUp = "UPDATE inventory_pallets SET status = ?, $updateColumn = ?, arrival_date = ? WHERE id = ?";
         $stmtUp = $conn->prepare($sqlUp);
         if (!$stmtUp) throw new Exception("Failed to prepare pallet update: " . $conn->error);
 
-        foreach ($palletIds as $pid) {
-            // Link
-            $stmtLink->bind_param("ii", $deliveryId, $pid);
-            if (!$stmtLink->execute()) throw new Exception("Failed to link pallet ID {$pid}: " . $stmtLink->error);
+        // Loop through each wattage group and create a delivery record
+        foreach ($palletsByWattage as $wattage => $group) {
+            $groupQty = $group['quantity'];
+            $groupPalletIds = $group['ids'];
 
-            // Update
-            $stmtUp->bind_param("sisi", $updateStatus, $targetId, $date, $pid); // Use date for arrival_date
-            if (!$stmtUp->execute()) throw new Exception("Failed to update pallet ID {$pid}: " . $stmtUp->error);
+            // Execute Delivery Insert
+            if ($assignType === 'project') {
+                $stmtProjectD->bind_param("isiiss", $targetId, $vendor_name, $wattage, $groupQty, $bol, $date);
+                if (!$stmtProjectD->execute()) throw new Exception("Failed to execute project delivery insert for {$wattage}W: " . $stmtProjectD->error);
+                $deliveryId = $conn->insert_id;
+            } else { // Warehouse
+                $stmtWarehouseD->bind_param("isiiss", $targetId, $vendor_name, $wattage, $groupQty, $bol, $date);
+                if (!$stmtWarehouseD->execute()) throw new Exception("Failed to execute warehouse delivery insert for {$wattage}W: " . $stmtWarehouseD->error);
+                $deliveryId = $conn->insert_id;
+            }
+            $createdDeliveryIds[] = $deliveryId; // Track created ID
+
+            // Link and Update Pallets in this group
+            foreach ($groupPalletIds as $pid) {
+                // Link
+                $stmtLink->bind_param("ii", $deliveryId, $pid);
+                if (!$stmtLink->execute()) throw new Exception("Failed to link pallet ID {$pid} to delivery {$deliveryId}: " . $stmtLink->error);
+
+                // Update
+                $stmtUp->bind_param("sisi", $updateStatus, $targetId, $date, $pid);
+                if (!$stmtUp->execute()) throw new Exception("Failed to update pallet ID {$pid}: " . $stmtUp->error);
+            }
         }
+        // Close prepared statements after the loop
+        if ($stmtProjectD) $stmtProjectD->close();
+        if ($stmtWarehouseD) $stmtWarehouseD->close();
         $stmtLink->close();
         $stmtUp->close();
 
         $conn->commit();
-        $shipMessage = "Created Delivery #{$deliveryId} and linked " . count($palletIds) . " pallets successfully.";
+        $shipMessage = "Successfully created Deliveries (" . implode(", ", $createdDeliveryIds) . ") for " . count($palletIds) . " pallets across " . count($palletsByWattage) ." wattage groups.";
 
     } catch (Exception $e) {
         $conn->rollback();
