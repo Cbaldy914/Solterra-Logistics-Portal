@@ -181,6 +181,33 @@ try {
     }
     unset($data); // Unset reference after loop
 
+    // Fetch Projects for the account associated with this batch
+    $account_projects = [];
+    if (isset($batch_data['account_id'])) {
+        $stmtP = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC");
+        if ($stmtP) {
+            $stmtP->bind_param("i", $batch_data['account_id']);
+            $stmtP->execute();
+            $resultP = $stmtP->get_result();
+            while ($proj = $resultP->fetch_assoc()) {
+                $account_projects[] = $proj;
+            }
+            $stmtP->close();
+        }
+    }
+
+    // Fetch Warehouses (assuming all are potential destinations for now)
+    $all_warehouses = [];
+    $stmtW = $conn->prepare("SELECT id, name FROM warehouses ORDER BY name ASC");
+    if ($stmtW) {
+        $stmtW->execute();
+        $resultW = $stmtW->get_result();
+        while ($wh = $resultW->fetch_assoc()) {
+            $all_warehouses[] = $wh;
+        }
+        $stmtW->close();
+    }
+
 } catch (Exception $e) {
     $errorMessage = "Error loading data: " . $e->getMessage();
 }
@@ -386,44 +413,175 @@ $conn->close();
             <?php endif; ?>
         </div>
 
-        <div class="pallets-section">
-            <h2 class="section-title">Inventory Pallets</h2>
-            <?php if (!empty($pallets)): ?>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Pallet ID</th>
-                            <th>Identifier</th>
-                            <th>Wattage</th>
-                            <th>Quantity</th>
-                            <th>Status</th>
-                            <th>Current Location</th>
-                            <th>Arrival Date</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($pallets as $pallet): ?>
+        <!-- ====== SHIP PALLETS FORM ====== -->
+        <form method="POST" id="shipPalletsForm" style="margin-top: 30px;">
+            <input type="hidden" name="action" value="ship_pallets">
+            
+            <div class="shipment-details" style="background-color: #f9f9f9; padding: 15px; border: 1px solid #e0e0e0; border-radius: 5px; margin-bottom: 20px;">
+                 <h2 class="section-title" style="margin-top:0;">Create Delivery Shipment</h2>
+                 
+                 <!-- Display shipment message -->
+                 <?php if (!empty($shipMessage)): /* We'll define $shipMessage in the PHP handler later */ ?>
+                    <div class="success-message"><?php echo htmlspecialchars($shipMessage); ?></div>
+                 <?php endif; ?>
+                 
+                 <!-- Supplier (Readonly) -->
+                 <p><strong>Supplier:</strong> <?php echo htmlspecialchars($batch_data['vendor_name'] ?? 'Unknown'); ?></p>
+                 
+                 <!-- Destination Type -->
+                 <div style="margin-bottom: 10px;">
+                    <label style="font-weight: bold;">Assign To:</label>
+                    <label><input type="radio" name="assign_type" value="project" checked onchange="toggleTargetSelect()"> Project</label>
+                    <label><input type="radio" name="assign_type" value="warehouse" onchange="toggleTargetSelect()"> Warehouse</label>
+                 </div>
+                 
+                 <!-- Target Selection Dropdown -->
+                 <div id="targetSelectContainer" style="margin-bottom: 10px;">
+                    <label for="target_id" id="targetLabel" style="font-weight: bold;">Project:</label>
+                    <select name="target_id" id="target_id" required>
+                        <!-- Options will be populated by PHP/JS -->
+                    </select>
+                 </div>
+                 
+                 <!-- BOL & Date -->
+                 <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                     <div style="flex: 1; min-width: 150px;">
+                         <label for="bol" style="font-weight: bold;">BOL # (optional):</label>
+                         <input type="text" name="bol" id="bol" style="width: 100%; padding: 5px;">
+                     </div>
+                     <div style="flex: 1; min-width: 150px;">
+                         <label for="delivery_date" style="font-weight: bold;">Est. Delivery/Arrival Date (optional):</label>
+                         <input type="date" name="delivery_date" id="delivery_date" style="width: 100%; padding: 5px;">
+                     </div>
+                 </div>
+             </div>
+
+            <div class="pallets-section">
+                <h2 class="section-title">Select Inventory Pallets to Include in Shipment</h2>
+                <!-- Filter input -->
+                <div style="margin-bottom:10px;">
+                     <label>Filter Table:</label>
+                     <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()">
+                 </div>
+                <?php if (!empty($pallets)): ?>
+                    <table>
+                        <thead>
                             <tr>
-                                <td><?php echo $pallet['id']; ?></td>
-                                <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
-                                <td><?php echo $pallet['wattage']; ?>W</td>
-                                <td><?php echo number_format($pallet['quantity']); ?></td>
-                                <td><?php echo htmlspecialchars($pallet['status']); ?></td>
-                                <td><?php echo htmlspecialchars($pallet['display_location']); ?></td>
-                                <td><?php echo $pallet['arrival_date'] ? date('Y-m-d', strtotime($pallet['arrival_date'])) : 'N/A'; ?></td>
+                                <th><input type="checkbox" id="selectAllPallets" onclick="toggleAllPalletCheckboxes(this.checked)"></th>
+                                <th>Pallet ID</th>
+                                <th>Identifier</th>
+                                <th>Wattage</th>
+                                <th>Quantity</th>
+                                <th>Status</th>
+                                <th>Current Location</th>
+                                <th>Arrival Date</th>
                             </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            <?php else: ?>
-                <p>No pallets created or recorded for this batch yet.</p>
-            <?php endif; ?>
-        </div>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($pallets as $pallet): ?>
+                                <tr>
+                                    <td><input type="checkbox" name="selected_pallets[]" value="<?php echo $pallet['id']; ?>" class="pallet-checkbox"></td>
+                                    <td><?php echo $pallet['id']; ?></td>
+                                    <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
+                                    <td><?php echo $pallet['wattage']; ?>W</td>
+                                    <td><?php echo number_format($pallet['quantity']); ?></td>
+                                    <td><?php echo htmlspecialchars($pallet['status']); ?></td>
+                                    <td><?php echo htmlspecialchars($pallet['display_location']); ?></td>
+                                    <td><?php echo $pallet['arrival_date'] ? date('Y-m-d', strtotime($pallet['arrival_date'])) : 'N/A'; ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    <div style="margin-top: 20px; text-align: right;">
+                        <button type="submit" class="action-button" style="padding: 10px 20px; font-size: 1em;">Create Delivery for Selected Pallets</button>
+                    </div>
+                <?php else: ?>
+                    <p>No pallets created or recorded for this batch yet.</p>
+                <?php endif; ?>
+            </div>
+
+        </form> <!-- Close shipPalletsForm -->
 
     <?php else: ?>
          <p>Batch data could not be loaded.</p>
          <a href="manage_projects.php">Back to Manage List</a>
     <?php endif; ?>
 </main>
+
+<!-- Embed PHP data as JS variables -->
+<script>
+    const projectsData = <?php echo json_encode($account_projects); ?>;
+    const warehousesData = <?php echo json_encode($all_warehouses); ?>;
+</script>
+
+<!-- Add JavaScript functions -->
+<script>
+// Select/Deselect All Pallet Checkboxes
+function toggleAllPalletCheckboxes(isChecked) {
+    document.querySelectorAll('.pallet-checkbox').forEach(function(checkbox) {
+        checkbox.checked = isChecked;
+    });
+}
+
+// Filter Pallets Table
+function filterPallets() {
+    var filter = document.getElementById('palletSearch').value.toLowerCase();
+    var rows = document.querySelectorAll('.pallets-section table tbody tr');
+    rows.forEach(function(row) {
+        // Check all cells except the checkbox cell (index 0)
+        var textContent = '';
+        for (var i = 1; i < row.cells.length; i++) {
+            textContent += row.cells[i].textContent.toLowerCase() + ' ';
+        }
+        row.style.display = textContent.includes(filter) ? '' : 'none';
+    });
+}
+
+// Toggle Target Select Dropdown Label and Content 
+function toggleTargetSelect() {
+    var assignType = document.querySelector('input[name="assign_type"]:checked').value;
+    var targetLabel = document.getElementById('targetLabel');
+    var targetSelect = document.getElementById('target_id');
+
+    targetLabel.textContent = (assignType === 'project') ? 'Project:' : 'Warehouse:';
+
+    // Clear existing options
+    targetSelect.innerHTML = ''; 
+
+    if (assignType === 'project') {
+         if (projectsData.length === 0) {
+             targetSelect.innerHTML = '<option value="">No projects found for this account</option>';
+         } else {
+            targetSelect.innerHTML = '<option value="">-- Select Project --</option>';
+             projectsData.forEach(function(project) {
+                 var option = document.createElement('option');
+                 option.value = project.id;
+                 option.textContent = project.project_name;
+                 targetSelect.appendChild(option);
+             });
+         }
+         targetSelect.disabled = projectsData.length === 0;
+    } else { // Warehouse
+         if (warehousesData.length === 0) {
+             targetSelect.innerHTML = '<option value="">No warehouses found</option>';
+         } else {
+            targetSelect.innerHTML = '<option value="">-- Select Warehouse --</option>';
+             warehousesData.forEach(function(warehouse) {
+                 var option = document.createElement('option');
+                 option.value = warehouse.id;
+                 option.textContent = warehouse.name;
+                 targetSelect.appendChild(option);
+             });
+         }
+         targetSelect.disabled = warehousesData.length === 0;
+    }
+}
+
+// Initial call to set the dropdown correctly on page load
+document.addEventListener('DOMContentLoaded', function() {
+    toggleTargetSelect(); 
+});
+</script>
+
 </body>
 </html> 
