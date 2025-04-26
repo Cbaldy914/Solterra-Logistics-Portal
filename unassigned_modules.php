@@ -582,7 +582,6 @@ if ($conn && $conn instanceof mysqli) {
                             <!-- Links need refinement - directing to overview/edit/delete pages for unassigned modules -->
                             <button class="action-button" onclick="window.location.href='unassigned_module_overview.php?batch_id=<?php echo $batch['id']; ?>'" title="View full details and history for this batch">View Details</button>
                             <button class="action-button" onclick="window.location.href='edit_unassigned_module.php?batch_id=<?php echo $batch['id']; ?>'" title="Edit vendor, location, or items in this batch">Edit Batch</button>
-                            <button class="action-button" onclick="alert('Movement tracking page not yet implemented')" title="View detailed movement history (Not Implemented)">View Movements</button>
                             <!-- Add a proper delete form/confirmation -->
                             <form action="delete_unassigned_batch.php" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
                                 <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
