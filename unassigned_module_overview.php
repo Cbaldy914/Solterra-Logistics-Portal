@@ -47,6 +47,94 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         insertPallet($itemId, $wattage, $remainder);
     }
     $successMessage = "Created $totalPallets pallets (up to $modulesPerPallet modules each) for item ID $itemId.";
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets') {
+    // Initialize message variable for this action
+    $shipMessage = '';
+    $conn->begin_transaction();
+    try {
+        // Get data from form
+        $assignType = $_POST['assign_type'] ?? 'project';
+        $targetId   = intval($_POST['target_id']);
+        $bol        = trim($_POST['bol'] ?? '');
+        $date       = !empty($_POST['delivery_date']) ? $_POST['delivery_date'] : null;
+        $palletIds  = $_POST['selected_pallets'] ?? [];
+
+        if (empty($palletIds)) {
+            throw new Exception('No pallets selected to ship.');
+        }
+        if ($targetId <= 0) {
+             throw new Exception('Invalid Project or Warehouse selected.');
+        }
+
+        // Fetch supplier/vendor_name for this batch (needed for delivery record)
+        $stmtBn = $conn->prepare("SELECT vendor_name FROM unassigned_modules WHERE id = ? LIMIT 1");
+        if (!$stmtBn) throw new Exception("Failed to prepare vendor fetch: " . $conn->error);
+        $stmtBn->bind_param("i", $batch_id);
+        $stmtBn->execute();
+        $stmtBn->bind_result($vendor_name);
+        if (!$stmtBn->fetch()) {
+             $stmtBn->close();
+             throw new Exception("Could not find vendor name for this batch.");
+        }
+        $stmtBn->close();
+
+        // Sum module quantity across selected pallets
+        $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
+        $types        = str_repeat('i', count($palletIds));
+        $stmtSum = $conn->prepare("SELECT SUM(quantity) FROM inventory_pallets WHERE id IN ($placeholders)");
+        if (!$stmtSum) throw new Exception("Failed to prepare quantity sum: " . $conn->error);
+        $stmtSum->bind_param($types, ...$palletIds);
+        $stmtSum->execute();
+        $stmtSum->bind_result($totalQty);
+        $stmtSum->fetch();
+        $stmtSum->close();
+
+        // Insert into deliveries table
+        if ($assignType === 'project') {
+            $sql = "INSERT INTO deliveries (project_id, supplier, quantity, bol_number, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, 'Delivered')"; // Assume Delivered status
+            $stmtD = $conn->prepare($sql);
+            if (!$stmtD) throw new Exception("Failed to prepare project delivery insert: " . $conn->error);
+            $stmtD->bind_param("isiss", $targetId, $vendor_name, $totalQty, $bol, $date);
+        } else { // Warehouse
+            $sql = "INSERT INTO deliveries (warehouse_id, supplier, quantity, bol_number, warehouse_arrival_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, 'In Warehouse')"; // Assume In Warehouse status
+            $stmtD = $conn->prepare($sql);
+            if (!$stmtD) throw new Exception("Failed to prepare warehouse delivery insert: " . $conn->error);
+            $stmtD->bind_param("isiss", $targetId, $vendor_name, $totalQty, $bol, $date);
+        }
+        if (!$stmtD->execute()) throw new Exception("Failed to execute delivery insert: " . $stmtD->error);
+        $deliveryId = $conn->insert_id;
+        $stmtD->close();
+
+        // Link pallets via delivery_pallets pivot table
+        $stmtLink = $conn->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
+        if (!$stmtLink) throw new Exception("Failed to prepare pallet link insert: " . $conn->error);
+
+        // Update status and location for each selected pallet
+        $updateStatus = ($assignType === 'project') ? 'Delivered to Project' : 'In Warehouse';
+        $updateColumn = ($assignType === 'project') ? 'current_project_id' : 'current_warehouse_id';
+        $sqlUp = "UPDATE inventory_pallets SET status = ?, $updateColumn = ?, arrival_date = ? WHERE id = ?";
+        $stmtUp = $conn->prepare($sqlUp);
+        if (!$stmtUp) throw new Exception("Failed to prepare pallet update: " . $conn->error);
+
+        foreach ($palletIds as $pid) {
+            // Link
+            $stmtLink->bind_param("ii", $deliveryId, $pid);
+            if (!$stmtLink->execute()) throw new Exception("Failed to link pallet ID {$pid}: " . $stmtLink->error);
+
+            // Update
+            $stmtUp->bind_param("sisi", $updateStatus, $targetId, $date, $pid); // Use date for arrival_date
+            if (!$stmtUp->execute()) throw new Exception("Failed to update pallet ID {$pid}: " . $stmtUp->error);
+        }
+        $stmtLink->close();
+        $stmtUp->close();
+
+        $conn->commit();
+        $shipMessage = "Created Delivery #{$deliveryId} and linked " . count($palletIds) . " pallets successfully.";
+
+    } catch (Exception $e) {
+        $conn->rollback();
+        $shipMessage = "Error creating delivery: " . $e->getMessage();
+    }
 }
 
 // Helper to insert a pallet row and assign its identifier
@@ -341,6 +429,12 @@ $conn->close();
         .wattage-summary-block button:hover {
             background-color: #3A6E7F;
         }
+        .pallet-table-actions {
+            display: flex;
+            justify-content: space-between; /* Aligns items left and right */
+            align-items: center; /* Vertically aligns items */
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
@@ -421,9 +515,9 @@ $conn->close();
                  <h2 class="section-title" style="margin-top:0;">Create Delivery Shipment</h2>
                  
                  <!-- Display shipment message -->
-                 <?php if (!empty($shipMessage)): /* We'll define $shipMessage in the PHP handler later */ ?>
-                    <div class="success-message"><?php echo htmlspecialchars($shipMessage); ?></div>
-                 <?php endif; ?>
+                 <?php if (!empty($shipMessage)): ?>
+                     <div class="success-message"><?php echo htmlspecialchars($shipMessage); ?></div>
+                  <?php endif; ?>
                  
                  <!-- Supplier (Readonly) -->
                  <p><strong>Supplier:</strong> <?php echo htmlspecialchars($batch_data['vendor_name'] ?? 'Unknown'); ?></p>
@@ -458,10 +552,13 @@ $conn->close();
 
             <div class="pallets-section">
                 <h2 class="section-title">Select Inventory Pallets to Include in Shipment</h2>
-                <!-- Filter input -->
-                <div style="margin-bottom:10px;">
-                     <label>Filter Table:</label>
-                     <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()">
+                <div class="pallet-table-actions">
+                     <!-- Filter input -->
+                     <label>Filter Table:
+                      <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()">
+                    </label>
+                     <!-- Submit Button moved here -->
+                    <button type="submit" class="action-button" style="padding: 10px 20px; font-size: 1em;">Create Delivery for Selected Pallets</button>
                  </div>
                 <?php if (!empty($pallets)): ?>
                     <table>
@@ -492,9 +589,6 @@ $conn->close();
                             <?php endforeach; ?>
                         </tbody>
                     </table>
-                    <div style="margin-top: 20px; text-align: right;">
-                        <button type="submit" class="action-button" style="padding: 10px 20px; font-size: 1em;">Create Delivery for Selected Pallets</button>
-                    </div>
                 <?php else: ?>
                     <p>No pallets created or recorded for this batch yet.</p>
                 <?php endif; ?>
