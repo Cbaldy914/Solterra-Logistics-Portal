@@ -1168,6 +1168,14 @@ table.freight-costs th {
 .action-buttons {
     display: flex;
     gap: 10px;
+    display: inline-block;
+    padding: 8px 15px;
+    background-color: #488C9A; /* Example color */
+    color: white;
+    text-decoration: none;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
 }
 
 .action-buttons form {

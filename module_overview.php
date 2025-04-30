@@ -71,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         }
 
         // Fetch supplier/vendor_name for this batch (needed for delivery record)
-        $stmtBn = $conn->prepare("SELECT vendor_name FROM unassigned_modules WHERE id = ? LIMIT 1");
+        $stmtBn = $conn->prepare("SELECT vendor_name FROM modules WHERE id = ? LIMIT 1");
         if (!$stmtBn) throw new Exception("Failed to prepare vendor fetch: " . $conn->error);
         $stmtBn->bind_param("i", $batch_id);
         $stmtBn->execute();
@@ -106,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         // Prepare common statements outside the loop
         // Delivery Insert Statements
         $sqlProjectDelivery = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, 'Delivered')";
-        $sqlWarehouseDelivery = "INSERT INTO deliveries (warehouse_id, supplier, wattage, quantity, bol_number, warehouse_arrival_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, 'In Warehouse')";
+        $sqlWarehouseDelivery = "INSERT INTO deliveries (warehouse_id, project_id, supplier, wattage, quantity, bol_number, warehouse_arrival_date, status_of_delivery) VALUES (?, NULL, ?, ?, ?, ?, ?, 'In Warehouse')";
         $stmtProjectD = $conn->prepare($sqlProjectDelivery);
         $stmtWarehouseD = $conn->prepare($sqlWarehouseDelivery);
         if (!$stmtProjectD || !$stmtWarehouseD) throw new Exception("Failed to prepare delivery insert statements: " . $conn->error);
@@ -199,9 +199,10 @@ $errorMessage = '';
 try {
     // Fetch main batch data and account name
     $stmtBatch = $conn->prepare("
-        SELECT um.*, c.name as account_name 
-        FROM unassigned_modules um 
+        SELECT um.*, c.name as account_name, p.project_name
+        FROM modules um 
         JOIN customer_accounts c ON um.account_id = c.id
+        LEFT JOIN projects p ON um.project_id = p.id
         WHERE um.id = ?
     ");
     if (!$stmtBatch) throw new Exception("Prepare batch fetch failed: " . $conn->error);
@@ -209,7 +210,7 @@ try {
     $stmtBatch->execute();
     $resultBatch = $stmtBatch->get_result();
     if ($resultBatch->num_rows === 0) {
-        throw new Exception("Unassigned module batch not found.");
+        throw new Exception("Module batch not found.");
     }
     $batch_data = $resultBatch->fetch_assoc();
     $stmtBatch->close();
@@ -335,7 +336,7 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unassigned Module Overview</title>
+    <title>Module Overview</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -473,16 +474,25 @@ $conn->close();
     <?php elseif ($batch_data): ?>
         
         <div class="overview-header">
-            <h1>Unassigned Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?></h1>
+            <h1>Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?></h1>
             <p><strong>Account:</strong> <?php echo htmlspecialchars($batch_data['account_name']); ?></p>
             <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($batch_data['initial_location']); ?></p>
+            <p><strong>Assigned Project:</strong> 
+                <?php 
+                if (!empty($batch_data['project_id']) && !empty($batch_data['project_name'])) {
+                    echo htmlspecialchars($batch_data['project_name']); 
+                } else {
+                    echo "<em>Unassigned</em>";
+                }
+                ?>
+            </p>
             <p><strong>Batch ID:</strong> <?php echo $batch_data['id']; ?></p>
             <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch_data['created_at'])); ?></p>
-            <button class="edit-button" onclick="window.location.href='edit_unassigned_module.php?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
+            <button class="edit-button" onclick="window.location.href='edit_module.php?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
         </div>
 
         <div class="action-buttons">
-             <a href="manage_projects.php" class="action-button">Back to Manage List</a>
+             <a href="modules.php" class="action-button">Back to Modules List</a>
         </div>
 
         <div class="summary-section">
@@ -626,7 +636,7 @@ $conn->close();
 
     <?php else: ?>
          <p>Batch data could not be loaded.</p>
-         <a href="manage_projects.php">Back to Manage List</a>
+         <a href="modules.php">Back to Modules List</a>
     <?php endif; ?>
 </main>
 

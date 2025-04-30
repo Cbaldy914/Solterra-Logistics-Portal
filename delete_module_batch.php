@@ -27,7 +27,7 @@ try {
     // Admin role: ensure belongs to their account
     if ($_SESSION['role'] === 'admin') {
         $stmtCheck = $conn->prepare(
-            "SELECT 1 FROM unassigned_modules um
+            "SELECT 1 FROM modules um
              JOIN customer_account_users cau ON um.account_id = cau.account_id
              WHERE um.id = ? AND cau.user_id = ? AND cau.role = 'admin'"
         );
@@ -85,7 +85,7 @@ try {
     $stmtDelItems->close();
 
     // Delete batch
-    $stmtDelBatch = $conn->prepare("DELETE FROM unassigned_modules WHERE id = ?");
+    $stmtDelBatch = $conn->prepare("DELETE FROM modules WHERE id = ?");
     $stmtDelBatch->bind_param("i", $batchId);
     $stmtDelBatch->execute();
     $stmtDelBatch->close();
@@ -98,6 +98,6 @@ try {
 }
 
 $conn->close();
-header("Location: unassigned_modules.php");
+header("Location: modules.php");
 exit();
 ?> 
