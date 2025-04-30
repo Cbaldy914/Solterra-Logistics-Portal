@@ -126,23 +126,24 @@ while ($row = $result->fetch_assoc()) {
 }
 $stmt->close();
 
-// Fetch ALL Unassigned Modules
-$sqlUnassigned = "
-    SELECT um.id, um.account_id, um.vendor_name, um.initial_location, c.name as account_name
-    FROM unassigned_modules um
+// Fetch ALL Modules
+$sqlModules = "
+    SELECT um.id, um.account_id, um.vendor_name, um.initial_location, c.name as account_name, p.project_name
+    FROM modules um
     JOIN customer_accounts c ON um.account_id = c.id
+    LEFT JOIN projects p ON um.project_id = p.id
     ORDER BY c.name ASC, um.vendor_name ASC
 ";
-$stmt_unassigned = $conn->prepare($sqlUnassigned);
-if($stmt_unassigned === false) die("Prepare failed: (unassigned) " . $conn->error);
-$stmt_unassigned->execute();
-$result_unassigned = $stmt_unassigned->get_result();
+$stmt_modules = $conn->prepare($sqlModules);
+if($stmt_modules === false) die("Prepare failed: (modules) " . $conn->error);
+$stmt_modules->execute();
+$result_modules = $stmt_modules->get_result();
 
-$unassigned_modules_data = [];
+$modules_data = [];
 $stmt_items = $conn->prepare("SELECT wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id = ? ORDER BY wattage ASC");
-if (!$stmt_items) die("Prepare failed: (unassigned items) " . $conn->error);
+if (!$stmt_items) die("Prepare failed: (module items) " . $conn->error);
 
-while ($batch = $result_unassigned->fetch_assoc()) {
+while ($batch = $result_modules->fetch_assoc()) {
     $batch_id = $batch['id'];
     $batch['items'] = [];
     $batch['total_quantity'] = 0;
@@ -169,10 +170,10 @@ while ($batch = $result_unassigned->fetch_assoc()) {
     // Store details as JSON for modal
     $batch['details_json'] = htmlspecialchars(json_encode($batch['items']), ENT_QUOTES, 'UTF-8');
 
-    $unassigned_modules_data[] = $batch;
+    $modules_data[] = $batch;
 }
 $stmt_items->close();
-$stmt_unassigned->close();
+$stmt_modules->close();
 
 // Close DB
 $conn->close();
@@ -226,26 +227,36 @@ $conn->close();
         <?php endif; ?>
     </div>
 
-    <!-- Unassigned Modules Section -->
-    <h2 style="margin-top: 40px;">Unassigned Modules:</h2>
-    <?php if (!empty($unassigned_modules_data)): ?>
+    <!-- Modules Section -->
+    <h2 style="margin-top: 40px;">Module Batches:</h2>
+    <?php if (!empty($modules_data)): ?>
         <table>
             <thead>
                 <tr>
                     <th>Account</th>
                     <th>Vendor</th>
+                    <th>Assigned Project</th>
                     <th>Wattage Range</th>
                     <th>Total Quantity</th>
                     <th>Initial Location</th>
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($unassigned_modules_data as $batch): ?>
+                <?php foreach ($modules_data as $batch): ?>
                     <tr style="cursor: pointer;" 
                         onclick="openDetailsModal(<?php echo $batch['id']; ?>, '<?php echo htmlspecialchars($batch['vendor_name'], ENT_QUOTES, 'UTF-8'); ?>', this.dataset.details)" 
                         data-details='<?php echo $batch['details_json']; ?>'>
                         <td><?php echo htmlspecialchars($batch['account_name']); ?></td>
                         <td><?php echo htmlspecialchars($batch['vendor_name']); ?></td>
+                        <td>
+                            <?php 
+                              if (!empty($batch['project_id']) && !empty($batch['project_name'])) {
+                                  echo htmlspecialchars($batch['project_name']); 
+                              } else {
+                                  echo "<em>Unassigned</em>";
+                              }
+                            ?>
+                        </td>
                         <td><?php echo htmlspecialchars($batch['wattage_range']); ?></td>
                         <td><?php echo number_format($batch['total_quantity']); ?></td>
                         <td><?php echo htmlspecialchars($batch['initial_location']); ?></td>
@@ -254,7 +265,7 @@ $conn->close();
             </tbody>
         </table>
     <?php else: ?>
-        <p>No unassigned modules found.</p>
+        <p>No module batches found.</p>
     <?php endif; ?>
 </main>
 

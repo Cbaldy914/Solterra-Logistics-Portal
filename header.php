@@ -59,7 +59,7 @@ if (isset($_SESSION['role'])) {
                     <div class="dropdown-content">
                         <a href="add_project">Add Project</a>
                         <a href="manage_projects">Manage Projects</a>
-                        <a href="unassigned_modules">Unassigned Modules</a>
+                        <a href="modules">Modules</a>
                         <a href="module_cost_analysis">Module Cost Analysis</a>
                         <a href="admin_project_forecast">Forecast Costs</a>
                         <a href="project_site">Link Project to Site</a>
@@ -71,6 +71,7 @@ if (isset($_SESSION['role'])) {
                     <div class="dropdown-content">
                         <a href="warehouses">Warehouses</a>
                         <a href="admin_warehouse_estimate">Admin Warehouse Quote</a>
+                        <a href="manage_warehouses.php">Manage Warehouses</a>
                     </div>
                 </li>
                 <li class="dropdown">

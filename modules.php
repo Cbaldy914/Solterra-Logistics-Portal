@@ -4,7 +4,7 @@ session_start();
 
 // Ensure user has role admin or global_admin
 if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
-    die("Unauthorized: You must be 'admin' or 'global_admin' to manage unassigned modules.");
+    die("Unauthorized: You must be 'admin' or 'global_admin' to manage modules.");
 }
 
 // Database connection
@@ -20,30 +20,50 @@ $user_id = $_SESSION['user_id'];
 // --- Account Fetching Logic (needed for form and potentially for data fetch) ---
 $account_id_for_admin = null;
 $accounts             = [];
+$projects_for_account = [];
 
 if ($role === 'global_admin') {
-    $sqlAll = "SELECT id, name FROM customer_accounts ORDER BY name ASC";
-    $resAll = $conn->query($sqlAll);
-    if ($resAll && $resAll->num_rows > 0) {
-        while ($row = $resAll->fetch_assoc()) {
+    $sqlAllAcc = "SELECT id, name FROM customer_accounts ORDER BY name ASC";
+    $resAllAcc = $conn->query($sqlAllAcc);
+    if ($resAllAcc && $resAllAcc->num_rows > 0) {
+        while ($row = $resAllAcc->fetch_assoc()) {
             $accounts[] = $row;
         }
     }
+    $sqlAllProj = "SELECT id, project_name, account_id FROM projects ORDER BY account_id, project_name ASC";
+    $resAllProj = $conn->query($sqlAllProj);
+    if ($resAllProj && $resAllProj->num_rows > 0) {
+        while ($proj = $resAllProj->fetch_assoc()) {
+            $projects_for_account[] = $proj;
+        }
+    }
 } else { // admin role
-    $sqlOne = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
-    $stmtOne = $conn->prepare($sqlOne);
-    if (!$stmtOne) die("Error preparing account lookup: " . $conn->error);
-    $stmtOne->bind_param("i", $user_id);
-    $stmtOne->execute();
-    $stmtOne->bind_result($acctID);
-    if ($stmtOne->fetch()) {
+    $sqlOneAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
+    $stmtOneAcc = $conn->prepare($sqlOneAcc);
+    if (!$stmtOneAcc) die("Error preparing account lookup: " . $conn->error);
+    $stmtOneAcc->bind_param("i", $user_id);
+    $stmtOneAcc->execute();
+    $stmtOneAcc->bind_result($acctID);
+    if ($stmtOneAcc->fetch()) {
         $account_id_for_admin = $acctID;
     }
-    $stmtOne->close();
+    $stmtOneAcc->close();
+
+    if ($account_id_for_admin) {
+        $sqlOneProj = "SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+        $stmtOneProj = $conn->prepare($sqlOneProj);
+        if (!$stmtOneProj) die("Error preparing project lookup: " . $conn->error);
+        $stmtOneProj->bind_param("i", $account_id_for_admin);
+        $stmtOneProj->execute();
+        $resultProj = $stmtOneProj->get_result();
+        while ($proj = $resultProj->fetch_assoc()) {
+             $projects_for_account[] = $proj;
+        }
+        $stmtOneProj->close();
+    }
 
     if (!$account_id_for_admin) {
         // Handle case where admin has no assigned account - prevent further action
-        // We might still want to show the page but with an error and no table/form
         // For now, let's allow proceeding, the data fetch below will handle empty results.
     }
 }
@@ -82,16 +102,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Gather main fields
             $vendor_name        = trim($_POST['vendor_name'] ?? '');
             $initial_location   = trim($_POST['initial_location'] ?? '');
+            $project_id_input   = $_POST['project_id'] ?? '';
+            $project_id         = ($project_id_input !== '' && $project_id_input > 0) ? intval($project_id_input) : null;
     
             if ($vendor_name === '' || $initial_location === '') {
                 throw new Exception("Vendor Name and Initial Location are required.");
             }
+            
+            if ($role === 'global_admin' && $project_id !== null) {
+                $validProject = false;
+                $stmtCheckProj = $conn->prepare("SELECT 1 FROM projects WHERE id = ? AND account_id = ?");
+                if ($stmtCheckProj) {
+                    $stmtCheckProj->bind_param("ii", $project_id, $account_id);
+                    $stmtCheckProj->execute();
+                    $stmtCheckProj->store_result();
+                    if ($stmtCheckProj->num_rows > 0) {
+                        $validProject = true;
+                    }
+                    $stmtCheckProj->close();
+                }
+                if (!$validProject) {
+                     throw new Exception("Selected project does not belong to the selected account.");
+                }
+            }
     
-            // Insert into unassigned_modules
-            $stmt = $conn->prepare("INSERT INTO unassigned_modules (account_id, vendor_name, initial_location) VALUES (?, ?, ?)");
+            // Insert into modules (including new project_id)
+            $stmt = $conn->prepare("INSERT INTO modules (account_id, vendor_name, initial_location, project_id) VALUES (?, ?, ?, ?)");
             if (!$stmt) throw new Exception("Error preparing main insert: " . $conn->error);
-            $stmt->bind_param("iss", $account_id, $vendor_name, $initial_location);
-            if (!$stmt->execute()) throw new Exception("Error inserting unassigned module batch: " . $stmt->error);
+            $stmt->bind_param("issi", $account_id, $vendor_name, $initial_location, $project_id);
+            if (!$stmt->execute()) throw new Exception("Error inserting module batch: " . $stmt->error);
             $unassigned_module_id = $stmt->insert_id;
             $stmt->close();
     
@@ -122,7 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($wattage_items_added === 0) throw new Exception("You must add at least one Wattage/Quantity entry.");
     
             $conn->commit();
-            $successMessage = "Unassigned module batch (ID: {$unassigned_module_id}) and {$wattage_items_added} item(s) added successfully!";
+            $successMessage = "Module batch (ID: {$unassigned_module_id}) and {$wattage_items_added} item(s) added successfully!";
     
         } catch (Exception $ex) {
             $conn->rollback();
@@ -132,40 +171,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// --- Fetch Unassigned Modules Data for Table Display (moved from manage_projects.php) ---
-$unassignedModulesData = [];
+// --- Fetch Modules Data for Table Display ---
+$modulesData = [];
 if ($conn) { // Check connection is still valid
-    $sqlUnassigned        = "";
-    $paramTypesUnassigned = "";
-    $paramsUnassigned     = [];
+    $sqlModules        = "";
+    $paramTypesModules = "";
+    $paramsModules     = [];
     
     if ($role === 'global_admin') {
-        $sqlUnassigned = "SELECT um.id, um.vendor_name, um.initial_location, c.name AS account_name FROM unassigned_modules um JOIN customer_accounts c ON um.account_id = c.id ORDER BY c.name ASC, um.vendor_name ASC";
+        $sqlModules = "SELECT 
+                         um.id, um.vendor_name, um.initial_location, um.project_id,
+                         c.name AS account_name,
+                         p.project_name 
+                       FROM modules um 
+                       JOIN customer_accounts c ON um.account_id = c.id
+                       LEFT JOIN projects p ON um.project_id = p.id
+                       ORDER BY c.name ASC, um.vendor_name ASC";
     } elseif ($role === 'admin' && !empty($account_id_for_admin)) {
-         $sqlUnassigned = "SELECT um.id, um.vendor_name, um.initial_location, c.name AS account_name FROM unassigned_modules um JOIN customer_accounts c ON um.account_id = c.id WHERE um.account_id = ? ORDER BY um.vendor_name ASC";
-        $paramTypesUnassigned = "i";
-        $paramsUnassigned     = [$account_id_for_admin];
+         $sqlModules = "SELECT 
+                          um.id, um.vendor_name, um.initial_location, um.project_id,
+                          c.name AS account_name,
+                          p.project_name 
+                        FROM modules um 
+                        JOIN customer_accounts c ON um.account_id = c.id
+                        LEFT JOIN projects p ON um.project_id = p.id
+                        WHERE um.account_id = ? 
+                        ORDER BY um.vendor_name ASC";
+        $paramTypesModules = "i";
+        $paramsModules     = [$account_id_for_admin];
     } else {
-        // Admin with no account or other roles see no unassigned modules
-         $sqlUnassigned = "SELECT NULL LIMIT 0";
+        // Admin with no account or other roles see no modules
+         $sqlModules = "SELECT NULL LIMIT 0";
     }
     
-    $stmtUnassigned = $conn->prepare($sqlUnassigned);
-    if (!$stmtUnassigned) {
-        $errorMessage .= " Error preparing unassigned modules query: " . $conn->error;
+    $stmtModules = $conn->prepare($sqlModules);
+    if (!$stmtModules) {
+        $errorMessage .= " Error preparing modules query: " . $conn->error;
     } else {
-        if (!empty($paramTypesUnassigned)) {
-            $stmtUnassigned->bind_param($paramTypesUnassigned, ...$paramsUnassigned);
+        if (!empty($paramTypesModules)) {
+            $stmtModules->bind_param($paramTypesModules, ...$paramsModules);
         }
-        $stmtUnassigned->execute();
-        $resultUnassigned = $stmtUnassigned->get_result();
+        $stmtModules->execute();
+        $resultModules = $stmtModules->get_result();
         
         // Fetch items for each batch
         $stmtItems = $conn->prepare("SELECT wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id = ?");
         if (!$stmtItems) {
             $errorMessage .= " Error preparing item query: " . $conn->error;
         } else {
-            while ($batch = $resultUnassigned->fetch_assoc()) {
+            while ($batch = $resultModules->fetch_assoc()) {
                 $batch_id = $batch['id'];
                 $batch['items'] = [];
                 $batch['total_quantity'] = 0;
@@ -177,11 +231,11 @@ if ($conn) { // Check connection is still valid
                     $batch['items'][] = $item;
                     $batch['total_quantity'] += $item['quantity'];
                 }
-                $unassignedModulesData[] = $batch;
+                $modulesData[] = $batch;
             }
             $stmtItems->close();
         }
-        $stmtUnassigned->close();
+        $stmtModules->close();
     }
 } // end if($conn)
 
@@ -195,7 +249,7 @@ if ($conn && $conn instanceof mysqli) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Manage Unassigned Modules</title>
+    <title>Manage Modules</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
@@ -455,13 +509,48 @@ if ($conn && $conn instanceof mysqli) {
             <?php if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($errorMessage)): ?>
             modal.style.display = 'block';
             <?php endif; ?>
+
+            // NEW: Add initial wattage field if container is empty on modal load
+            if (modal && modal.style.display === 'block') {
+                var wattageContainer = document.getElementById('wattage-container');
+                 if (wattageContainer && wattageContainer.children.length === 0) {
+                      addWattageField();
+                 }
+            }
+             // NEW: Logic to filter project dropdown based on selected account (for global admin)
+            var accountSelect = document.getElementById('account_id');
+            var projectSelect = document.getElementById('project_id');
+            if (accountSelect && projectSelect && '<?php echo $role; ?>' === 'global_admin') {
+                 // Store all project options initially
+                 var allProjectOptions = Array.from(projectSelect.options).slice(1); // Skip placeholder
+
+                 accountSelect.addEventListener('change', function() {
+                     var selectedAccountId = this.value;
+                     // Clear current project options (except placeholder)
+                     while (projectSelect.options.length > 1) {
+                         projectSelect.remove(1);
+                     }
+
+                     // Add back relevant options
+                     allProjectOptions.forEach(function(option) {
+                          // Check if the option's data-account-id matches the selected account
+                          if (selectedAccountId === '' || option.getAttribute('data-account-id') === selectedAccountId) {
+                              projectSelect.add(option.cloneNode(true));
+                          }
+                     });
+                 });
+                 // Trigger change on load if an account is pre-selected (e.g., after error)
+                 if (accountSelect.value !== '') {
+                      accountSelect.dispatchEvent(new Event('change'));
+                 }
+            }
         });
     </script>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <h1>Manage Unassigned Modules</h1>
+    <h1>Manage Modules</h1>
 
     <?php
     // Display session message if it exists
@@ -480,13 +569,13 @@ if ($conn && $conn instanceof mysqli) {
     ?>
 
     <!-- Button to open the modal -->
-    <button id="openAddModalBtn" class="action-button" style="font-size: 1em; padding: 10px 20px; margin-bottom: 20px;">Add Unassigned Modules</button>
+    <button id="openAddModalBtn" class="action-button" style="font-size: 1em; padding: 10px 20px; margin-bottom: 20px;">Add Module Batch</button>
 
     <!-- The Modal -->
     <div id="addModuleModal" class="modal">
         <div class="modal-content">
             <span class="close-button">&times;</span>
-            <h2>Add New Unassigned Module Batch</h2>
+            <h2>Add New Module Batch</h2>
 
             <!-- Display error message INSIDE modal if POST failed -->
             <?php if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($errorMessage)): ?>
@@ -494,13 +583,13 @@ if ($conn && $conn instanceof mysqli) {
             <?php endif; ?>
 
             <!-- The form moved inside the modal -->
-            <form action="unassigned_modules.php" method="POST">
+            <form action="modules.php" method="POST">
                 <?php if ($role === 'global_admin'): ?>
                     <label for="account_id">Account Name:</label>
                     <select name="account_id" id="account_id" required>
                         <option value="">--Select Account--</option>
                         <?php foreach ($accounts as $acc): ?>
-                            <option value="<?php echo $acc['id']; ?>">
+                            <option value="<?php echo $acc['id']; ?>" <?php echo (isset($_POST['account_id']) && $_POST['account_id'] == $acc['id']) ? 'selected' : ''; ?>>
                                 <?php echo htmlspecialchars($acc['name']); ?>
                             </option>
                         <?php endforeach; ?>
@@ -529,14 +618,42 @@ if ($conn && $conn instanceof mysqli) {
                 <?php endif; ?>
         
                 <label for="vendor_name">Vendor Name:</label>
-                <input type="text" name="vendor_name" id="vendor_name" required>
+                <input type="text" name="vendor_name" id="vendor_name" required value="<?php echo htmlspecialchars($_POST['vendor_name'] ?? ''); ?>">
         
                 <label for="initial_location">Initial Location:</label>
-                <input type="text" name="initial_location" id="initial_location" placeholder="e.g., Warehouse A, Port of Long Beach" required>
-        
+                <input type="text" name="initial_location" id="initial_location" placeholder="e.g., Warehouse A, Port of Long Beach" required value="<?php echo htmlspecialchars($_POST['initial_location'] ?? ''); ?>">
+                
+                <!-- NEW: Project Assignment Dropdown -->
+                <label for="project_id">Assign to Project (Optional):</label>
+                <select name="project_id" id="project_id">
+                     <option value="">-- None (Unassigned Stock) --</option>
+                     <?php foreach ($projects_for_account as $proj): ?>
+                          <option value="<?php echo $proj['id']; ?>" 
+                                  <?php if ($role === 'global_admin') echo ' data-account-id="' . $proj['account_id'] . '"'; // Add data attribute for filtering ?>
+                                  <?php echo (isset($_POST['project_id']) && $_POST['project_id'] == $proj['id']) ? 'selected' : ''; ?>>
+                              <?php echo htmlspecialchars($proj['project_name']); ?>
+                              <?php if ($role === 'global_admin') echo ' (Account ID: ' . $proj['account_id'] . ')'; // Show account ID for clarity ?>
+                          </option>
+                     <?php endforeach; ?>
+                </select>
+
                 <div class="section-title">Module Wattage and Quantities</div>
                 <div id="wattage-container">
                      <!-- Dynamically added fields go here -->
+                     <?php
+                     // Re-populate wattage fields on error
+                     if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['wattages'])) {
+                          for ($i = 0; $i < count($_POST['wattages']); $i++) {
+                               $w_val = htmlspecialchars($_POST['wattages'][$i] ?? '');
+                               $q_val = htmlspecialchars($_POST['quantities'][$i] ?? '');
+                               echo '<div class="wattage-entry">';
+                               echo '<div><label>Wattage:</label><input type="number" step="1" name="wattages[]" value="' . $w_val . '" required></div>';
+                               echo '<div><label>Quantity:</label><input type="number" step="1" name="quantities[]" value="' . $q_val . '" min="1" required></div>';
+                               echo '<div class="remove-btn-container"><button type="button" class="remove-wattage-btn" onclick="this.closest(\'.wattage-entry\').remove()">Remove</button></div>';
+                               echo '</div>';
+                          }
+                     }
+                     ?>
                 </div>
                 <button type="button" class="btn-add-wattage" onclick="addWattageField()">+ Add Wattage/Quantity</button>
         
@@ -545,26 +662,36 @@ if ($conn && $conn instanceof mysqli) {
         </div>
     </div>
 
-    <!-- Unassigned Modules Table (copied from manage_projects.php) -->
-    <h2>Current Unassigned Modules</h2>
-     <table id="unassignedModulesTable">
+    <!-- Modules Table -->
+    <h2>Current Module Batches</h2>
+     <table id="modulesTable">
         <thead>
             <tr>
                 <th>Customer Account</th>
                 <th>Vendor Name</th>
                 <th>Initial Location</th>
+                <th>Assigned Project</th>
                 <th>Total Quantity</th>
                 <th>Module Details</th>
                 <th>Batch Actions</th>
             </tr>
         </thead>
         <tbody>
-        <?php if (!empty($unassignedModulesData)): ?>
-            <?php foreach ($unassignedModulesData as $batch): ?>
+        <?php if (!empty($modulesData)): ?>
+            <?php foreach ($modulesData as $batch): ?>
                 <tr>
                     <td><?php echo htmlspecialchars($batch['account_name']); ?></td>
                     <td><?php echo htmlspecialchars($batch['vendor_name']); ?></td>
                     <td><?php echo htmlspecialchars($batch['initial_location']); ?></td>
+                    <td>
+                        <?php 
+                          if (!empty($batch['project_id']) && !empty($batch['project_name'])) {
+                              echo htmlspecialchars($batch['project_name']); 
+                          } else {
+                              echo "<em>Unassigned</em>";
+                          }
+                        ?>
+                    </td>
                     <td><?php echo number_format($batch['total_quantity']); ?></td>
                     <td>
                         <?php
@@ -579,11 +706,11 @@ if ($conn && $conn instanceof mysqli) {
                     </td>
                     <td>
                         <div class="action-forms">
-                            <!-- Links need refinement - directing to overview/edit/delete pages for unassigned modules -->
-                            <button class="action-button" onclick="window.location.href='unassigned_module_overview.php?batch_id=<?php echo $batch['id']; ?>'" title="View full details and history for this batch">View Details</button>
-                            <button class="action-button" onclick="window.location.href='edit_unassigned_module.php?batch_id=<?php echo $batch['id']; ?>'" title="Edit vendor, location, or items in this batch">Edit Batch</button>
-                            <!-- Add a proper delete form/confirmation -->
-                            <form action="delete_unassigned_batch.php" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
+                            <!-- Updated links to reflect potential filename changes (assuming overview/edit also renamed) -->
+                            <button class="action-button" onclick="window.location.href='module_overview.php?batch_id=<?php echo $batch['id']; ?>'" title="View full details and history for this batch">View Details</button>
+                            <button class="action-button" onclick="window.location.href='edit_module.php?batch_id=<?php echo $batch['id']; ?>'" title="Edit vendor, location, assignment, or items in this batch">Edit Batch</button>
+                            <!-- Updated delete form action -->
+                            <form action="delete_module_batch.php" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
                                 <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
                                 <button type="submit" class="action-button" style="background-color: #dc3545;" title="Delete this entire batch">Delete Batch</button>
                             </form>
@@ -593,7 +720,7 @@ if ($conn && $conn instanceof mysqli) {
             <?php endforeach; ?>
         <?php else: ?>
             <tr>
-                <td colspan="6">No unassigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?>.</td>
+                <td colspan="7">No module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?>.</td>
             </tr>
         <?php endif; ?>
         </tbody>
