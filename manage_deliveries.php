@@ -708,6 +708,28 @@ $stmt->close();
                 width: 100%;
             }
         }
+        /* Associated Pallets Modal Styling */
+        #associatedPalletsModal {
+             display: none;
+             /* Reuse general modal styles */
+        }
+         #associatedPalletsModal .modal-content {
+             max-width: 500px; /* Smaller modal */
+             position: relative; /* Added for absolute positioning of child */
+         }
+        #associatedPalletsModal ul {
+             list-style: none;
+             padding: 0;
+             max-height: 300px; /* Scrollable list */
+             overflow-y: auto;
+        }
+        #associatedPalletsModal li {
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+        #associatedPalletsModal li:last-child {
+            border-bottom: none;
+        }
     </style>
 </head>
 <body>
@@ -853,10 +875,41 @@ $stmt->close();
                     <th>Miles</th>
                     <th>Freight Cost</th>
                     <th>Accessorial Costs</th>
+                    <th>Associated Pallets</th>
                     <th>Actions</th>
                 </tr>
                 <?php if ($deliveries_result->num_rows > 0): ?>
+                    <?php 
+                    // Prepare statement for fetching pallets outside the loop for efficiency
+                    $stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
+                    if (!$stmtPallets) {
+                        // Handle error appropriately - maybe log it or display a generic error
+                        echo "Error preparing pallet statement: " . $conn->error;
+                        // Optionally exit or skip the loop
+                    }
+                    ?>
                     <?php while($delivery = $deliveries_result->fetch_assoc()): ?>
+                        <?php
+                        // Fetch associated pallets for this delivery
+                        $associatedPallets = [];
+                        $palletDataJson = '[]'; // Default to empty JSON array
+                        $palletCount = 0;
+                        if ($stmtPallets) { // Check if statement was prepared successfully
+                            $stmtPallets->bind_param("i", $delivery['id']);
+                            $stmtPallets->execute();
+                            $palletsResult = $stmtPallets->get_result();
+                            while ($palletRow = $palletsResult->fetch_assoc()) {
+                                $associatedPallets[] = $palletRow;
+                            }
+                            $palletCount = count($associatedPallets);
+                            if ($palletCount > 0) {
+                                $palletDataJson = htmlspecialchars(json_encode($associatedPallets), ENT_QUOTES, 'UTF-8');
+                            }
+                        } else {
+                            // Handle case where statement couldn't be prepared
+                            $associatedPallets = 'Error fetching pallets'; // Or some other indicator
+                        }
+                        ?>
                         <tr>
                             <td>
                                 <input type="checkbox" name="selected_deliveries[]" value="<?php echo $delivery['id']; ?>" onclick="updateBulkActionButtons()">
@@ -884,15 +937,32 @@ $stmt->close();
                             <td>$<?php echo number_format($delivery['freight_cost_with_default'], 2); ?></td>
                             <td>$<?php echo number_format($delivery['accessorial_costs'], 2); ?></td>
                             <td>
+                                <?php if ($stmtPallets && $palletCount > 0): ?>
+                                    <button type="button" class="action-button" 
+                                            onclick="showPalletModal(this)" 
+                                            data-pallets='<?php echo $palletDataJson; ?>'
+                                            style="background-color: #28a745;"
+                                            >View Pallets (<?php echo $palletCount; ?>)</button>
+                                <?php elseif ($stmtPallets): ?>
+                                    N/A
+                                <?php else: ?>
+                                    Error
+                                <?php endif; ?>
+                            </td>
+                            <td>
                                 <a href="edit_delivery?delivery_id=<?php echo $delivery['id']; ?>&project_id=<?php echo $project_id; ?>">
                                     Edit
                                 </a>
                             </td>
                         </tr>
                     <?php endwhile; ?>
+                    <?php 
+                    // Close the prepared statement after the loop
+                    if ($stmtPallets) $stmtPallets->close(); 
+                    ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="14">No delivery entries found.</td>
+                        <td colspan="15">No delivery entries found.</td>
                     </tr>
                 <?php endif; ?>
             </table>
@@ -998,6 +1068,18 @@ $stmt->close();
             </form>
         </div>
     </div>
+
+    <!-- Associated Pallets Modal -->
+    <div id="associatedPalletsModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeAssociatedPalletModal()">&times;</span>
+            <h2>Associated Pallets</h2>
+            <ul id="palletList"> 
+                <!-- Pallet details will be loaded here by JS -->
+            </ul>
+        </div>
+    </div>
+
 </main>
 
 <script>
@@ -1077,6 +1159,47 @@ $stmt->close();
             closeBulkEditModal();
         }
     }
+
+    // --- Associated Pallets Modal --- 
+    var associatedPalletsModal = document.getElementById('associatedPalletsModal');
+    var palletListUl = document.getElementById('palletList');
+
+    function showPalletModal(buttonElement) {
+        var palletsJson = buttonElement.getAttribute('data-pallets');
+        try {
+            var pallets = JSON.parse(palletsJson);
+            palletListUl.innerHTML = ''; // Clear previous list
+
+            if (pallets.length > 0) {
+                pallets.forEach(function(pallet) {
+                    var li = document.createElement('li');
+                    li.textContent = `ID: ${pallet.id}` + (pallet.pallet_identifier ? ` - Identifier: ${pallet.pallet_identifier}` : '');
+                    palletListUl.appendChild(li);
+                });
+            } else {
+                 palletListUl.innerHTML = '<li>No pallets found.</li>';
+            }
+
+            associatedPalletsModal.style.display = 'block';
+        } catch (e) {
+            console.error("Error parsing pallet data:", e);
+            palletListUl.innerHTML = '<li>Error loading pallet data.</li>';
+            associatedPalletsModal.style.display = 'block'; // Show modal even on error to indicate issue
+        }
+    }
+
+    function closeAssociatedPalletModal() {
+         associatedPalletsModal.style.display = 'none';
+         palletListUl.innerHTML = ''; // Clear list on close
+    }
+
+    // Add event listener for clicks outside the associated pallets modal too
+    window.addEventListener('click', function(event) {
+        if (event.target == associatedPalletsModal) {
+            closeAssociatedPalletModal();
+        }
+    });
+
 </script>
 </body>
 </html>

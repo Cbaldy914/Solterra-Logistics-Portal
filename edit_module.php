@@ -191,8 +191,8 @@ if ($batch_id > 0) {
         $errorMessage = "Error preparing batch fetch: " . $conn->error;
     } else {
         $stmt->bind_param("i", $batch_id);
-        $stmt->execute();
-        $result = $stmt->get_result();
+$stmt->execute();
+$result = $stmt->get_result();
         if ($result->num_rows > 0) {
             $batch_data = $result->fetch_assoc();
             // Security check for admin role
@@ -429,13 +429,13 @@ $conn->close();
                      $connTemp = getDBConnection(); // Temporary connection
                      if ($connTemp) {
                          $stmtAccName = $connTemp->prepare("SELECT name FROM customer_accounts WHERE id = ?");
-                         if ($stmtAccName) {
+                    if ($stmtAccName) {
                              $stmtAccName->bind_param("i", $account_id_for_admin);
-                             $stmtAccName->execute();
+                        $stmtAccName->execute();
                              $stmtAccName->bind_result($fetchedName);
                              if ($stmtAccName->fetch()) { $adminAccountName = $fetchedName; }
-                             $stmtAccName->close();
-                         }
+                        $stmtAccName->close();
+                    }
                          $connTemp->close();
                      }
                      echo "<p><strong>Account:</strong> " . htmlspecialchars($adminAccountName) . "</p>";
@@ -482,10 +482,10 @@ $conn->close();
             <button type="button" class="btn-add-wattage" onclick="addWattageField()">+ Add Wattage/Quantity</button>
 
             <input type="submit" value="Save Changes" class="btn-submit">
-        </form>
+    </form>
     <?php elseif (empty($errorMessage)): ?>
-        <p>Loading batch data...</p>
-    <?php endif; ?>
+        <p>Loading batch data...</p> 
+    <?php endif; ?> 
 
     <div class="back-link" style="margin-top: 20px;">
         <a href="module_overview.php?batch_id=<?php echo $batch_id; ?>">&larr; Back to Module Overview</a>
