@@ -109,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
         } elseif ($file['size'] > 5 * 1024 * 1024) {
              $pod_upload_error = "POD File larger than 5 MB.";
         } else {
-            $upload_dir = 'uploads/pods/';
+        $upload_dir = 'uploads/pods/';
             if (!is_dir($upload_dir)) {@mkdir($upload_dir, 0755, true);}
             $new_name = 'pod_' . time() . '_' . uniqid() . '.' . $ext;
             $dest = $upload_dir . $new_name;
@@ -132,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
         // Validation Checks
         if (!empty($pod_upload_error)) {
              throw new Exception($pod_upload_error);
-        }
+    }
         if (empty($supplier) || $targetId <= 0 || empty($wattages) || count($wattages) !== count($quantities)) {
             throw new Exception("Missing required fields: Supplier, Destination, or valid Wattage/Quantity pairs.");
         }
@@ -149,8 +149,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
 
         // Prepare INSERT statement once based on destination
         if ($assignType === 'project') {
-            $sql = "INSERT INTO deliveries
-                    (project_id, supplier, wattage, status_of_delivery, quantity, bol_number,
+    $sql = "INSERT INTO deliveries
+            (project_id, supplier, wattage, status_of_delivery, quantity, bol_number,
                      anticipated_delivery_date, actual_delivery_date, left_warehouse_date,
                      freight_cost, accessorial_costs_paid, accessorial_costs, proof_of_delivery, miles)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 14 placeholders
@@ -328,18 +328,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
         <input type="hidden" name="form_project_id" value="<?php echo $project_id; ?>">
     <?php endif; ?>
 
-    <fieldset>
+<fieldset>
         <legend>Shipment Details</legend>
         <label>Supplier:<input type="text" name="supplier" required value="<?php echo htmlspecialchars($_POST['supplier'] ?? ''); ?>"></label>
         <label>BOL Number:<input type="text" name="bol_number" value="<?php echo htmlspecialchars($_POST['bol_number'] ?? ''); ?>"></label>
-        <label>Status of Delivery:
-            <select name="status_of_delivery" required>
+ <label>Status of Delivery:
+   <select name="status_of_delivery" required>
                 <option value="Produced" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Produced') ? 'selected' : ''; ?>>Produced</option>
                 <option value="In Warehouse" <?php echo (($_POST['status_of_delivery'] ?? '') === 'In Warehouse') ? 'selected' : ''; ?>>In Warehouse</option>
                 <option value="Delivered" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Delivered') ? 'selected' : ''; ?>>Delivered</option>
                 <option value="Canceled" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Canceled') ? 'selected' : ''; ?>>Canceled</option>
-            </select>
-        </label>
+   </select>
+ </label>
 
         <div>
             <label style="margin-bottom: 10px; display:block;">Destination:</label>
@@ -379,35 +379,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
             ?>
         </div>
         <button type="button" class="btn-add-wattage" onclick="addWattageField()">+ Add Wattage/Quantity</button>
-    </fieldset>
+</fieldset>
 
-    <fieldset>
-         <legend>Dates</legend>
+<fieldset>
+ <legend>Dates</legend>
          <label>Anticipated Delivery Date (Project Only):<input type="date" name="anticipated_delivery_date" value="<?php echo htmlspecialchars($_POST['anticipated_delivery_date'] ?? ''); ?>"></label>
          <label>Actual Delivery Date (Project Only):<input type="date" name="actual_delivery_date" value="<?php echo htmlspecialchars($_POST['actual_delivery_date'] ?? ''); ?>"></label>
          <label>Left Warehouse Date (Project Only):<input type="date" name="left_warehouse_date" value="<?php echo htmlspecialchars($_POST['left_warehouse_date'] ?? ''); ?>"></label>
          <label>Warehouse Arrival Date (Warehouse Only):<input type="date" name="warehouse_arrival_date" value="<?php echo htmlspecialchars($_POST['warehouse_arrival_date'] ?? ''); ?>"></label>
-    </fieldset>
+</fieldset>
 
-    <fieldset>
+<fieldset>
          <legend>Costs & Logistics</legend>
          <label>Total Freight Cost (for entire shipment):<input type="number" step="0.01" name="freight_cost" value="<?php echo htmlspecialchars($_POST['freight_cost'] ?? ''); ?>"></label>
          <label>Total Accessorial Cost (what we pay carrier):<input type="number" step="0.01" id="accessorial_costs_paid" name="accessorial_costs_paid" value="<?php echo htmlspecialchars($_POST['accessorial_costs_paid'] ?? ''); ?>"></label>
          <label style="display:flex; align-items:center; margin-top: 10px;">
            <input type="checkbox" id="charge_customer_ckb" style="width:auto; margin-right: 8px;" <?php echo !empty($_POST['accessorial_costs']) ? 'checked' : ''; ?>>
            Charge Customer Accessorials?
-         </label>
+ </label>
          <!-- Hidden field for customer-facing amount -->
          <input type="hidden" id="accessorial_costs" name="accessorial_costs" value="<?php echo htmlspecialchars($_POST['accessorial_costs'] ?? '0'); ?>">
          <label>Total Miles:<input type="number" step="0.01" name="miles" value="<?php echo htmlspecialchars($_POST['miles'] ?? ''); ?>"></label>
-    </fieldset>
+</fieldset>
 
-    <fieldset>
-         <legend>Proof of Delivery (POD)</legend>
-         <label>Upload POD:<input type="file" name="proof_of_delivery" accept=".pdf,.jpg,.jpeg,.png"></label>
-    </fieldset>
+<fieldset>
+ <legend>Proof of Delivery (POD)</legend>
+ <label>Upload POD:<input type="file" name="proof_of_delivery" accept=".pdf,.jpg,.jpeg,.png"></label>
+</fieldset>
 
-    <input type="submit" name="add_delivery" value="Add Delivery Entry">
+<input type="submit" name="add_delivery" value="Add Delivery Entry">
 </form>
 
 <div class="back-link" style="margin-top: 20px;">

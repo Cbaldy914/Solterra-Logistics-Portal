@@ -59,10 +59,18 @@ if (isset($_SESSION['role'])) {
                     <div class="dropdown-content">
                         <a href="add_project">Add Project</a>
                         <a href="manage_projects">Manage Projects</a>
-                        <a href="modules">Modules</a>
                         <a href="module_cost_analysis">Module Cost Analysis</a>
                         <a href="admin_project_forecast">Forecast Costs</a>
                         <a href="project_site">Link Project to Site</a>
+                    </div>
+                </li>
+
+                <li class="dropdown">
+                    <a href="#" class="dropbtn">Modules</a>
+                    <div class="dropdown-content">
+                        <a href="modules">Modules</a>
+                        <a href="manage_pallets.php">Manage Pallets</a>
+
                     </div>
                 </li>
 
@@ -125,6 +133,7 @@ if (isset($_SESSION['role'])) {
                         <a href="cost_estimate_calculator">Cost Estimate Calculator</a>
                         <a href="warehouse_optimization">Warehouse Optimization (Beta)</a>
                         <a href="warehouse_estimate">Warehouse Quotes</a>
+                        <a href="manage_pallets.php">Manage Pallets</a>
                     </div>
                 </li>
 

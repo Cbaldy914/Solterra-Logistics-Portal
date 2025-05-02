@@ -491,10 +491,6 @@ $conn->close();
             <button class="edit-button" onclick="window.location.href='edit_module.php?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
         </div>
 
-        <div class="action-buttons">
-             <a href="modules.php" class="action-button">Back to Modules List</a>
-        </div>
-
         <div class="summary-section">
             <h2 class="section-title">Summary & Pallet Generation</h2>
             
