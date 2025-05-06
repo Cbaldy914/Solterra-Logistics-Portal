@@ -19,6 +19,7 @@ if ($warehouse_id <= 0) {
 
 $warehouse = null;
 $pallets_in_storage = [];
+$pallets_in_transit = []; // Added for inbound pallets
 $errorMessage = '';
 $successMessage = $_SESSION['move_pallet_message'] ?? ''; // Check for success message from POST redirect
 if (isset($_SESSION['move_pallet_message'])) unset($_SESSION['move_pallet_message']); // Clear message after displaying
@@ -40,8 +41,8 @@ try {
     $warehouse = $resultW->fetch_assoc();
     $stmtW->close();
 
-    // Fetch Pallets currently in this warehouse
-    $stmtP = $conn->prepare("
+    // Fetch Pallets currently in this warehouse ('In Warehouse' status)
+    $stmtP_Stored = $conn->prepare("
         SELECT 
             ip.id AS pallet_id,
             ip.pallet_identifier,
@@ -55,16 +56,16 @@ try {
         WHERE ip.current_warehouse_id = ? AND ip.status = 'In Warehouse'
         ORDER BY ip.arrival_date DESC, ip.id DESC
     ");
-    if (!$stmtP) throw new Exception("Failed to prepare pallets query: " . $conn->error);
-    $stmtP->bind_param("i", $warehouse_id);
-    $stmtP->execute();
-    $resultP = $stmtP->get_result();
+    if (!$stmtP_Stored) throw new Exception("Failed to prepare stored pallets query: " . $conn->error);
+    $stmtP_Stored->bind_param("i", $warehouse_id);
+    $stmtP_Stored->execute();
+    $resultP_Stored = $stmtP_Stored->get_result();
     
     $today = new DateTime(); // For cost calculation
     $daily_storage_rate = ($warehouse['monthly_storage_fee'] ?? 0) / 30;
     $total_pallets = 0;
 
-    while ($pallet = $resultP->fetch_assoc()) {
+    while ($pallet = $resultP_Stored->fetch_assoc()) {
         $pallets_in_storage[] = $pallet;
         $total_pallets++;
         // Calculate storage cost for this pallet since arrival
@@ -84,9 +85,37 @@ try {
             }
         }
     }
-    $stmtP->close();
+    $stmtP_Stored->close();
     
-    // Simple monthly rate calculation based on current pallet count
+    // Fetch Pallets in transit TO this warehouse
+    $stmtP_Transit = $conn->prepare("
+        SELECT 
+            ip.id AS pallet_id,
+            ip.pallet_identifier,
+            ip.wattage,
+            ip.quantity,
+            m.vendor_name AS origin_vendor,
+            d.bol_number AS delivery_bol,
+            d.anticipated_delivery_date AS est_arrival_date,
+            d.id AS delivery_id 
+        FROM inventory_pallets ip
+        JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+        JOIN deliveries d ON dp.delivery_id = d.id
+        LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+        LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE ip.status = 'In Transit to Warehouse' AND d.warehouse_id = ?
+        ORDER BY d.anticipated_delivery_date ASC, ip.id DESC
+    ");
+    if (!$stmtP_Transit) throw new Exception("Failed to prepare transit pallets query: " . $conn->error);
+    $stmtP_Transit->bind_param("i", $warehouse_id);
+    $stmtP_Transit->execute();
+    $resultP_Transit = $stmtP_Transit->get_result();
+    while ($pallet = $resultP_Transit->fetch_assoc()) {
+        $pallets_in_transit[] = $pallet;
+    }
+    $stmtP_Transit->close();
+    
+    // Simple monthly rate calculation based on stored pallet count
     $total_storage_cost_monthly_rate = $total_pallets * ($warehouse['monthly_storage_fee'] ?? 0);
 
     // Fetch all projects for the destination dropdown
@@ -268,7 +297,66 @@ $conn->close();
             padding: 0;
             margin-top: 0;
         }
-
+        .action-button.active {
+            background-color: #293E4C; /* Darker blue for active toggle */
+            font-weight: bold;
+        }
+        .inventory-section { /* Class for sections to toggle */
+           display: none; /* Hide sections by default */
+           margin-top: 50px;
+        }
+        .inventory-section.active { /* Class for the visible section */
+           display: block;
+        }
+        /* Styles for new tabs and button layout */
+        .table-controls-header {
+            display: flex;
+            justify-content: space-between; /* Pushes move button to the right */
+            align-items: center;
+            margin-bottom: 20px; /* Space before the tables */
+        }
+        .tabs {
+            display: flex;
+            justify-content: center; /* Center the tab buttons */
+            gap: 1px;
+            flex-grow: 1; /* Allow tabs to take available space for centering */
+        }
+        .tabs button {
+            flex: 1; /* Distribute space if you want them to grow */
+            min-width: 0;
+            white-space: nowrap;
+            background: #293E4C; /* var(--primary-blue) equivalent */
+            color: #fff;
+            padding: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            border: none;
+            font-size: 1em;
+            max-width: 200px; /* As per your style */
+        }
+        .tabs button.active {
+            background: #f39c12; /* var(--accent-orange) - assuming an orange color */
+            color: #000;
+        }
+        .page-actions {
+            /* No specific changes needed if button is already styled, 
+               but ensure it doesn't have conflicting margins pushing it down */
+            margin-bottom: 0; 
+            text-align: right; /* Keep this if only one button */
+        }
+        /* Ensure action-button class for Move Pallets doesn't override tab styles if they were the same */
+        #movePalletsBtn {
+            padding: 10px 20px;
+            background-color: #488C9A;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #movePalletsBtn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -312,96 +400,158 @@ $conn->close();
             <!-- Add more cost details here if calculated (e.g., total accrued cost) -->
         </div>
         
-        <!-- Move Pallets Button -->
-        <div class="page-actions">
-            <button id="movePalletsBtn" class="action-button" disabled>Move Selected Pallets</button>
-        </div>
-
-        <!-- Pallet Inventory Table (wrapped in a form for submission) -->
-        <h2>Pallet Inventory (Status: In Warehouse)</h2>
-        <form id="palletInventoryForm" method="POST" action="handle_pallet_move.php"> <!-- Action points to a new handler script -->
-            <input type="hidden" name="current_warehouse_id" value="<?php echo $warehouse_id; ?>">
-            <input type="hidden" name="action" value="move_pallets">
-            
-            <div class="table-responsive">
-                <table>
-                    <thead>
-                        <tr>
-                            <th><input type="checkbox" id="select-all-pallets" onclick="toggleAllPalletCheckboxes(this.checked)"></th>
-                            <th>Pallet ID</th>
-                            <th>Identifier</th>
-                            <th>Origin Vendor</th>
-                            <th>Wattage</th>
-                            <th>Quantity</th>
-                            <th>Arrival Date</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if (!empty($pallets_in_storage)): ?>
-                            <?php foreach ($pallets_in_storage as $pallet): ?>
-                                <tr>
-                                    <td><input type="checkbox" name="selected_pallets[]" value="<?php echo $pallet['pallet_id']; ?>" class="pallet-checkbox" onclick="updateMoveButtonState()"></td>
-                                    <td><?php echo $pallet['pallet_id']; ?></td>
-                                    <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
-                                    <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
-                                    <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
-                                    <td><?php echo number_format($pallet['quantity']); ?></td>
-                                    <td><?php echo htmlspecialchars($pallet['arrival_date'] ?? 'N/A'); ?></td>
-                                </tr>
-                            <?php endforeach; ?>
-                        <?php else: ?>
-                            <tr>
-                                <td colspan="7">No pallets currently stored in this warehouse.</td> <!-- Updated colspan -->
-                            </tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Hidden Move Pallet Form Container -->
-            <div id="movePalletFormContainer" style="display: none;">
-                <h3>Create Transfer Delivery</h3>
-                <div class="form-row">
-                    <div>
-                        <label for="bol_number">BOL Number (Optional):</label>
-                        <input type="text" id="bol_number" name="bol_number">
-                    </div>
+        <!-- Stored Inventory Section -->
+        <div id="storedInventorySection" class="inventory-section active">
+            <h2>Pallet Inventory (Status: In Warehouse)</h2>
+            <div class="table-controls-header">
+                <div class="inventory-toggle-buttons tabs">
+                    <button id="toggleStoredBtn" class="action-button active" onclick="showInventoryView('stored')">Stored Inventory</button>
+                    <button id="toggleTransitBtn" class="action-button" onclick="showInventoryView('transit')">Inbound Transit</button>
                 </div>
-                <div class="form-row">
-                    <div>
-                        <label for="departure_date">Departure Date:</label>
-                        <input type="date" id="departure_date" name="departure_date" required>
+                <div class="page-actions">
+                    <button id="movePalletsBtn" class="action-button" disabled>Move Selected Pallets</button>
+                </div>
+            </div>
+            <form id="palletInventoryForm" method="POST" action="handle_pallet_move.php">
+                <input type="hidden" name="current_warehouse_id" value="<?php echo $warehouse_id; ?>">
+                <input type="hidden" name="action" value="move_pallets">
+                
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="select-all-pallets" onclick="toggleAllPalletCheckboxes(this.checked)"></th>
+                                <th>Pallet ID</th>
+                                <th>Identifier</th>
+                                <th>Origin Vendor</th>
+                                <th>Wattage</th>
+                                <th>Quantity</th>
+                                <th>Arrival Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($pallets_in_storage)): ?>
+                                <?php foreach ($pallets_in_storage as $pallet): ?>
+                                    <tr>
+                                        <td><input type="checkbox" name="selected_pallets[]" value="<?php echo $pallet['pallet_id']; ?>" class="pallet-checkbox" onclick="updateMoveButtonState()"></td>
+                                        <td><?php echo $pallet['pallet_id']; ?></td>
+                                        <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
+                                        <td><?php echo number_format($pallet['quantity']); ?></td>
+                                        <td><?php echo htmlspecialchars($pallet['arrival_date'] ?? 'N/A'); ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr>
+                                    <td colspan="7">No pallets currently stored in this warehouse.</td>
+                                </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Hidden Move Pallet Form Container -->
+                <div id="movePalletFormContainer" style="display: none;">
+                    <h3>Create Transfer Delivery</h3>
+                    <div class="form-row">
+                        <div>
+                            <label for="bol_number">BOL Number (Optional):</label>
+                            <input type="text" id="bol_number" name="bol_number">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="departure_date">Departure Date:</label>
+                            <input type="date" id="departure_date" name="departure_date" required>
+                        </div>
+                         <div>
+                            <label for="est_arrival_date">Est. Arrival Date:</label>
+                            <input type="date" id="est_arrival_date" name="est_arrival_date" required>
+                        </div>
                     </div>
                      <div>
-                        <label for="est_arrival_date">Est. Arrival Date (Optional):</label>
-                        <input type="date" id="est_arrival_date" name="est_arrival_date">
+                        <label style="margin-bottom: 10px; display:block;">Destination:</label>
+                        <label class="radio-label">
+                            <input type="radio" name="destination_type" value="project" checked onchange="toggleDestinationSelect()"> Project
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="destination_type" value="warehouse" onchange="toggleDestinationSelect()"> Another Warehouse
+                        </label>
+                    </div>
+                     <div id="destinationSelectContainer">
+                        <label for="destination_id" id="destinationLabel">Project:</label>
+                        <select name="destination_id" id="destination_id" required>
+                            <!-- Options loaded by JS -->
+                        </select>
+                    </div>
+                    
+                    <div style="margin-top: 20px;">
+                        <button type="button" id="submitMoveBtn" class="action-button">Create Transfer Delivery</button>
                     </div>
                 </div>
-                 <div>
-                    <label style="margin-bottom: 10px; display:block;">Destination:</label>
-                    <label class="radio-label">
-                        <input type="radio" name="destination_type" value="project" checked onchange="toggleDestinationSelect()"> Project
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="destination_type" value="warehouse" onchange="toggleDestinationSelect()"> Another Warehouse
-                    </label>
+            </form>
+        </div> <!-- End storedInventorySection -->
+
+        <!-- Inbound Transit Section -->
+        <div id="transitInventorySection" class="inventory-section">
+             <h2>Pallet Inventory (Status: In Transit to Warehouse)</h2>
+             <div class="table-controls-header">
+                <div class="inventory-toggle-buttons tabs">
+                    <button id="toggleStoredBtnTransit" class="action-button" onclick="showInventoryView('stored')">Stored Inventory</button>
+                    <button id="toggleTransitBtnTransit" class="action-button active" onclick="showInventoryView('transit')">Inbound Transit</button>
                 </div>
-                 <div id="destinationSelectContainer">
-                    <label for="destination_id" id="destinationLabel">Project:</label>
-                    <select name="destination_id" id="destination_id" required>
-                        <!-- Options loaded by JS -->
-                    </select>
-                </div>
-                
-                <div style="margin-top: 20px;">
-                    <button type="button" id="submitMoveBtn" class="action-button">Create Transfer Delivery</button>
-                </div>
-            </div>
-            
-        </form> <!-- End palletInventoryForm -->
+             </div>
+             <div class="table-responsive">
+                <form id="receivePalletsForm" method="POST" action="handle_pallet_arrival.php"> 
+                    <input type="hidden" name="warehouse_id" value="<?php echo $warehouse_id; ?>">
+                    <input type="hidden" name="action" value="receive_pallets">
+                    <table>
+                        <thead>
+                            <tr>
+                                <!-- Optional: Add checkbox for bulk receive? -->
+                                <th>Pallet ID</th>
+                                <th>Identifier</th>
+                                <th>Origin Vendor</th>
+                                <th>Wattage</th>
+                                <th>Quantity</th>
+                                <th>Delivery BOL</th>
+                                <th>Est. Arrival Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($pallets_in_transit)): ?>
+                                <?php foreach ($pallets_in_transit as $pallet): ?>
+                                    <tr>
+                                        <td><?php echo $pallet['pallet_id']; ?></td>
+                                        <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
+                                        <td><?php echo number_format($pallet['quantity']); ?></td>
+                                        <td><?php echo htmlspecialchars($pallet['delivery_bol'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($pallet['est_arrival_date'] ?? 'N/A'); ?></td>
+                                        <td>
+                                            <!-- Simple form per pallet for receiving -->
+                                            <button type="submit" name="receive_pallet_id" value="<?php echo $pallet['pallet_id']; ?>" class="action-button" style="background-color: #28a745;">Receive</button>
+                                            <!-- Pass delivery ID if needed by handler -->
+                                            <input type="hidden" name="delivery_id_<?php echo $pallet['pallet_id']; ?>" value="<?php echo $pallet['delivery_id']; ?>">
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr>
+                                    <td colspan="8">No pallets currently in transit to this warehouse.</td>
+                                </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                 </form> 
+             </div>
+        </div> <!-- End transitInventorySection -->
 
         <div class="back-link" style="margin-top: 20px;">
-            <a href="manage_warehouses.php" class="action-button">&larr; Back to Warehouses List</a>
+            <a href="manage_warehouses.php" class="action-buttons">&larr; Back to Warehouses List</a>
         </div>
     <?php endif; ?>
 </main>
@@ -590,10 +740,45 @@ function toggleDestinationSelect() {
     }
 }
 
+// --- Add JS for Inventory View Toggle --- 
+function showInventoryView(viewType) {
+    console.log(`showInventoryView called with type: ${viewType}`);
+    // Hide all sections
+    document.getElementById('storedInventorySection').classList.remove('active');
+    document.getElementById('transitInventorySection').classList.remove('active');
+    // Deactivate all toggle buttons
+    document.getElementById('toggleStoredBtn').classList.remove('active');
+    document.getElementById('toggleTransitBtn').classList.remove('active');
+    // Also handle the new buttons for the transit view
+    if(document.getElementById('toggleStoredBtnTransit')) {
+        document.getElementById('toggleStoredBtnTransit').classList.remove('active');
+    }
+    if(document.getElementById('toggleTransitBtnTransit')) {
+        document.getElementById('toggleTransitBtnTransit').classList.remove('active');
+    }
+
+    // Show the selected section and activate its button(s)
+    if (viewType === 'stored') {
+        document.getElementById('storedInventorySection').classList.add('active');
+        document.getElementById('toggleStoredBtn').classList.add('active');
+        if(document.getElementById('toggleStoredBtnTransit')) { // Keep transit view tabs in sync
+            document.getElementById('toggleStoredBtnTransit').classList.add('active');
+        }
+        console.log("Showing Stored Inventory");
+    } else if (viewType === 'transit') {
+        document.getElementById('transitInventorySection').classList.add('active');
+        document.getElementById('toggleTransitBtn').classList.add('active');
+        if(document.getElementById('toggleTransitBtnTransit')) { // Keep transit view tabs in sync
+            document.getElementById('toggleTransitBtnTransit').classList.add('active');
+        }
+        console.log("Showing Transit Inventory");
+    }
+}
+
 // Initial setup on page load
 document.addEventListener('DOMContentLoaded', function() {
     updateMoveButtonState(); // Set initial button state
-    // Ensure form is hidden initially (it has style="display: none" in HTML)
+    showInventoryView('stored'); // Show stored inventory by default
 });
 
 </script>

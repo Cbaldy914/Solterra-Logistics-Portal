@@ -55,6 +55,11 @@ if (empty($departure_date)) {
     header("Location: " . $redirect_url);
     exit();
 }
+if (empty($est_arrival_date)) {
+    $_SESSION['move_pallet_message'] = "Error: Estimated arrival date is required.";
+    header("Location: " . $redirect_url);
+    exit();
+}
 
 // Convert selected pallet IDs to integers
 $palletIds = array_map('intval', $selected_pallets);
@@ -107,51 +112,93 @@ try {
         throw new Exception("No valid pallets to move after verification.");
     }
 
-    // 3. Prepare statements for Insert/Update
-    $sqlDeliveryInsert = "";
-    $bindTypesDelivery = "";
-    $paramsDeliveryBase = [];
+    // 3. DETERMINE TARGET STATUS AND LOCATIONS BASED ON DESTINATION AND DATES
+    $today_date = date('Y-m-d');
+    $is_same_day_warehouse_arrival = ($destination_type === 'warehouse' && $est_arrival_date === $today_date);
+
+    $new_pallet_status = '';
+    $target_warehouse_id = null;
+    $target_project_id = null;
+    $delivery_status = '';
+    $add_arrival_date_to_delivery = false;
+    $arrival_date_for_delivery = null;
 
     if ($destination_type === 'project') {
-        $sqlDeliveryInsert = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, left_warehouse_date, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Project')";
-        $bindTypesDelivery = "issssss"; // project_id, supplier, wattage, quantity, bol, left_date, arrival_date
-        $paramsDeliveryBase = [$destination_id, $origin_warehouse_name];
-    } else { // Moving to another warehouse
-        $sqlDeliveryInsert = "INSERT INTO deliveries (warehouse_id, supplier, wattage, quantity, bol_number, left_warehouse_date, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse')";
-        $bindTypesDelivery = "issssss"; // warehouse_id, supplier, wattage, quantity, bol, left_date, arrival_date
-        $paramsDeliveryBase = [$destination_id, $origin_warehouse_name];
+        $new_pallet_status = 'In Transit to Project';
+        $target_warehouse_id = null; 
+        $target_project_id = $destination_id;
+        $delivery_status = 'In Transit to Project';
+    } else { // Destination is warehouse
+        if ($is_same_day_warehouse_arrival) {
+            $new_pallet_status = 'In Warehouse';
+            $target_warehouse_id = $destination_id;
+            $target_project_id = null;
+            $delivery_status = 'Delivered'; 
+            $add_arrival_date_to_delivery = true;
+            $arrival_date_for_delivery = date('Y-m-d H:i:s'); // Use current datetime for immediate arrival
+        } else {
+            $new_pallet_status = 'In Transit to Warehouse';
+            $target_warehouse_id = null; // Not yet at the destination warehouse
+            $target_project_id = null;
+            $delivery_status = 'In Transit to Warehouse';
+        }
     }
-    $stmtDelivery = $conn->prepare($sqlDeliveryInsert);
-    if (!$stmtDelivery) throw new Exception("Failed to prepare delivery insert: " . $conn->error);
 
+    // 4. Prepare Statements (Dynamically build INSERT based on destination)
     $stmtLink = $conn->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
     if (!$stmtLink) throw new Exception("Failed to prepare pallet link insert: " . $conn->error);
-
-    $newStatus = ($destination_type === 'project') ? 'In Transit to Project' : 'In Transit to Warehouse';
-    $updateProjectId = ($destination_type === 'project') ? $destination_id : null;
-    $updateWarehouseId = null; // Pallets are leaving the current warehouse
 
     $sqlPalletUpdate = "UPDATE inventory_pallets SET status = ?, current_warehouse_id = ?, current_project_id = ? WHERE id = ?";
     $stmtPalletUpdate = $conn->prepare($sqlPalletUpdate);
     if (!$stmtPalletUpdate) throw new Exception("Failed to prepare pallet update: " . $conn->error);
 
-    // 4. Loop through wattage groups, create delivery, link/update pallets
+    // 5. Loop through wattage groups, create delivery, link/update pallets
     $createdDeliveryIds = [];
     foreach ($palletsByWattage as $wattage => $group) {
         $groupQty = $group['quantity'];
         $groupPalletIds = $group['ids'];
 
-        // Execute Delivery Insert
-        $paramsDelivery = array_merge($paramsDeliveryBase, [$wattage, $groupQty, $bol_number, $departure_date, $est_arrival_date]);
-        $stmtDelivery->bind_param($bindTypesDelivery, ...$paramsDelivery);
-        if (!$stmtDelivery->execute()) throw new Exception("Failed to execute delivery insert for {$wattage}W: " . $stmtDelivery->error);
+        // --- Dynamically build INSERT for deliveries for *this group* ---
+        $deliveryColumns = ["supplier", "wattage", "quantity", "bol_number", "left_warehouse_date", "anticipated_delivery_date", "status_of_delivery"];
+        $deliveryParams = [$origin_warehouse_name, $wattage, $groupQty, $bol_number, $departure_date, $est_arrival_date, $delivery_status];
+        $deliveryTypes = "ssissss"; // Initial types
+
+        if ($destination_type === 'project') {
+            $deliveryColumns[] = "project_id";
+            $deliveryParams[] = $destination_id;
+            $deliveryTypes .= "i";
+        } else { // Destination is warehouse
+            $deliveryColumns[] = "warehouse_id";
+            $deliveryParams[] = $destination_id;
+            $deliveryTypes .= "i";
+            if ($add_arrival_date_to_delivery) {
+                $deliveryColumns[] = "warehouse_arrival_date";
+                $deliveryParams[] = $arrival_date_for_delivery;
+                $deliveryTypes .= "s";
+            }
+        }
+
+        $sqlPlaceholders = implode(", ", array_fill(0, count($deliveryParams), "?"));
+        $sqlDeliveryInsert = "INSERT INTO deliveries (" . implode(", ", $deliveryColumns) . ") VALUES (" . $sqlPlaceholders . ")";
+        
+        // Prepare and execute Delivery Insert for this group
+        $stmtDelivery = $conn->prepare($sqlDeliveryInsert);
+        if (!$stmtDelivery) throw new Exception("Failed to prepare delivery insert for group: " . $conn->error);
+        
+        $stmtDelivery->bind_param($deliveryTypes, ...$deliveryParams);
+        if (!$stmtDelivery->execute()) {
+             error_log("Delivery Insert Error: " . $stmtDelivery->error . " SQL: " . $sqlDeliveryInsert . " Params: " . json_encode($deliveryParams));
+            throw new Exception("Failed to execute delivery insert for {$wattage}W: " . $stmtDelivery->error);
+        }
         $deliveryId = $conn->insert_id;
         $createdDeliveryIds[] = $deliveryId;
+        $stmtDelivery->close(); // Close statement after use in loop
+        // --- End of dynamic INSERT build --- 
 
         // Link and Update Pallets in this group
         foreach ($groupPalletIds as $pid) {
-            // Update Pallet Status/Location
-            $stmtPalletUpdate->bind_param("siii", $newStatus, $updateWarehouseId, $updateProjectId, $pid);
+            // Update Pallet Status/Location using pre-determined variables
+            $stmtPalletUpdate->bind_param("siii", $new_pallet_status, $target_warehouse_id, $target_project_id, $pid);
             if (!$stmtPalletUpdate->execute()) throw new Exception("Failed to update pallet ID {$pid}: " . $stmtPalletUpdate->error);
             
             // Link Pallet to new Delivery
@@ -160,19 +207,18 @@ try {
         }
     }
 
-    // 5. Commit Transaction
+    // 6. Commit Transaction
     $conn->commit();
     $_SESSION['move_pallet_message'] = "Successfully created transfer delivery (IDs: " . implode(", ", $createdDeliveryIds) . ") for " . count($fetchedPalletIds) . " pallets.";
 
-    // Close statements
-    $stmtDelivery->close();
+    // Close remaining statements
     $stmtLink->close();
     $stmtPalletUpdate->close();
 
 } catch (Exception $e) {
     $conn->rollback();
     // Close statements if they were prepared before error
-    if (isset($stmtDelivery) && $stmtDelivery) $stmtDelivery->close();
+    // Note: $stmtDelivery is closed inside the loop now
     if (isset($stmtLink) && $stmtLink) $stmtLink->close();
     if (isset($stmtPalletUpdate) && $stmtPalletUpdate) $stmtPalletUpdate->close();
     

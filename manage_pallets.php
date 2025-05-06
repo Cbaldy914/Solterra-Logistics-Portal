@@ -12,10 +12,11 @@ require_once '../config.php';
 $conn = getDBConnection();
 
 $pallets = [];
+$projects = [];
 $errorMessage = '';
 
 try {
-    // Comprehensive query to fetch pallet details and their current location name
+    // Comprehensive query to fetch pallet details, their current location name, and delivery association count
     $sql = "SELECT 
                 ip.id AS pallet_id,
                 ip.pallet_identifier,
@@ -29,20 +30,21 @@ try {
                 m.vendor_name AS origin_vendor,
                 w.name AS current_warehouse_name,
                 p.project_name AS current_project_name,
+                (SELECT COUNT(*) FROM delivery_pallets dp WHERE dp.inventory_pallet_id = ip.id) AS delivery_association_count,
                 CASE
                     WHEN ip.status = 'At Manufacturer' THEN 'At Manufacturer'
                     WHEN ip.status = 'In Warehouse' AND w.name IS NOT NULL THEN CONCAT('Warehouse: ', w.name)
-                    WHEN ip.status = 'In Transit to Warehouse' AND w.name IS NOT NULL THEN CONCAT('In Transit to Warehouse: ', w.name) /* Assuming pallets move FROM a location TO a warehouse */
+                    WHEN ip.status = 'In Transit to Warehouse' AND w.name IS NOT NULL THEN CONCAT('In Transit to Warehouse: ', w.name)
                     WHEN ip.status = 'Delivered to Project' AND p.project_name IS NOT NULL THEN CONCAT('Project: ', p.project_name)
                     WHEN ip.status = 'In Transit to Project' AND p.project_name IS NOT NULL THEN CONCAT('In Transit to Project: ', p.project_name)
-                    ELSE ip.status /* Fallback to status if location name isn't available or status is different */
+                    ELSE ip.status
                 END AS current_location_display
             FROM inventory_pallets ip
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
             LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
             LEFT JOIN projects p ON ip.current_project_id = p.id
-            ORDER BY ip.id DESC"; // Order by most recent pallets first
+            ORDER BY ip.id DESC";
             
     $result = $conn->query($sql);
 
@@ -52,6 +54,15 @@ try {
         }
     } else {
         throw new Exception("Error fetching pallets: " . $conn->error);
+    }
+
+    // Fetch all projects for filter dropdown
+    $sqlProjects = "SELECT id, project_name FROM projects ORDER BY project_name ASC";
+    $resultProjects = $conn->query($sqlProjects);
+    if ($resultProjects) {
+        while ($row = $resultProjects->fetch_assoc()) {
+            $projects[] = $row;
+        }
     }
 
 } catch (Exception $e) {
@@ -96,6 +107,22 @@ $conn->close();
             border-radius: 5px;
             margin-bottom: 20px;
         }
+        .action-button { /* Ensure action-button style is available if not in portal.css */
+            background-color: #488C9A;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 5px;
+            padding: 5px 10px;
+            margin: 2px;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            font-size: 0.9em;
+            display: inline-block;
+        }
+        .action-button:hover {
+            background-color: #3A6E7F;
+        }
     </style>
 </head>
 <body>
@@ -109,17 +136,24 @@ $conn->close();
         </div>
     <?php endif; ?>
 
-    <!-- Add Filters/Search Here -->
     <div class="filter-container">
         <label for="filterInput">Search:</label>
-        <input type="text" id="filterInput" onkeyup="filterTable()" placeholder="Filter by ID, Vendor, Project, Wattage, Status, Location...">
-        <!-- Add more specific filters if needed (e.g., dropdown for status) -->
+        <input type="text" id="filterInput" onkeyup="filterTable()" placeholder="Filter by ID, Vendor, Wattage, Status, Location...">
+        <label for="projectFilter">Project:</label>
+        <select id="projectFilter" onchange="filterTable()">
+            <option value="">All Projects</option>
+            <option value="Unassigned">Unassigned</option>
+            <?php foreach ($projects as $proj): ?>
+                <option value="<?php echo htmlspecialchars($proj['project_name']); ?>"><?php echo htmlspecialchars($proj['project_name']); ?></option>
+            <?php endforeach; ?>
+        </select>
     </div>
 
     <div class="table-responsive">
         <table id="palletsTable">
             <thead>
                 <tr>
+                    <th>Project</th>
                     <th>Pallet ID</th>
                     <th>Identifier</th>
                     <th>Origin Vendor</th>
@@ -127,15 +161,16 @@ $conn->close();
                     <th>Quantity</th>
                     <th>Status</th>
                     <th>Current Location</th>
-                    <th>Project</th>
+                    <th>Associated Deliveries</th>
                     <th>Arrival Date</th>
-                    <!-- Add Actions column if needed (e.g., View History) -->
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if (!empty($pallets)): ?>
                     <?php foreach ($pallets as $pallet): ?>
                         <tr>
+                            <td><?php echo htmlspecialchars($pallet['current_project_name'] ?? 'Unassigned'); ?></td>
                             <td><?php echo $pallet['pallet_id']; ?></td>
                             <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                             <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
@@ -143,17 +178,14 @@ $conn->close();
                             <td><?php echo number_format($pallet['quantity']); ?></td>
                             <td><?php echo htmlspecialchars($pallet['status']); ?></td>
                             <td><?php echo htmlspecialchars($pallet['current_location_display']); ?></td>
-                            <td>
-                                <?php echo htmlspecialchars($pallet['current_project_name'] ?? 'Unassigned'); ?>
-                            </td>
+                            <td><?php echo $pallet['delivery_association_count']; ?></td>
                             <td><?php echo htmlspecialchars($pallet['arrival_date'] ?? 'N/A'); ?></td>
-                            <!-- Actions Placeholder -->
-                            <!-- <td><a href="pallet_history.php?pallet_id=<?php echo $pallet['pallet_id']; ?>">View History</a></td> -->
+                            <td><a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button">View Details</a></td>
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="9">No pallets found in the system.</td>
+                        <td colspan="11">No pallets found in the system.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>
@@ -166,27 +198,44 @@ $conn->close();
 </main>
 
 <script>
-// Simple table text filter
+// Combined filter for project and general search
 function filterTable() {
-    var input, filter, table, tr, td, i, j, txtValue;
-    input = document.getElementById("filterInput");
-    filter = input.value.toUpperCase();
-    table = document.getElementById("palletsTable");
-    tr = table.getElementsByTagName("tr");
+    var input = document.getElementById("filterInput").value.toUpperCase();
+    var projectFilterValue = document.getElementById("projectFilter").value;
+    var table = document.getElementById("palletsTable");
+    var tr = table.getElementsByTagName("tr");
 
-    // Loop through all table rows (start from 1 to skip header)
-    for (i = 1; i < tr.length; i++) {
+    for (var i = 1; i < tr.length; i++) { // Start from 1 to skip header row
         tr[i].style.display = "none"; // Hide row initially
-        td = tr[i].getElementsByTagName("td");
-        // Loop through all columns in the current row
-        for (j = 0; j < td.length; j++) { 
-            if (td[j]) {
-                txtValue = td[j].textContent || td[j].innerText;
-                if (txtValue.toUpperCase().indexOf(filter) > -1) {
-                    tr[i].style.display = ""; // Show row if match found
-                    break; // No need to check other columns in this row
+        var td = tr[i].getElementsByTagName("td");
+        var projectCellText = td[0] ? td[0].textContent || td[0].innerText : "";
+
+        var matchesProject = false;
+        if (projectFilterValue === "") { // "All Projects"
+            matchesProject = true;
+        } else if (projectFilterValue === "Unassigned") {
+            matchesProject = projectCellText === "Unassigned";
+        } else {
+            matchesProject = projectCellText === projectFilterValue;
+        }
+
+        var matchesSearch = false;
+        if (input === "") {
+            matchesSearch = true; // If search is empty, it's a match for the search part
+        } else {
+            for (var j = 0; j < td.length; j++) { // Iterate over all cells for general search
+                if (td[j]) {
+                    var txtValue = td[j].textContent || td[j].innerText;
+                    if (txtValue.toUpperCase().indexOf(input) > -1) {
+                        matchesSearch = true;
+                        break; 
+                    }
                 }
             }
+        }
+
+        if (matchesProject && matchesSearch) {
+            tr[i].style.display = "";
         }
     }
 }
