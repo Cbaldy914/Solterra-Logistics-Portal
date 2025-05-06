@@ -100,11 +100,12 @@ if (isset($_SESSION['role'])) {
                     </div>
                 </li>
                 <li class="dropdown">
-                    <a href="accounting" class="dropbtn">Accounting</a>
+                    <a href="#" class="dropbtn">Accounting</a>
                     <div class="dropdown-content">
-                        <a href="add_invoice">Add Invoice</a>
+                        <a href="accounting_overview">Accounting Overview</a>
+                        <a href="add_invoice">Invoices</a>
                         <a href="generate_invoice">Generate Invoice</a>
-                        <a href="accounts_payable">Accounts Payable</a>
+                        <a href="accounts_payable">Generate Payables</a>
                         <a href="total_payables">Total Payables</a>
                     </div>
                 </li>

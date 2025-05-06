@@ -22,6 +22,9 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// OPTIONAL constant: cost per canceled truck
+define('CANCELED_TRUCK_COST', 250.0);
+
 $errorMessage   = "";
 $successMessage = "";
 
@@ -33,7 +36,7 @@ if (!is_array($selectedRows)) {
     $selectedRows = [];
 }
 
-// Fetch project data (for solterra_fee, project_name)
+// Fetch project data
 $project_name = "";
 $solterra_fee = 0.0;
 if ($project_id > 0) {
@@ -45,31 +48,45 @@ if ($project_id > 0) {
     $stmt->close();
 }
 
-// Fetch selected deliveries
-$deliveries = [];
+// Fetch the selected deliveries
+$allDeliveries = [];
 if (!empty($selectedRows)) {
-    $placeholders = rtrim(str_repeat('?,', count($selectedRows)), ',');
-    $paramTypes   = str_repeat('i', count($selectedRows));
-    $sql_del      = "SELECT * FROM deliveries WHERE id IN ($placeholders)";
-
-    $stmtDel = $conn->prepare($sql_del);
-    $stmtDel->bind_param($paramTypes, ...$selectedRows);
+    $ph = rtrim(str_repeat('?,', count($selectedRows)), ',');
+    $pt = str_repeat('i', count($selectedRows));
+    $sql = "SELECT * FROM deliveries WHERE id IN ($ph)";
+    $stmtDel = $conn->prepare($sql);
+    $stmtDel->bind_param($pt, ...$selectedRows);
     $stmtDel->execute();
-    $resultDel = $stmtDel->get_result();
-    while ($row = $resultDel->fetch_assoc()) {
-        $deliveries[] = $row;
+    $resDel = $stmtDel->get_result();
+    while ($row = $resDel->fetch_assoc()) {
+        $allDeliveries[] = $row;
     }
     $stmtDel->close();
 }
 
-// =========================
-// 1) Compute truckloads & MW
-// =========================
+// Separate normal vs canceled
+$normalDeliveries   = [];
+$canceledDeliveries = [];
+foreach ($allDeliveries as $d) {
+    $status = trim($d['status_of_delivery'] ?? '');
+    if (strcasecmp($status, 'canceled') === 0) {
+        $canceledDeliveries[] = $d;
+    } else {
+        $normalDeliveries[] = $d;
+    }
+}
+
+// Summaries for top line in invoice_info.php page:
+$countAll    = count($allDeliveries);
+$countCancel = count($canceledDeliveries);
+$countNormal = count($normalDeliveries);
+
+// Distinct BOL & MW only for normal deliveries
 $distinctBOLs = [];
 $totalWatts   = 0.0;
-foreach ($deliveries as $d) {
+foreach ($normalDeliveries as $d) {
     $bol = trim($d['bol_number'] ?? '');
-    if (!in_array($bol, $distinctBOLs, true) && $bol !== '') {
+    if ($bol !== '' && !in_array($bol, $distinctBOLs, true)) {
         $distinctBOLs[] = $bol;
     }
     $w = floatval($d['wattage'] ?? 0);
@@ -77,8 +94,7 @@ foreach ($deliveries as $d) {
     $totalWatts += ($w * $q);
 }
 $truckloads = count($distinctBOLs);
-// Convert total watts => MW
-$totalMW = $totalWatts / 1000000;
+$totalMW    = $totalWatts / 1_000_000;
 
 // Editable fields
 $invoice_number      = trim($_POST['invoice_number']       ?? '');
@@ -92,26 +108,22 @@ $notes               = trim($_POST['notes']                ?? '');
 
 $invoiceId = null;
 
-// =============================
-// (A) SAVE INVOICE TO DATABASE
-// =============================
+/* =============================================
+   (A) SAVE INVOICE (DB insert)
+   ============================================= */
 if (isset($_POST['save_invoice'])) {
-
-    // Must have selected deliveries + invoice #
     if (empty($selectedRows) || empty($invoice_number)) {
         $errorMessage = "Please provide an invoice number and select at least one delivery.";
     } else {
-        // Upload approach from add_invoice.php
+        // Optional file upload
         $upload_dir = 'uploads/invoices/';
         if (!is_dir($upload_dir)) {
             mkdir($upload_dir, 0777, true);
         }
 
-        // Check if file was uploaded
         if (isset($_FILES['invoice_file']) && $_FILES['invoice_file']['error'] === UPLOAD_ERR_OK) {
             $invoice_name = basename($_FILES['invoice_file']['name']);
             $invoice_path = $upload_dir . time() . '_' . $invoice_name;
-
             if (!move_uploaded_file($_FILES['invoice_file']['tmp_name'], $invoice_path)) {
                 $errorMessage = "Failed to upload the invoice file.";
             }
@@ -119,21 +131,18 @@ if (isset($_POST['save_invoice'])) {
             $errorMessage = "No file uploaded or there was an upload error.";
         }
 
-        // If no error, proceed with DB insert
         if (empty($errorMessage)) {
             $invoice_file = $invoice_path;
-
-            // Default date => today if none specified
+            // Default date => today
             $issued_date = (!empty($invoice_issued_date)) ? $invoice_issued_date : date('Y-m-d');
             $due_date    = $invoice_due_date;
             $status      = 'Open';
 
-            // Calculate finalAmount
+            // 1) Calculate from normal deliveries
             $totalFreight     = 0.0;
             $totalAccessorial = 0.0;
             $totalSolterraFee = 0.0;
-
-            foreach ($deliveries as $d) {
+            foreach ($normalDeliveries as $d) {
                 $f  = floatval($d['freight_cost'] ?? 0);
                 $a  = floatval($d['accessorial_costs'] ?? 0);
                 $q  = floatval($d['quantity'] ?? 0);
@@ -145,11 +154,21 @@ if (isset($_POST['save_invoice'])) {
                 $totalSolterraFee += $sf;
             }
 
-            $combined    = $totalFreight + $totalAccessorial + $totalSolterraFee;
-            $finalAmount = $combined - $deposit_credit;
-            if ($finalAmount < 0) {
-                $finalAmount = 0.0;
+            // 2) Also add the cancellations cost (CANCELED_TRUCK_COST * # canceled truckloads)
+            // We'll count distinct BOL for cancellations
+            $distinctCanceledBOLs = [];
+            foreach ($canceledDeliveries as $cd) {
+                $bolC = trim($cd['bol_number'] ?? '');
+                if ($bolC !== '' && !in_array($bolC, $distinctCanceledBOLs, true)) {
+                    $distinctCanceledBOLs[] = $bolC;
+                }
             }
+            $numCanceledTrucks = count($distinctCanceledBOLs);
+            $canceledCostTotal = CANCELED_TRUCK_COST * $numCanceledTrucks;
+
+            $combined    = $totalFreight + $totalAccessorial + $totalSolterraFee + $canceledCostTotal;
+            $finalAmount = $combined - $deposit_credit;
+            if ($finalAmount < 0) $finalAmount = 0.0;
 
             // Insert into project_invoices
             $sqlPi = "
@@ -183,18 +202,14 @@ if (isset($_POST['save_invoice'])) {
             $stmtPi->close();
 
             if ($invoiceId && empty($errorMessage)) {
-                // Update deliveries -> set invoice_id and invoice_number
-                $ph2       = rtrim(str_repeat('?,', count($selectedRows)), ',');
-                $pt2       = str_repeat('i', count($selectedRows));
-                $sqlUpdate = "
-                   UPDATE deliveries
-                   SET invoice_id = ?, invoice_number = ?
-                   WHERE id IN ($ph2)
-                ";
+                // Update all selected deliveries
+                $ph2 = rtrim(str_repeat('?,', count($selectedRows)), ',');
+                $pt2 = str_repeat('i', count($selectedRows));
+                $sqlUp = "UPDATE deliveries SET invoice_id = ?, invoice_number=? WHERE id IN ($ph2)";
                 $bindTypes = 'is' . $pt2;
                 $allParams = array_merge([$invoiceId, $invoice_number], $selectedRows);
 
-                $stmtUp = $conn->prepare($sqlUpdate);
+                $stmtUp = $conn->prepare($sqlUp);
                 $stmtUp->bind_param($bindTypes, ...$allParams);
                 if ($stmtUp->execute()) {
                     $successMessage = "Invoice #{$invoice_number} has been saved (ID: $invoiceId).";
@@ -207,12 +222,12 @@ if (isset($_POST['save_invoice'])) {
     }
 }
 
-// ================================
-// (B) GENERATE PDF (no DB insert)
-// ================================
+/* =============================================
+   (B) GENERATE PDF (no DB insert)
+   ============================================= */
 if (isset($_POST['generate_pdf'])) {
 
-    // 1) Format dates
+    // Format dates
     $displayIssuedDate = (!empty($invoice_issued_date))
         ? date('m-d-Y', strtotime($invoice_issued_date))
         : 'N/A';
@@ -220,82 +235,120 @@ if (isset($_POST['generate_pdf'])) {
         ? date('m-d-Y', strtotime($invoice_due_date))
         : 'N/A';
 
-    // 2) Group by BOL
-    $groupedByBOL   = [];
-    $uniqueBOLs     = [];
-    $totalFreight   = 0.0;
-    $totalAccess    = 0.0;
-    $totalSolterra  = 0.0;
+    // ----- Normal deliveries -----
+    $groupedByBOL_normal  = [];
+    $uniqueBOLs_normal    = [];
+    $totalFreight_normal  = 0.0;
+    $totalAccess_normal   = 0.0;
+    $totalSolterra_normal = 0.0;
 
-    foreach ($deliveries as $d) {
-        $bol       = $d['bol_number'] ?? '';
-        $freight   = floatval($d['freight_cost'] ?? 0);
-        $access    = floatval($d['accessorial_costs'] ?? 0);
-        $q         = floatval($d['quantity'] ?? 0);
-        $w         = floatval($d['wattage']  ?? 0);
-        $sf        = $solterra_fee * ($w * $q);
+    foreach ($normalDeliveries as $d) {
+        $bol     = $d['bol_number'] ?? '';
+        $freight = floatval($d['freight_cost'] ?? 0);
+        $access  = floatval($d['accessorial_costs'] ?? 0);
+        $q       = floatval($d['quantity'] ?? 0);
+        $w       = floatval($d['wattage']  ?? 0);
+        $sf      = $solterra_fee * ($w * $q);
 
-        $totalFreight   += $freight;
-        $totalAccess    += $access;
-        $totalSolterra  += $sf;
+        $totalFreight_normal  += $freight;
+        $totalAccess_normal   += $access;
+        $totalSolterra_normal += $sf;
 
-        if (!in_array($bol, $uniqueBOLs)) {
-            $uniqueBOLs[] = $bol;
+        if ($bol !== '' && !in_array($bol, $uniqueBOLs_normal, true)) {
+            $uniqueBOLs_normal[] = $bol;
         }
-        if (!isset($groupedByBOL[$bol])) {
-            $groupedByBOL[$bol] = [
+        if (!isset($groupedByBOL_normal[$bol])) {
+            $groupedByBOL_normal[$bol] = [
                 'bol'         => $bol,
                 'quantity'    => 0,
                 'freight'     => 0.0,
                 'accessorial' => 0.0,
             ];
         }
-        $groupedByBOL[$bol]['quantity']    += $q;
-        $groupedByBOL[$bol]['freight']     += $freight;
-        $groupedByBOL[$bol]['accessorial'] += $access;
+        $groupedByBOL_normal[$bol]['quantity']    += $q;
+        $groupedByBOL_normal[$bol]['freight']     += $freight;
+        $groupedByBOL_normal[$bol]['accessorial'] += $access;
     }
+    $numTruckloads_normal = count($uniqueBOLs_normal);
+    $freightPlusAcc_normal = $totalFreight_normal + $totalAccess_normal;
+    $ratePerTruck_normal   = ($numTruckloads_normal > 0)
+                                ? ($freightPlusAcc_normal / $numTruckloads_normal)
+                                : 0.0;
 
-    $numTruckloads  = count($uniqueBOLs);
-    $freightPlusAcc = $totalFreight + $totalAccess;
-    $ratePerTruck   = ($numTruckloads > 0) ? ($freightPlusAcc / $numTruckloads) : 0.0;
+    // ----- Canceled deliveries -----
+    $canceledBOLs = [];
+    $groupedCanceled = [];
+    foreach ($canceledDeliveries as $cd) {
+        $bolC = trim($cd['bol_number'] ?? '');
+        if ($bolC !== '' && !in_array($bolC, $canceledBOLs, true)) {
+            $canceledBOLs[] = $bolC;
+        }
+        // We'll store a fixed $250 cost per canceled load
+        // plus we might track the quantity if needed
+        $qC = floatval($cd['quantity'] ?? 0);
 
-    $summaryRow = "
+        if (!isset($groupedCanceled[$bolC])) {
+            $groupedCanceled[$bolC] = [
+                'quantity' => 0, // sum of canceled quantities
+            ];
+        }
+        $groupedCanceled[$bolC]['quantity'] += $qC;
+    }
+    $numTruckloads_canceled = count($canceledBOLs);
+    $canceledTotalCost = $numTruckloads_canceled * CANCELED_TRUCK_COST;
+
+    // Build top summary table rows
+    // 1) Normal deliveries row
+    $normalSummaryRow = "
     <tr>
       <td>Deliveries - {$project_name} Inland Freight</td>
-      <td>{$numTruckloads}</td>
-      <td>" . number_format($ratePerTruck, 2) . "</td>
-      <td>" . number_format($freightPlusAcc, 2) . "</td>
+      <td>{$numTruckloads_normal}</td>
+      <td>" . number_format($ratePerTruck_normal, 2) . "</td>
+      <td>" . number_format($freightPlusAcc_normal, 2) . "</td>
     </tr>";
 
-    // Solterra fee row
-    $solterraFeeLine = "
+    // 2) Cancellations row (if any)
+    $canceledSummaryRow = "";
+    if (!empty($canceledDeliveries)) {
+        $canceledSummaryRow = "
+        <tr>
+          <td>Cancellations - {$project_name}</td>
+          <td>{$numTruckloads_canceled}</td>
+          <td>" . number_format(CANCELED_TRUCK_COST, 2) . "</td>
+          <td>" . number_format($canceledTotalCost, 2) . "</td>
+        </tr>";
+    }
+
+    // 3) Solterra fee row
+    $solterraFeeRow = "
     <tr>
       <td>Solterra Solution's Base Fee</td>
       <td>--</td>
       <td>" . number_format($solterra_fee, 4) . "/w</td>
-      <td>" . number_format($totalSolterra, 2) . "</td>
+      <td>" . number_format($totalSolterra_normal, 2) . "</td>
     </tr>";
 
-    $depositLine = "
+    // 4) Deposit row
+    $depositRow = "
     <tr>
       <td>Pro-Rated Credit for Deposit</td>
       <td colspan='2'></td>
       <td>(\$" . number_format($deposit_credit, 2) . ")</td>
     </tr>";
 
-    $subTotal   = $freightPlusAcc + $totalSolterra;
+    // 5) final amounts
+    $subTotal   = $freightPlusAcc_normal + $totalSolterra_normal + $canceledTotalCost;
     $grandTotal = $subTotal - $deposit_credit;
     if ($grandTotal < 0) $grandTotal = 0.0;
 
-    // Build itemized
-    $itemizedRows = "";
-    foreach ($groupedByBOL as $info) {
-        $bolNum = $info['bol'];
-        $desc   = "Deliveries - {$project_name} Inland Freight (BOL: {$bolNum})";
-        $qty    = (int)$info['quantity'];
-        $fVal   = number_format($info['freight'], 2);
-        $aVal   = number_format($info['accessorial'], 2);
-        $itemizedRows .= "
+    // ----- Itemized normal deliveries
+    $itemizedRows_normal = "";
+    foreach ($groupedByBOL_normal as $bolX => $info) {
+        $desc = "Deliveries - {$project_name} Inland Freight (BOL: {$bolX})";
+        $qty  = (int)($info['quantity']);
+        $fVal = number_format($info['freight'], 2);
+        $aVal = number_format($info['accessorial'], 2);
+        $itemizedRows_normal .= "
         <tr>
           <td>{$desc}</td>
           <td>{$qty}</td>
@@ -304,7 +357,25 @@ if (isset($_POST['generate_pdf'])) {
         </tr>";
     }
 
-    // 5) DOMPDF
+    // ----- Itemized canceled deliveries
+    $itemizedRows_canceled = "";
+    if (!empty($canceledDeliveries)) {
+        foreach ($groupedCanceled as $bolC => $cdData) {
+            $descC = "Canceled Load (BOL: {$bolC})";
+            $qtyC  = (int)($cdData['quantity']);
+            // We show a fixed $250 under accessorial
+            // (One charge per canceled BOL, so total is $250 each)
+            $itemizedRows_canceled .= "
+            <tr>
+              <td>{$descC}</td>
+              <td>{$qtyC}</td>
+              <td>--</td>
+              <td>\$" . number_format(CANCELED_TRUCK_COST, 2) . "</td>
+            </tr>";
+        }
+    }
+
+    // Construct HTML
     $html = "
     <html>
     <head>
@@ -369,9 +440,10 @@ if (isset($_POST['generate_pdf'])) {
         </tr>
       </thead>
       <tbody>
-        {$summaryRow}
-        {$solterraFeeLine}
-        {$depositLine}
+        {$normalSummaryRow}
+        {$canceledSummaryRow}
+        {$solterraFeeRow}
+        {$depositRow}
       </tbody>
     </table>
 
@@ -405,14 +477,32 @@ if (isset($_POST['generate_pdf'])) {
         </tr>
       </thead>
       <tbody>
-        {$itemizedRows}
+        {$itemizedRows_normal}
       </tbody>
     </table>
-
-    </body>
-    </html>
     ";
 
+    if (!empty($canceledDeliveries)) {
+        $html .= "
+        <h3 class='mt-20'>Cancellations</h3>
+        <table class='table-services'>
+          <thead>
+            <tr>
+              <th>Description</th>
+              <th>Quantity</th>
+              <th>Freight</th>
+              <th>Accessorial</th>
+            </tr>
+          </thead>
+          <tbody>
+            {$itemizedRows_canceled}
+          </tbody>
+        </table>";
+    }
+
+    $html .= "</body></html>";
+
+    // DOMPDF
     $options = new Options();
     $options->set('isRemoteEnabled', true);
     $dompdf = new Dompdf($options);
@@ -421,7 +511,7 @@ if (isset($_POST['generate_pdf'])) {
     $dompdf->render();
 
     $filename = "Invoice_" . ($invoice_number ?: 'NoNumber') . ".pdf";
-    // Open in a new tab in the browser
+    // open inline
     $dompdf->stream($filename, ["Attachment" => false]);
     exit;
 }
@@ -436,6 +526,7 @@ $conn->close();
   <link rel="stylesheet" href="portal.css">
   <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
   <style>
     .container {
       margin: 40px;
@@ -454,62 +545,26 @@ $conn->close();
       border-radius: 6px;
       color: #721c24;
     }
-    .back-link {
-      margin-top: 10px;
-      display: inline-block;
-    }
-    .modal-buttons {
-      margin-top:20px; 
-      display:flex; 
-      gap:10px;
-    }
-    #saveModal {
-      display: none;
-      position: fixed;
-      z-index: 9999;
-      left: 0;
-      top: 0;
-      width: 100%;
-      height: 100%;
-      overflow: auto;
-      background-color: rgba(0,0,0,0.4);
-    }
-    #modalContent {
-      background-color: #fff;
-      margin: 10% auto;
-      padding: 20px;
-      border-radius: 8px;
-      max-width: 400px;
-      position: relative;
-    }
-    .closeBtn {
-      color: #aaa;
-      float: right;
-      font-size: 28px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    .closeBtn:hover {
-      color: #000;
-    }
     form {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
       max-width: 600px;
     }
-    form label {
+    label {
       font-weight: 500;
     }
-    form input[type="text"],
-    form input[type="number"],
-    form input[type="date"],
-    form input[type="file"],
-    form textarea {
+    input[type="text"],
+    input[type="number"],
+    input[type="date"],
+    textarea {
       padding: 6px;
       border-radius: 4px;
       border: 1px solid #ccc;
       font: inherit;
       width: 100%;
     }
-    form button {
+    button {
       padding: 8px 16px;
       border: none;
       background: #488C9A;
@@ -518,26 +573,23 @@ $conn->close();
       cursor: pointer;
       font-size: 1rem;
     }
-    form button:hover {
+    button:hover {
       background: #33707b;
     }
+    .back-link {
+      margin-top: 10px;
+      display: inline-block;
+    }
+    .file-input {
+      margin-top:10px;
+    }
   </style>
-  <script>
-    function openSaveModal() {
-      document.getElementById('saveModal').style.display = 'block';
-    }
-    function closeSaveModal() {
-      document.getElementById('saveModal').style.display = 'none';
-    }
-    function confirmSave() {
-      document.getElementById('hiddenSaveBtn').click();
-    }
 
-    // Key fix: remove "required" if user clicks "Generate Invoice"
-    function allowGenerateWithoutFile() {
-      const fileInput = document.getElementById('invoice_file');
-      if (fileInput) {
-        fileInput.removeAttribute('required');
+  <script>
+    function removeRequiredFile() {
+      const invFile = document.getElementById('invoice_file');
+      if (invFile) {
+        invFile.removeAttribute('required');
       }
     }
   </script>
@@ -546,29 +598,28 @@ $conn->close();
 <?php include 'header.php'; ?>
 
 <div class="container">
-  <!-- Show error or success messages -->
+  <!-- error / success messages -->
   <?php if (!empty($errorMessage)): ?>
-    <div class="error-message">
-      <?php echo htmlspecialchars($errorMessage); ?>
-    </div>
+    <div class="error-message"><?php echo htmlspecialchars($errorMessage); ?></div>
   <?php endif; ?>
   <?php if (!empty($successMessage)): ?>
-    <div class="success-message">
-      <?php echo htmlspecialchars($successMessage); ?>
-      <div style="margin-top:10px;">
-        <a href="add_invoice.php">View Invoices</a>
-      </div>
-    </div>
+    <div class="success-message"><?php echo htmlspecialchars($successMessage); ?></div>
   <?php endif; ?>
 
   <h1>Invoice Info for <?php echo htmlspecialchars($project_name); ?></h1>
+  <?php
+    $countAll    = count($allDeliveries);
+    $countCancel = count($canceledDeliveries);
+    $countNormal = count($normalDeliveries);
+  ?>
   <p>
-    You have selected <strong><?php echo count($selectedRows); ?></strong> deliveries,
+    You have selected <strong><?php echo $countAll; ?></strong> total deliveries,
+    of which <strong><?php echo $countCancel; ?></strong> are cancellations,
+    so <strong><?php echo $countNormal; ?></strong> normal deliveries,
     <strong><?php echo $truckloads; ?></strong> truckloads,
     and <strong><?php echo number_format($totalMW, 3); ?></strong> MW.
   </p>
 
-  <!-- Single form for both saving and generating PDF -->
   <form method="POST" enctype="multipart/form-data">
     <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
     <input type="hidden" name="selected_ids" value='<?php echo htmlspecialchars($selected_ids_json, ENT_QUOTES); ?>'>
@@ -601,34 +652,20 @@ $conn->close();
     <label for="notes">Additional Notes:</label>
     <textarea id="notes" name="notes" rows="4"><?php echo htmlspecialchars($notes); ?></textarea>
 
-    <!-- Buttons -->
-    <div style="display:flex; gap:10px;">
-      <!-- 1) SAVE INVOICE triggers modal -->
-      <button type="button" onclick="openSaveModal()">Save Invoice</button>
-
-      <!-- 2) GENERATE PDF: remove 'required' from file input so it won't block submission -->
-      <button type="submit" name="generate_pdf" value="1" formtarget="_blank" onclick="allowGenerateWithoutFile()">
-        Generate Invoice
-      </button>
+    <!-- file required only for saving -->
+    <div class="file-input">
+      <label for="invoice_file">Attach Invoice File (for Save):</label>
+      <input type="file" name="invoice_file" id="invoice_file" accept=".pdf,.doc,.docx,.xls,.xlsx" required>
     </div>
 
-    <!-- Hidden submit for final "Save Invoice" -->
-    <button id="hiddenSaveBtn" type="submit" name="save_invoice" value="1" style="display:none;"></button>
+    <div style="display:flex; gap:10px; margin-top:15px;">
+      <!-- Save Invoice => DB Insert -->
+      <button type="submit" name="save_invoice" value="1">Save Invoice</button>
 
-    <!-- The Modal (inside the same form) -->
-    <div id="saveModal">
-      <div id="modalContent">
-        <span class="closeBtn" onclick="closeSaveModal()">&times;</span>
-        <h2>Select Invoice File:</h2>
-        <!-- 'required' will force user to pick a file if actually saving -->
-        <label for="invoice_file">Invoice PDF (required):</label>
-        <input type="file" id="invoice_file" name="invoice_file" accept=".pdf,.doc,.docx,.xls,.xlsx" required>
-
-        <div class="modal-buttons">
-          <button type="button" onclick="confirmSave()">Save</button>
-          <button type="button" onclick="closeSaveModal()">Cancel</button>
-        </div>
-      </div>
+      <!-- Generate PDF => No DB Insert -->
+      <button type="submit" name="generate_pdf" value="1" formtarget="_blank" onclick="removeRequiredFile()">
+        Generate Invoice
+      </button>
     </div>
   </form>
 
