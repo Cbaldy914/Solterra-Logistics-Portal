@@ -8,11 +8,13 @@ if (!isset($_SESSION['user_id']) || ($_SESSION['role'] != 'global_admin' && $_SE
     exit();
 }
 
-// Validate the project ID
-if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
-    die("Project ID is missing.");
+// NEW: Get selected project filter. Can be 'all', 'unassigned', or a specific project ID.
+$filter_project_id = isset($_GET['filter_project_id']) ? $_GET['filter_project_id'] : 'all'; // Default to 'all'
+
+// OLD project_id from URL is now used to pre-select the filter if `filter_project_id` isn't set
+if (isset($_GET['project_id']) && empty($_GET['filter_project_id'])) {
+    $filter_project_id = intval($_GET['project_id']);
 }
-$project_id = intval($_GET['project_id']);
 
 // Set up time filter variables (if not passed, use defaults)
 $time_filter   = isset($_GET['time_filter']) ? $_GET['time_filter'] : 'all';
@@ -26,18 +28,42 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// Fetch all projects for the filter dropdown
+$all_projects_for_filter = [];
+$stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects ORDER BY project_name ASC");
+if ($stmt_all_proj) {
+    $stmt_all_proj->execute();
+    $result_all_proj = $stmt_all_proj->get_result();
+    while ($proj_row = $result_all_proj->fetch_assoc()) {
+        $all_projects_for_filter[] = $proj_row;
+    }
+    $stmt_all_proj->close();
+}
+
 // Initialize messages
 if (!isset($_SESSION['messages'])) {
     $_SESSION['messages'] = [];
 }
 
-// Fetch the project name and default freight cost (still used for display logic)
-$stmt = $conn->prepare("SELECT project_name, default_freight_cost FROM projects WHERE id = ?");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$stmt->bind_result($project_name, $default_freight_cost);
-$stmt->fetch();
-$stmt->close();
+$project_name = "All Projects"; // Default page title
+$default_freight_cost = 0; // Default if no specific project is selected
+
+if (is_numeric($filter_project_id)) {
+    // Fetch the specific project name and default freight cost
+    $stmt_proj_details = $conn->prepare("SELECT project_name, default_freight_cost FROM projects WHERE id = ?");
+    if ($stmt_proj_details) {
+        $stmt_proj_details->bind_param("i", $filter_project_id);
+        $stmt_proj_details->execute();
+        $stmt_proj_details->bind_result($project_name_specific, $default_freight_cost_specific);
+        if ($stmt_proj_details->fetch()) {
+            $project_name = $project_name_specific;
+            $default_freight_cost = $default_freight_cost_specific ?: 0;
+        }
+        $stmt_proj_details->close();
+    }
+} elseif ($filter_project_id === 'unassigned') {
+    $project_name = "Unassigned Deliveries";
+}
 
 /*
   -----------------------------------------------------------------------------
@@ -114,7 +140,8 @@ if (isset($_POST['bulk_edit_submit'])) {
     }
 
     // Redirect back
-    header("Location: manage_deliveries?project_id=$project_id&time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter));
+    $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+    header("Location: manage_deliveries?" . $redirect_params);
     exit();
 }
 
@@ -127,10 +154,24 @@ if (isset($_POST['delete_selected'])) {
     if (isset($_POST['selected_deliveries']) && !empty($_POST['selected_deliveries'])) {
         $selected_ids   = array_map('intval', $_POST['selected_deliveries']);
         $ids_placeholder = implode(',', array_fill(0, count($selected_ids), '?'));
-        $stmt = $conn->prepare("DELETE FROM deliveries WHERE id IN ($ids_placeholder) AND project_id = ?");
-        $types  = str_repeat('i', count($selected_ids)) . 'i';
-        $params = array_merge($selected_ids, [$project_id]);
-        $stmt->bind_param($types, ...$params);
+        
+        // MODIFIED: Bulk delete needs to consider current project filter if not 'all' or 'unassigned'
+        $delete_project_condition = "";
+        $delete_params = $selected_ids;
+        $delete_types = str_repeat('i', count($selected_ids));
+
+        if (is_numeric($filter_project_id)) {
+            $delete_project_condition = " AND project_id = ?";
+            $delete_params[] = $filter_project_id;
+            $delete_types .= 'i';
+        } elseif ($filter_project_id === 'unassigned') {
+            $delete_project_condition = " AND project_id IS NULL";
+            // No additional param needed
+        }
+        // If 'all', no project condition, so it deletes from any project (dangerous, ensure this is intended or add further checks)
+
+        $stmt = $conn->prepare("DELETE FROM deliveries WHERE id IN ($ids_placeholder) $delete_project_condition");
+        $stmt->bind_param($delete_types, ...$delete_params);
         if ($stmt->execute()) {
             $_SESSION['messages'][] = "<p>Selected deliveries have been deleted.</p>";
         } else {
@@ -141,7 +182,8 @@ if (isset($_POST['delete_selected'])) {
         $_SESSION['messages'][] = "<p>No deliveries selected for deletion.</p>";
     }
 
-    header("Location: manage_deliveries?project_id=$project_id&time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter));
+    $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+    header("Location: manage_deliveries?" . $redirect_params);
     exit();
 }
 
@@ -232,9 +274,31 @@ if (isset($_POST['upload_csv'])) {
                 $freight_cost = (isset($rowData['freight_cost']) && trim($rowData['freight_cost']) !== '') ? floatval($rowData['freight_cost']) : null;
                 $accessorial_costs = (isset($rowData['accessorial_costs']) && trim($rowData['accessorial_costs']) !== '') ? floatval($rowData['accessorial_costs']) : null;
 
-                // Check if this delivery (by BOL number) already exists
-                $stmt = $conn->prepare("SELECT id FROM deliveries WHERE project_id = ? AND bol_number = ?");
-                $stmt->bind_param("is", $project_id, $bol_number);
+                // Check if this delivery (by BOL number) already exists FOR THE CURRENT PROJECT CONTEXT
+                // If filter_project_id is 'all' or 'unassigned', this check might need adjustment or be less strict.
+                // For now, assuming CSV upload is primarily for a specific project context.
+                // If uploading for 'unassigned', project_id in DB should be NULL.
+                // If uploading for 'all', this logic is complex and needs careful thought - perhaps disable CSV upload for 'all'.
+                
+                $current_upload_project_id_context = null;
+                if (is_numeric($filter_project_id)) {
+                    $current_upload_project_id_context = $filter_project_id;
+                } // For 'unassigned', project_id is NULL. For 'all', it's tricky.
+
+                if ($current_upload_project_id_context !== null) {
+                    $stmt = $conn->prepare("SELECT id FROM deliveries WHERE project_id = ? AND bol_number = ?");
+                    $stmt->bind_param("is", $current_upload_project_id_context, $bol_number);
+                } else if ($filter_project_id === 'unassigned') {
+                     $stmt = $conn->prepare("SELECT id FROM deliveries WHERE project_id IS NULL AND bol_number = ?");
+                     $stmt->bind_param("s", $bol_number);
+                } else {
+                    // Potentially disallow CSV upload when "All Projects" is selected, or require a project_id column in CSV
+                     $_SESSION['messages'][] = "<p>CSV Upload is not supported when 'All Projects' is selected without a project identifier in the CSV.</p>";
+                     $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+                     header("Location: manage_deliveries?" . $redirect_params);
+                     exit();
+                }
+                
                 $stmt->execute();
                 $stmt->store_result();
 
@@ -288,9 +352,10 @@ if (isset($_POST['upload_csv'])) {
                         (project_id, supplier, wattage, status_of_delivery, quantity, bol_number, anticipated_delivery_date, warehouse_arrival_date, actual_delivery_date, miles, freight_cost, accessorial_costs)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ");
+                    // Use $current_upload_project_id_context for project_id (which will be NULL if 'unassigned')
                     $insert_stmt->bind_param(
                         "isssissssddd",
-                        $project_id,
+                        $current_upload_project_id_context, 
                         $supplier,
                         $wattage,
                         $status_of_delivery,
@@ -326,17 +391,20 @@ if (isset($_POST['upload_csv'])) {
             }
 
             $_SESSION['messages'][] = "<p>Successfully imported $insertedRows new entries and updated $updatedRows existing entries.</p>";
-            header("Location: manage_deliveries?project_id=$project_id&time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter));
+            $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+            header("Location: manage_deliveries?" . $redirect_params);
             exit();
 
         } else {
             $_SESSION['messages'][] = "<p>Invalid file type or file too large. Please upload a valid CSV file (max 2MB).</p>";
-            header("Location: manage_deliveries?project_id=$project_id&time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter));
+            $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+            header("Location: manage_deliveries?" . $redirect_params);
             exit();
         }
     } else {
         $_SESSION['messages'][] = "<p>Error uploading the file. Please try again.</p>";
-        header("Location: manage_deliveries?project_id=$project_id&time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter));
+        $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+        header("Location: manage_deliveries?" . $redirect_params);
         exit();
     }
 }
@@ -346,10 +414,21 @@ if (isset($_POST['upload_csv'])) {
   4) Fetch Deliveries for Display
   -----------------------------------------------------------------------------
 */
-$filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)";
+$filterColumn = "COALESCE(d.actual_delivery_date, d.anticipated_delivery_date)";
 $dateCondition = "";
-$paramTypes    = "di"; // for default_freight_cost (d), project_id (i)
-$params        = [$default_freight_cost, $project_id];
+$projectConditionSQL = ""; // New variable for project filtering condition
+$paramTypes    = "d"; // for default_freight_cost (d) - will be prepended
+$params        = [$default_freight_cost];
+
+if (is_numeric($filter_project_id)) {
+    $projectConditionSQL = " AND d.project_id = ?";
+    $paramTypes .= "i";
+    $params[] = $filter_project_id;
+} elseif ($filter_project_id === 'unassigned') {
+    $projectConditionSQL = " AND d.project_id IS NULL";
+    // No parameter to add for IS NULL
+}
+// If $filter_project_id is 'all', $projectConditionSQL remains empty, showing all projects.
 
 if ($time_filter === 'day') {
     $dateCondition .= " AND DATE($filterColumn) = ?";
@@ -400,10 +479,12 @@ if (!empty($status_filter)) {
 }
 
 $sql = "
-    SELECT *,
-           IFNULL(freight_cost, ?) AS freight_cost_with_default
-    FROM deliveries
-    WHERE project_id = ?
+    SELECT d.*, p.project_name AS project_name_from_join,
+           IFNULL(d.freight_cost, ?) AS freight_cost_with_default 
+    FROM deliveries d
+    LEFT JOIN projects p ON d.project_id = p.id
+    WHERE 1=1
+    $projectConditionSQL
     $dateCondition
     $statusCondition
     ORDER BY $filterColumn DESC
@@ -421,12 +502,22 @@ $stmt->close();
 */
 $stmt = $conn->prepare("
     SELECT 
-        SUM(IF(status_of_delivery = 'delivered', IFNULL(freight_cost, ?), 0)) AS total_freight_cost,
-        SUM(IFNULL(accessorial_costs, 0)) AS total_accessorial_costs
-    FROM deliveries
-    WHERE project_id = ?
+        SUM(IF(d.status_of_delivery = 'delivered', IFNULL(d.freight_cost, ?), 0)) AS total_freight_cost,
+        SUM(IFNULL(d.accessorial_costs, 0)) AS total_accessorial_costs
+    FROM deliveries d
+    WHERE 1=1 
+    $projectConditionSQL 
 ");
-$stmt->bind_param("di", $default_freight_cost, $project_id);
+// Adjust params for this query. It only needs default_freight_cost and potentially project_id
+$costParams = [$default_freight_cost];
+$costParamTypes = "d";
+if (is_numeric($filter_project_id)) {
+    $costParams[] = $filter_project_id;
+    $costParamTypes .= "i";
+}
+// No param for 'unassigned' project_id IS NULL
+
+$stmt->bind_param($costParamTypes, ...$costParams);
 $stmt->execute();
 $stmt->bind_result($total_freight_cost, $total_accessorial_costs);
 $stmt->fetch();
@@ -717,31 +808,31 @@ $stmt->close();
              max-width: 500px; /* Smaller modal */
              position: relative; /* Added for absolute positioning of child */
          }
-        #associatedPalletsModal ul {
-             list-style: none;
+        /* UPDATED: Changed from #associatedPalletsModal ul to #palletList for the div container */
+        #palletList {
+             /* list-style: none; */ /* No longer a ul */
              padding: 0;
-             max-height: 300px; /* Scrollable list */
-             overflow-y: auto;
+             max-height: 300px; /* Or your desired max height */
+             overflow-y: auto;  /* Add scroll for vertical overflow */
+             border: 1px solid #eee; /* Optional: to see the scroll container bounds */
         }
-        #associatedPalletsModal li {
-            padding: 5px 0;
-            border-bottom: 1px solid #eee;
+        /* Styles for the table within #palletList, if not already covered by inline styles */
+        #palletList table {
+            /* Add any specific table styling here if needed, e.g., for borders within the scrollable area */
         }
-        #associatedPalletsModal li:last-child {
-            border-bottom: none;
-        }
+
     </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <a href="project_overview?id=<?php echo $project_id; ?>" class="back-icon" style="margin:20px;">
+    <a href="<?php echo (is_numeric($filter_project_id)) ? 'project_overview?id=' . $filter_project_id : 'admin_dashboard.php'; ?>" class="back-icon" style="margin:20px;">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width:24px;height:24px;">
             <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
         </svg>
-        Back
+        Back <?php echo (is_numeric($filter_project_id)) ? 'to Project Overview' : 'to Dashboard'; ?>
     </a>
-    <h1>Manage Deliveries for <?php echo htmlspecialchars($project_name); ?></h1>
+    <h1>Manage Deliveries: <?php echo htmlspecialchars($project_name); ?></h1>
 
     <!-- Display Messages -->
     <?php
@@ -759,14 +850,14 @@ $stmt->close();
             <h2>Add Deliveries</h2>
             <h3>Upload via CSV</h3>
             <!-- CSV Upload Form -->
-            <form action="manage_deliveries?project_id=<?php echo $project_id; ?>" method="post" enctype="multipart/form-data">
+            <form action="manage_deliveries?filter_project_id=<?php echo urlencode($filter_project_id); ?>" method="post" enctype="multipart/form-data">
                 <input type="file" name="csv_file" accept=".csv" required>
                 <button type="submit" name="upload_csv">Upload CSV</button>
             </form>
             <div class="single-entry">
                 <h3>Add Single Entry:
                     <button type="button" class="add-single-entry-button"
-                            onclick="window.location.href='add_delivery?project_id=<?php echo $project_id; ?>';">+</button>
+                            onclick="window.location.href='add_delivery?<?php echo (is_numeric($filter_project_id)) ? 'project_id=' . $filter_project_id : ''; ?>';">+</button>
                 </h3>
             </div>
         </div>
@@ -805,27 +896,27 @@ $stmt->close();
     <div class="time-filter-header">
         <!-- Left: Time Filters -->
         <div class="time-filters">
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=all"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=all"
                class="<?php echo ($time_filter === 'all') ? 'active' : ''; ?>">All</a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=day&ref_date=<?php echo $ref_date; ?>"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=day&ref_date=<?php echo $ref_date; ?>"
                class="<?php echo ($time_filter === 'day') ? 'active' : ''; ?>">Day</a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=week&ref_date=<?php echo $ref_date; ?>"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=week&ref_date=<?php echo $ref_date; ?>"
                class="<?php echo ($time_filter === 'week') ? 'active' : ''; ?>">Week</a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=month&ref_date=<?php echo $ref_date; ?>"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=month&ref_date=<?php echo $ref_date; ?>"
                class="<?php echo ($time_filter === 'month') ? 'active' : ''; ?>">Month</a>
         </div>
         <!-- Center: Date Navigation -->
         <div class="date-navigation">
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
+                        onclick="window.location.href='?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
                     &larr;
                 </button>
             <?php endif; ?>
             <span class="date-label"><?php echo $dateLabel; ?></span>
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
+                        onclick="window.location.href='?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
                     &rarr;
                 </button>
             <?php endif; ?>
@@ -836,24 +927,39 @@ $stmt->close();
                 <label for="searchInput" style="align-self: center;">Search in Table:</label>
                 <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
             </div>
-            <form method="get" action="" style="display: flex; gap: 10px;">
-                <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+            <form method="get" action="" style="display: flex; gap: 10px; flex-wrap: wrap;">
                 <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
                 <input type="hidden" name="ref_date" value="<?php echo $ref_date; ?>">
-                <label for="status_filter" style="align-self: center;">Filter by Status:</label>
-                <select name="status_filter" id="status_filter" onchange="this.form.submit()">
-                    <option value="">All</option>
-                    <option value="Pending" <?php if($status_filter === 'Pending') echo 'selected'; ?>>Pending</option>
-                    <option value="In Transit" <?php if($status_filter === 'In Transit') echo 'selected'; ?>>In Transit</option>
-                    <option value="Delivered" <?php if($status_filter === 'Delivered') echo 'selected'; ?>>Delivered</option>
-                    <option value="Complete" <?php if($status_filter === 'Complete') echo 'selected'; ?>>Complete</option>
-                </select>
+                
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label for="filter_project_id" style="align-self: center;">Project:</label>
+                    <select name="filter_project_id" id="filter_project_id" onchange="this.form.submit()">
+                        <option value="all" <?php if($filter_project_id === 'all') echo 'selected'; ?>>All Projects</option>
+                        <option value="unassigned" <?php if($filter_project_id === 'unassigned') echo 'selected'; ?>>Unassigned Deliveries</option>
+                        <?php foreach ($all_projects_for_filter as $proj_filter_item): ?>
+                            <option value="<?php echo $proj_filter_item['id']; ?>" <?php if (is_numeric($filter_project_id) && $filter_project_id == $proj_filter_item['id']) echo 'selected'; ?>>
+                                <?php echo htmlspecialchars($proj_filter_item['project_name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label for="status_filter" style="align-self: center;">Status:</label>
+                    <select name="status_filter" id="status_filter" onchange="this.form.submit()">
+                        <option value="">All</option>
+                        <option value="Pending" <?php if($status_filter === 'Pending') echo 'selected'; ?>>Pending</option>
+                        <option value="In Transit" <?php if($status_filter === 'In Transit') echo 'selected'; ?>>In Transit</option>
+                        <option value="Delivered" <?php if($status_filter === 'Delivered') echo 'selected'; ?>>Delivered</option>
+                        <option value="Complete" <?php if($status_filter === 'Complete') echo 'selected'; ?>>Complete</option>
+                    </select>
+                </div>
             </form>
         </div>
     </div>
 
     <!-- Deliveries Form + Table -->
-    <form action="manage_deliveries?project_id=<?php echo $project_id; ?>" method="post" id="deliveriesForm">
+    <form action="manage_deliveries?filter_project_id=<?php echo urlencode($filter_project_id); ?>" method="post" id="deliveriesForm">
         <!-- Preserve filter parameters -->
         <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter); ?>">
         <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
@@ -863,6 +969,9 @@ $stmt->close();
             <table class="deliveries-table" id="deliveriesTable">
                 <tr>
                     <th><input type="checkbox" id="select-all"></th>
+                    <?php if ($filter_project_id === 'all' || $filter_project_id === 'unassigned'): ?>
+                        <th>Project</th>
+                    <?php endif; ?>
                     <th>Supplier</th>
                     <th>Wattage</th>
                     <th>Status of Delivery</th>
@@ -881,7 +990,7 @@ $stmt->close();
                 <?php if ($deliveries_result->num_rows > 0): ?>
                     <?php 
                     // Prepare statement for fetching pallets outside the loop for efficiency
-                    $stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
+                    $stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
                     if (!$stmtPallets) {
                         // Handle error appropriately - maybe log it or display a generic error
                         echo "Error preparing pallet statement: " . $conn->error;
@@ -914,6 +1023,18 @@ $stmt->close();
                             <td>
                                 <input type="checkbox" name="selected_deliveries[]" value="<?php echo $delivery['id']; ?>" onclick="updateBulkActionButtons()">
                             </td>
+                            <?php if ($filter_project_id === 'all' || $filter_project_id === 'unassigned'): ?>
+                                <td>
+                                    <?php 
+                                    if (!empty($delivery['project_id'])) {
+                                        // Display project name from the join, or fetch if necessary (though join is better)
+                                        echo htmlspecialchars($delivery['project_name_from_join'] ?? 'N/A');
+                                    } else {
+                                        echo "<em>Unassigned</em>";
+                                    }
+                                    ?>
+                                </td>
+                            <?php endif; ?>
                             <td><?php echo htmlspecialchars($delivery['supplier']); ?></td>
                             <td><?php echo htmlspecialchars($delivery['wattage']); ?></td>
                             <td><?php echo htmlspecialchars($delivery['status_of_delivery']); ?></td>
@@ -950,7 +1071,7 @@ $stmt->close();
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <a href="edit_delivery?delivery_id=<?php echo $delivery['id']; ?>&project_id=<?php echo $project_id; ?>">
+                                <a href="edit_delivery?delivery_id=<?php echo $delivery['id']; ?><?php echo (is_numeric($filter_project_id)) ? '&project_id=' . $filter_project_id : ((!empty($delivery['project_id'])) ? '&project_id=' . $delivery['project_id'] : ''); ?>">
                                     Edit
                                 </a>
                             </td>
@@ -962,7 +1083,7 @@ $stmt->close();
                     ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="15">No delivery entries found.</td>
+                        <td colspan="<?php echo ($filter_project_id === 'all' || $filter_project_id === 'unassigned') ? '16' : '15'; ?>">No delivery entries found.</td>
                     </tr>
                 <?php endif; ?>
             </table>
@@ -984,7 +1105,7 @@ $stmt->close();
             
             <p>Fill in only the fields you want to update. Leave others blank.</p>
             
-            <form method="post" action="manage_deliveries?project_id=<?php echo $project_id; ?>">
+            <form method="post" action="manage_deliveries?filter_project_id=<?php echo urlencode($filter_project_id); ?>">
                 <!-- Keep time/status filters in case you want to preserve them after submit -->
                 <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter); ?>">
                 <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
@@ -1074,9 +1195,9 @@ $stmt->close();
         <div class="modal-content">
             <span class="close-modal" onclick="closeAssociatedPalletModal()">&times;</span>
             <h2>Associated Pallets</h2>
-            <ul id="palletList"> 
+            <div id="palletList"> 
                 <!-- Pallet details will be loaded here by JS -->
-            </ul>
+            </div>
         </div>
     </div>
 
@@ -1162,29 +1283,79 @@ $stmt->close();
 
     // --- Associated Pallets Modal --- 
     var associatedPalletsModal = document.getElementById('associatedPalletsModal');
-    var palletListUl = document.getElementById('palletList');
+    var palletListUl = document.getElementById('palletList'); // This will now be the container for the table
 
     function showPalletModal(buttonElement) {
         var palletsJson = buttonElement.getAttribute('data-pallets');
         try {
             var pallets = JSON.parse(palletsJson);
-            palletListUl.innerHTML = ''; // Clear previous list
+            palletListUl.innerHTML = ''; // Clear previous content (table or list)
 
             if (pallets.length > 0) {
-                pallets.forEach(function(pallet) {
-                    var li = document.createElement('li');
-                    li.textContent = `ID: ${pallet.id}` + (pallet.pallet_identifier ? ` - Identifier: ${pallet.pallet_identifier}` : '');
-                    palletListUl.appendChild(li);
+                var table = document.createElement('table');
+                table.style.width = '100%';
+                table.style.borderCollapse = 'collapse';
+
+                var thead = table.createTHead();
+                var headerRow = thead.insertRow();
+                var headers = ['Identifier', 'Wattage', 'Quantity', 'Actions'];
+                headers.forEach(function(headerText) {
+                    var th = document.createElement('th');
+                    th.textContent = headerText;
+                    th.style.border = '1px solid #ddd';
+                    th.style.padding = '8px';
+                    th.style.textAlign = 'center';
+                    th.style.backgroundColor = '#293E4C';
+                    th.style.maxHeight = '50px';
+                    headerRow.appendChild(th);
                 });
+
+                var tbody = table.createTBody();
+                pallets.forEach(function(pallet) {
+                    var row = tbody.insertRow();
+                    
+                    var cellIdentifier = row.insertCell();
+                    cellIdentifier.textContent = pallet.pallet_identifier ? pallet.pallet_identifier : `ID: ${pallet.id}`;
+                    cellIdentifier.style.border = '1px solid #ddd';
+                    cellIdentifier.style.padding = '8px';
+
+                    var cellWattage = row.insertCell();
+                    cellWattage.textContent = pallet.wattage ? `${pallet.wattage}W` : 'N/A';
+                    cellWattage.style.border = '1px solid #ddd';
+                    cellWattage.style.padding = '8px';
+
+                    var cellQuantity = row.insertCell();
+                    cellQuantity.textContent = pallet.quantity ? pallet.quantity : 'N/A';
+                    cellQuantity.style.border = '1px solid #ddd';
+                    cellQuantity.style.padding = '8px';
+
+                    var cellActions = row.insertCell();
+                    cellActions.style.border = '1px solid #ddd';
+                    cellActions.style.padding = '8px';
+                    cellActions.style.textAlign = 'center';
+
+                    var viewDetailsBtn = document.createElement('a');
+                    viewDetailsBtn.href = `pallet_details.php?pallet_id=${pallet.id}`;
+                    viewDetailsBtn.textContent = 'View Details';
+                    viewDetailsBtn.className = 'action-button'; 
+                    viewDetailsBtn.target = '_blank';
+                    // action-button class should handle styling, remove inline if not needed
+                    // viewDetailsBtn.style.marginLeft = '15px'; 
+                    cellActions.appendChild(viewDetailsBtn);
+                });
+
+                palletListUl.appendChild(table); // Append the table to the designated container
             } else {
-                 palletListUl.innerHTML = '<li>No pallets found.</li>';
+                 var p = document.createElement('p');
+                 p.textContent = 'No pallets found.';
+                 palletListUl.appendChild(p);
             }
 
             associatedPalletsModal.style.display = 'block';
         } catch (e) {
-            console.error("Error parsing pallet data:", e);
-            palletListUl.innerHTML = '<li>Error loading pallet data.</li>';
-            associatedPalletsModal.style.display = 'block'; // Show modal even on error to indicate issue
+            console.error("Error parsing pallet data or creating table:", e);
+            palletListUl.innerHTML = '<p>Error loading pallet data.</p>';
+            associatedPalletsModal.style.display = 'block';
         }
     }
 

@@ -464,6 +464,49 @@ $conn->close();
             align-items: center; /* Vertically aligns items */
             margin-bottom: 10px;
         }
+        /* Modal Styles (basic, adapt from manage_warehouse_inventory or portal.css if standardized) */
+        .modal {
+            display: none; 
+            position: fixed; 
+            z-index: 1000; 
+            left: 0;
+            top: 0;
+            width: 100%; 
+            height: 100%; 
+            overflow: auto; 
+            background-color: rgba(0,0,0,0.5); 
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 10% auto; 
+            padding: 25px;
+            border: 1px solid #888;
+            width: 80%; 
+            max-width: 650px; /* Slightly wider for shipment details */
+            border-radius: 8px;
+            position: relative;
+        }
+        .close-modal-btn { /* Changed class name for clarity */
+            color: #aaa;
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close-modal-btn:hover,
+        .close-modal-btn:focus {
+            color: black;
+            text-decoration: none;
+        }
+        .shipment-details-modal-content h2 {
+            margin-top:0;
+            color: #293E4C;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 <body>
@@ -541,58 +584,18 @@ $conn->close();
             <?php endif; ?>
         </div>
 
-        <!-- ====== SHIP PALLETS FORM ====== -->
-        <form method="POST" id="shipPalletsForm" style="margin-top: 30px;">
+        <!-- ====== SHIP PALLETS FORM (Now only wraps the table) ====== -->
+        <form method="POST" id="shipPalletsForm">
             <input type="hidden" name="action" value="ship_pallets">
             
-            <div class="shipment-details" style="background-color: #f9f9f9; padding: 15px; border: 1px solid #e0e0e0; border-radius: 5px; margin-bottom: 20px;">
-                 <h2 class="section-title" style="margin-top:0;">Create Delivery Shipment</h2>
-                 
-                 <!-- Display shipment message -->
-                 <?php if (!empty($shipMessage)): ?>
-                     <div class="success-message"><?php echo htmlspecialchars($shipMessage); ?></div>
-                  <?php endif; ?>
-                 
-                 <!-- Supplier (Readonly) -->
-                 <p><strong>Supplier:</strong> <?php echo htmlspecialchars($batch_data['vendor_name'] ?? 'Unknown'); ?></p>
-                 
-                 <!-- Destination Type -->
-                 <div style="margin-bottom: 10px;">
-                    <label style="font-weight: bold;">Assign To:</label>
-                    <label><input type="radio" name="assign_type" value="project" checked onchange="toggleTargetSelect()"> Project</label>
-                    <label><input type="radio" name="assign_type" value="warehouse" onchange="toggleTargetSelect()"> Warehouse</label>
-                 </div>
-                 
-                 <!-- Target Selection Dropdown -->
-                 <div id="targetSelectContainer" style="margin-bottom: 10px;">
-                    <label for="target_id" id="targetLabel" style="font-weight: bold;">Project:</label>
-                    <select name="target_id" id="target_id" required>
-                        <!-- Options will be populated by PHP/JS -->
-                    </select>
-                 </div>
-                 
-                 <!-- BOL & Date -->
-                 <div style="display: flex; gap: 20px; flex-wrap: wrap;">
-                     <div style="flex: 1; min-width: 150px;">
-                         <label for="bol" style="font-weight: bold;">BOL # (optional):</label>
-                         <input type="text" name="bol" id="bol" style="width: 100%; padding: 5px;">
-                     </div>
-                     <div style="flex: 1; min-width: 150px;">
-                         <label for="delivery_date" style="font-weight: bold;">Est. Delivery/Arrival Date (optional):</label>
-                         <input type="date" name="delivery_date" id="delivery_date" style="width: 100%; padding: 5px;">
-                     </div>
-                 </div>
-             </div>
-
             <div class="pallets-section">
                 <h2 class="section-title">Select Inventory Pallets to Include in Shipment</h2>
                 <div class="pallet-table-actions">
-                     <!-- Filter input -->
                      <label>Filter Table:
                       <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()">
                     </label>
-                     <!-- Submit Button moved here -->
-                    <button type="submit" class="action-button" style="padding: 10px 20px; font-size: 1em;">Create Delivery for Selected Pallets</button>
+                    <!-- MODIFIED Button to open modal -->
+                    <button type="button" id="openShipModalBtn" class="action-button" style="padding: 10px 20px; font-size: 1em;" disabled>Create Delivery for Selected Pallets</button>
                  </div>
                 <?php if (!empty($pallets)): ?>
                     <table>
@@ -636,6 +639,50 @@ $conn->close();
     <?php endif; ?>
 </main>
 
+<!-- Modal for Shipment Details -->
+<div id="shipModal" class="modal">
+    <div class="modal-content">
+        <span class="close-modal-btn">&times;</span>
+        <div class="shipment-details-modal-content">
+            <h2 class="section-title" style="margin-top:0;">Create Delivery Shipment</h2>
+            
+            <!-- Display shipment message (if any, though typically shown on page reload) -->
+            <?php if (!empty($shipMessage) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets'): ?>
+                <div class="<?php echo (strpos(strtolower($shipMessage), 'error') === false) ? 'success-message' : 'error-message'; ?>" style="margin-bottom:15px;">
+                    <?php echo htmlspecialchars($shipMessage); ?>
+                </div>
+            <?php endif; ?>
+            
+            <p><strong>Supplier:</strong> <?php echo htmlspecialchars($batch_data['vendor_name'] ?? 'Unknown'); ?></p>
+            
+            <div style="margin-bottom: 10px;">
+               <label style="font-weight: bold;">Assign To:</label>
+               <label><input type="radio" name="modal_assign_type" value="project" checked onchange="toggleModalTargetSelect()"> Project</label>
+               <label><input type="radio" name="modal_assign_type" value="warehouse" onchange="toggleModalTargetSelect()"> Warehouse</label>
+            </div>
+            
+            <div id="modalTargetSelectContainer" style="margin-bottom: 10px;">
+               <label for="modal_target_id" id="modalTargetLabel" style="font-weight: bold;">Project:</label>
+               <select name="modal_target_id" id="modal_target_id" required style="width:100%; padding: 8px; border:1px solid #ccc; border-radius:4px;">
+                   <!-- Options will be populated by JS -->
+               </select>
+            </div>
+            
+            <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom:20px;">
+                <div style="flex: 1; min-width: 150px;">
+                    <label for="modal_bol" style="font-weight: bold;">BOL # (optional):</label>
+                    <input type="text" name="modal_bol" id="modal_bol" style="width: 100%; padding: 8px; border:1px solid #ccc; border-radius:4px;">
+                </div>
+                <div style="flex: 1; min-width: 150px;">
+                    <label for="modal_delivery_date" style="font-weight: bold;">Est. Delivery/Arrival Date (optional):</label>
+                    <input type="date" name="modal_delivery_date" id="modal_delivery_date" style="width: 100%; padding: 8px; border:1px solid #ccc; border-radius:4px;">
+                </div>
+            </div>
+            <button type="button" id="confirmShipmentBtn" class="action-button" style="padding: 10px 20px; font-size: 1em;">Confirm & Create Delivery</button>
+        </div>
+    </div>
+</div>
+
 <!-- Embed PHP data as JS variables -->
 <script>
     const projectsData = <?php echo json_encode($account_projects); ?>;
@@ -649,6 +696,16 @@ function toggleAllPalletCheckboxes(isChecked) {
     document.querySelectorAll('.pallet-checkbox').forEach(function(checkbox) {
         checkbox.checked = isChecked;
     });
+    updateOpenShipModalButtonState(); // Update button state
+}
+
+// Update state of the "Create Delivery for Selected Pallets" button
+function updateOpenShipModalButtonState() {
+    const openBtn = document.getElementById('openShipModalBtn');
+    const checkedBoxes = document.querySelectorAll('.pallet-checkbox:checked');
+    if (openBtn) {
+        openBtn.disabled = checkedBoxes.length === 0;
+    }
 }
 
 // Filter Pallets Table
@@ -665,15 +722,34 @@ function filterPallets() {
     });
 }
 
-// Toggle Target Select Dropdown Label and Content 
-function toggleTargetSelect() {
-    var assignType = document.querySelector('input[name="assign_type"]:checked').value;
-    var targetLabel = document.getElementById('targetLabel');
-    var targetSelect = document.getElementById('target_id');
+// Modal variables
+const shipModal = document.getElementById('shipModal');
+const openShipModalBtn = document.getElementById('openShipModalBtn');
+const closeShipModalBtn = shipModal.querySelector('.close-modal-btn');
+const confirmShipmentBtn = document.getElementById('confirmShipmentBtn');
+
+// Open Modal
+function openShipModal() {
+    if (shipModal) {
+        shipModal.style.display = 'block';
+        toggleModalTargetSelect(); // Populate dropdowns in modal
+    }
+}
+
+// Close Modal
+function closeShipModal() {
+    if (shipModal) {
+        shipModal.style.display = 'none';
+    }
+}
+
+// Toggle Target Select for Modal
+function toggleModalTargetSelect() {
+    var assignType = document.querySelector('input[name="modal_assign_type"]:checked').value;
+    var targetLabel = document.getElementById('modalTargetLabel');
+    var targetSelect = document.getElementById('modal_target_id');
 
     targetLabel.textContent = (assignType === 'project') ? 'Project:' : 'Warehouse:';
-
-    // Clear existing options
     targetSelect.innerHTML = ''; 
 
     if (assignType === 'project') {
@@ -705,9 +781,85 @@ function toggleTargetSelect() {
     }
 }
 
-// Initial call to set the dropdown correctly on page load
+// New event listeners for modal
+if (openShipModalBtn) {
+    openShipModalBtn.addEventListener('click', openShipModal);
+}
+if (closeShipModalBtn) {
+    closeShipModalBtn.addEventListener('click', closeShipModal);
+}
+window.addEventListener('click', function(event) {
+    if (event.target == shipModal) {
+        closeShipModal();
+    }
+});
+
+if (confirmShipmentBtn) {
+    confirmShipmentBtn.addEventListener('click', function() {
+        const mainForm = document.getElementById('shipPalletsForm');
+        if (!mainForm) return;
+
+        // Get values from modal inputs
+        const assignType = document.querySelector('input[name="modal_assign_type"]:checked').value;
+        const targetId = document.getElementById('modal_target_id').value;
+        const bol = document.getElementById('modal_bol').value;
+        const deliveryDate = document.getElementById('modal_delivery_date').value;
+
+        // Simple validation
+        if (!targetId) {
+            alert('Please select a destination Project or Warehouse.');
+            return;
+        }
+
+        // Add/Update hidden fields in the main form
+        let assignTypeInput = mainForm.querySelector('input[name="assign_type"]');
+        if (!assignTypeInput) {
+            assignTypeInput = document.createElement('input');
+            assignTypeInput.type = 'hidden';
+            assignTypeInput.name = 'assign_type';
+            mainForm.appendChild(assignTypeInput);
+        }
+        assignTypeInput.value = assignType;
+
+        let targetIdInput = mainForm.querySelector('input[name="target_id"]');
+        if (!targetIdInput) {
+            targetIdInput = document.createElement('input');
+            targetIdInput.type = 'hidden';
+            targetIdInput.name = 'target_id';
+            mainForm.appendChild(targetIdInput);
+        }
+        targetIdInput.value = targetId;
+
+        let bolInput = mainForm.querySelector('input[name="bol"]');
+        if (!bolInput) {
+            bolInput = document.createElement('input');
+            bolInput.type = 'hidden';
+            bolInput.name = 'bol';
+            mainForm.appendChild(bolInput);
+        }
+        bolInput.value = bol;
+        
+        let deliveryDateInput = mainForm.querySelector('input[name="delivery_date"]');
+        if (!deliveryDateInput) {
+            deliveryDateInput = document.createElement('input');
+            deliveryDateInput.type = 'hidden';
+            deliveryDateInput.name = 'delivery_date';
+            mainForm.appendChild(deliveryDateInput);
+        }
+        deliveryDateInput.value = deliveryDate;
+
+        mainForm.submit();
+    });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
-    toggleTargetSelect(); 
+    updateOpenShipModalButtonState(); // Set initial button state
+    // Add event listeners to individual checkboxes
+    document.querySelectorAll('.pallet-checkbox').forEach(function(checkbox) {
+        checkbox.addEventListener('change', updateOpenShipModalButtonState);
+    });
+    // If the original toggleTargetSelect was for a non-modal form, it might not be needed or might need renaming.
+    // For now, the modal has its own toggleModalTargetSelect.
 });
 </script>
 

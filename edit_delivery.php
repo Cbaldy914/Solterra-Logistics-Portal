@@ -15,11 +15,11 @@ if (!isset($_SESSION['user_id']) ||
 }
 
 /* ───────────────────────── PARAMS & CONNECTION ───────────────────────── */
-if (empty($_GET['delivery_id']) || empty($_GET['project_id'])) {
-    die("Delivery ID or Project ID missing.");
+if (empty($_GET['delivery_id'])) {
+    die("Delivery ID missing.");
 }
 $delivery_id = (int)$_GET['delivery_id'];
-$project_id  = (int)$_GET['project_id'];
+$project_id_from_url = isset($_GET['project_id']) ? (int)$_GET['project_id'] : null;
 
 require_once '../config.php';
 $conn = getDBConnection();
@@ -32,6 +32,27 @@ $stmt->execute();
 $delivery = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 if (!$delivery) die("Delivery not found.");
+
+$context_project_id = $project_id_from_url ?? $delivery['project_id'] ?? null;
+$is_unassigned_delivery = is_null($delivery['project_id']);
+
+// NEW: Fetch project name if a project_id is associated with the delivery
+$project_name_for_title = null;
+if ($delivery['project_id']) {
+    $stmt_project_name = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
+    if ($stmt_project_name) {
+        $stmt_project_name->bind_param("i", $delivery['project_id']);
+        $stmt_project_name->execute();
+        $stmt_project_name->bind_result($fetched_project_name);
+        if ($stmt_project_name->fetch()) {
+            $project_name_for_title = $fetched_project_name;
+        }
+        $stmt_project_name->close();
+    } else {
+        // Optional: Log an error if preparing the statement fails
+        error_log("Failed to prepare statement to fetch project name: " . $conn->error);
+    }
+}
 
 /* ────────────────────────── UPDATE HANDLER ───────────────────────────── */
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['update_delivery'])) {
@@ -106,7 +127,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['update_delivery'])) {
         $delivery_id
     );
     if ($stmt->execute()) {
-        header("Location: manage_deliveries?project_id={$project_id}");
+        $redirect_url = "manage_deliveries.php";
+        if ($context_project_id) {
+            $redirect_url .= "?filter_project_id=" . $context_project_id;
+        } elseif ($is_unassigned_delivery) {
+            $redirect_url .= "?filter_project_id=unassigned";
+        }
+        header("Location: " . $redirect_url);
         exit;
     }
     echo "<p>Error: ".htmlspecialchars($stmt->error)."</p>";
@@ -119,7 +146,13 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['update_delivery'])) {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Edit Delivery</title>
+<title>Edit Delivery<?php 
+    if ($project_name_for_title) {
+        echo " - For " . htmlspecialchars($project_name_for_title);
+    } elseif ($is_unassigned_delivery) {
+        echo " - Unassigned";
+    } 
+?></title>
 <link rel="stylesheet" href="portal.css">
 <link rel="icon" href="pictures/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;500;600;700&display=swap" rel="stylesheet">
@@ -136,9 +169,30 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['update_delivery'])) {
 <body>
 <?php include 'header.php'; ?>
 <main>
-<h1>Edit Delivery – Project <?php echo htmlspecialchars($project_id); ?></h1>
+<p style="margin-top:20px;">
+  <?php 
+  $back_link_url = "manage_deliveries.php";
+  if ($context_project_id) {
+      $back_link_url .= "?filter_project_id=" . $context_project_id;
+  } elseif ($is_unassigned_delivery) {
+      $back_link_url .= "?filter_project_id=unassigned";
+  }
+  ?>
+  <a href="<?php echo $back_link_url; ?>">&larr; Back to Manage Deliveries</a>
+</p>
+<h1>Edit Delivery
+    <?php 
+    if ($project_name_for_title) {
+        echo "– For " . htmlspecialchars($project_name_for_title);
+    } elseif ($is_unassigned_delivery) {
+        echo "– Unassigned Delivery";
+    } elseif ($delivery['project_id']) { // Fallback if name fetch failed but ID exists
+        echo "– For Project ID: " . htmlspecialchars($delivery['project_id']); 
+    }
+    ?>
+</h1>
 
-<form action="edit_delivery.php?delivery_id=<?php echo $delivery_id; ?>&project_id=<?php echo $project_id; ?>"
+<form action="edit_delivery.php?delivery_id=<?php echo $delivery_id; ?><?php if ($project_id_from_url) { echo '&project_id=' . $project_id_from_url; } ?>"
       method="post" enctype="multipart/form-data">
  <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token'];?>">
 
@@ -201,9 +255,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['update_delivery'])) {
  <button type="submit" name="update_delivery">Update Delivery</button>
 </form>
 
-<p style="text-align:center;margin-top:20px;">
-  <a href="manage_deliveries?project_id=<?php echo $project_id;?>">&larr; Back to Manage Deliveries</a>
-</p>
+
 </main>
 
 <script>

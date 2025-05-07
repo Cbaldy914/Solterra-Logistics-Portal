@@ -70,6 +70,7 @@ if (isset($_SESSION['role'])) {
                     <div class="dropdown-content">
                         <a href="modules">Modules</a>
                         <a href="manage_pallets.php">Manage Pallets</a>
+                        <a href="manage_deliveries.php">Manage Deliveries</a>
 
                     </div>
                 </li>
