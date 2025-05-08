@@ -259,7 +259,7 @@ try {
         $placeholders = implode(',', array_fill(0, count($item_ids), '?'));
         $types = str_repeat('i', count($item_ids));
         
-        $sqlPallets = "SELECT ip.id, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name as warehouse_name, p.project_name 
+        $sqlPallets = "SELECT ip.id, ip.pallet_identifier, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name as warehouse_name, p.project_name 
                          FROM inventory_pallets ip
                          LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
                          LEFT JOIN projects p ON ip.current_project_id = p.id
@@ -390,11 +390,6 @@ $conn->close();
             width: 100%;
             border-collapse: collapse;
             margin-top: 15px;
-        }
-        th, td {
-            border: 1px solid #ccc;
-            padding: 8px 12px;
-            text-align: left;
         }
         th {
             background-color: #e9ecef;
