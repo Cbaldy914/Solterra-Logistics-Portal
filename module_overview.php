@@ -51,38 +51,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
     }
     $successMessage = "Created $totalPallets pallets (up to $modulesPerPallet modules each) for item ID $itemId.";
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets') {
-    // Initialize message variable for this action
     $shipMessage = '';
-    $createdDeliveryIds = []; // To store IDs of created deliveries
+    $createdDeliveryIds = [];
+    $conn = getDBConnection();
     $conn->begin_transaction();
     try {
-        // Get data from form
-        $assignType = $_POST['assign_type'] ?? 'project';
-        $targetId   = intval($_POST['target_id']);
-        $bol        = trim($_POST['bol'] ?? '');
-        $date       = !empty($_POST['delivery_date']) ? $_POST['delivery_date'] : null;
-        $palletIds  = $_POST['selected_pallets'] ?? [];
+        // Get data from new modal fields
+        $destinationType = $_POST['destination_type'] ?? 'project';
+        $destinationId   = isset($_POST['destination_id']) ? intval($_POST['destination_id']) : 0;
+        $bolNumber       = trim($_POST['bol_number'] ?? '');
+        $departureDate   = $_POST['departure_date'] ?? null;
+        $estArrivalDate  = $_POST['est_arrival_date'] ?? null;
+        $palletIds       = $_POST['selected_pallets'] ?? [];
 
         if (empty($palletIds)) {
             throw new Exception('No pallets selected to ship.');
         }
-        if ($targetId <= 0) {
-             throw new Exception('Invalid Project or Warehouse selected.');
+        if ($destinationId <= 0) {
+            throw new Exception('No destination selected.');
+        }
+        if (empty($departureDate)) {
+            throw new Exception('Departure date is required.');
+        }
+        if (empty($estArrivalDate)) {
+            throw new Exception('Estimated arrival date is required.');
         }
 
-        // Fetch supplier/vendor_name for this batch (needed for delivery record)
+        // Fetch supplier/vendor_name for this batch
         $stmtBn = $conn->prepare("SELECT vendor_name FROM modules WHERE id = ? LIMIT 1");
         if (!$stmtBn) throw new Exception("Failed to prepare vendor fetch: " . $conn->error);
         $stmtBn->bind_param("i", $batch_id);
         $stmtBn->execute();
         $stmtBn->bind_result($vendor_name);
         if (!$stmtBn->fetch()) {
-             $stmtBn->close();
-             throw new Exception("Could not find vendor name for this batch.");
+            $stmtBn->close();
+            throw new Exception("Could not find vendor name for this batch.");
         }
         $stmtBn->close();
 
-        // Fetch details (id, wattage, quantity) for selected pallets
+        // Fetch details for selected pallets
         $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
         $types        = str_repeat('i', count($palletIds));
         $stmtFetchPallets = $conn->prepare("SELECT id, wattage, quantity FROM inventory_pallets WHERE id IN ($placeholders)");
@@ -103,65 +110,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         }
         $stmtFetchPallets->close();
 
-        // Prepare common statements outside the loop
-        // Delivery Insert Statements
-        $sqlProjectDelivery = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, 'Delivered')";
-        $sqlWarehouseDelivery = "INSERT INTO deliveries (warehouse_id, project_id, supplier, wattage, quantity, bol_number, warehouse_arrival_date, status_of_delivery) VALUES (?, NULL, ?, ?, ?, ?, ?, 'In Warehouse')";
-        $stmtProjectD = $conn->prepare($sqlProjectDelivery);
-        $stmtWarehouseD = $conn->prepare($sqlWarehouseDelivery);
-        if (!$stmtProjectD || !$stmtWarehouseD) throw new Exception("Failed to prepare delivery insert statements: " . $conn->error);
+        // Prepare statements for delivery and pallet updates
+        $sqlDelivery = "";
+        $deliveryTypes = "";
+        $deliveryParams = [];
+        if ($destinationType === 'project') {
+            $sqlDelivery = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, left_warehouse_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Project')";
+            $deliveryTypes = "isissss";
+        } else {
+            $sqlDelivery = "INSERT INTO deliveries (warehouse_id, supplier, wattage, quantity, bol_number, left_warehouse_date, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse')";
+            $deliveryTypes = "isissss";
+        }
+        $stmtDelivery = $conn->prepare($sqlDelivery);
+        if (!$stmtDelivery) throw new Exception("Failed to prepare delivery insert: " . $conn->error);
 
-        // Pallet Link Statement
         $stmtLink = $conn->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
         if (!$stmtLink) throw new Exception("Failed to prepare pallet link insert: " . $conn->error);
 
-        // Pallet Update Statement
-        $updateStatus = ($assignType === 'project') ? 'Delivered to Project' : 'In Warehouse';
-        $updateColumn = ($assignType === 'project') ? 'current_project_id' : 'current_warehouse_id';
-        $sqlUp = "UPDATE inventory_pallets SET status = ?, $updateColumn = ?, arrival_date = ? WHERE id = ?";
+        $sqlUp = "UPDATE inventory_pallets SET status = ?, current_project_id = ?, current_warehouse_id = ?, arrival_date = ? WHERE id = ?";
         $stmtUp = $conn->prepare($sqlUp);
         if (!$stmtUp) throw new Exception("Failed to prepare pallet update: " . $conn->error);
 
-        // Loop through each wattage group and create a delivery record
         foreach ($palletsByWattage as $wattage => $group) {
             $groupQty = $group['quantity'];
             $groupPalletIds = $group['ids'];
-
-            // Execute Delivery Insert
-            if ($assignType === 'project') {
-                $stmtProjectD->bind_param("isiiss", $targetId, $vendor_name, $wattage, $groupQty, $bol, $date);
-                if (!$stmtProjectD->execute()) throw new Exception("Failed to execute project delivery insert for {$wattage}W: " . $stmtProjectD->error);
-                $deliveryId = $conn->insert_id;
-            } else { // Warehouse
-                $stmtWarehouseD->bind_param("isiiss", $targetId, $vendor_name, $wattage, $groupQty, $bol, $date);
-                if (!$stmtWarehouseD->execute()) throw new Exception("Failed to execute warehouse delivery insert for {$wattage}W: " . $stmtWarehouseD->error);
-                $deliveryId = $conn->insert_id;
+            if ($destinationType === 'project') {
+                $deliveryParams = [$destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate, $departureDate];
+            } else {
+                $deliveryParams = [$destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $departureDate, $estArrivalDate];
             }
-            $createdDeliveryIds[] = $deliveryId; // Track created ID
-
-            // Link and Update Pallets in this group
+            $stmtDelivery->bind_param($deliveryTypes, ...$deliveryParams);
+            if (!$stmtDelivery->execute()) throw new Exception("Failed to execute delivery insert for {$wattage}W: " . $stmtDelivery->error);
+            $deliveryId = $conn->insert_id;
+            $createdDeliveryIds[] = $deliveryId;
             foreach ($groupPalletIds as $pid) {
-                // Link
                 $stmtLink->bind_param("ii", $deliveryId, $pid);
                 if (!$stmtLink->execute()) throw new Exception("Failed to link pallet ID {$pid} to delivery {$deliveryId}: " . $stmtLink->error);
-
-                // Update
-                $stmtUp->bind_param("sisi", $updateStatus, $targetId, $date, $pid);
+                // Update pallet status/location
+                $status = ($destinationType === 'project') ? 'In Transit to Project' : 'In Transit to Warehouse';
+                $projectId = ($destinationType === 'project') ? $destinationId : null;
+                $warehouseId = ($destinationType === 'warehouse') ? $destinationId : null;
+                $stmtUp->bind_param("siisi", $status, $projectId, $warehouseId, $estArrivalDate, $pid);
                 if (!$stmtUp->execute()) throw new Exception("Failed to update pallet ID {$pid}: " . $stmtUp->error);
             }
         }
-        // Close prepared statements after the loop
-        if ($stmtProjectD) $stmtProjectD->close();
-        if ($stmtWarehouseD) $stmtWarehouseD->close();
+        $stmtDelivery->close();
         $stmtLink->close();
         $stmtUp->close();
-
         $conn->commit();
-        $shipMessage = "Successfully created Deliveries (" . implode(", ", $createdDeliveryIds) . ") for " . count($palletIds) . " pallets across " . count($palletsByWattage) ." wattage groups.";
-
+        $shipMessage = "Successfully created transfer delivery (IDs: " . implode(", ", $createdDeliveryIds) . ") for " . count($palletIds) . " pallets.";
     } catch (Exception $e) {
         $conn->rollback();
-        $shipMessage = "Error creating delivery: " . $e->getMessage();
+        $shipMessage = "Error creating transfer delivery: " . $e->getMessage();
     }
 }
 
@@ -464,7 +464,7 @@ $conn->close();
             align-items: center; /* Vertically aligns items */
             margin-bottom: 10px;
         }
-        /* Modal Styles (basic, adapt from manage_warehouse_inventory or portal.css if standardized) */
+        /* Modal Styles for Transfer Delivery */
         .modal {
             display: none; 
             position: fixed; 
@@ -478,13 +478,14 @@ $conn->close();
         }
         .modal-content {
             background-color: #fefefe;
-            margin: 10% auto; 
-            padding: 25px;
+            margin: 5% auto;
+            padding: 30px 30px 20px 30px;
             border: 1px solid #888;
-            width: 80%; 
-            max-width: 650px; /* Slightly wider for shipment details */
+            width: 100%;
+            max-width: 500px;
             border-radius: 8px;
             position: relative;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
         }
         .close-modal-btn { /* Changed class name for clarity */
             color: #aaa;
@@ -501,11 +502,49 @@ $conn->close();
             text-decoration: none;
         }
         .shipment-details-modal-content h2 {
-            margin-top:0;
+            margin-top: 0;
+            margin-bottom: 20px;
             color: #293E4C;
+            font-size: 1.3em;
             border-bottom: 1px solid #eee;
             padding-bottom: 10px;
-            margin-bottom: 15px;
+        }
+        .form-row {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 18px;
+        }
+        .form-row > div {
+            flex: 1;
+            min-width: 150px;
+        }
+        .shipment-details-modal-content label {
+            font-weight: 500;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .shipment-details-modal-content input[type="text"],
+        .shipment-details-modal-content input[type="date"],
+        .shipment-details-modal-content select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            font-size: 1em;
+            box-sizing: border-box;
+        }
+        .radio-label {
+            display: inline-block;
+            margin-right: 20px;
+            font-weight: normal;
+        }
+        .radio-label input[type=radio] {
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+        #destinationSelectContainer {
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -602,26 +641,22 @@ $conn->close();
                         <thead>
                             <tr>
                                 <th><input type="checkbox" id="selectAllPallets" onclick="toggleAllPalletCheckboxes(this.checked)"></th>
-                                <th>Pallet ID</th>
                                 <th>Identifier</th>
                                 <th>Wattage</th>
                                 <th>Quantity</th>
                                 <th>Status</th>
                                 <th>Current Location</th>
-                                <th>Arrival Date</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($pallets as $pallet): ?>
                                 <tr>
                                     <td><input type="checkbox" name="selected_pallets[]" value="<?php echo $pallet['id']; ?>" class="pallet-checkbox"></td>
-                                    <td><?php echo $pallet['id']; ?></td>
                                     <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                                     <td><?php echo $pallet['wattage']; ?>W</td>
                                     <td><?php echo number_format($pallet['quantity']); ?></td>
                                     <td><?php echo htmlspecialchars($pallet['status']); ?></td>
                                     <td><?php echo htmlspecialchars($pallet['display_location']); ?></td>
-                                    <td><?php echo $pallet['arrival_date'] ? date('Y-m-d', strtotime($pallet['arrival_date'])) : 'N/A'; ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -644,41 +679,33 @@ $conn->close();
     <div class="modal-content">
         <span class="close-modal-btn">&times;</span>
         <div class="shipment-details-modal-content">
-            <h2 class="section-title" style="margin-top:0;">Create Delivery Shipment</h2>
-            
-            <!-- Display shipment message (if any, though typically shown on page reload) -->
-            <?php if (!empty($shipMessage) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets'): ?>
-                <div class="<?php echo (strpos(strtolower($shipMessage), 'error') === false) ? 'success-message' : 'error-message'; ?>" style="margin-bottom:15px;">
-                    <?php echo htmlspecialchars($shipMessage); ?>
+            <h2 class="section-title" style="margin-top:0;">Create Transfer Delivery</h2>
+            <label for="bol_number">BOL Number (Optional):</label>
+            <input type="text" id="bol_number" name="bol_number">
+            <div class="form-row">
+                <div>
+                    <label for="departure_date">Departure Date:</label>
+                    <input type="date" id="departure_date" name="departure_date" required>
                 </div>
-            <?php endif; ?>
-            
-            <p><strong>Supplier:</strong> <?php echo htmlspecialchars($batch_data['vendor_name'] ?? 'Unknown'); ?></p>
-            
-            <div style="margin-bottom: 10px;">
-               <label style="font-weight: bold;">Assign To:</label>
-               <label><input type="radio" name="modal_assign_type" value="project" checked onchange="toggleModalTargetSelect()"> Project</label>
-               <label><input type="radio" name="modal_assign_type" value="warehouse" onchange="toggleModalTargetSelect()"> Warehouse</label>
-            </div>
-            
-            <div id="modalTargetSelectContainer" style="margin-bottom: 10px;">
-               <label for="modal_target_id" id="modalTargetLabel" style="font-weight: bold;">Project:</label>
-               <select name="modal_target_id" id="modal_target_id" required style="width:100%; padding: 8px; border:1px solid #ccc; border-radius:4px;">
-                   <!-- Options will be populated by JS -->
-               </select>
-            </div>
-            
-            <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom:20px;">
-                <div style="flex: 1; min-width: 150px;">
-                    <label for="modal_bol" style="font-weight: bold;">BOL # (optional):</label>
-                    <input type="text" name="modal_bol" id="modal_bol" style="width: 100%; padding: 8px; border:1px solid #ccc; border-radius:4px;">
-                </div>
-                <div style="flex: 1; min-width: 150px;">
-                    <label for="modal_delivery_date" style="font-weight: bold;">Est. Delivery/Arrival Date (optional):</label>
-                    <input type="date" name="modal_delivery_date" id="modal_delivery_date" style="width: 100%; padding: 8px; border:1px solid #ccc; border-radius:4px;">
+                <div>
+                    <label for="est_arrival_date">Est. Arrival Date:</label>
+                    <input type="date" id="est_arrival_date" name="est_arrival_date" required>
                 </div>
             </div>
-            <button type="button" id="confirmShipmentBtn" class="action-button" style="padding: 10px 20px; font-size: 1em;">Confirm & Create Delivery</button>
+            <label style="margin-bottom: 10px; display:block;">Destination:</label>
+            <label class="radio-label">
+                <input type="radio" name="destination_type" value="project" checked onchange="toggleDestinationSelect()"> Project
+            </label>
+            <label class="radio-label">
+                <input type="radio" name="destination_type" value="warehouse" onchange="toggleDestinationSelect()"> Warehouse
+            </label>
+            <div id="destinationSelectContainer">
+                <label for="destination_id" id="destinationLabel">Project:</label>
+                <select name="destination_id" id="destination_id" required>
+                    <!-- Options loaded by JS -->
+                </select>
+            </div>
+            <button type="button" id="confirmShipmentBtn" class="action-button">Create Delivery</button>
         </div>
     </div>
 </div>
@@ -691,15 +718,14 @@ $conn->close();
 
 <!-- Add JavaScript functions -->
 <script>
-// Select/Deselect All Pallet Checkboxes
+// --- Pallet Table Checkbox Logic (Global Scope) ---
 function toggleAllPalletCheckboxes(isChecked) {
     document.querySelectorAll('.pallet-checkbox').forEach(function(checkbox) {
         checkbox.checked = isChecked;
     });
-    updateOpenShipModalButtonState(); // Update button state
+    updateOpenShipModalButtonState();
 }
 
-// Update state of the "Create Delivery for Selected Pallets" button
 function updateOpenShipModalButtonState() {
     const openBtn = document.getElementById('openShipModalBtn');
     const checkedBoxes = document.querySelectorAll('.pallet-checkbox:checked');
@@ -707,6 +733,25 @@ function updateOpenShipModalButtonState() {
         openBtn.disabled = checkedBoxes.length === 0;
     }
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Select All checkbox
+    const selectAll = document.getElementById('selectAllPallets');
+    const palletCheckboxes = document.querySelectorAll('.pallet-checkbox');
+
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            toggleAllPalletCheckboxes(this.checked);
+        });
+    }
+
+    palletCheckboxes.forEach(function(checkbox) {
+        checkbox.addEventListener('change', updateOpenShipModalButtonState);
+    });
+
+    // Initial state
+    updateOpenShipModalButtonState();
+});
 
 // Filter Pallets Table
 function filterPallets() {
@@ -745,39 +790,26 @@ function closeShipModal() {
 
 // Toggle Target Select for Modal
 function toggleModalTargetSelect() {
-    var assignType = document.querySelector('input[name="modal_assign_type"]:checked').value;
-    var targetLabel = document.getElementById('modalTargetLabel');
-    var targetSelect = document.getElementById('modal_target_id');
-
+    var assignType = document.querySelector('input[name="destination_type"]:checked').value;
+    var targetLabel = document.getElementById('destinationLabel');
+    var targetSelect = document.getElementById('destination_id');
+    var data = (assignType === 'project') ? projectsData : warehousesData;
+    var placeholder = (assignType === 'project') ? '-- Select Project --' : '-- Select Warehouse --';
+    var nameField = (assignType === 'project') ? 'project_name' : 'name';
     targetLabel.textContent = (assignType === 'project') ? 'Project:' : 'Warehouse:';
-    targetSelect.innerHTML = ''; 
-
-    if (assignType === 'project') {
-         if (projectsData.length === 0) {
-             targetSelect.innerHTML = '<option value="">No projects found for this account</option>';
-         } else {
-            targetSelect.innerHTML = '<option value="">-- Select Project --</option>';
-             projectsData.forEach(function(project) {
-                 var option = document.createElement('option');
-                 option.value = project.id;
-                 option.textContent = project.project_name;
-                 targetSelect.appendChild(option);
-             });
-         }
-         targetSelect.disabled = projectsData.length === 0;
-    } else { // Warehouse
-         if (warehousesData.length === 0) {
-             targetSelect.innerHTML = '<option value="">No warehouses found</option>';
-         } else {
-            targetSelect.innerHTML = '<option value="">-- Select Warehouse --</option>';
-             warehousesData.forEach(function(warehouse) {
-                 var option = document.createElement('option');
-                 option.value = warehouse.id;
-                 option.textContent = warehouse.name;
-                 targetSelect.appendChild(option);
-             });
-         }
-         targetSelect.disabled = warehousesData.length === 0;
+    targetSelect.innerHTML = '';
+    if (data.length === 0) {
+        targetSelect.innerHTML = `<option value="">No ${assignType === 'project' ? 'projects' : 'warehouses'} found</option>`;
+        targetSelect.disabled = true;
+    } else {
+        targetSelect.innerHTML = `<option value="">${placeholder}</option>`;
+        data.forEach(function(item) {
+            var option = document.createElement('option');
+            option.value = item.id;
+            option.textContent = item[nameField];
+            targetSelect.appendChild(option);
+        });
+        targetSelect.disabled = false;
     }
 }
 
@@ -800,10 +832,11 @@ if (confirmShipmentBtn) {
         if (!mainForm) return;
 
         // Get values from modal inputs
-        const assignType = document.querySelector('input[name="modal_assign_type"]:checked').value;
-        const targetId = document.getElementById('modal_target_id').value;
-        const bol = document.getElementById('modal_bol').value;
-        const deliveryDate = document.getElementById('modal_delivery_date').value;
+        const assignType = document.querySelector('input[name="destination_type"]:checked').value;
+        const targetId = document.getElementById('destination_id').value;
+        const bol = document.getElementById('bol_number').value;
+        const deliveryDate = document.getElementById('departure_date').value;
+        const estArrivalDate = document.getElementById('est_arrival_date').value;
 
         // Simple validation
         if (!targetId) {
@@ -812,55 +845,87 @@ if (confirmShipmentBtn) {
         }
 
         // Add/Update hidden fields in the main form
-        let assignTypeInput = mainForm.querySelector('input[name="assign_type"]');
+        let assignTypeInput = mainForm.querySelector('input[name="destination_type"]');
         if (!assignTypeInput) {
             assignTypeInput = document.createElement('input');
             assignTypeInput.type = 'hidden';
-            assignTypeInput.name = 'assign_type';
+            assignTypeInput.name = 'destination_type';
             mainForm.appendChild(assignTypeInput);
         }
         assignTypeInput.value = assignType;
 
-        let targetIdInput = mainForm.querySelector('input[name="target_id"]');
+        let targetIdInput = mainForm.querySelector('input[name="destination_id"]');
         if (!targetIdInput) {
             targetIdInput = document.createElement('input');
             targetIdInput.type = 'hidden';
-            targetIdInput.name = 'target_id';
+            targetIdInput.name = 'destination_id';
             mainForm.appendChild(targetIdInput);
         }
         targetIdInput.value = targetId;
 
-        let bolInput = mainForm.querySelector('input[name="bol"]');
+        let bolInput = mainForm.querySelector('input[name="bol_number"]');
         if (!bolInput) {
             bolInput = document.createElement('input');
             bolInput.type = 'hidden';
-            bolInput.name = 'bol';
+            bolInput.name = 'bol_number';
             mainForm.appendChild(bolInput);
         }
         bolInput.value = bol;
         
-        let deliveryDateInput = mainForm.querySelector('input[name="delivery_date"]');
+        let deliveryDateInput = mainForm.querySelector('input[name="departure_date"]');
         if (!deliveryDateInput) {
             deliveryDateInput = document.createElement('input');
             deliveryDateInput.type = 'hidden';
-            deliveryDateInput.name = 'delivery_date';
+            deliveryDateInput.name = 'departure_date';
             mainForm.appendChild(deliveryDateInput);
         }
         deliveryDateInput.value = deliveryDate;
+
+        let estArrivalDateInput = mainForm.querySelector('input[name="est_arrival_date"]');
+        if (!estArrivalDateInput) {
+            estArrivalDateInput = document.createElement('input');
+            estArrivalDateInput.type = 'hidden';
+            estArrivalDateInput.name = 'est_arrival_date';
+            mainForm.appendChild(estArrivalDateInput);
+        }
+        estArrivalDateInput.value = estArrivalDate;
 
         mainForm.submit();
     });
 }
 
-document.addEventListener('DOMContentLoaded', function() {
-    updateOpenShipModalButtonState(); // Set initial button state
-    // Add event listeners to individual checkboxes
-    document.querySelectorAll('.pallet-checkbox').forEach(function(checkbox) {
-        checkbox.addEventListener('change', updateOpenShipModalButtonState);
+function toggleDestinationSelect() {
+    var assignType = document.querySelector('input[name="destination_type"]:checked').value;
+    var targetLabel = document.getElementById('destinationLabel');
+    var targetSelect = document.getElementById('destination_id');
+    var data = (assignType === 'project') ? projectsData : warehousesData;
+    var placeholder = (assignType === 'project') ? '-- Select Project --' : '-- Select Warehouse --';
+    var nameField = (assignType === 'project') ? 'project_name' : 'name';
+    targetLabel.textContent = (assignType === 'project') ? 'Project:' : 'Warehouse:';
+    targetSelect.innerHTML = '';
+    if (data.length === 0) {
+        targetSelect.innerHTML = `<option value="">No ${assignType === 'project' ? 'projects' : 'warehouses'} found</option>`;
+        targetSelect.disabled = true;
+    } else {
+        targetSelect.innerHTML = `<option value="">${placeholder}</option>`;
+        data.forEach(function(item) {
+            var option = document.createElement('option');
+            option.value = item.id;
+            option.textContent = item[nameField];
+            targetSelect.appendChild(option);
+        });
+        targetSelect.disabled = false;
+    }
+}
+
+// Ensure this runs on page load and when the modal opens
+function setupDestinationSelectListeners() {
+    document.querySelectorAll('input[name="destination_type"]').forEach(function(radio) {
+        radio.addEventListener('change', toggleDestinationSelect);
     });
-    // If the original toggleTargetSelect was for a non-modal form, it might not be needed or might need renaming.
-    // For now, the modal has its own toggleModalTargetSelect.
-});
+    toggleDestinationSelect();
+}
+
 </script>
 
 </body>
