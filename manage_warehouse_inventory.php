@@ -19,10 +19,10 @@ if ($warehouse_id <= 0) {
 
 $warehouse = null;
 $pallets_in_storage = [];
-$pallets_in_transit = []; // Added for inbound pallets
+$pallets_in_transit = [];
 $errorMessage = '';
-$successMessage = $_SESSION['move_pallet_message'] ?? ''; // Check for success message from POST redirect
-if (isset($_SESSION['move_pallet_message'])) unset($_SESSION['move_pallet_message']); // Clear message after displaying
+$successMessage = $_SESSION['move_pallet_message'] ?? '';
+if (isset($_SESSION['move_pallet_message'])) unset($_SESSION['move_pallet_message']);
 
 $total_storage_cost_monthly_rate = 0;
 $all_projects = [];
@@ -41,7 +41,7 @@ try {
     $warehouse = $resultW->fetch_assoc();
     $stmtW->close();
 
-    // Fetch Pallets currently in this warehouse ('In Warehouse' status)
+    // Fetch Pallets in Warehouse
     $stmtP_Stored = $conn->prepare("
         SELECT 
             ip.id AS pallet_id,
@@ -61,33 +61,17 @@ try {
     $stmtP_Stored->execute();
     $resultP_Stored = $stmtP_Stored->get_result();
     
-    $today = new DateTime(); // For cost calculation
+    $today = new DateTime();
     $daily_storage_rate = ($warehouse['monthly_storage_fee'] ?? 0) / 30;
     $total_pallets = 0;
 
     while ($pallet = $resultP_Stored->fetch_assoc()) {
         $pallets_in_storage[] = $pallet;
         $total_pallets++;
-        // Calculate storage cost for this pallet since arrival
-        if (!empty($pallet['arrival_date']) && $daily_storage_rate > 0) {
-            try {
-                $arrival_date = new DateTime($pallet['arrival_date']);
-                // Calculate days difference (inclusive, so add 1 if needed based on business logic)
-                // For a monthly rate estimate, let's calculate based on days passed
-                $interval = $arrival_date->diff($today);
-                $days_in_storage = $interval->days + 1; // Include arrival day
-                // Accumulate cost based on daily rate * days
-                // Note: This is an estimate. Accurate monthly billing might require different logic.
-                // $total_storage_cost += ($days_in_storage * $daily_storage_rate);
-            } catch (Exception $dateEx) {
-                // Ignore pallets with invalid arrival dates for cost calculation
-                error_log("Invalid date format for pallet ID {$pallet['pallet_id']}: {$pallet['arrival_date']}");
-            }
-        }
     }
     $stmtP_Stored->close();
     
-    // Fetch Pallets in transit TO this warehouse
+    // Fetch Pallets in transit
     $stmtP_Transit = $conn->prepare("
         SELECT 
             ip.id AS pallet_id,
@@ -115,10 +99,10 @@ try {
     }
     $stmtP_Transit->close();
     
-    // Simple monthly rate calculation based on stored pallet count
+    // Monthly cost estimate
     $total_storage_cost_monthly_rate = $total_pallets * ($warehouse['monthly_storage_fee'] ?? 0);
 
-    // Fetch all projects for the destination dropdown
+    // Fetch all projects
     $stmtAllP = $conn->prepare("SELECT id, project_name FROM projects ORDER BY project_name ASC");
     if ($stmtAllP) {
         $stmtAllP->execute();
@@ -129,7 +113,7 @@ try {
         $stmtAllP->close();
     }
 
-    // Fetch other warehouses for the destination dropdown
+    // Fetch other warehouses
     $stmtOtherW = $conn->prepare("SELECT id, name FROM warehouses WHERE id != ? ORDER BY name ASC");
     if ($stmtOtherW) {
         $stmtOtherW->bind_param("i", $warehouse_id);
@@ -152,10 +136,11 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Warehouse Inventory - <?php echo htmlspecialchars($warehouse['name'] ?? 'Unknown Warehouse'); ?></title>
+    <title>Manage Warehouse Inventory - <?php echo htmlspecialchars($warehouse['name'] ?? 'Unknown'); ?></title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+
     <style>
         .warehouse-details-container {
             background-color: #f9f9f9;
@@ -165,114 +150,111 @@ $conn->close();
             margin-bottom: 25px;
             display: flex;
             justify-content: space-between;
-            align-items: flex-start;
             flex-wrap: wrap;
         }
         .warehouse-info p {
             margin: 6px 0;
             line-height: 1.5;
         }
-        .warehouse-info strong {
-             color: #293E4C; 
-        }
-        .warehouse-actions a {
-            margin-left: 15px; /* Add space between buttons if needed */
-        }
         .cost-summary {
             margin-bottom: 25px;
         }
-        .cost-summary span {
-             font-weight: bold; color: #488C9A; font-size: 1.1em;
-        }
-         .error-message,
-         .success-message { /* Added success message style */
+        .error-message, .success-message {
             color: red;
             background-color: #ffe6e6;
             padding: 10px;
             border: 1px solid red;
             border-radius: 5px;
             margin-bottom: 20px;
-            text-align: center; /* Center align text */
+            text-align: center;
         }
         .success-message {
             color: green;
             border-color: green;
             background-color: #e6ffed;
         }
-        /* Style for future buttons like "Move Pallets" */
-        .page-actions {
-             text-align: right;
-             margin-bottom: 20px;
-        }
-        /* Styles for the move pallet form */
-        #movePalletFormContainer {
-             background-color: #f0f8ff; /* Light blue background */
-             padding: 20px;
-             border: 1px solid #b0e0e6; /* Powder blue border */
-             border-radius: 8px;
-             margin-top: 30px;
-        }
-        #movePalletFormContainer h3 {
-             margin-top: 0;
-             color: #293E4C;
-             border-bottom: 1px solid #ccc;
-             padding-bottom: 10px;
-             margin-bottom: 15px;
-        }
-        .form-row {
+        .table-controls-header {
             display: flex;
+            align-items: center;
+            justify-content: space-between;
             flex-wrap: wrap;
-            gap: 20px;
+            gap: 10px;
             margin-bottom: 15px;
         }
-        .form-row > div {
-            flex: 1;
-            min-width: 200px; /* Adjust as needed */
+        .filter-controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
         }
-        .form-row label,
-        #movePalletFormContainer label {
-             display: block;
-             margin-bottom: 5px;
-             font-weight: 500;
+        .tabs-container {
+            text-align: center;
+            width: 100%;
+            margin-bottom: 10px;
         }
-        .form-row input[type="text"],
-        .form-row input[type="date"],
-        .form-row select,
-        #movePalletFormContainer select {
-             width: 100%;
-             padding: 8px;
-             border: 1px solid #ccc;
-             border-radius: 4px;
-             box-sizing: border-box;
+        .tabs {
+            display: inline-flex;
+            gap: 1px;
         }
-        label.radio-label {
-            display: inline-block; 
-            margin-right: 15px; 
-            font-weight: normal; 
+        .tabs button {
+            background: #293E4C;
+            color: #fff;
+            padding: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            border: none;
+            font-size: 1em;
         }
-        label.radio-label input[type=radio] {
-             width: auto; margin-right: 5px; vertical-align: middle; 
+        .tabs button.active {
+            background: #f39c12;
+            color: #000;
         }
-
-        /* Modal Styling */
+        .page-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+        }
+        .inventory-section {
+            display: none;
+            margin-top: 10px;
+        }
+        .inventory-section.active {
+            display: block;
+        }
+        .table-responsive {
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 10px;
+        }
+        th {
+            background-color: #e9ecef;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
         .modal {
-            display: none !important; /* Hidden by default - ensure this takes precedence initially */
-            position: fixed; 
-            z-index: 1000; 
-            left: 0;
-            top: 0;
-            width: 100%; 
-            height: 100%; 
-            overflow: auto; 
-            background-color: rgba(0,0,0,0.5); 
+            display: none !important;
+            position: fixed;
+            z-index: 1000;
+            left: 0; top: 0;
+            width: 100%; height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.5);
         }
         .modal-content {
             background-color: #fefefe;
-            margin: 10% auto; 
+            margin: 10% auto;
             padding: 25px;
             border: 1px solid #888;
-            width: 80%; 
-            max-width: 600px; 
+            width: 80%;
+            max-width: 600px;
             border-radius: 8px;
             position: relative;
         }
@@ -290,62 +272,46 @@ $conn->close();
             color: black;
             text-decoration: none;
         }
-        /* Ensure form elements inside modal content look okay */
-        .modal-content #movePalletFormContainer {
-            background-color: transparent; /* Remove specific bg if modal provides it */
-            border: none;
-            padding: 0;
+        #movePalletFormContainer {
+            background-color: #f0f8ff;
+            padding: 20px;
+            border: 1px solid #b0e0e6;
+            border-radius: 8px;
+            margin-top: 30px;
+        }
+        #movePalletFormContainer h3 {
             margin-top: 0;
+            color: #293E4C;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
         }
-        .action-button.active {
-            background-color: #293E4C; /* Darker blue for active toggle */
-            font-weight: bold;
-        }
-        .inventory-section { /* Class for sections to toggle */
-           display: none; /* Hide sections by default */
-           margin-top: 50px;
-        }
-        .inventory-section.active { /* Class for the visible section */
-           display: block;
-        }
-        /* Styles for new tabs and button layout */
-        .table-controls-header {
+        .form-row {
             display: flex;
-            justify-content: space-between; /* Pushes move button to the right */
-            align-items: center;
-            margin-bottom: 20px; /* Space before the tables */
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 15px;
         }
-        .tabs {
-            display: flex;
-            justify-content: center; /* Center the tab buttons */
-            gap: 1px;
-            flex-grow: 1; /* Allow tabs to take available space for centering */
+        .form-row > div {
+            flex: 1;
+            min-width: 200px;
         }
-        .tabs button {
-            flex: 1; /* Distribute space if you want them to grow */
-            min-width: 0;
-            white-space: nowrap;
-            background: #293E4C; /* var(--primary-blue) equivalent */
-            color: #fff;
-            padding: 10px;
-            cursor: pointer;
-            font-weight: 600;
-            border: none;
-            font-size: 1em;
-            max-width: 200px; /* As per your style */
+        .form-row label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
         }
-        .tabs button.active {
-            background: #f39c12; /* var(--accent-orange) - assuming an orange color */
-            color: #000;
+        label.radio-label {
+            display: inline-block;
+            margin-right: 15px;
+            font-weight: normal;
         }
-        .page-actions {
-            /* No specific changes needed if button is already styled, 
-               but ensure it doesn't have conflicting margins pushing it down */
-            margin-bottom: 0; 
-            text-align: right; /* Keep this if only one button */
+        label.radio-label input[type=radio] {
+            width: auto;
+            margin-right: 5px;
+            vertical-align: middle;
         }
-        /* Ensure action-button class for Move Pallets doesn't override tab styles if they were the same */
-        #movePalletsBtn {
+        .action-button {
             padding: 10px 20px;
             background-color: #488C9A;
             color: #fff;
@@ -353,9 +319,21 @@ $conn->close();
             border-radius: 4px;
             cursor: pointer;
         }
-        #movePalletsBtn:disabled {
-            background-color: #cccccc;
+        .action-button:disabled {
+            background-color: #ccc;
             cursor: not-allowed;
+        }
+        .filter-controls label {
+            font-weight: 500;
+        }
+        .filter-controls input[type="text"],
+        .filter-controls select {
+            padding: 6px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .back-link {
+            margin-top: 20px;
         }
     </style>
 </head>
@@ -363,9 +341,7 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <?php if (!empty($successMessage)): ?>
-        <div class="success-message">
-            <?php echo htmlspecialchars($successMessage); ?>
-        </div>
+        <div class="success-message"><?php echo htmlspecialchars($successMessage); ?></div>
     <?php endif; ?>
     <?php if (!empty($errorMessage)): ?>
         <div class="error-message">
@@ -378,7 +354,7 @@ $conn->close();
         </div>
         <p><a href="manage_warehouses.php" class="action-buttons">&larr; Back to Warehouses List</a></p>
     <?php else: ?>
-        <!-- Warehouse Details Header -->
+        <!-- Warehouse Details -->
         <div class="warehouse-details-container">
             <div class="warehouse-info">
                 <h1><?php echo htmlspecialchars($warehouse['name']); ?></h1>
@@ -388,7 +364,9 @@ $conn->close();
                 <p><strong>Monthly Storage Fee (per Pallet):</strong> $<?php echo number_format($warehouse['monthly_storage_fee'] ?? 0, 2); ?></p>
             </div>
             <div class="warehouse-actions">
-                <a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="action-buttons">Edit Warehouse Info</a>
+                <a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="action-buttons">
+                    Edit Warehouse Info
+                </a>
             </div>
         </div>
 
@@ -397,31 +375,53 @@ $conn->close();
             <h2>Current Inventory Summary</h2>
             <p>Total Pallets Currently Stored: <span><?php echo number_format($total_pallets); ?></span></p>
             <p>Estimated Monthly Storage Cost (Current Rate): <span>$<?php echo number_format($total_storage_cost_monthly_rate, 2); ?></span></p>
-            <!-- Add more cost details here if calculated (e.g., total accrued cost) -->
         </div>
-        
-        <!-- Stored Inventory Section -->
+
+        <!-- TABS (always visible) -->
+        <div class="tabs-container">
+            <div class="tabs">
+                <button id="toggleStoredBtn" class="active">Stored Inventory</button>
+                <button id="toggleTransitBtn">Inbound Transit</button>
+            </div>
+        </div>
+
+        <!-- STORED INVENTORY SECTION -->
         <div id="storedInventorySection" class="inventory-section active">
-            <h2>Pallet Inventory (Status: In Warehouse)</h2>
+            <h2>Pallet Inventory (In Warehouse)</h2>
             <div class="table-controls-header">
-                <div class="inventory-toggle-buttons tabs">
-                    <button id="toggleStoredBtn" class="action-button active" onclick="showInventoryView('stored')">Stored Inventory</button>
-                    <button id="toggleTransitBtn" class="action-button" onclick="showInventoryView('transit')">Inbound Transit</button>
+                <div class="filter-controls">
+                    <label>Search:</label>
+                    <input type="text" id="storedSearch" placeholder="Filter by Identifier, Vendor...">
+                    <label>Wattage:</label>
+                    <select id="storedWattageFilter">
+                        <option value="">All</option>
+                        <?php
+                        $storedWattages = [];
+                        foreach ($pallets_in_storage as $p) {
+                            $storedWattages[] = $p['wattage'];
+                        }
+                        $storedWattages = array_unique($storedWattages);
+                        sort($storedWattages);
+                        foreach ($storedWattages as $w) {
+                            echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
+                        }
+                        ?>
+                    </select>
                 </div>
                 <div class="page-actions">
                     <button id="movePalletsBtn" class="action-button" disabled>Move Selected Pallets</button>
                 </div>
             </div>
+
             <form id="palletInventoryForm" method="POST" action="handle_pallet_move.php">
                 <input type="hidden" name="current_warehouse_id" value="<?php echo $warehouse_id; ?>">
                 <input type="hidden" name="action" value="move_pallets">
-                
+
                 <div class="table-responsive">
-                    <table>
+                    <table id="storedTable">
                         <thead>
                             <tr>
-                                <th><input type="checkbox" id="select-all-pallets" onclick="toggleAllPalletCheckboxes(this.checked)"></th>
-                                <th>Pallet ID</th>
+                                <th><input type="checkbox" id="select-all-stored"></th>
                                 <th>Identifier</th>
                                 <th>Origin Vendor</th>
                                 <th>Wattage</th>
@@ -433,8 +433,12 @@ $conn->close();
                             <?php if (!empty($pallets_in_storage)): ?>
                                 <?php foreach ($pallets_in_storage as $pallet): ?>
                                     <tr>
-                                        <td><input type="checkbox" name="selected_pallets[]" value="<?php echo $pallet['pallet_id']; ?>" class="pallet-checkbox" onclick="updateMoveButtonState()"></td>
-                                        <td><?php echo $pallet['pallet_id']; ?></td>
+                                        <td>
+                                            <input type="checkbox"
+                                                   name="selected_pallets[]"
+                                                   value="<?php echo $pallet['pallet_id']; ?>"
+                                                   class="pallet-checkbox-stored">
+                                        </td>
                                         <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
@@ -443,15 +447,13 @@ $conn->close();
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr>
-                                    <td colspan="7">No pallets currently stored in this warehouse.</td>
-                                </tr>
+                                <tr><td colspan="6">No pallets currently stored in this warehouse.</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
 
-                <!-- Hidden Move Pallet Form Container -->
+                <!-- Hidden "Move Pallet" form container (for modal) -->
                 <div id="movePalletFormContainer" style="display: none;">
                     <h3>Create Transfer Delivery</h3>
                     <div class="form-row">
@@ -465,25 +467,23 @@ $conn->close();
                             <label for="departure_date">Departure Date:</label>
                             <input type="date" id="departure_date" name="departure_date" required>
                         </div>
-                         <div>
+                        <div>
                             <label for="est_arrival_date">Est. Arrival Date:</label>
                             <input type="date" id="est_arrival_date" name="est_arrival_date" required>
                         </div>
                     </div>
-                     <div>
+                    <div>
                         <label style="margin-bottom: 10px; display:block;">Destination:</label>
                         <label class="radio-label">
-                            <input type="radio" name="destination_type" value="project" checked onchange="toggleDestinationSelect()"> Project
+                            <input type="radio" name="destination_type" value="project" checked> Project
                         </label>
                         <label class="radio-label">
-                            <input type="radio" name="destination_type" value="warehouse" onchange="toggleDestinationSelect()"> Another Warehouse
+                            <input type="radio" name="destination_type" value="warehouse"> Another Warehouse
                         </label>
                     </div>
-                     <div id="destinationSelectContainer">
+                    <div id="destinationSelectContainer">
                         <label for="destination_id" id="destinationLabel">Project:</label>
-                        <select name="destination_id" id="destination_id" required>
-                            <!-- Options loaded by JS -->
-                        </select>
+                        <select name="destination_id" id="destination_id" required></select>
                     </div>
                     
                     <div style="margin-top: 20px;">
@@ -491,297 +491,417 @@ $conn->close();
                     </div>
                 </div>
             </form>
-        </div> <!-- End storedInventorySection -->
+        </div>
 
-        <!-- Inbound Transit Section -->
+        <!-- INBOUND TRANSIT SECTION -->
         <div id="transitInventorySection" class="inventory-section">
-             <h2>Pallet Inventory (Status: In Transit to Warehouse)</h2>
-             <div class="table-controls-header">
-                <div class="inventory-toggle-buttons tabs">
-                    <button id="toggleStoredBtnTransit" class="action-button" onclick="showInventoryView('stored')">Stored Inventory</button>
-                    <button id="toggleTransitBtnTransit" class="action-button active" onclick="showInventoryView('transit')">Inbound Transit</button>
+            <h2>Pallet Inventory (Inbound Transit)</h2>
+            <div class="table-controls-header">
+                <div class="filter-controls">
+                    <label>Search:</label>
+                    <input type="text" id="transitSearch" placeholder="Filter by Identifier, Vendor...">
+                    <label>Wattage:</label>
+                    <select id="transitWattageFilter">
+                        <option value="">All</option>
+                        <?php
+                        $transitWattages = [];
+                        foreach ($pallets_in_transit as $p) {
+                            $transitWattages[] = $p['wattage'];
+                        }
+                        $transitWattages = array_unique($transitWattages);
+                        sort($transitWattages);
+                        foreach ($transitWattages as $w) {
+                            echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
+                        }
+                        ?>
+                    </select>
                 </div>
-             </div>
-             <div class="table-responsive">
-                <form id="receivePalletsForm" method="POST" action="handle_pallet_arrival.php"> 
-                    <input type="hidden" name="warehouse_id" value="<?php echo $warehouse_id; ?>">
-                    <input type="hidden" name="action" value="receive_pallets">
-                    <table>
+                <div class="page-actions">
+                    <button id="receivePalletsBtn" class="action-button" disabled>Receive Selected Pallets</button>
+                </div>
+            </div>
+
+            <form id="receivePalletsForm" method="POST" action="handle_pallet_arrival.php">
+                <input type="hidden" name="warehouse_id" value="<?php echo $warehouse_id; ?>">
+                <input type="hidden" name="action" value="receive_pallets">
+
+                <div class="table-responsive">
+                    <table id="transitTable">
                         <thead>
                             <tr>
-                                <!-- Optional: Add checkbox for bulk receive? -->
-                                <th>Pallet ID</th>
+                                <th><input type="checkbox" id="select-all-transit"></th>
                                 <th>Identifier</th>
                                 <th>Origin Vendor</th>
                                 <th>Wattage</th>
                                 <th>Quantity</th>
                                 <th>Delivery BOL</th>
                                 <th>Est. Arrival Date</th>
-                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (!empty($pallets_in_transit)): ?>
                                 <?php foreach ($pallets_in_transit as $pallet): ?>
                                     <tr>
-                                        <td><?php echo $pallet['pallet_id']; ?></td>
+                                        <td>
+                                            <input type="checkbox"
+                                                   name="inbound_pallets[]"
+                                                   value="<?php echo $pallet['pallet_id']; ?>"
+                                                   class="transit-checkbox">
+                                            <input type="hidden"
+                                                   name="delivery_id_for_pallet[<?php echo $pallet['pallet_id']; ?>]"
+                                                   value="<?php echo $pallet['delivery_id']; ?>">
+                                        </td>
                                         <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
                                         <td><?php echo number_format($pallet['quantity']); ?></td>
                                         <td><?php echo htmlspecialchars($pallet['delivery_bol'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($pallet['est_arrival_date'] ?? 'N/A'); ?></td>
-                                        <td>
-                                            <!-- Simple form per pallet for receiving -->
-                                            <button type="submit" name="receive_pallet_id" value="<?php echo $pallet['pallet_id']; ?>" class="action-button" style="background-color: #28a745;">Receive</button>
-                                            <!-- Pass delivery ID if needed by handler -->
-                                            <input type="hidden" name="delivery_id_<?php echo $pallet['pallet_id']; ?>" value="<?php echo $pallet['delivery_id']; ?>">
-                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr>
-                                    <td colspan="8">No pallets currently in transit to this warehouse.</td>
-                                </tr>
+                                <tr><td colspan="7">No pallets currently in transit to this warehouse.</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
-                 </form> 
-             </div>
-        </div> <!-- End transitInventorySection -->
+                </div>
 
-        <div class="back-link" style="margin-top: 20px;">
+                <!-- Hidden "Receive Pallets" form container -->
+                <div id="receiveFormContainer" style="display: none;">
+                    <h3>Receive Pallets</h3>
+                    <div class="form-row">
+                        <div>
+                            <label for="receive_bol">BOL Number (Confirm/Update):</label>
+                            <input type="text" id="receive_bol" name="receive_bol">
+                        </div>
+                        <div>
+                            <label for="actual_arrival_date">Actual Arrival Date:</label>
+                            <input type="date" id="actual_arrival_date" name="actual_arrival_date" required>
+                        </div>
+                    </div>
+                    <button type="button" id="confirmReceiveBtn" class="action-button">Mark as Received</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="back-link">
             <a href="manage_warehouses.php" class="action-buttons">&larr; Back to Warehouses List</a>
         </div>
     <?php endif; ?>
 </main>
 
-<!-- Modal Structure -->
+<!-- MOVE PALLETS MODAL -->
 <div id="moveModal" class="modal">
     <div class="modal-content">
         <span class="close-modal">&times;</span>
-        <!-- Content from #movePalletFormContainer will be moved here -->
+        <!-- #movePalletFormContainer is moved here dynamically -->
     </div>
 </div>
 
-<!-- Embed PHP data for JS -->
-<script>
-    const allProjectsData = <?php echo json_encode($all_projects); ?>;
-    const otherWarehousesData = <?php echo json_encode($other_warehouses); ?>;
-</script>
+<!-- RECEIVE PALLETS MODAL -->
+<div id="receiveModal" class="modal">
+    <div class="modal-content">
+        <span class="close-receive-modal">&times;</span>
+        <!-- #receiveFormContainer is moved here dynamically -->
+    </div>
+</div>
 
 <script>
-// Select/Deselect All Pallet Checkboxes
-function toggleAllPalletCheckboxes(isChecked) {
-    document.querySelectorAll('.pallet-checkbox').forEach(function(checkbox) {
-        checkbox.checked = isChecked;
-    });
-    updateMoveButtonState(); // Update button state after toggling all
-}
+// Projects & Warehouses for the Move Pallets dropdown
+const allProjectsData = <?php echo json_encode($all_projects); ?>;
+const otherWarehousesData = <?php echo json_encode($other_warehouses); ?>;
 
-// Enable/disable Move Pallets button and reset form location on disable
-function updateMoveButtonState() {
-    const moveBtn = document.getElementById('movePalletsBtn');
-    const checkedBoxes = document.querySelectorAll('.pallet-checkbox:checked');
-    const shouldBeDisabled = checkedBoxes.length === 0;
-    console.log(`updateMoveButtonState: ${checkedBoxes.length} boxes checked. Button disabled: ${shouldBeDisabled}`);
-    moveBtn.disabled = shouldBeDisabled;
+/** Show or hide the stored vs. transit sections. */
+function showInventoryView(viewType) {
+    // Sections
+    const storedSec  = document.getElementById('storedInventorySection');
+    const transitSec = document.getElementById('transitInventorySection');
+    storedSec.classList.remove('active');
+    transitSec.classList.remove('active');
 
-    // If no boxes are checked, ensure the modal is closed and form is back in place
-    if (checkedBoxes.length === 0) {
-        closeMoveModal(); 
-    }
-}
+    // Tab buttons
+    document.getElementById('toggleStoredBtn').classList.remove('active');
+    document.getElementById('toggleTransitBtn').classList.remove('active');
 
-// Get references to modal elements
-const moveModal = document.getElementById('moveModal');
-const modalContent = moveModal.querySelector('.modal-content');
-const closeModalBtn = moveModal.querySelector('.close-modal');
-const formContainer = document.getElementById('movePalletFormContainer');
-const originalFormParent = formContainer.parentNode; // Keep track of where the form belongs
-
-// Show the move pallet modal
-function openMoveModal() {
-    console.log("openMoveModal called."); // Log start of function
-    const moveBtn = document.getElementById('movePalletsBtn');
-
-    // Only open if the button is NOT disabled
-    if (!moveBtn.disabled) {
-        console.log("Button is enabled, proceeding to open modal."); // Log inside if
-        // Move the form content into the modal's content area
-        // Insert the form container after the close button
-        if (closeModalBtn.nextSibling) {
-            modalContent.insertBefore(formContainer, closeModalBtn.nextSibling);
-        } else {
-            modalContent.appendChild(formContainer);
-        }
-        formContainer.style.display = 'block'; // Make the form content visible
-        console.log("Form container display set to block.");
-        
-        moveModal.style.setProperty('display', 'block', 'important'); // Use setProperty to add !important
-        console.log("Modal display set to block !important.");
-        
-        toggleDestinationSelect(); // Initialize dropdown
+    // Activate whichever the user clicked
+    if (viewType === 'stored') {
+        storedSec.classList.add('active');
+        document.getElementById('toggleStoredBtn').classList.add('active');
     } else {
-        console.log("Button is disabled, modal not opened."); // Log else case
+        transitSec.classList.add('active');
+        document.getElementById('toggleTransitBtn').classList.add('active');
     }
 }
 
-// Close the move pallet modal
-function closeMoveModal() {
-    if (moveModal.style.display === 'block') {
-         // Move the form container back to its original parent and hide it
-        originalFormParent.appendChild(formContainer);
-        formContainer.style.display = 'none';
-        moveModal.style.display = 'none'; // Hide the modal
+document.addEventListener('DOMContentLoaded', () => {
+    // On load, default to "stored"
+    showInventoryView('stored');
+
+    // Hook tab button clicks
+    document.getElementById('toggleStoredBtn').addEventListener('click', () => showInventoryView('stored'));
+    document.getElementById('toggleTransitBtn').addEventListener('click', () => showInventoryView('transit'));
+
+    // Set up "select all" checkboxes
+    const selAllStored = document.getElementById('select-all-stored');
+    if (selAllStored) {
+        selAllStored.addEventListener('change', (e) => {
+            toggleAllCheckboxesInTable('storedTable', e.target.checked);
+            updateMoveButtonState();
+        });
     }
-}
-
-// --- Event Listeners ---
-
-// Open modal when the Move button is clicked
-document.getElementById('movePalletsBtn').addEventListener('click', openMoveModal);
-
-// Close modal listeners
-closeModalBtn.addEventListener('click', closeMoveModal);
-
-window.addEventListener('click', function(event) {
-    if (event.target == moveModal) { // Clicked outside the modal content
-        closeMoveModal();
+    const selAllTransit = document.getElementById('select-all-transit');
+    if (selAllTransit) {
+        selAllTransit.addEventListener('change', (e) => {
+            toggleAllCheckboxesInTable('transitTable', e.target.checked);
+            updateReceiveButtonState();
+        });
     }
+
+    // Child checkboxes for stored
+    document.querySelectorAll('.pallet-checkbox-stored').forEach(cb => {
+        cb.addEventListener('change', updateMoveButtonState);
+    });
+    // Child checkboxes for transit
+    document.querySelectorAll('.transit-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateReceiveButtonState);
+    });
+
+    // Initial states
+    updateMoveButtonState();
+    updateReceiveButtonState();
+
+    // Filter watchers (Stored)
+    document.getElementById('storedSearch').addEventListener('keyup', filterStoredTable);
+    document.getElementById('storedWattageFilter').addEventListener('change', filterStoredTable);
+
+    // Filter watchers (Transit)
+    document.getElementById('transitSearch').addEventListener('keyup', filterTransitTable);
+    document.getElementById('transitWattageFilter').addEventListener('change', filterTransitTable);
 });
 
-// Trigger form submission when the button inside the modal is clicked
-document.getElementById('submitMoveBtn').addEventListener('click', function() {
-    console.log("Submit button inside modal clicked. Submitting form...");
+/** Toggle all child checkboxes in a given table. */
+function toggleAllCheckboxesInTable(tableId, isChecked) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const checkboxes = table.querySelectorAll('tbody input[type="checkbox"]');
+    checkboxes.forEach(cb => { cb.checked = isChecked; });
+}
+
+/** MOVE button state */
+function updateMoveButtonState() {
+    const moveBtn = document.getElementById('movePalletsBtn');
+    const table = document.getElementById('storedTable');
+    if (!table) return;
+    const checked = table.querySelectorAll('.pallet-checkbox-stored:checked').length;
+    moveBtn.disabled = (checked === 0);
+    if (checked === 0) closeMoveModal();
+}
+
+/** RECEIVE button state */
+function updateReceiveButtonState() {
+    const receiveBtn = document.getElementById('receivePalletsBtn');
+    const table = document.getElementById('transitTable');
+    if (!table) return;
+    const checked = table.querySelectorAll('.transit-checkbox:checked').length;
+    receiveBtn.disabled = (checked === 0);
+    if (checked === 0) closeReceiveModal();
+}
+
+/** Filter stored table */
+function filterStoredTable() {
+    const textFilter = document.getElementById('storedSearch').value.toLowerCase();
+    const wattageFilter = document.getElementById('storedWattageFilter').value;
+    const rows = document.querySelectorAll('#storedTable tbody tr');
+
+    rows.forEach(row => {
+        let show = true;
+        let rowText = '';
+        // Build row text for searching
+        for (let i = 1; i < row.cells.length; i++) {
+            rowText += row.cells[i].textContent.toLowerCase() + ' ';
+        }
+        if (textFilter && !rowText.includes(textFilter)) show = false;
+        let wattageText = row.cells[3]?.textContent.replace('W','').trim() || '';
+        if (wattageFilter && wattageText !== wattageFilter) show = false;
+
+        row.style.display = show ? '' : 'none';
+    });
+}
+
+/** Filter transit table */
+function filterTransitTable() {
+    const textFilter = document.getElementById('transitSearch').value.toLowerCase();
+    const wattageFilter = document.getElementById('transitWattageFilter').value;
+    const rows = document.querySelectorAll('#transitTable tbody tr');
+
+    rows.forEach(row => {
+        let show = true;
+        let rowText = '';
+        for (let i = 1; i < row.cells.length; i++) {
+            rowText += row.cells[i].textContent.toLowerCase() + ' ';
+        }
+        if (textFilter && !rowText.includes(textFilter)) show = false;
+
+        let wattageText = row.cells[3]?.textContent.replace('W','').trim() || '';
+        if (wattageFilter && wattageText !== wattageFilter) show = false;
+
+        row.style.display = show ? '' : 'none';
+    });
+}
+
+/** MOVE PALLETS MODAL */
+const moveModal = document.getElementById('moveModal');
+const closeModalBtn = moveModal.querySelector('.close-modal');
+const moveFormContainer = document.getElementById('movePalletFormContainer');
+const moveOriginalParent = moveFormContainer.parentNode;
+
+document.getElementById('movePalletsBtn').addEventListener('click', openMoveModal);
+closeModalBtn.addEventListener('click', closeMoveModal);
+window.addEventListener('click', (e) => {
+    if (e.target === moveModal) closeMoveModal();
+});
+
+function openMoveModal() {
+    const moveBtn = document.getElementById('movePalletsBtn');
+    if (moveBtn.disabled) return;
+    if (closeModalBtn.nextSibling) {
+        moveModal.querySelector('.modal-content').insertBefore(moveFormContainer, closeModalBtn.nextSibling);
+    } else {
+        moveModal.querySelector('.modal-content').appendChild(moveFormContainer);
+    }
+    moveFormContainer.style.display = 'block';
+    moveModal.style.setProperty('display', 'block', 'important');
+    toggleDestinationSelect(); // populate project/warehouse
+}
+function closeMoveModal() {
+    if (moveModal.style.display === 'block') {
+        moveOriginalParent.appendChild(moveFormContainer);
+        moveFormContainer.style.display = 'none';
+        moveModal.style.display = 'none';
+    }
+}
+
+/** RECEIVE PALLETS MODAL */
+const receiveModal = document.getElementById('receiveModal');
+const closeReceiveBtn = receiveModal.querySelector('.close-receive-modal');
+const receiveFormContainer = document.getElementById('receiveFormContainer');
+const receiveOriginalParent = receiveFormContainer.parentNode;
+
+document.getElementById('receivePalletsBtn').addEventListener('click', openReceiveModal);
+closeReceiveBtn.addEventListener('click', closeReceiveModal);
+window.addEventListener('click', (e) => {
+    if (e.target === receiveModal) closeReceiveModal();
+});
+
+function openReceiveModal() {
+    const btn = document.getElementById('receivePalletsBtn');
+    if (btn.disabled) return;
+    if (closeReceiveBtn.nextSibling) {
+        receiveModal.querySelector('.modal-content').insertBefore(receiveFormContainer, closeReceiveBtn.nextSibling);
+    } else {
+        receiveModal.querySelector('.modal-content').appendChild(receiveFormContainer);
+    }
+    receiveFormContainer.style.display = 'block';
+    receiveModal.style.setProperty('display', 'block', 'important');
+}
+function closeReceiveModal() {
+    if (receiveModal.style.display === 'block') {
+        receiveOriginalParent.appendChild(receiveFormContainer);
+        receiveFormContainer.style.display = 'none';
+        receiveModal.style.display = 'none';
+    }
+}
+
+/** SUBMIT: Move Pallets */
+document.getElementById('submitMoveBtn').addEventListener('click', () => {
     const mainForm = document.getElementById('palletInventoryForm');
+    const destType = document.querySelector('input[name="destination_type"]:checked').value;
+    const destId = document.getElementById('destination_id').value;
 
-    // Find selected destination type and value from modal
-    const selectedType = document.querySelector('input[name="destination_type"]:checked').value;
-    const selectedId = document.getElementById('destination_id').value;
-
-    // --- Create/update hidden fields in the main form ---
-    let typeInput = mainForm.querySelector('input[name="destination_type_hidden"]');
-    if (!typeInput) {
-        typeInput = document.createElement('input');
-        typeInput.type = 'hidden';
-        typeInput.name = 'destination_type'; // Use the original name expected by backend
-        mainForm.appendChild(typeInput);
-    }
-    typeInput.value = selectedType;
-
-    let idInput = mainForm.querySelector('input[name="destination_id_hidden"]');
-    if (!idInput) {
-        idInput = document.createElement('input');
-        idInput.type = 'hidden';
-        idInput.name = 'destination_id'; // Use the original name expected by backend
-        mainForm.appendChild(idInput);
-    }
-    idInput.value = selectedId;
-    
-    // Also ensure other modal fields are submitted if needed (BOL, Dates)
-    let bolInput = mainForm.querySelector('input[name="bol_number_hidden"]');
-    if (!bolInput) {
-        bolInput = document.createElement('input');
-        bolInput.type = 'hidden';
-        bolInput.name = 'bol_number';
-        mainForm.appendChild(bolInput);
-    }
-    bolInput.value = document.getElementById('bol_number').value;
-
-    let departureDateInput = mainForm.querySelector('input[name="departure_date_hidden"]');
-    if (!departureDateInput) {
-        departureDateInput = document.createElement('input');
-        departureDateInput.type = 'hidden';
-        departureDateInput.name = 'departure_date';
-        mainForm.appendChild(departureDateInput);
-    }
-    departureDateInput.value = document.getElementById('departure_date').value;
-
-    let estArrivalDateInput = mainForm.querySelector('input[name="est_arrival_date_hidden"]');
-    if (!estArrivalDateInput) {
-        estArrivalDateInput = document.createElement('input');
-        estArrivalDateInput.type = 'hidden';
-        estArrivalDateInput.name = 'est_arrival_date';
-        mainForm.appendChild(estArrivalDateInput);
-    }
-    estArrivalDateInput.value = document.getElementById('est_arrival_date').value;
-    // --- End of hidden field creation/update ---
+    setHidden(mainForm, 'destination_type', destType);
+    setHidden(mainForm, 'destination_id', destId);
+    setHidden(mainForm, 'bol_number', document.getElementById('bol_number').value);
+    setHidden(mainForm, 'departure_date', document.getElementById('departure_date').value);
+    setHidden(mainForm, 'est_arrival_date', document.getElementById('est_arrival_date').value);
 
     mainForm.submit();
 });
 
-// Toggle Destination Select Dropdown Label and Content 
-function toggleDestinationSelect() {
-    console.log("toggleDestinationSelect called."); // Log start of function
-    var destType = document.querySelector('input[name="destination_type"]:checked').value;
-    var destLabel = document.getElementById('destinationLabel');
-    var destSelect = document.getElementById('destination_id');
+/** SUBMIT: Receive Pallets */
+document.getElementById('confirmReceiveBtn').addEventListener('click', () => {
+    const mainForm = document.getElementById('receivePalletsForm');
 
-    destLabel.textContent = (destType === 'project') ? 'Project:' : 'Destination Warehouse:';
-    destSelect.innerHTML = ''; // Clear existing options
-
-    var data = (destType === 'project') ? allProjectsData : otherWarehousesData;
-    var placeholder = (destType === 'project') ? '-- Select Project --' : '-- Select Warehouse --';
-    var nameField = (destType === 'project') ? 'project_name' : 'name';
-
-    if (data.length === 0) {
-        destSelect.innerHTML = `<option value="">No ${destType}s found</option>`;
-        destSelect.disabled = true;
-    } else {
-        destSelect.innerHTML = `<option value="">${placeholder}</option>`;
-        data.forEach(function(item) {
-            var option = document.createElement('option');
-            option.value = item.id;
-            option.textContent = item[nameField];
-            destSelect.appendChild(option);
-        });
-        destSelect.disabled = false;
+    let bolHidden = mainForm.querySelector('input[name="receive_bol_hidden"]');
+    if (!bolHidden) {
+        bolHidden = document.createElement('input');
+        bolHidden.type = 'hidden';
+        bolHidden.name = 'receive_bol_hidden';
+        mainForm.appendChild(bolHidden);
     }
-}
+    bolHidden.value = document.getElementById('receive_bol').value;
 
-// --- Add JS for Inventory View Toggle --- 
-function showInventoryView(viewType) {
-    console.log(`showInventoryView called with type: ${viewType}`);
-    // Hide all sections
-    document.getElementById('storedInventorySection').classList.remove('active');
-    document.getElementById('transitInventorySection').classList.remove('active');
-    // Deactivate all toggle buttons
-    document.getElementById('toggleStoredBtn').classList.remove('active');
-    document.getElementById('toggleTransitBtn').classList.remove('active');
-    // Also handle the new buttons for the transit view
-    if(document.getElementById('toggleStoredBtnTransit')) {
-        document.getElementById('toggleStoredBtnTransit').classList.remove('active');
+    let arrivalHidden = mainForm.querySelector('input[name="actual_arrival_date_hidden"]');
+    if (!arrivalHidden) {
+        arrivalHidden = document.createElement('input');
+        arrivalHidden.type = 'hidden';
+        arrivalHidden.name = 'actual_arrival_date_hidden';
+        mainForm.appendChild(arrivalHidden);
     }
-    if(document.getElementById('toggleTransitBtnTransit')) {
-        document.getElementById('toggleTransitBtnTransit').classList.remove('active');
-    }
+    arrivalHidden.value = document.getElementById('actual_arrival_date').value;
 
-    // Show the selected section and activate its button(s)
-    if (viewType === 'stored') {
-        document.getElementById('storedInventorySection').classList.add('active');
-        document.getElementById('toggleStoredBtn').classList.add('active');
-        if(document.getElementById('toggleStoredBtnTransit')) { // Keep transit view tabs in sync
-            document.getElementById('toggleStoredBtnTransit').classList.add('active');
-        }
-        console.log("Showing Stored Inventory");
-    } else if (viewType === 'transit') {
-        document.getElementById('transitInventorySection').classList.add('active');
-        document.getElementById('toggleTransitBtn').classList.add('active');
-        if(document.getElementById('toggleTransitBtnTransit')) { // Keep transit view tabs in sync
-            document.getElementById('toggleTransitBtnTransit').classList.add('active');
-        }
-        console.log("Showing Transit Inventory");
-    }
-}
-
-// Initial setup on page load
-document.addEventListener('DOMContentLoaded', function() {
-    updateMoveButtonState(); // Set initial button state
-    showInventoryView('stored'); // Show stored inventory by default
+    mainForm.submit();
 });
 
-</script>
+/** Toggle Destination (Project vs Warehouse) for move modal */
+function toggleDestinationSelect() {
+    const destType = document.querySelector('input[name="destination_type"]:checked').value;
+    const lbl = document.getElementById('destinationLabel');
+    const sel = document.getElementById('destination_id');
+    sel.innerHTML = '';
+    if (destType === 'project') {
+        lbl.textContent = 'Project:';
+        if (allProjectsData.length === 0) {
+            sel.innerHTML = '<option value="">No projects found</option>';
+            sel.disabled = true;
+        } else {
+            sel.disabled = false;
+            sel.innerHTML = '<option value="">-- Select Project --</option>';
+            allProjectsData.forEach(proj => {
+                const opt = document.createElement('option');
+                opt.value = proj.id;
+                opt.textContent = proj.project_name;
+                sel.appendChild(opt);
+            });
+        }
+    } else {
+        lbl.textContent = 'Destination Warehouse:';
+        if (otherWarehousesData.length === 0) {
+            sel.innerHTML = '<option value="">No other warehouses found</option>';
+            sel.disabled = true;
+        } else {
+            sel.disabled = false;
+            sel.innerHTML = '<option value="">-- Select Warehouse --</option>';
+            otherWarehousesData.forEach(wh => {
+                const opt = document.createElement('option');
+                opt.value = wh.id;
+                opt.textContent = wh.name;
+                sel.appendChild(opt);
+            });
+        }
+    }
+}
 
+/** Utility to set a hidden field in a form. */
+function setHidden(form, fieldName, val) {
+    let el = form.querySelector(`[name="${fieldName}"]`);
+    if (!el) {
+        el = document.createElement('input');
+        el.type = 'hidden';
+        el.name = fieldName;
+        form.appendChild(el);
+    }
+    el.value = val;
+}
+</script>
 </body>
-</html> 
+</html>
