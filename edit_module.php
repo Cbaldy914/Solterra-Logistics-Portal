@@ -135,44 +135,117 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$updateMainStmt->execute()) throw new Exception("Execute main update failed: " . $updateMainStmt->error);
             $updateMainStmt->close();
 
-            // Delete existing items
-            $deleteItemsStmt = $conn->prepare("DELETE FROM module_items WHERE module_id = ?");
-            if (!$deleteItemsStmt) throw new Exception("Prepare delete items failed: " . $conn->error);
-            $deleteItemsStmt->bind_param("i", $batch_id_post);
-            if (!$deleteItemsStmt->execute()) throw new Exception("Execute delete items failed: " . $deleteItemsStmt->error);
-            $deleteItemsStmt->close();
+            // --- Handle Module Items (Update/Insert/Delete logic) ---
 
-            // Insert new items
-            $items_added_count = 0;
-            if (isset($_POST['wattages'], $_POST['quantities'])) {
-                $wattages = $_POST['wattages'];
-                $quantities = $_POST['quantities'];
+            // 1. Get existing item IDs for this batch from DB
+            $existing_item_ids = [];
+            $stmt_get_ids = $conn->prepare("SELECT id FROM unassigned_module_items WHERE unassigned_module_id = ?");
+            if ($stmt_get_ids) {
+                $stmt_get_ids->bind_param("i", $batch_id_post);
+                $stmt_get_ids->execute();
+                $result_ids = $stmt_get_ids->get_result();
+                while ($row = $result_ids->fetch_assoc()) {
+                    $existing_item_ids[] = $row['id'];
+                }
+                $stmt_get_ids->close();
+            } else {
+                throw new Exception("Failed to fetch existing item IDs: " . $conn->error);
+            }
 
-                if (count($wattages) === count($quantities)) {
-                     $insertItemStmt = $conn->prepare("INSERT INTO module_items (module_id, wattage, quantity) VALUES (?, ?, ?)");
-                     if (!$insertItemStmt) throw new Exception("Prepare insert item failed: " . $conn->error);
+            // 2. Prepare Update and Insert statements
+            $stmt_update_item = $conn->prepare("UPDATE unassigned_module_items SET wattage = ?, quantity = ? WHERE id = ?");
+            $stmt_insert_item = $conn->prepare("INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) VALUES (?, ?, ?)");
+            if (!$stmt_update_item || !$stmt_insert_item) {
+                throw new Exception("Failed to prepare item update/insert statements: " . $conn->error);
+            }
 
-                    for ($i = 0; $i < count($wattages); $i++) {
-                        $w = intval($wattages[$i]);
-                        $q = intval($quantities[$i]);
-                        if ($w > 0 && $q > 0) {
-                            $insertItemStmt->bind_param("iii", $batch_id_post, $w, $q);
-                            if (!$insertItemStmt->execute()) throw new Exception("Execute insert item failed: " . $insertItemStmt->error);
-                            $items_added_count++;
-                        }
+            // 3. Process submitted items
+            $submitted_item_ids = [];
+            $items_processed_count = 0;
+            if (isset($_POST['items']) && is_array($_POST['items'])) {
+                foreach ($_POST['items'] as $index => $item_data) {
+                    $item_id = isset($item_data['id']) ? intval($item_data['id']) : 0;
+                    $wattage = isset($item_data['wattage']) ? intval($item_data['wattage']) : 0;
+                    $quantity = isset($item_data['quantity']) ? intval($item_data['quantity']) : 0;
+
+                    if ($wattage <= 0 || $quantity <= 0) {
+                        // Skip invalid entries, maybe log a warning later
+                        continue; 
                     }
-                    $insertItemStmt->close();
-                } else {
-                     throw new Exception("Mismatch between wattage and quantity inputs.");
+
+                    if ($item_id > 0 && in_array($item_id, $existing_item_ids)) {
+                        // Existing item: Update it
+                        $stmt_update_item->bind_param("iii", $wattage, $quantity, $item_id);
+                        if (!$stmt_update_item->execute()) throw new Exception("Failed to update item ID {$item_id}: " . $stmt_update_item->error);
+                        $submitted_item_ids[] = $item_id; // Keep track of IDs that were submitted
+                        $items_processed_count++;
+                    } else {
+                        // New item (or invalid ID submitted): Insert it
+                        $stmt_insert_item->bind_param("iii", $batch_id_post, $wattage, $quantity);
+                        if (!$stmt_insert_item->execute()) throw new Exception("Failed to insert new item ({$wattage}W, {$quantity}qty): " . $stmt_insert_item->error);
+                        // We don't add the new insert_id to submitted_item_ids as it wasn't pre-existing
+                        $items_processed_count++;
+                    }
                 }
             }
-            if ($items_added_count === 0) {
-                 throw new Exception("At least one valid Wattage/Quantity item must be provided.");
+            $stmt_update_item->close();
+            $stmt_insert_item->close();
+
+            if ($items_processed_count === 0) {
+                throw new Exception("No valid Wattage/Quantity items were provided.");
+            }
+
+            // 4. Handle Deletions (Safely - only if no pallets are linked)
+            $items_to_delete = array_diff($existing_item_ids, $submitted_item_ids);
+            $skipped_deletions = [];
+            if (!empty($items_to_delete)) {
+                $placeholders_del = implode(',', array_fill(0, count($items_to_delete), '?'));
+                $types_del = str_repeat('i', count($items_to_delete));
+
+                // Check which items have linked pallets
+                $stmt_check_pallets = $conn->prepare("SELECT DISTINCT unassigned_module_item_id FROM inventory_pallets WHERE unassigned_module_item_id IN ({$placeholders_del})");
+                $linked_item_ids = [];
+                if ($stmt_check_pallets) {
+                    $stmt_check_pallets->bind_param($types_del, ...$items_to_delete);
+                    $stmt_check_pallets->execute();
+                    $result_linked = $stmt_check_pallets->get_result();
+                    while($row = $result_linked->fetch_assoc()) {
+                        $linked_item_ids[] = $row['unassigned_module_item_id'];
+                    }
+                    $stmt_check_pallets->close();
+                } else {
+                     throw new Exception("Failed to check for linked pallets: " . $conn->error);
+                }
+
+                // Prepare delete statement
+                $stmt_delete_item = $conn->prepare("DELETE FROM unassigned_module_items WHERE id = ?");
+                if (!$stmt_delete_item) throw new Exception("Failed to prepare item delete statement: " . $conn->error);
+
+                foreach ($items_to_delete as $delete_id) {
+                    if (in_array($delete_id, $linked_item_ids)) {
+                        // Cannot delete - Pallets are linked
+                        $skipped_deletions[] = $delete_id;
+                    } else {
+                        // Safe to delete
+                        $stmt_delete_item->bind_param("i", $delete_id);
+                        if (!$stmt_delete_item->execute()) {
+                             error_log("Failed to delete unlinked item ID {$delete_id}: " . $stmt_delete_item->error);
+                             // Decide whether to throw exception or just log error and continue
+                             // For now, let's log and continue, but add to error message later
+                             $skipped_deletions[] = $delete_id; // Add to skipped list even on error
+                        }
+                    }
+                }
+                $stmt_delete_item->close();
             }
 
             $conn->commit();
             $successMessage = "Batch updated successfully!";
-            header("Location: module_overview.php?batch_id=" . $batch_id_post . "&update_success=1");
+            if (!empty($skipped_deletions)) {
+                $successMessage .= " Note: Items with IDs (" . implode(', ', $skipped_deletions) . ") were not deleted because they still have pallets linked to them.";
+            }
+            $_SESSION['edit_module_message'] = $successMessage; // Use a specific session key
+            header("Location: module_overview.php?batch_id=" . $batch_id_post . "&update_status=success");
             exit();
 
         } catch (Exception $e) {
@@ -191,8 +264,8 @@ if ($batch_id > 0) {
         $errorMessage = "Error preparing batch fetch: " . $conn->error;
     } else {
         $stmt->bind_param("i", $batch_id);
-$stmt->execute();
-$result = $stmt->get_result();
+        $stmt->execute();
+        $result = $stmt->get_result();
         if ($result->num_rows > 0) {
             $batch_data = $result->fetch_assoc();
             // Security check for admin role
@@ -209,19 +282,67 @@ $result = $stmt->get_result();
 
     // Fetch items if batch data was found
     if ($batch_data) {
-        $stmtItems = $conn->prepare("SELECT id, wattage, quantity FROM module_items WHERE module_id = ? ORDER BY id ASC");
+        $stmtItems = $conn->prepare("SELECT id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id = ?");
         if (!$stmtItems) {
             $errorMessage = "Error preparing items fetch: " . $conn->error;
         } else {
             $stmtItems->bind_param("i", $batch_id);
             $stmtItems->execute();
             $resultItems = $stmtItems->get_result();
-            while ($row = $resultItems->fetch_assoc()) {
-                $batch_items[] = $row;
+            $item_wattage_map = [];
+            $original_item_quantities = []; // Store original quantities here
+            while ($item = $resultItems->fetch_assoc()) {
+                $item['discrepancy_details'] = [];
+                $batch_items[] = $item;
+                $item_wattage_map[$item['id']] = $item['wattage'];
+                $original_item_quantities[$item['id']] = (int)$item['quantity']; // Store original
             }
             $stmtItems->close();
         }
     }
+
+    // Fetch associated pallets and collate wattage discrepancies
+    $item_discrepancy_collector = []; 
+    if (!empty($batch_items)) {
+        $item_ids = array_column($batch_items, 'id');
+        $placeholders = implode(',', array_fill(0, count($item_ids), '?'));
+        $types = str_repeat('i', count($item_ids));
+        $sqlPallets = "SELECT id, pallet_identifier, unassigned_module_item_id, wattage, quantity 
+                       FROM inventory_pallets 
+                       WHERE unassigned_module_item_id IN ({$placeholders})";
+        $stmtPallets = $conn->prepare($sqlPallets);
+        if ($stmtPallets) {
+            $stmtPallets->bind_param($types, ...$item_ids);
+            $stmtPallets->execute();
+            $resultPallets = $stmtPallets->get_result();
+            while ($pallet = $resultPallets->fetch_assoc()) {
+                $item_id = $pallet['unassigned_module_item_id'];
+                $pallet_wattage = $pallet['wattage'];
+                $pallet_quantity = (int)$pallet['quantity'];
+
+                if (isset($item_wattage_map[$item_id]) && $item_wattage_map[$item_id] != $pallet_wattage) {
+                    if (!isset($item_discrepancy_collector[$item_id])) {
+                        $item_discrepancy_collector[$item_id] = [];
+                    }
+                    $item_discrepancy_collector[$item_id][$pallet_wattage] = 
+                        ($item_discrepancy_collector[$item_id][$pallet_wattage] ?? 0) + $pallet_quantity;
+                }
+            }
+            $stmtPallets->close();
+        }
+    }
+
+    // Add discrepancy details back to the main batch_items array
+    foreach ($batch_items as &$item) { 
+        $item_id = $item['id'];
+        if (isset($item_discrepancy_collector[$item_id])) {
+            $item['discrepancy_details'] = $item_discrepancy_collector[$item_id];
+            $outgoing_discrepant_qty = array_sum($item['discrepancy_details']);
+            // Use the original quantity for calculation
+            $item['adjusted_quantity'] = max(0, $original_item_quantities[$item_id] - $outgoing_discrepant_qty);
+        }
+    }
+    unset($item); 
 } elseif ($batch_id <= 0 && $_SERVER['REQUEST_METHOD'] !== 'POST') {
     $errorMessage = "No Batch ID provided.";
 }
@@ -337,6 +458,13 @@ $conn->close();
             background-color: #ffe6e6;
             text-align: center;
             border-radius: 4px;
+        }
+        .discrepancy-warning {
+            /* Add desired styles, e.g.: */
+            /* background-color: #fff3cd; */
+            /* border: 1px solid #ffeeba; */
+            /* padding: 10px; */
+            /* border-radius: 4px; */
         }
     </style>
     <script>
@@ -462,19 +590,74 @@ $conn->close();
             </select>
 
             <div class="section-title">Module Wattage and Quantities</div>
+
+            <?php
+            // --- GLOBAL DISCREPANCY WARNING ---
+            // Build a map of actual pallet quantities by wattage
+            $pallet_wattage_totals = [];
+            if (!empty($batch_items)) {
+                $item_ids = array_column($batch_items, 'id');
+                if (!empty($item_ids)) {
+                    $placeholders = implode(',', array_fill(0, count($item_ids), '?'));
+                    $types = str_repeat('i', count($item_ids));
+                    $sqlPallets = "SELECT wattage, SUM(quantity) as total_qty FROM inventory_pallets WHERE unassigned_module_item_id IN ({$placeholders}) GROUP BY wattage";
+                    $conn2 = getDBConnection();
+                    $stmtPallets = $conn2->prepare($sqlPallets);
+                    if ($stmtPallets) {
+                        $stmtPallets->bind_param($types, ...$item_ids);
+                        $stmtPallets->execute();
+                        $resultPallets = $stmtPallets->get_result();
+                        while ($row = $resultPallets->fetch_assoc()) {
+                            $pallet_wattage_totals[$row['wattage']] = (int)$row['total_qty'];
+                        }
+                        $stmtPallets->close();
+                    }
+                    $conn2->close();
+                }
+            }
+            // Build a map of batch item quantities by wattage
+            $batch_item_wattage_qty = [];
+            foreach ($batch_items as $item) {
+                $batch_item_wattage_qty[$item['wattage']] = (int)$item['quantity'];
+            }
+            // Find all wattages present in either batch or pallets
+            $all_wattages = array_unique(array_merge(array_keys($batch_item_wattage_qty), array_keys($pallet_wattage_totals)));
+            sort($all_wattages);
+            $discrepancy_found = false;
+            $discrepancy_lines = [];
+            foreach ($all_wattages as $watt) {
+                $expected = $batch_item_wattage_qty[$watt] ?? 0;
+                $actual = $pallet_wattage_totals[$watt] ?? 0;
+                if ($expected !== $actual) {
+                    $discrepancy_found = true;
+                    $discrepancy_lines[] = "Wattage $watt: $actual modules on pallets (should match batch: $expected)";
+                }
+            }
+            if ($discrepancy_found): ?>
+                <div style="background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 12px; margin-bottom: 18px; border-radius: 4px;">
+                    <strong>Warning:</strong> The quantities below reflect the actual number of modules on pallets for each wattage. Please update the batch quantities to match if you have made changes to pallet wattages.<br>
+                    <ul style="margin-top: 8px;">
+                        <?php foreach ($discrepancy_lines as $line): ?>
+                            <li><?php echo htmlspecialchars($line); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+            <?php endif; ?>
+
             <div id="wattage-container">
                 <?php foreach ($batch_items as $index => $item): ?>
                     <div class="wattage-entry">
+                        <input type="hidden" name="items[<?php echo $index; ?>][id]" value="<?php echo $item['id']; ?>">
                         <div>
-                            <label for="wattages_<?php echo $index; ?>">Wattage:</label>
-                            <input type="number" step="1" name="wattages[]" id="wattages_<?php echo $index; ?>" value="<?php echo htmlspecialchars($item['wattage']); ?>" required>
+                            <label for="items_<?php echo $index; ?>_wattage">Wattage:</label>
+                            <input type="number" step="1" name="items[<?php echo $index; ?>][wattage]" id="items_<?php echo $index; ?>_wattage" value="<?php echo htmlspecialchars($item['wattage']); ?>" required>
                         </div>
                         <div>
-                            <label for="quantities_<?php echo $index; ?>">Quantity:</label>
-                            <input type="number" step="1" name="quantities[]" id="quantities_<?php echo $index; ?>" value="<?php echo htmlspecialchars($item['quantity']); ?>" required>
+                            <label for="items_<?php echo $index; ?>_quantity">Quantity:</label>
+                            <input type="number" step="1" name="items[<?php echo $index; ?>][quantity]" id="items_<?php echo $index; ?>_quantity" value="<?php echo htmlspecialchars($item['quantity']); ?>" required min="1">
                         </div>
                         <div class="remove-btn-container">
-                            <button type="button" class="remove-wattage-btn" onclick="this.closest('.wattage-entry').remove()">Remove</button>
+                            <button type="button" class="remove-wattage-btn" onclick="removeExistingItem(this, <?php echo $item['id']; ?>)">Remove</button>
                         </div>
                     </div>
                 <?php endforeach; ?>
@@ -482,7 +665,7 @@ $conn->close();
             <button type="button" class="btn-add-wattage" onclick="addWattageField()">+ Add Wattage/Quantity</button>
 
             <input type="submit" value="Save Changes" class="btn-submit">
-    </form>
+        </form>
     <?php elseif (empty($errorMessage)): ?>
         <p>Loading batch data...</p> 
     <?php endif; ?> 
