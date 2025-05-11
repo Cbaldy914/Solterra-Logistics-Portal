@@ -233,32 +233,43 @@ $conn->close();
         }
         th, td {
             padding: 8px;
-            text-align: left;
             border: 1px solid #ddd;
         }
         tr:nth-child(even) {
             background-color: #f9f9f9;
         }
         .modal {
-            display: none !important;
+            display: none;
             position: fixed;
             z-index: 1000;
-            left: 0; top: 0;
-            width: 100%; height: 100%;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
             overflow: auto;
             background-color: rgba(0,0,0,0.5);
         }
         .modal-content {
             background-color: #fefefe;
-            margin: 10% auto;
-            padding: 25px;
+            margin: 5% auto;
+            padding: 30px 30px 20px 30px;
             border: 1px solid #888;
-            width: 80%;
-            max-width: 600px;
+            width: 100%;
+            max-width: 500px;
             border-radius: 8px;
             position: relative;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
         }
-        .close-modal {
+        .modal-header {
+            text-align: center;
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #293E4C;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .close-modal, .close-receive-modal {
             color: #aaa;
             position: absolute;
             top: 10px;
@@ -267,17 +278,66 @@ $conn->close();
             font-weight: bold;
             cursor: pointer;
         }
-        .close-modal:hover,
-        .close-modal:focus {
+        .close-modal:hover, .close-modal:focus,
+        .close-receive-modal:hover, .close-receive-modal:focus {
             color: black;
             text-decoration: none;
         }
-        #movePalletFormContainer {
-            background-color: #f0f8ff;
-            padding: 20px;
-            border: 1px solid #b0e0e6;
-            border-radius: 8px;
-            margin-top: 30px;
+        .modal-form-row {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 18px;
+        }
+        .modal-form-row > div {
+            flex: 1;
+            min-width: 150px;
+        }
+        .modal-content label {
+            font-weight: 500;
+            margin-bottom: 6px;
+            display: block;
+        }
+        .modal-content input[type="text"],
+        .modal-content input[type="date"],
+        .modal-content select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            font-size: 1em;
+            box-sizing: border-box;
+        }
+        .modal-content .radio-label {
+            display: inline-block;
+            margin-right: 20px;
+            font-weight: normal;
+        }
+        .modal-content .radio-label input[type=radio] {
+            margin-right: 5px;
+            vertical-align: middle;
+        }
+        .modal-content button.action-button {
+            background-color: #488C9A;
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 1em;
+            margin-top: 10px;
+        }
+        .modal-content button.action-button:hover {
+            background-color: #3A6E7F;
+        }
+        /* Remove old background from form containers */
+        #movePalletFormContainer, #receiveFormContainer {
+            background: none;
+            border: none;
+            border-radius: 0;
+            padding: 0;
+            margin: 0;
         }
         #movePalletFormContainer h3 {
             margin-top: 0;
@@ -455,14 +515,13 @@ $conn->close();
 
                 <!-- Hidden "Move Pallet" form container (for modal) -->
                 <div id="movePalletFormContainer" style="display: none;">
-                    <h3>Create Transfer Delivery</h3>
-                    <div class="form-row">
+                    <div class="modal-form-row">
                         <div>
                             <label for="bol_number">BOL Number (Optional):</label>
                             <input type="text" id="bol_number" name="bol_number">
                         </div>
                     </div>
-                    <div class="form-row">
+                    <div class="modal-form-row">
                         <div>
                             <label for="departure_date">Departure Date:</label>
                             <input type="date" id="departure_date" name="departure_date" required>
@@ -486,7 +545,7 @@ $conn->close();
                         <select name="destination_id" id="destination_id" required></select>
                     </div>
                     
-                    <div style="margin-top: 20px;">
+                    <div style="margin-top: 20px; text-align: center;">
                         <button type="button" id="submitMoveBtn" class="action-button">Create Transfer Delivery</button>
                     </div>
                 </div>
@@ -568,10 +627,9 @@ $conn->close();
 
                 <!-- Hidden "Receive Pallets" form container -->
                 <div id="receiveFormContainer" style="display: none;">
-                    <h3>Receive Pallets</h3>
-                    <div class="form-row">
+                    <div class="modal-form-row">
                         <div>
-                            <label for="receive_bol">BOL Number (Confirm/Update):</label>
+                            <label for="receive_bol">BOL Number:</label>
                             <input type="text" id="receive_bol" name="receive_bol">
                         </div>
                         <div>
@@ -579,7 +637,9 @@ $conn->close();
                             <input type="date" id="actual_arrival_date" name="actual_arrival_date" required>
                         </div>
                     </div>
-                    <button type="button" id="confirmReceiveBtn" class="action-button">Mark as Received</button>
+                    <div style="margin-top: 20px; text-align: center;">din
+                        <button type="button" id="confirmReceiveBtn" class="action-button">Mark as Received</button>
+                    </div>
                 </div>
             </form>
         </div>
@@ -594,6 +654,7 @@ $conn->close();
 <div id="moveModal" class="modal">
     <div class="modal-content">
         <span class="close-modal">&times;</span>
+        <div class="modal-header">Create Transfer Delivery</div>
         <!-- #movePalletFormContainer is moved here dynamically -->
     </div>
 </div>
@@ -602,6 +663,7 @@ $conn->close();
 <div id="receiveModal" class="modal">
     <div class="modal-content">
         <span class="close-receive-modal">&times;</span>
+        <div class="modal-header">Receive Pallets</div>
         <!-- #receiveFormContainer is moved here dynamically -->
     </div>
 </div>
@@ -764,10 +826,15 @@ window.addEventListener('click', (e) => {
 function openMoveModal() {
     const moveBtn = document.getElementById('movePalletsBtn');
     if (moveBtn.disabled) return;
-    if (closeModalBtn.nextSibling) {
-        moveModal.querySelector('.modal-content').insertBefore(moveFormContainer, closeModalBtn.nextSibling);
+    const modalContent = moveModal.querySelector('.modal-content');
+    const header = modalContent.querySelector('.modal-header');
+    if (header && moveFormContainer) {
+        // Insert the form container after the header
+        if (header.nextSibling !== moveFormContainer) {
+            modalContent.insertBefore(moveFormContainer, header.nextSibling);
+        }
     } else {
-        moveModal.querySelector('.modal-content').appendChild(moveFormContainer);
+        modalContent.appendChild(moveFormContainer);
     }
     moveFormContainer.style.display = 'block';
     moveModal.style.setProperty('display', 'block', 'important');
@@ -796,10 +863,15 @@ window.addEventListener('click', (e) => {
 function openReceiveModal() {
     const btn = document.getElementById('receivePalletsBtn');
     if (btn.disabled) return;
-    if (closeReceiveBtn.nextSibling) {
-        receiveModal.querySelector('.modal-content').insertBefore(receiveFormContainer, closeReceiveBtn.nextSibling);
+    const modalContent = receiveModal.querySelector('.modal-content');
+    const header = modalContent.querySelector('.modal-header');
+    if (header && receiveFormContainer) {
+        // Insert the form container after the header
+        if (header.nextSibling !== receiveFormContainer) {
+            modalContent.insertBefore(receiveFormContainer, header.nextSibling);
+        }
     } else {
-        receiveModal.querySelector('.modal-content').appendChild(receiveFormContainer);
+        modalContent.appendChild(receiveFormContainer);
     }
     receiveFormContainer.style.display = 'block';
     receiveModal.style.setProperty('display', 'block', 'important');

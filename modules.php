@@ -4,9 +4,9 @@ session_start();
 
 // Ensure user has role admin or global_admin
 if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
-    die("Unauthorized: You must be 'admin' or 'global_admin' to manage modules.");
+    header("Location: unauthorized");
+    exit();
 }
-
 // Database connection
 require_once '../config.php';
 $conn = getDBConnection(); // Keep connection open initially

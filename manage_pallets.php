@@ -216,7 +216,6 @@ if ($conn) { // Close connection if it was opened
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
         .filter-container {
-            margin-bottom: 20px;
             padding: 15px;
             background-color: #f9f9f9;
             border: 1px solid #e0e0e0;
@@ -240,7 +239,8 @@ if ($conn) { // Close connection if it was opened
         }
         .filter-container input[type="text"] {
             flex-grow: 1; /* Allow search input to take more space */
-            min-width: 200px; /* Minimum width for search */
+            min-width: 200px;
+            max-width: 200px;
         }
         .filter-container .export-button-container {
             margin-left: auto; /* Push export button to the right */
@@ -370,7 +370,7 @@ if ($conn) { // Close connection if it was opened
             <?php endforeach; ?>
         </select>
          <div class="export-button-container">
-             <button id="exportCsvBtn" class="action-button" style="background-color: #17a2b8;">Export Visible Data to CSV</button>
+             <button id="exportCsvBtn" class="action-button">Export to CSV</button>
         </div>
     </div>
 
