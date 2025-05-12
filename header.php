@@ -102,7 +102,7 @@ if (isset($_SESSION['role'])) {
                 <li class="dropdown">
                     <a href="#" class="dropbtn">Accounting</a>
                     <div class="dropdown-content">
-                        <a href="accounting_overview">Accounting Overview</a>
+                        <a href="accounting">Accounting Overview</a>
                         <a href="add_invoice">Invoices</a>
                         <a href="generate_invoice">Generate Invoice</a>
                         <a href="accounts_payable">Generate Payables</a>
