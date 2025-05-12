@@ -258,6 +258,36 @@ while ($drow = $deliveries_result->fetch_assoc()) {
     $left_warehouse_date_values[]    = $drow['left_warehouse_date']    ?? '';
 }
 
+// --- NEW: Fetch Inventory Pallets in this Warehouse ---
+$inventory_pallets = [];
+$stmt_pallets = $conn->prepare("
+    SELECT 
+        ip.id AS pallet_id,
+        ip.pallet_identifier,
+        ip.wattage,
+        ip.quantity,
+        ip.arrival_date,
+        m.vendor_name AS origin_vendor 
+    FROM inventory_pallets ip
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE ip.current_warehouse_id = ? AND ip.status = 'In Warehouse'
+    ORDER BY ip.arrival_date DESC, ip.id DESC
+");
+if ($stmt_pallets) {
+    $stmt_pallets->bind_param("i", $warehouse_id);
+    $stmt_pallets->execute();
+    $result_pallets = $stmt_pallets->get_result();
+    while ($pallet_row = $result_pallets->fetch_assoc()) {
+        $inventory_pallets[] = $pallet_row;
+    }
+    $stmt_pallets->close();
+} else {
+    // Optionally log an error or display a message
+    error_log("Failed to prepare pallet inventory query: " . $conn->error);
+}
+// --- END NEW ---
+
 $conn->close();
 
 // Remove duplicates
@@ -291,11 +321,15 @@ $left_warehouse_date_values    = array_unique($left_warehouse_date_values);
 
         .warehouse-info {
             display: flex;
+            align-items: center;
+            flex-wrap: wrap;
             margin-bottom: 20px;
         }
         .warehouse-image img {
-            max-width: 200px;
-            margin-right: 20px;
+            display: block;
+        }
+        .warehouse-details {
+            margin-left: 20px;
         }
         .warehouse-details p {
             margin: 5px 0;
@@ -331,6 +365,8 @@ $left_warehouse_date_values    = array_unique($left_warehouse_date_values);
             .warehouse-image img {
                 max-width: 100%;
                 margin-bottom: 20px;
+                margin-left: auto;
+                margin-right: auto;
             }
             .cost-summary th, .cost-summary td {
                 font-size: 14px;
@@ -400,6 +436,44 @@ $left_warehouse_date_values    = array_unique($left_warehouse_date_values);
         tr:hover {
             background-color: #f1f1f1;
         }
+        /* --- NEW Tab Styles --- */
+        .tabs-container {
+            text-align: center; /* Center the tabs */
+            width: 100%;
+            margin-bottom: 20px; /* Space below tabs */
+            border-bottom: 1px solid #ccc; /* Separator line */
+        }
+        .tabs {
+            display: inline-flex; /* Make buttons sit side-by-side */
+            gap: 1px; /* Small gap between buttons */
+        }
+        .tabs button {
+            background: #e9ecef; /* Light grey background */
+            color: #333; /* Dark text */
+            padding: 10px 15px;
+            cursor: pointer;
+            font-weight: 600;
+            border: none;
+            border-top-left-radius: 5px;
+            border-top-right-radius: 5px;
+            font-size: 1em;
+            border: 1px solid #ccc; /* Add border */
+            border-bottom: none; /* Remove bottom border */
+            margin-bottom: -1px; /* Overlap the container's bottom border */
+        }
+        .tabs button.active {
+            background: #fff; /* White background for active tab */
+            color: #293E4C; /* Darker color for active text */
+            border-bottom: 1px solid #fff; /* Make bottom border white to blend */
+        }
+        .tab-section {
+            display: none; /* Hide sections by default */
+            margin-top: 10px; /* Space above section content */
+        }
+        .tab-section.active {
+            display: block; /* Show active section */
+        }
+        /* --- END NEW Tab Styles --- */
     </style>
 </head>
 <body>
@@ -459,172 +533,252 @@ $left_warehouse_date_values    = array_unique($left_warehouse_date_values);
         <!-- Potential future controls (search, etc.) -->
     </div>
 
-    <?php
-    // Now display the deliveries that are/have been in this warehouse
-    ?>
-    <div class="table-responsive">
-        <table id="warehouse-table">
-            <thead>
-                <tr>
-                    <th>
-                        Supplier
-                        <div class="sort-dropdown">
-                            <span class="sort-icon">&#9660;</span>
-                            <div class="sort-dropdown-content">
-                                <a href="#" onclick="sortTable(0, 'string', 'asc'); return false;">Sort A-Z</a>
-                                <a href="#" onclick="sortTable(0, 'string', 'desc'); return false;">Sort Z-A</a>
-                                <hr>
-                                <div>
-                                    <label><input type="checkbox" class="filter-checkbox" data-column="0" value="all" checked> Select All</label>
-                                </div>
-                                <?php foreach ($supplier_values as $value): ?>
-                                    <?php if (trim($value) !== ''): ?>
-                                        <div>
-                                            <label>
-                                                <input type="checkbox" class="filter-checkbox" data-column="0" value="<?php echo htmlspecialchars($value); ?>" checked>
-                                                <?php echo htmlspecialchars($value); ?>
-                                            </label>
-                                        </div>
-                                    <?php endif; ?>
-                                <?php endforeach; ?>
-                            </div>
-                        </div>
-                    </th>
-                    <th>
-                        Wattage
-                        <div class="sort-dropdown">
-                            <span class="sort-icon">&#9660;</span>
-                            <div class="sort-dropdown-content">
-                                <a href="#" onclick="sortTable(1, 'num', 'asc'); return false;">Sort Asc</a>
-                                <a href="#" onclick="sortTable(1, 'num', 'desc'); return false;">Sort Desc</a>
-                                <hr>
-                                <div>
-                                    <label><input type="checkbox" class="filter-checkbox" data-column="1" value="all" checked> Select All</label>
-                                </div>
-                                <?php foreach ($wattage_values as $value): ?>
-                                    <?php if (trim($value) !== ''): ?>
-                                        <div>
-                                            <label>
-                                                <input type="checkbox" class="filter-checkbox" data-column="1" value="<?php echo htmlspecialchars($value); ?>" checked>
-                                                <?php echo htmlspecialchars($value); ?>
-                                            </label>
-                                        </div>
-                                    <?php endif; ?>
-                                <?php endforeach; ?>
-                            </div>
-                        </div>
-                    </th>
-                    <th>
-                        Quantity
-                        <div class="sort-dropdown">
-                            <span class="sort-icon">&#9660;</span>
-                            <div class="sort-dropdown-content">
-                                <a href="#" onclick="sortTable(2, 'num', 'asc'); return false;">Sort Asc</a>
-                                <a href="#" onclick="sortTable(2, 'num', 'desc'); return false;">Sort Desc</a>
-                            </div>
-                        </div>
-                    </th>
-                    <th>
-                        BOL Number
-                        <div class="sort-dropdown">
-                            <span class="sort-icon">&#9660;</span>
-                            <div class="sort-dropdown-content">
-                                <a href="#" onclick="sortTable(3, 'string', 'asc'); return false;">Sort A-Z</a>
-                                <a href="#" onclick="sortTable(3, 'string', 'desc'); return false;">Sort Z-A</a>
-                                <hr>
-                                <div>
-                                    <label><input type="checkbox" class="filter-checkbox" data-column="3" value="all" checked> Select All</label>
-                                </div>
-                                <?php foreach ($bol_number_values as $value): ?>
-                                    <?php if (trim($value) !== ''): ?>
-                                        <div>
-                                            <label>
-                                                <input type="checkbox" class="filter-checkbox" data-column="3" value="<?php echo htmlspecialchars($value); ?>" checked>
-                                                <?php echo htmlspecialchars($value); ?>
-                                            </label>
-                                        </div>
-                                    <?php endif; ?>
-                                <?php endforeach; ?>
-                            </div>
-                        </div>
-                    </th>
-                    <th>
-                        Warehouse Arrival Date
-                        <div class="sort-dropdown">
-                            <span class="sort-icon">&#9660;</span>
-                            <div class="sort-dropdown-content">
-                                <a href="#" onclick="sortTable(4, 'date', 'asc'); return false;">Sort Asc</a>
-                                <a href="#" onclick="sortTable(4, 'date', 'desc'); return false;">Sort Desc</a>
-                                <hr>
-                                <div>
-                                    <label><input type="checkbox" class="filter-checkbox" data-column="4" value="all" checked> Select All</label>
-                                </div>
-                                <?php foreach ($warehouse_arrival_date_values as $value): ?>
-                                    <?php if (trim($value) !== ''): ?>
-                                        <div>
-                                            <label>
-                                                <input type="checkbox" class="filter-checkbox" data-column="4" value="<?php echo htmlspecialchars($value); ?>" checked>
-                                                <?php echo htmlspecialchars($value); ?>
-                                            </label>
-                                        </div>
-                                    <?php endif; ?>
-                                <?php endforeach; ?>
-                            </div>
-                        </div>
-                    </th>
-                    <th>
-                        Left Warehouse Date
-                        <div class="sort-dropdown">
-                            <span class="sort-icon">&#9660;</span>
-                            <div class="sort-dropdown-content">
-                                <a href="#" onclick="sortTable(5, 'date', 'asc'); return false;">Sort Asc</a>
-                                <a href="#" onclick="sortTable(5, 'date', 'desc'); return false;">Sort Desc</a>
-                                <hr>
-                                <div>
-                                    <label><input type="checkbox" class="filter-checkbox" data-column="5" value="all" checked> Select All</label>
-                                </div>
-                                <?php foreach ($left_warehouse_date_values as $value): ?>
-                                    <?php if (trim($value) !== ''): ?>
-                                        <div>
-                                            <label>
-                                                <input type="checkbox" class="filter-checkbox" data-column="5" value="<?php echo htmlspecialchars($value); ?>" checked>
-                                                <?php echo htmlspecialchars($value); ?>
-                                            </label>
-                                        </div>
-                                    <?php endif; ?>
-                                <?php endforeach; ?>
-                            </div>
-                        </div>
-                    </th>
-                    <th>Proof of Delivery</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (!empty($deliveries)): ?>
-                    <?php foreach ($deliveries as $d): ?>
-                        <tr>
-                            <td><?php echo htmlspecialchars($d['supplier'] ?? ''); ?></td>
-                            <td><?php echo htmlspecialchars($d['wattage'] ?? ''); ?></td>
-                            <td><?php echo htmlspecialchars($d['quantity'] ?? ''); ?></td>
-                            <td><?php echo htmlspecialchars($d['bol_number'] ?? ''); ?></td>
-                            <td><?php echo !empty($d['warehouse_arrival_date']) ? htmlspecialchars($d['warehouse_arrival_date']) : 'N/A'; ?></td>
-                            <td><?php echo !empty($d['left_warehouse_date']) ? htmlspecialchars($d['left_warehouse_date']) : 'N/A'; ?></td>
-                            <td>
-                                <?php if (!empty($d['proof_of_delivery'])): ?>
-                                    <a href="view_pod?delivery_id=<?php echo $d['id']; ?>" target="_blank">View POD</a>
-                                <?php else: ?>
-                                    N/A
-                                <?php endif; ?>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr><td colspan="7">No deliveries found.</td></tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
+    <!-- NEW: TABS -->
+    <div class="tabs-container">
+        <div class="tabs">
+            <button id="toggleTruckloadBtn" class="active" onclick="showTabView('truckload')">Truckload View</button>
+            <button id="toggleInventoryBtn" onclick="showTabView('inventory')">Inventory View</button>
+        </div>
     </div>
-    <div class="scroll-note">Swipe or scroll horizontally to see more columns.</div>
+    <!-- END NEW: TABS -->
+
+    <!-- TRUCKLOAD VIEW SECTION (Existing Table) -->
+    <div id="truckloadViewSection" class="tab-section active">
+        <h2>Deliveries Arrived at Warehouse</h2>
+        <div class="table-responsive">
+            <table id="warehouse-table">
+                <thead>
+                    <tr>
+                        <th>
+                            Supplier
+                            <div class="sort-dropdown">
+                                <span class="sort-icon">&#9660;</span>
+                                <div class="sort-dropdown-content">
+                                    <a href="#" onclick="sortTable(0, 'string', 'asc'); return false;">Sort A-Z</a>
+                                    <a href="#" onclick="sortTable(0, 'string', 'desc'); return false;">Sort Z-A</a>
+                                    <hr>
+                                    <div>
+                                        <label><input type="checkbox" class="filter-checkbox" data-column="0" value="all" checked> Select All</label>
+                                    </div>
+                                    <?php foreach ($supplier_values as $value): ?>
+                                        <?php if (trim($value) !== ''): ?>
+                                            <div>
+                                                <label>
+                                                    <input type="checkbox" class="filter-checkbox" data-column="0" value="<?php echo htmlspecialchars($value); ?>" checked>
+                                                    <?php echo htmlspecialchars($value); ?>
+                                                </label>
+                                            </div>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </th>
+                        <th>
+                            Wattage
+                            <div class="sort-dropdown">
+                                <span class="sort-icon">&#9660;</span>
+                                <div class="sort-dropdown-content">
+                                    <a href="#" onclick="sortTable(1, 'num', 'asc'); return false;">Sort Asc</a>
+                                    <a href="#" onclick="sortTable(1, 'num', 'desc'); return false;">Sort Desc</a>
+                                    <hr>
+                                    <div>
+                                        <label><input type="checkbox" class="filter-checkbox" data-column="1" value="all" checked> Select All</label>
+                                    </div>
+                                    <?php foreach ($wattage_values as $value): ?>
+                                        <?php if (trim($value) !== ''): ?>
+                                            <div>
+                                                <label>
+                                                    <input type="checkbox" class="filter-checkbox" data-column="1" value="<?php echo htmlspecialchars($value); ?>" checked>
+                                                    <?php echo htmlspecialchars($value); ?>
+                                                </label>
+                                            </div>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </th>
+                        <th>
+                            Quantity
+                            <div class="sort-dropdown">
+                                <span class="sort-icon">&#9660;</span>
+                                <div class="sort-dropdown-content">
+                                    <a href="#" onclick="sortTable(2, 'num', 'asc'); return false;">Sort Asc</a>
+                                    <a href="#" onclick="sortTable(2, 'num', 'desc'); return false;">Sort Desc</a>
+                                </div>
+                            </div>
+                        </th>
+                        <th>
+                            BOL Number
+                            <div class="sort-dropdown">
+                                <span class="sort-icon">&#9660;</span>
+                                <div class="sort-dropdown-content">
+                                    <a href="#" onclick="sortTable(3, 'string', 'asc'); return false;">Sort A-Z</a>
+                                    <a href="#" onclick="sortTable(3, 'string', 'desc'); return false;">Sort Z-A</a>
+                                    <hr>
+                                    <div>
+                                        <label><input type="checkbox" class="filter-checkbox" data-column="3" value="all" checked> Select All</label>
+                                    </div>
+                                    <?php foreach ($bol_number_values as $value): ?>
+                                        <?php if (trim($value) !== ''): ?>
+                                            <div>
+                                                <label>
+                                                    <input type="checkbox" class="filter-checkbox" data-column="3" value="<?php echo htmlspecialchars($value); ?>" checked>
+                                                    <?php echo htmlspecialchars($value); ?>
+                                                </label>
+                                            </div>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </th>
+                        <th>
+                            Warehouse Arrival Date
+                            <div class="sort-dropdown">
+                                <span class="sort-icon">&#9660;</span>
+                                <div class="sort-dropdown-content">
+                                    <a href="#" onclick="sortTable(4, 'date', 'asc'); return false;">Sort Asc</a>
+                                    <a href="#" onclick="sortTable(4, 'date', 'desc'); return false;">Sort Desc</a>
+                                    <hr>
+                                    <div>
+                                        <label><input type="checkbox" class="filter-checkbox" data-column="4" value="all" checked> Select All</label>
+                                    </div>
+                                    <?php foreach ($warehouse_arrival_date_values as $value): ?>
+                                        <?php if (trim($value) !== ''): ?>
+                                            <div>
+                                                <label>
+                                                    <input type="checkbox" class="filter-checkbox" data-column="4" value="<?php echo htmlspecialchars($value); ?>" checked>
+                                                    <?php echo htmlspecialchars($value); ?>
+                                                </label>
+                                            </div>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </th>
+                        <th>
+                            Left Warehouse Date
+                            <div class="sort-dropdown">
+                                <span class="sort-icon">&#9660;</span>
+                                <div class="sort-dropdown-content">
+                                    <a href="#" onclick="sortTable(5, 'date', 'asc'); return false;">Sort Asc</a>
+                                    <a href="#" onclick="sortTable(5, 'date', 'desc'); return false;">Sort Desc</a>
+                                    <hr>
+                                    <div>
+                                        <label><input type="checkbox" class="filter-checkbox" data-column="5" value="all" checked> Select All</label>
+                                    </div>
+                                    <?php foreach ($left_warehouse_date_values as $value): ?>
+                                        <?php if (trim($value) !== ''): ?>
+                                            <div>
+                                                <label>
+                                                    <input type="checkbox" class="filter-checkbox" data-column="5" value="<?php echo htmlspecialchars($value); ?>" checked>
+                                                    <?php echo htmlspecialchars($value); ?>
+                                                </label>
+                                            </div>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </th>
+                        <th>Proof of Delivery</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (!empty($deliveries)): ?>
+                        <?php foreach ($deliveries as $d): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($d['supplier'] ?? ''); ?></td>
+                                <td><?php echo htmlspecialchars($d['wattage'] ?? ''); ?></td>
+                                <td><?php echo htmlspecialchars($d['quantity'] ?? ''); ?></td>
+                                <td><?php echo htmlspecialchars($d['bol_number'] ?? ''); ?></td>
+                                <td><?php echo !empty($d['warehouse_arrival_date']) ? htmlspecialchars($d['warehouse_arrival_date']) : 'N/A'; ?></td>
+                                <td><?php echo !empty($d['left_warehouse_date']) ? htmlspecialchars($d['left_warehouse_date']) : 'N/A'; ?></td>
+                                <td>
+                                    <?php if (!empty($d['proof_of_delivery'])): ?>
+                                        <a href="view_pod?delivery_id=<?php echo $d['id']; ?>" target="_blank">View POD</a>
+                                    <?php else: ?>
+                                        N/A
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr><td colspan="7">No deliveries found.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+        <div class="scroll-note">Swipe or scroll horizontally to see more columns.</div>
+    </div> <!-- End Truckload View Section -->
+
+    <!-- NEW: INVENTORY VIEW SECTION -->
+    <div id="inventoryViewSection" class="tab-section">
+        <h2>Inventory Pallets Stored in Warehouse</h2>
+         <div class="table-controls-header" style="justify-content: flex-start; margin-bottom: 10px;"> <!-- Added basic controls -->
+             <div class="filter-controls">
+                 <label for="inventorySearch">Search:</label>
+                 <input type="text" id="inventorySearch" placeholder="Filter by Identifier, Vendor..." onkeyup="filterInventoryTable()">
+                 <label for="inventoryWattageFilter">Wattage:</label>
+                 <select id="inventoryWattageFilter" onchange="filterInventoryTable()">
+                     <option value="">All</option>
+                     <?php
+                     $invWattages = [];
+                     foreach ($inventory_pallets as $p) { $invWattages[] = $p['wattage']; }
+                     $invWattages = array_unique($invWattages);
+                     sort($invWattages);
+                     foreach ($invWattages as $w) {
+                         echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
+                     }
+                     ?>
+                 </select>
+             </div>
+         </div>
+        <div class="table-responsive">
+            <table id="inventory-pallets-table">
+                <thead>
+                    <tr>
+                        <th>Identifier</th>
+                        <th>Origin Vendor</th>
+                        <th>Wattage</th>
+                        <th>Quantity</th>
+                        <th>Arrival Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (!empty($inventory_pallets)): ?>
+                        <?php foreach ($inventory_pallets as $pallet): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
+                                <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
+                                <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
+                                <td><?php echo number_format($pallet['quantity']); ?></td>
+                                <td>
+                                    <?php 
+                                    if (!empty($pallet['arrival_date'])) {
+                                        try {
+                                            $date = new DateTime($pallet['arrival_date']);
+                                            echo $date->format('m-d-Y');
+                                        } catch (Exception $e) {
+                                            echo htmlspecialchars($pallet['arrival_date']); // Fallback
+                                        }
+                                    } else { echo 'N/A'; }
+                                    ?>
+                                </td>
+                                <td>
+                                     <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" style="padding: 3px 8px; font-size: 0.9em;" target="_blank">Details</a>
+                                     <!-- Add other actions if needed -->
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr><td colspan="6">No individual pallets currently tracked in storage for this warehouse.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+        <div class="scroll-note">Swipe or scroll horizontally to see more columns.</div>
+    </div> <!-- End Inventory View Section -->
+
 </main>
 
 <script>
@@ -796,6 +950,61 @@ function applyFilters() {
         row.style.display = showRow ? '' : 'none';
     }
 }
+
+// --- NEW Tab Switching Logic ---
+function showTabView(viewType) {
+    // Hide all sections
+    document.querySelectorAll('.tab-section').forEach(sec => sec.classList.remove('active'));
+    // Deactivate all buttons
+    document.querySelectorAll('.tabs button').forEach(btn => btn.classList.remove('active'));
+
+    // Show the selected section
+    const sectionId = viewType === 'truckload' ? 'truckloadViewSection' : 'inventoryViewSection';
+    document.getElementById(sectionId).classList.add('active');
+
+    // Activate the corresponding button
+    const buttonId = viewType === 'truckload' ? 'toggleTruckloadBtn' : 'toggleInventoryBtn';
+    document.getElementById(buttonId).classList.add('active');
+}
+
+// --- NEW Filter Logic for Inventory Table ---
+function filterInventoryTable() {
+    const textFilter = document.getElementById('inventorySearch').value.toLowerCase();
+    const wattageFilter = document.getElementById('inventoryWattageFilter').value;
+    const rows = document.querySelectorAll('#inventory-pallets-table tbody tr');
+
+    rows.forEach(row => {
+        // Handle case where there's only one 'td' (e.g., "No pallets...")
+        if (row.cells.length < 5) {
+             row.style.display = ''; // Always show the 'no results' row
+             return; 
+        }
+
+        let show = true;
+        const identifierText = row.cells[0]?.textContent.toLowerCase() || '';
+        const vendorText = row.cells[1]?.textContent.toLowerCase() || '';
+        const wattageText = row.cells[2]?.textContent.replace('W','').trim() || '';
+        // Add other cells to search if needed
+
+        // Text filter (searches identifier and vendor)
+        if (textFilter && !(identifierText.includes(textFilter) || vendorText.includes(textFilter))) {
+            show = false;
+        }
+        // Wattage filter
+        if (wattageFilter && wattageText !== wattageFilter) {
+            show = false;
+        }
+
+        row.style.display = show ? '' : 'none';
+    });
+}
+
+// Initial call to ensure the correct view is shown on load (Truckload)
+document.addEventListener('DOMContentLoaded', () => {
+    showTabView('truckload');
+    // Add event listeners for inventory filters if needed later
+});
+// --- END NEW ---
 </script>
 </body>
 </html>

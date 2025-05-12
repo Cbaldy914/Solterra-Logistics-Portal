@@ -884,15 +884,10 @@ main {
 }
 
 /* Styles for Project Warehouse */
-.warehouse-info {
-    display: flex;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
-}
 
 .warehouse-image img {
     max-width: 300px;
-    height: auto;
+    height: 200px;
 }
 
 .warehouse-details h2 {
@@ -944,16 +939,6 @@ main {
     overflow: hidden;
 }
 
-.warehouse-image img {
-    width: 100%;
-    height: auto;
-}
-
-.warehouse-info {
-        padding: 15px;
-        display: flex;
-        flex-direction: column;
-}
 
 .warehouse-info h2 {
     margin-top: 0;
