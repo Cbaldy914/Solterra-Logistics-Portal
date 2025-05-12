@@ -1059,10 +1059,9 @@ $stmt->close();
                             <td>$<?php echo number_format($delivery['accessorial_costs'], 2); ?></td>
                             <td>
                                 <?php if ($stmtPallets && $palletCount > 0): ?>
-                                    <button type="button" class="action-button" 
+                                    <button type="button" class="action-buttons" 
                                             onclick="showPalletModal(this)" 
                                             data-pallets='<?php echo $palletDataJson; ?>'
-                                            style="background-color: #28a745;"
                                             >View Pallets (<?php echo $palletCount; ?>)</button>
                                 <?php elseif ($stmtPallets): ?>
                                     N/A

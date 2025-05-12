@@ -23,8 +23,8 @@ if (!$conn) {
 
 // Handle form submission for updating the estimate
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_estimate'])) {
-    $cost_per_truck = floatval($_POST['cost_per_truck']);
-    $total_accessorial_cost = floatval($_POST['total_accessorial_cost']);
+    $cost_per_truck = floatval($_POST['cost_per_truck'] ?? 0);
+    $total_accessorial_cost = floatval($_POST['total_accessorial_cost'] ?? 0);
 
     // Fetch existing estimate data
     $stmt = $conn->prepare("SELECT estimate_data FROM freight_estimates WHERE id = ?");
@@ -34,13 +34,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_estimate'])) {
     $stmt->fetch();
     $stmt->close();
 
-    $estimate_data = json_decode($estimate_data_json, true);
+    $estimate_data = json_decode($estimate_data_json, true) ?? [];
 
-    // Update estimate data with admin inputs
-    $number_of_trucks = $estimate_data['estimated_number_of_trucks'];
+    // Safely retrieve numeric fields, default to 0 if missing
+    $number_of_trucks = floatval($estimate_data['estimated_number_of_trucks'] ?? 0);
+
+    // Perform calculations
     $total_freight_cost = $cost_per_truck * $number_of_trucks;
     $grand_total = $total_freight_cost + $total_accessorial_cost;
 
+    // Update estimate data with admin inputs
     $estimate_data['cost_per_truck'] = $cost_per_truck;
     $estimate_data['total_accessorial_cost'] = $total_accessorial_cost;
     $estimate_data['total_freight_cost'] = $total_freight_cost;
@@ -68,7 +71,7 @@ $stmt->fetch();
 $stmt->close();
 $conn->close();
 
-$estimate_data = json_decode($estimate_data_json, true);
+$estimate_data = json_decode($estimate_data_json, true) ?? [];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -128,50 +131,38 @@ $estimate_data = json_decode($estimate_data_json, true);
         h1, h2 {
             margin-top: 20px;
         }
-        ul {
-            list-style-type: none;
-            padding: 0;
-            margin: 0;
-        }
-        ul li {
-            margin: 5px 0;
-        }
-        ul li strong {
-            display: inline-block;
-            width: 220px; /* Adjust for alignment as needed */
-        }
     </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <h1>Freight Estimate: <?php echo htmlspecialchars($name); ?></h1>
+    <h1>Freight Estimate: <?php echo htmlspecialchars($name ?? ''); ?></h1>
 
     <?php
     // Display success or error messages
-    if (isset($success_message)) {
+    if (!empty($success_message)) {
         echo '<p class="success-message">' . htmlspecialchars($success_message) . '</p>';
     }
-    if (isset($error_message)) {
+    if (!empty($error_message)) {
         echo '<p class="error-message">' . htmlspecialchars($error_message) . '</p>';
     }
     ?>
 
     <!-- Basic Info -->
     <ul>
-        <li><strong>User ID:</strong> <?php echo htmlspecialchars($user_id); ?></li>
-        <li><strong>Created At:</strong> <?php echo htmlspecialchars($created_at); ?></li>
+        <li><strong>User ID:</strong> <?php echo htmlspecialchars($user_id ?? ''); ?></li>
+        <li><strong>Created At:</strong> <?php echo htmlspecialchars($created_at ?? ''); ?></li>
     </ul>
 
     <h2>Estimate Details</h2>
     <ul>
-        <li><strong>Origin:</strong> <?php echo htmlspecialchars($estimate_data['origin']); ?></li>
-        <li><strong>Destination:</strong> <?php echo htmlspecialchars($estimate_data['destination']); ?></li>
-        <li><strong>Distance:</strong> <?php echo htmlspecialchars($estimate_data['distance']); ?> miles</li>
-        <li><strong>Project Size:</strong> <?php echo htmlspecialchars($estimate_data['project_size']); ?> MW</li>
-        <li><strong>Estimated Start Date:</strong> <?php echo htmlspecialchars($estimate_data['estimated_start_date']); ?></li>
-        <li><strong>Estimated Number of Trucks:</strong> <?php echo htmlspecialchars($estimate_data['estimated_number_of_trucks']); ?></li>
-        <li><strong>Estimated Modules Per Truck:</strong> <?php echo htmlspecialchars($estimate_data['estimated_modules_per_truck']); ?></li>
+        <li><strong>Origin:</strong> <?php echo htmlspecialchars($estimate_data['origin'] ?? ''); ?></li>
+        <li><strong>Destination:</strong> <?php echo htmlspecialchars($estimate_data['destination'] ?? ''); ?></li>
+        <li><strong>Distance:</strong> <?php echo htmlspecialchars($estimate_data['distance'] ?? ''); ?> miles</li>
+        <li><strong>Project Size:</strong> <?php echo htmlspecialchars($estimate_data['project_size'] ?? ''); ?> MW</li>
+        <li><strong>Estimated Start Date:</strong> <?php echo htmlspecialchars($estimate_data['estimated_start_date'] ?? ''); ?></li>
+        <li><strong>Estimated Number of Trucks:</strong> <?php echo htmlspecialchars($estimate_data['estimated_number_of_trucks'] ?? ''); ?></li>
+        <li><strong>Estimated Modules Per Truck:</strong> <?php echo htmlspecialchars($estimate_data['estimated_modules_per_truck'] ?? ''); ?></li>
     </ul>
 
     <!-- Admin input for costs -->
@@ -180,12 +171,22 @@ $estimate_data = json_decode($estimate_data_json, true);
         <input type="hidden" name="update_estimate" value="1">
 
         <label for="cost_per_truck">Cost per Truck:</label>
-        <input type="number" name="cost_per_truck" step="0.01" required
-               value="<?php echo htmlspecialchars($estimate_data['cost_per_truck']); ?>">
+        <input
+            type="number"
+            step="0.01"
+            name="cost_per_truck"
+            required
+            value="<?php echo htmlspecialchars($estimate_data['cost_per_truck'] ?? ''); ?>"
+        >
 
         <label for="total_accessorial_cost">Total Accessorial Cost:</label>
-        <input type="number" name="total_accessorial_cost" step="0.01" required
-               value="<?php echo htmlspecialchars($estimate_data['total_accessorial_cost']); ?>">
+        <input
+            type="number"
+            step="0.01"
+            name="total_accessorial_cost"
+            required
+            value="<?php echo htmlspecialchars($estimate_data['total_accessorial_cost'] ?? ''); ?>"
+        >
 
         <button type="submit">Update Estimate</button>
     </form>
@@ -196,15 +197,15 @@ $estimate_data = json_decode($estimate_data_json, true);
         <table>
             <tr>
                 <th>Total Freight Cost</th>
-                <td>$<?php echo number_format($estimate_data['total_freight_cost'], 2); ?></td>
+                <td>$<?php echo number_format($estimate_data['total_freight_cost'] ?? 0, 2); ?></td>
             </tr>
             <tr>
                 <th>Total Accessorial Cost</th>
-                <td>$<?php echo number_format($estimate_data['total_accessorial_cost'], 2); ?></td>
+                <td>$<?php echo number_format($estimate_data['total_accessorial_cost'] ?? 0, 2); ?></td>
             </tr>
             <tr>
                 <th>Grand Total</th>
-                <td>$<?php echo number_format($estimate_data['grand_total'], 2); ?></td>
+                <td>$<?php echo number_format($estimate_data['grand_total'] ?? 0, 2); ?></td>
             </tr>
         </table>
     <?php endif; ?>
