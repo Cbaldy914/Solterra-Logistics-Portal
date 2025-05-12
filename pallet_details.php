@@ -73,7 +73,9 @@ try {
                             d.warehouse_arrival_date,
                             d.actual_delivery_date,
                             d.left_warehouse_date,
-                            proj.project_name AS delivery_project_name
+                            proj.project_name AS delivery_project_name,
+                            d.freight_cost,
+                            d.accessorial_costs
                         FROM deliveries d 
                         JOIN delivery_pallets dp ON d.id = dp.delivery_id
                         LEFT JOIN projects proj ON d.project_id = proj.id
@@ -215,12 +217,14 @@ $conn->close();
                                 <th>Warehouse Arrival</th>
                                 <th>Actual Delivery</th>
                                 <th>Left Warehouse</th>
+                                <th>Freight Cost</th>
+                                <th>Accessorial Costs</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($associated_deliveries as $delivery): ?>
                                 <tr>
-                                    <td><?php echo $delivery['delivery_id']; ?></td>
+                                    <td><a href="manage_deliveries.php#delivery-<?php echo $delivery['delivery_id']; ?>"><?php echo $delivery['delivery_id']; ?></a></td>
                                     <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
                                     <td><?php echo htmlspecialchars($delivery['delivery_project_name'] ?? 'N/A'); ?></td>
                                     <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
@@ -229,6 +233,8 @@ $conn->close();
                                     <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
                                     <td><?php echo htmlspecialchars($delivery['actual_delivery_date'] ?? 'N/A'); ?></td>
                                     <td><?php echo htmlspecialchars($delivery['left_warehouse_date'] ?? 'N/A'); ?></td>
+                                    <td><?php echo isset($delivery['freight_cost']) ? '$' . number_format($delivery['freight_cost'], 2) : 'N/A'; ?></td>
+                                    <td><?php echo isset($delivery['accessorial_costs']) ? '$' . number_format($delivery['accessorial_costs'], 2) : 'N/A'; ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>

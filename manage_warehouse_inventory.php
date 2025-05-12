@@ -503,7 +503,20 @@ $conn->close();
                                         <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
                                         <td><?php echo number_format($pallet['quantity']); ?></td>
-                                        <td><?php echo htmlspecialchars($pallet['arrival_date'] ?? 'N/A'); ?></td>
+                                        <td>
+                                            <?php 
+                                            if (!empty($pallet['arrival_date']) && $pallet['arrival_date'] !== 'N/A') {
+                                                try {
+                                                    $date = new DateTime($pallet['arrival_date']);
+                                                    echo $date->format('m-d-Y');
+                                                } catch (Exception $e) {
+                                                    echo htmlspecialchars($pallet['arrival_date']); // Fallback in case of parsing error
+                                                }
+                                            } else {
+                                                echo 'N/A';
+                                            }
+                                            ?>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
@@ -637,7 +650,7 @@ $conn->close();
                             <input type="date" id="actual_arrival_date" name="actual_arrival_date" required>
                         </div>
                     </div>
-                    <div style="margin-top: 20px; text-align: center;">din
+                    <div style="margin-top: 20px; text-align: center;">
                         <button type="button" id="confirmReceiveBtn" class="action-button">Mark as Received</button>
                     </div>
                 </div>
