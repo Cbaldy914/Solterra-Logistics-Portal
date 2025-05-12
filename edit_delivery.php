@@ -467,7 +467,7 @@ if ($context_project_id) {
         <?php echo $checked;?> 
         style="width: auto; margin-right: 10px;"
       >
-      Charge Customer This Amount? (Updates hidden field)
+      Charge Customer This Amount?
     </label>
 
     <!-- Hidden field for accessorial_costs -->
