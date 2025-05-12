@@ -70,103 +70,144 @@ $conn->close();
 
 $estimate_data = json_decode($estimate_data_json, true);
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin- Freight Estimate</title>
+    <title>Admin - Freight Estimate View</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
+    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+
+    <style>
+        /* Mimicking the style approach from admin_warehouse_estimate_view.php */
+        label {
+            display: block;
+            margin-top: 15px;
+            font-weight: bold;
+        }
+        input {
+            width: 95%;
+            padding: 8px;
+            margin-top: 5px;
+        }
+        button {
+            background-color: #488C9A; /* Secondary blue color */
+            color: white;
+            padding: 10px 20px;
+            margin: 10px 0;
+            border: none;
+            border-radius: 4px;
+            font-size: 1em;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #293E4C; /* Darker shade on hover */
+        }
+        .success-message {
+            color: green;
+            margin-top: 15px;
+        }
+        .error-message {
+            color: red;
+            margin-top: 15px;
+        }
+        table {
+            width: 100%;
+            margin-top: 20px;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        h1, h2 {
+            margin-top: 20px;
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+        }
+        ul li {
+            margin: 5px 0;
+        }
+        ul li strong {
+            display: inline-block;
+            width: 220px; /* Adjust for alignment as needed */
+        }
+    </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
-    <main>
-        <h1>View / Edit Estimate</h1>
+<main>
+    <h1>Freight Estimate: <?php echo htmlspecialchars($name); ?></h1>
 
-        <?php
-        // Display success or error messages
-        if (isset($success_message)) {
-            echo '<p class="success-message">' . htmlspecialchars($success_message) . '</p>';
-        }
-        if (isset($error_message)) {
-            echo '<p class="error-message">' . htmlspecialchars($error_message) . '</p>';
-        }
-        ?>
+    <?php
+    // Display success or error messages
+    if (isset($success_message)) {
+        echo '<p class="success-message">' . htmlspecialchars($success_message) . '</p>';
+    }
+    if (isset($error_message)) {
+        echo '<p class="error-message">' . htmlspecialchars($error_message) . '</p>';
+    }
+    ?>
 
-        <h2><?php echo htmlspecialchars($name); ?></h2>
-        <p><strong>User ID:</strong> <?php echo htmlspecialchars($user_id); ?></p>
-        <p><strong>Created At:</strong> <?php echo htmlspecialchars($created_at); ?></p>
+    <!-- Basic Info -->
+    <ul>
+        <li><strong>User ID:</strong> <?php echo htmlspecialchars($user_id); ?></li>
+        <li><strong>Created At:</strong> <?php echo htmlspecialchars($created_at); ?></li>
+    </ul>
 
-        <!-- Display estimate details -->
+    <h2>Estimate Details</h2>
+    <ul>
+        <li><strong>Origin:</strong> <?php echo htmlspecialchars($estimate_data['origin']); ?></li>
+        <li><strong>Destination:</strong> <?php echo htmlspecialchars($estimate_data['destination']); ?></li>
+        <li><strong>Distance:</strong> <?php echo htmlspecialchars($estimate_data['distance']); ?> miles</li>
+        <li><strong>Project Size:</strong> <?php echo htmlspecialchars($estimate_data['project_size']); ?> MW</li>
+        <li><strong>Estimated Start Date:</strong> <?php echo htmlspecialchars($estimate_data['estimated_start_date']); ?></li>
+        <li><strong>Estimated Number of Trucks:</strong> <?php echo htmlspecialchars($estimate_data['estimated_number_of_trucks']); ?></li>
+        <li><strong>Estimated Modules Per Truck:</strong> <?php echo htmlspecialchars($estimate_data['estimated_modules_per_truck']); ?></li>
+    </ul>
+
+    <!-- Admin input for costs -->
+    <h2>Update Costs</h2>
+    <form method="POST" action="">
+        <input type="hidden" name="update_estimate" value="1">
+
+        <label for="cost_per_truck">Cost per Truck:</label>
+        <input type="number" name="cost_per_truck" step="0.01" required
+               value="<?php echo htmlspecialchars($estimate_data['cost_per_truck']); ?>">
+
+        <label for="total_accessorial_cost">Total Accessorial Cost:</label>
+        <input type="number" name="total_accessorial_cost" step="0.01" required
+               value="<?php echo htmlspecialchars($estimate_data['total_accessorial_cost']); ?>">
+
+        <button type="submit">Update Estimate</button>
+    </form>
+
+    <!-- Display updated totals -->
+    <?php if (!empty($estimate_data['grand_total'])): ?>
+        <h2>Updated Totals</h2>
         <table>
             <tr>
-                <th>Origin</th>
-                <td><?php echo htmlspecialchars($estimate_data['origin']); ?></td>
+                <th>Total Freight Cost</th>
+                <td>$<?php echo number_format($estimate_data['total_freight_cost'], 2); ?></td>
             </tr>
             <tr>
-                <th>Destination</th>
-                <td><?php echo htmlspecialchars($estimate_data['destination']); ?></td>
+                <th>Total Accessorial Cost</th>
+                <td>$<?php echo number_format($estimate_data['total_accessorial_cost'], 2); ?></td>
             </tr>
             <tr>
-                <th>Distance</th>
-                <td><?php echo htmlspecialchars($estimate_data['distance']); ?> miles</td>
-            </tr>
-            <tr>
-                <th>Project Size</th>
-                <td><?php echo htmlspecialchars($estimate_data['project_size']); ?> MW</td>
-            </tr>
-            <tr>
-                <th>Estimated Start Date</th>
-                <td><?php echo htmlspecialchars($estimate_data['estimated_start_date']); ?></td>
-            </tr>
-            <tr>
-                <th>Estimated Number of Trucks</th>
-                <td><?php echo htmlspecialchars($estimate_data['estimated_number_of_trucks']); ?></td>
-            </tr>
-            <tr>
-                <th>Estimated Modules Per Truck</th>
-                <td><?php echo htmlspecialchars($estimate_data['estimated_modules_per_truck']); ?></td>
+                <th>Grand Total</th>
+                <td>$<?php echo number_format($estimate_data['grand_total'], 2); ?></td>
             </tr>
         </table>
-
-        <!-- Admin input for costs -->
-        <h2>Update Costs</h2>
-        <form method="POST" action="">
-            <input type="hidden" name="update_estimate" value="1">
-            <table>
-                <tr>
-                    <th>Cost per Truck</th>
-                    <td><input type="number" name="cost_per_truck" step="0.01" required value="<?php echo htmlspecialchars($estimate_data['cost_per_truck']); ?>"></td>
-                </tr>
-                <tr>
-                    <th>Total Accessorial Cost</th>
-                    <td><input type="number" name="total_accessorial_cost" step="0.01" required value="<?php echo htmlspecialchars($estimate_data['total_accessorial_cost']); ?>"></td>
-                </tr>
-            </table>
-            <button type="submit">Update Estimate</button>
-        </form>
-
-        <!-- Display updated totals -->
-        <?php if ($estimate_data['grand_total'] !== null): ?>
-            <h2>Updated Totals</h2>
-            <table>
-                <tr>
-                    <th>Total Freight Cost</th>
-                    <td>$<?php echo number_format($estimate_data['total_freight_cost'], 2); ?></td>
-                </tr>
-                <tr>
-                    <th>Total Accessorial Cost</th>
-                    <td>$<?php echo number_format($estimate_data['total_accessorial_cost'], 2); ?></td>
-                </tr>
-                <tr>
-                    <th>Grand Total</th>
-                    <td>$<?php echo number_format($estimate_data['grand_total'], 2); ?></td>
-                </tr>
-            </table>
-        <?php endif; ?>
-    </main>
+    <?php endif; ?>
+</main>
 </body>
 </html>

@@ -197,14 +197,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
-
+        /* Styles adapted from add_warehouse.php (and originally add_project.php) */
         main {
-            max-width: 800px;
+            max-width: 800px; /* Adjust as needed */
+            margin: 20px auto; /* Center main content */
+            padding: 20px;
+            background-color: #fff;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
         form label {
             display: block;
             margin-top: 15px;
             font-weight: 600;
+            color: #333; /* Darker label text */
         }
         form input[type="text"],
         form input[type="number"],
@@ -212,21 +217,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         form input[type="file"],
         form select {
             width: 100%;
-            padding: 8px;
+            padding: 10px; /* Slightly larger padding */
             margin-top: 5px;
             border-radius: 4px;
             border: 1px solid #ccc;
+            box-sizing: border-box; /* Include padding and border in the element's total width and height */
         }
+        /* Keep specific wattage entry styles */
         .wattage-entry {
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
             margin-bottom: 10px;
+            padding: 10px;
+            border: 1px dashed #ccc;
+            border-radius: 4px;
         }
         .wattage-entry label {
-            margin-top: 0; 
+            margin-top: 0; /* Override general label margin */
+            flex-basis: 100px; /* Adjust label width as needed */
         }
-        .btn-add-wattage, .wattage-entry button {
+        .wattage-entry input[type="number"] {
+            flex-grow: 1; /* Allow inputs to take available space */
+            width: auto; /* Override 100% width */
+        }
+        .wattage-entry button {
+            background: #dc3545; /* Red for remove */
+            color: #fff;
+            border: none;
+            padding: 8px 14px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin-top: 5px; /* Align with inputs */
+            align-self: flex-end; /* Align button bottom */
+        }
+        .wattage-entry button:hover {
+            background: #c82333;
+        }
+        /* Styling for the 'Add Wattage' button */
+         .btn-add-wattage {
             background: #488C9A;
             color: #fff;
             border: none;
@@ -234,40 +263,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             cursor: pointer;
             border-radius: 4px;
             margin-top: 10px;
+            margin-bottom: 20px; /* Space before submit */
+            display: inline-block;
         }
-        .btn-add-wattage:hover, .wattage-entry button:hover {
+        .btn-add-wattage:hover {
             background: #293E4C;
         }
-        .btn-submit {
-            background: #293E4C;
+        /* General submit button style */
+        .btn-submit { 
+            background: #293E4C; /* Dark blue */
             color: #fff;
             border: none;
             padding: 12px 20px;
             cursor: pointer;
             border-radius: 4px;
             font-size: 1rem;
+            font-weight: 600; /* Make button text bolder */
             margin-top: 20px;
-            display: block;
+            display: inline-block; /* Or block if you want it full width */
+            transition: background-color 0.3s ease; /* Smooth transition on hover */
         }
         .btn-submit:hover {
-            background: #488C9A;
+            background: #488C9A; /* Lighter blue on hover */
+        }
+        h1 {
+            color: #293E4C; /* Match button color */
+            text-align: center; /* Center the heading */
+            margin-bottom: 30px;
         }
         .section-title {
             margin-top: 30px;
-            margin-bottom: 10px;
-            font-size: 1.1rem;
+            margin-bottom: 15px; /* Increased bottom margin */
+            font-size: 1.2rem; /* Slightly larger title */
             font-weight: 600;
+            color: #333;
+            border-bottom: 1px solid #eee; /* Add a light separator */
+            padding-bottom: 5px;
         }
         /* Message styling */
         .success-message {
-            color: green;
-            margin: 20px;
+            color: #155724; /* Dark green */
+            background-color: #d4edda; /* Light green background */
+            border: 1px solid #c3e6cb; /* Green border */
+            padding: 15px;
+            margin: 20px 0; /* Add margin */
             text-align: center;
+            border-radius: 4px;
         }
         .error-message {
-            color: red;
-            margin: 20px;
+            color: #721c24; /* Dark red */
+            background-color: #f8d7da; /* Light red background */
+            border: 1px solid #f5c6cb; /* Red border */
+            padding: 15px;
+            margin: 20px 0; /* Add margin */
             text-align: center;
+            border-radius: 4px;
+        }
+        /* Remove default br spacing if labels are block */
+        form br {
+            display: none;
         }
     </style>
     <script>
@@ -329,7 +383,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <form action="" method="POST" enctype="multipart/form-data">
         <?php if ($role === 'global_admin'): ?>
             <label for="account_id">Account Name:</label>
-            <select name="account_id" required>
+            <select name="account_id" id="account_id" required>
                 <option value="">--Select Account--</option>
                 <?php foreach ($accounts as $acc): ?>
                     <option value="<?php echo $acc['id']; ?>">
@@ -342,25 +396,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php endif; ?>
 
         <label for="project_name">Project Name:</label>
-        <input type="text" name="project_name" required>
+        <input type="text" id="project_name" name="project_name" required>
 
         <label for="project_address">Project Address:</label>
-        <input type="text" name="project_address" required>
+        <input type="text" id="project_address" name="project_address" required>
 
         <label for="image_file">Project Image:</label>
-        <input type="file" name="image_file" accept="image/*">
+        <input type="file" id="image_file" name="image_file" accept="image/*">
 
         <label for="estimated_completion_date">Estimated Completion Date:</label>
-        <input type="date" name="estimated_completion_date">
+        <input type="date" id="estimated_completion_date" name="estimated_completion_date">
 
         <label for="solterra_fee">Solterra Fee (per watt):</label>
-        <input type="number" step="0.0001" name="solterra_fee" value="0.0000" required>
+        <input type="number" id="solterra_fee" step="0.0001" name="solterra_fee" value="0.0000" required>
 
         <div class="section-title">Wattage and Total Order Quantities</div>
-        <div id="wattage-container"></div>
+        <div id="wattage-container">
+            <!-- Wattage fields will be added here by JS -->
+        </div>
         <button type="button" class="btn-add-wattage" onclick="addWattageField()">Add Wattage</button>
 
-        <input type="submit" value="Add Project" class="btn-submit">
+        <div class="btn-submit-container">
+            <input type="submit" value="Add Project" class="btn-submit">
+        </div>
     </form>
 </main>
 </body>
