@@ -471,6 +471,27 @@ if ($conn) {
             text-align: center;
             white-space: nowrap;
         }
+        .sub-tabs-container {
+            /* Add any container styling if needed */
+            /* Example: margin-bottom: 10px; */
+        }
+        .sub-tab-button {
+            padding: 8px 12px;
+            cursor: pointer;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            /* border-bottom: none; */ /* Keep bottom border for unselected or adjust as preferred */
+            margin-right: 5px;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            font-size: 0.9em; /* Slightly smaller font for sub-tabs */
+        }
+        .sub-tab-button.active {
+            background-color: #fff;
+            border-bottom: 1px solid #fff; /* To make it look like it merges with content */
+            font-weight: bold;
+            color: #293E4C; /* Match active main tab text color */
+        }
 
         @media (max-width: 768px) {
              .filter-controls {
@@ -610,7 +631,16 @@ if ($conn) {
         <div class="tabs-container">
             <div class="tabs">
                 <button class="tab-link active" onclick="openTab(event, 'InventoryView')">Inventory View (<?php echo count($inventory_pallets); ?>)</button>
-                <button class="tab-link" onclick="openTab(event, 'TruckloadView')">Truckload History (<?php echo count(array_unique(array_merge(array_column($delivered_deliveries,'id'),array_column($left_warehouse_deliveries,'id')))); ?>)</button>
+                <button class="tab-link" onclick="openTab(event, 'TruckloadView')">Truckload History (<?php 
+                    $all_truckload_ids = [];
+                    if (!empty($inbound_deliveries_for_table)) {
+                        foreach($inbound_deliveries_for_table as $d) { $all_truckload_ids[] = $d['id']; }
+                    }
+                    if (!empty($outbound_deliveries_for_table)) {
+                        foreach($outbound_deliveries_for_table as $d) { $all_truckload_ids[] = $d['id']; }
+                    }
+                    echo count(array_unique($all_truckload_ids)); 
+                ?>)</button>
             </div>
         </div>
 
