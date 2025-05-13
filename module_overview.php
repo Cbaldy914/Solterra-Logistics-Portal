@@ -129,11 +129,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         $deliveryTypes = "";
         $deliveryParams = [];
         if ($destinationType === 'project') {
-            $sqlDelivery = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, left_warehouse_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Project')";
-            $deliveryTypes = "ississs";
+            $sqlDelivery = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, 'In Transit to Project')";
+            $deliveryTypes = "ississ";
         } else {
-            $sqlDelivery = "INSERT INTO deliveries (project_id, warehouse_id, supplier, wattage, quantity, bol_number, left_warehouse_date, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse')";
-            $deliveryTypes = "iississs";
+            $sqlDelivery = "INSERT INTO deliveries (project_id, warehouse_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse')";
+            $deliveryTypes = "iississ";
         }
         $stmtDelivery = $conn->prepare($sqlDelivery);
         if (!$stmtDelivery) throw new Exception("Failed to prepare delivery insert: " . $conn->error);
@@ -156,10 +156,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
             foreach ($groupByWattage as $wattage => $palletsForWatt) {
                 $groupQty = array_sum(array_column($palletsForWatt, 'quantity'));
                 if ($destinationType === 'project') {
-                    $deliveryParams = [$destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate, $departureDate];
+                    $deliveryParams = [$destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate];
                 } else {
-                    error_log("Attempting to insert delivery to warehouse. Project ID for delivery: " . print_r($source_project_id_for_delivery, true)); // DEBUG LINE - Uses the newly fetched project_id
-                    $deliveryParams = [$source_project_id_for_delivery, $destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $departureDate, $estArrivalDate];
+                    error_log("Attempting to insert delivery to warehouse. Project ID for delivery: " . print_r($source_project_id_for_delivery, true)); 
+                    $deliveryParams = [$source_project_id_for_delivery, $destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate];
                 }
                 $stmtDelivery->bind_param($deliveryTypes, ...$deliveryParams);
                 if (!$stmtDelivery->execute()) {
