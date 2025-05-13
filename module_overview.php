@@ -53,6 +53,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
     $conn = getDBConnection();
     $conn->begin_transaction();
     try {
+        // --- NEW: Fetch current batch's vendor_name and project_id directly --- 
+        $current_batch_info_stmt = $conn->prepare("SELECT vendor_name, project_id FROM modules WHERE id = ? LIMIT 1");
+        if (!$current_batch_info_stmt) {
+            throw new Exception("Failed to prepare batch info query: " . $conn->error);
+        }
+        $current_batch_info_stmt->bind_param("i", $batch_id); // $batch_id is from $_GET
+        $current_batch_info_stmt->execute();
+        $current_batch_info_result = $current_batch_info_stmt->get_result();
+        if ($current_batch_info_row = $current_batch_info_result->fetch_assoc()) {
+            $current_batch_vendor_name = $current_batch_info_row['vendor_name'];
+            $source_project_id_for_delivery = $current_batch_info_row['project_id']; // This can be NULL
+        } else {
+            $current_batch_info_stmt->close();
+            throw new Exception("Module batch with ID {$batch_id} not found.");
+        }
+        $current_batch_info_stmt->close();
+        // --- END NEW --- 
+
         $destinationType = $_POST['destination_type'] ?? 'project';
         $destinationId   = isset($_POST['destination_id']) ? intval($_POST['destination_id']) : 0;
         $bolNumber       = trim($_POST['bol_number'] ?? '');
@@ -77,17 +95,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
             throw new Exception('Estimated arrival date is required.');
         }
 
-        // Fetch supplier/vendor_name for this batch
-        $stmtBn = $conn->prepare("SELECT vendor_name FROM modules WHERE id = ? LIMIT 1");
-        if (!$stmtBn) throw new Exception("Failed to prepare vendor fetch: " . $conn->error);
-        $stmtBn->bind_param("i", $batch_id);
-        $stmtBn->execute();
-        $stmtBn->bind_result($vendor_name);
-        if (!$stmtBn->fetch()) {
-            $stmtBn->close();
-            throw new Exception("Could not find vendor name for this batch.");
-        }
-        $stmtBn->close();
+        // Fetch supplier/vendor_name for this batch - NOW USING $current_batch_vendor_name
+        $vendor_name = $current_batch_vendor_name ?? 'Unknown Vendor';
+        // Get the project_id from the module batch itself - NOW USING $source_project_id_for_delivery
+        // This was the main issue: $batch_data was not populated at this stage of POST handling.
 
         // Fetch details for selected pallets
         $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
@@ -119,10 +130,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         $deliveryParams = [];
         if ($destinationType === 'project') {
             $sqlDelivery = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, left_warehouse_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Project')";
-            $deliveryTypes = "isissss";
+            $deliveryTypes = "ississs";
         } else {
-            $sqlDelivery = "INSERT INTO deliveries (warehouse_id, supplier, wattage, quantity, bol_number, left_warehouse_date, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse')";
-            $deliveryTypes = "isissss";
+            $sqlDelivery = "INSERT INTO deliveries (project_id, warehouse_id, supplier, wattage, quantity, bol_number, left_warehouse_date, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse')";
+            $deliveryTypes = "iississs";
         }
         $stmtDelivery = $conn->prepare($sqlDelivery);
         if (!$stmtDelivery) throw new Exception("Failed to prepare delivery insert: " . $conn->error);
@@ -147,7 +158,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
                 if ($destinationType === 'project') {
                     $deliveryParams = [$destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate, $departureDate];
                 } else {
-                    $deliveryParams = [$destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $departureDate, $estArrivalDate];
+                    error_log("Attempting to insert delivery to warehouse. Project ID for delivery: " . print_r($source_project_id_for_delivery, true)); // DEBUG LINE - Uses the newly fetched project_id
+                    $deliveryParams = [$source_project_id_for_delivery, $destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $departureDate, $estArrivalDate];
                 }
                 $stmtDelivery->bind_param($deliveryTypes, ...$deliveryParams);
                 if (!$stmtDelivery->execute()) {
@@ -185,20 +197,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
 // Helper to insert a pallet row and assign its identifier
 function insertPallet($itemId, $watt, $qty) {
     global $conn;
+
+    // --- NEW: Fetch assigned project_id from the parent module batch --- 
+    $assignedProjectId = null; // Default to NULL
+    $stmtFetchProject = $conn->prepare("
+        SELECT m.project_id 
+        FROM modules m 
+        JOIN unassigned_module_items umi ON m.id = umi.unassigned_module_id 
+        WHERE umi.id = ? 
+        LIMIT 1
+    ");
+    if ($stmtFetchProject) {
+        $stmtFetchProject->bind_param("i", $itemId);
+        if ($stmtFetchProject->execute()) {
+            $stmtFetchProject->bind_result($fetchedProjectId);
+            if ($stmtFetchProject->fetch()) {
+                $assignedProjectId = $fetchedProjectId; // Can be NULL if the module batch wasn't assigned
+            }
+        } else {
+            // Log error or handle appropriately if project fetch fails
+            error_log("Error executing project fetch for item ID {$itemId}: " . $stmtFetchProject->error);
+        }
+        $stmtFetchProject->close();
+    } else {
+        error_log("Error preparing project fetch for item ID {$itemId}: " . $conn->error);
+    }
+    // --- END NEW --- 
+
     $stmtIns = $conn->prepare(
-        "INSERT INTO inventory_pallets (pallet_identifier, unassigned_module_item_id, wattage, quantity, status) 
-         VALUES (?, ?, ?, ?, 'At Manufacturer')"
+        "INSERT INTO inventory_pallets 
+         (pallet_identifier, unassigned_module_item_id, assigned_project_id, wattage, quantity, status) 
+         VALUES (?, ?, ?, ?, ?, 'At Manufacturer')"
     );
-    $emptyId = '';
-    $stmtIns->bind_param("siid", $emptyId, $itemId, $watt, $qty);
-    $stmtIns->execute();
-    $newId      = $conn->insert_id;
+    if (!$stmtIns) {
+        // Log error or handle appropriately
+        error_log("Error preparing pallet insert for item ID {$itemId}: " . $conn->error);
+        // Potentially throw an exception or return false to indicate failure
+        return; // Exit function if prepare fails
+    }
+
+    $emptyId = ''; // Pallet identifier will be set after insert
+    // Bind parameters including the fetched assigned project ID (type 'i' handles NULL correctly)
+    $stmtIns->bind_param("siiid", $emptyId, $itemId, $assignedProjectId, $watt, $qty);
+    
+    if (!$stmtIns->execute()) {
+        error_log("Error executing pallet insert for item ID {$itemId}: " . $stmtIns->error);
+        $stmtIns->close();
+        return; // Exit function if execute fails
+    }
+    
+    $newId = $conn->insert_id;
     $identifier = 'P' . $newId;
-    $stmtUpd    = $conn->prepare("UPDATE inventory_pallets SET pallet_identifier = ? WHERE id = ?");
-    $stmtUpd->bind_param("si", $identifier, $newId);
-    $stmtUpd->execute();
+    $stmtUpd = $conn->prepare("UPDATE inventory_pallets SET pallet_identifier = ? WHERE id = ?");
+    if ($stmtUpd) {
+        $stmtUpd->bind_param("si", $identifier, $newId);
+        $stmtUpd->execute();
+        $stmtUpd->close();
+    } else {
+         error_log("Error preparing pallet identifier update for ID {$newId}: " . $conn->error);
+    }
     $stmtIns->close();
-    $stmtUpd->close();
 }
 
 // --- Data Fetching --- 
