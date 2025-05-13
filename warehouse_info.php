@@ -141,11 +141,9 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
     $warehouse_id = $warehouse_data['id']; 
 
     try {
-        // Fetch Stored Pallets (Inventory View)
+        // Fetch Pallets currently IN this warehouse (for Inventory View)
         $sql_pallets = "
-            SELECT 
-                ip.id AS pallet_id, ip.pallet_identifier, ip.wattage, ip.quantity, 
-                ip.arrival_date, m.vendor_name AS origin_vendor 
+            SELECT ip.id AS pallet_id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.arrival_date, m.vendor_name AS origin_vendor
             FROM inventory_pallets ip
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
@@ -174,6 +172,7 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $stmt_pallets->close();
 
         // Fetch Deliveries Arrived (for Truckload View)
+        $arrived_delivery_ids = [];
         $sql_deliveries_arrived = "
             SELECT 
                 d.id, d.supplier, d.wattage, d.quantity, d.bol_number, 
@@ -195,25 +194,44 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $stmt_delivered->bind_param($delivered_types, ...$delivered_params);
         $stmt_delivered->execute();
         $result_delivered = $stmt_delivered->get_result();
-        $total_inbound_deliveries = 0;
+        // $total_inbound_pallets = 0; // Old logic based on d.quantity
         while ($drow = $result_delivered->fetch_assoc()) {
             $delivered_deliveries[] = $drow;
+            $arrived_delivery_ids[] = $drow['id']; // Collect IDs for pallet counting
             $arrived_date_values[] = $drow['warehouse_arrival_date'] ?? '';
-            $total_inbound_deliveries++;
+            // $total_inbound_pallets += ($drow['quantity'] ?? 0); // Old logic
         }
         $stmt_delivered->close();
+
+        // Count actual pallets for INBOUND deliveries
+        $total_inbound_pallets_count = 0;
+        if (!empty($arrived_delivery_ids)) {
+            $placeholders = implode(',', array_fill(0, count($arrived_delivery_ids), '?'));
+            $stmt_count_in_pallets = $conn->prepare("SELECT COUNT(DISTINCT inventory_pallet_id) FROM delivery_pallets WHERE delivery_id IN ({$placeholders})");
+            if ($stmt_count_in_pallets) {
+                $types_in_pallets = str_repeat('i', count($arrived_delivery_ids));
+                $stmt_count_in_pallets->bind_param($types_in_pallets, ...$arrived_delivery_ids);
+                $stmt_count_in_pallets->execute();
+                $stmt_count_in_pallets->bind_result($count_in);
+                if ($stmt_count_in_pallets->fetch()) {
+                    $total_inbound_pallets_count = $count_in;
+                }
+                $stmt_count_in_pallets->close();
+            }
+        }
+
         $arrived_date_values = array_unique(array_filter($arrived_date_values));
         sort($arrived_date_values);
         
         // Fetch Deliveries Departed (for Truckload View)
-        // We need deliveries that arrived AND left THIS warehouse
+        $departed_delivery_ids = [];
         $sql_deliveries_left = "
             SELECT 
                 d.id, d.supplier, d.wattage, d.quantity, d.bol_number, 
                 d.warehouse_arrival_date, d.left_warehouse_date, d.proof_of_delivery
             FROM deliveries d
             WHERE d.warehouse_id = ? AND d.left_warehouse_date IS NOT NULL 
-        ";
+        "; // Reverted to d.warehouse_id from d.origin_warehouse_id
         $left_params = [$warehouse_id];
         $left_types = "i";
         if ($project_id) {
@@ -228,14 +246,11 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $stmt_left->bind_param($left_types, ...$left_params);
         $stmt_left->execute();
         $result_left = $stmt_left->get_result();
-        $total_outbound_deliveries = 0;
+        // $total_outbound_pallets = 0; // Old logic based on d.quantity
         while ($drow = $result_left->fetch_assoc()) {
-            // Avoid duplicating if it was fetched in 'arrived' already
-            // Simple check: if already in $delivered_deliveries (by ID), maybe update it, else add
             $found = false;
             foreach ($delivered_deliveries as &$existing_d) {
                 if ($existing_d['id'] === $drow['id']) {
-                    // Update the existing record with left date if it wasn't there
                     if (empty($existing_d['left_warehouse_date'])) {
                          $existing_d['left_warehouse_date'] = $drow['left_warehouse_date'];
                     }
@@ -245,45 +260,44 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
             }
             unset($existing_d);
             if (!$found) {
-                 $left_warehouse_deliveries[] = $drow; // Only add if not already in arrived list
+                 $left_warehouse_deliveries[] = $drow; 
             }
+            $departed_delivery_ids[] = $drow['id']; // Collect IDs for pallet counting
             $left_warehouse_date_values[] = $drow['left_warehouse_date'] ?? '';
-            $total_outbound_deliveries++; // Count all that left
+            // $total_outbound_pallets += ($drow['quantity'] ?? 0); // Old logic
         }
         $stmt_left->close();
+
+        // Count actual pallets for OUTBOUND deliveries
+        $total_outbound_pallets_count = 0;
+        if (!empty($departed_delivery_ids)) {
+            $placeholders_out = implode(',', array_fill(0, count($departed_delivery_ids), '?'));
+            $stmt_count_out_pallets = $conn->prepare("SELECT COUNT(DISTINCT inventory_pallet_id) FROM delivery_pallets WHERE delivery_id IN ({$placeholders_out})");
+            if ($stmt_count_out_pallets) {
+                $types_out_pallets = str_repeat('i', count($departed_delivery_ids));
+                $stmt_count_out_pallets->bind_param($types_out_pallets, ...$departed_delivery_ids);
+                $stmt_count_out_pallets->execute();
+                $stmt_count_out_pallets->bind_result($count_out);
+                if ($stmt_count_out_pallets->fetch()) {
+                    $total_outbound_pallets_count = $count_out;
+                }
+                $stmt_count_out_pallets->close();
+            }
+        }
+
         $left_warehouse_date_values = array_unique(array_filter($left_warehouse_date_values));
         sort($left_warehouse_date_values);
         
         // Calculate Costs (Based on this specific warehouse's fees)
-        $in_fee_cost  = ($warehouse_data['in_fee'] ?? 0)  * $total_inbound_deliveries;
-        $out_fee_cost = ($warehouse_data['out_fee'] ?? 0) * $total_outbound_deliveries;
+        $in_fee_cost  = ($warehouse_data['in_fee'] ?? 0)  * $total_inbound_pallets_count;
+        $out_fee_cost = ($warehouse_data['out_fee'] ?? 0) * $total_outbound_pallets_count;
         
         // Monthly Storage Cost Estimate (based on current pallet count)
         $monthly_storage_cost = $total_pallets_count * ($warehouse_data['monthly_storage_fee'] ?? 0);
         
-        // Calculate total historical storage cost (more complex - loop through pallets)
-        $storage_cost_to_date = 0;
-        if ($total_pallets_count > 0) {
-            $daily_storage_rate = ($warehouse_data['monthly_storage_fee'] ?? 0) / 30;
-            if ($daily_storage_rate > 0) {
-                 // Need arrival date for each pallet (already fetched in $inventory_pallets)
-                 // For simplicity, let's calculate based on stored pallets only for now
-                 // A more accurate calc would need pallet arrival/departure history
-                 $today = new DateTime();
-                 foreach ($inventory_pallets as $pallet) {
-                     if (!empty($pallet['arrival_date'])) {
-                         try {
-                             $arrival_dt = new DateTime($pallet['arrival_date']);
-                             $interval = $arrival_dt->diff($today);
-                             $days_in_storage = $interval->days + 1; // Include arrival day
-                             $storage_cost_to_date += ($days_in_storage * $daily_storage_rate);
-                         } catch (Exception $dateEx) { /* Ignore invalid date */ }
-                     }
-                 }
-            }
-        }
+        $storage_cost_to_date = 0; // Removed calculation, set to 0
         
-        $total_cost_to_date = $in_fee_cost + $out_fee_cost + $storage_cost_to_date; // Use calculated historical
+        $total_cost_to_date = $in_fee_cost + $out_fee_cost; // Updated total cost
 
     } catch (Exception $e) {
         $errorMessage = "Error fetching inventory data: " . $e->getMessage();
@@ -591,7 +605,6 @@ if ($conn) {
                          <th>Est. Monthly Storage Cost</th>
                          <th>In Fee Cost (Total)</th>
                          <th>Out Fee Cost (Total)</th>
-                         <th>Storage Cost To Date</th>
                          <th>Total Cost To Date</th>
                      </tr>
                  </thead>
@@ -602,7 +615,6 @@ if ($conn) {
                          <td>$<?php echo number_format($monthly_storage_cost, 2); ?></td>
                          <td>$<?php echo number_format($in_fee_cost, 2); ?></td>
                          <td>$<?php echo number_format($out_fee_cost, 2); ?></td>
-                         <td>$<?php echo number_format($storage_cost_to_date ?? 0, 2); ?></td>
                          <td>$<?php echo number_format($total_cost_to_date, 2); ?></td>
                      </tr>
                  </tbody>
