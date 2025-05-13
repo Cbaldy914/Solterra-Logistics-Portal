@@ -2,441 +2,351 @@
 session_name("logistics_session");
 session_start();
 
+// Check if user is logged in (adjust roles as needed for warehouse view)
+if (!isset($_SESSION['user_id'])) { 
+    header("Location: login"); 
+    exit();
+}
+
 require_once '../config.php';
 $conn = getDBConnection();
 if (!$conn) {
-    die("Unable to connect to database. Please try again later.");
+    die("Database connection failed. Please try again later.");
 }
 
-// Check if user is logged in
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login");
-    exit();
-}
+// Get parameters
+$warehouse_id = isset($_GET['warehouse_id']) ? intval($_GET['warehouse_id']) : null;
+$project_id   = isset($_GET['project_id'])   ? intval($_GET['project_id'])   : null;
 
-$user_id = $_SESSION['user_id'];
-$role    = $_SESSION['role'] ?? 'user';
+// Initialize variables
+$warehouse_data         = null;
+$project_name_for_title = null;
+$show_warehouse_list    = false;
+$relevant_warehouses    = []; 
+$errorMessage           = '';
+$page_title             = "Warehouse Information"; 
 
-// Validate project ID
-if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
-    die("Project ID is missing.");
-}
-$project_id = intval($_GET['project_id']);
+// --- Dispatcher Logic ---
 
-// Determine if user has access to the project based on role/account membership
-$project_name = '';
+try {
+    if ($warehouse_id) {
+        // --- Scenario 1: Specific Warehouse ID provided ---
+        $stmtW = $conn->prepare("SELECT * FROM warehouses WHERE id = ?");
+        if (!$stmtW) throw new Exception("Prepare warehouse failed: " . $conn->error);
+        $stmtW->bind_param("i", $warehouse_id);
+        $stmtW->execute();
+        $resultW = $stmtW->get_result();
+        if ($resultW->num_rows === 0) {
+            throw new Exception("Warehouse with ID {$warehouse_id} not found.");
+        }
+        $warehouse_data = $resultW->fetch_assoc();
+        $page_title = htmlspecialchars($warehouse_data['name']);
+        $stmtW->close();
 
-if ($role === 'admin' || $role === 'global_admin') {
-    // Admin or global_admin => can see any project, so just confirm it exists
-    $stmt = $conn->prepare("SELECT project_name FROM projects WHERE id=?");
-    $stmt->bind_param("i", $project_id);
-} else {
-    // Regular user => check if they belong to the same account as the project
-    $stmt = $conn->prepare("
-        SELECT p.project_name
-        FROM projects p
-        JOIN customer_account_users cau ON p.account_id = cau.account_id
-        WHERE p.id = ?
-          AND cau.user_id = ?
-        LIMIT 1
-    ");
-    $stmt->bind_param("ii", $project_id, $user_id);
-}
+        if ($project_id) {
+            $stmtPName = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
+            if ($stmtPName) {
+                $stmtPName->bind_param("i", $project_id);
+                $stmtPName->execute();
+                $stmtPName->bind_result($pName);
+                if ($stmtPName->fetch()) {
+                    $project_name_for_title = $pName;
+                    $page_title .= " - Inventory for Project: " . htmlspecialchars($project_name_for_title);
+                }
+                $stmtPName->close();
+            }
+        }
 
-$stmt->execute();
-$stmt->bind_result($project_name);
-$stmt->fetch();
-$stmt->close();
+    } elseif ($project_id) {
+        // --- Scenario 2: Only Project ID provided ---
+        $stmtPName = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
+        if (!$stmtPName) throw new Exception("Prepare project name failed: " . $conn->error);
+        $stmtPName->bind_param("i", $project_id);
+        $stmtPName->execute();
+        $stmtPName->bind_result($pName);
+        if (!$stmtPName->fetch()) {
+            $stmtPName->close();
+            throw new Exception("Project with ID {$project_id} not found.");
+        }
+        $project_name_for_title = $pName;
+        $stmtPName->close();
 
-if (!$project_name) {
-    // Project not found or user has no access
-    ?>
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Access Denied</title>
-        <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
-        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="portal.css">
-        <style>
-            .back-icon { text-decoration: none; color: #333; display: inline-flex; align-items: center; margin-bottom: 20px; }
-            .back-icon svg { width: 24px; height: 24px; margin-right: 5px; }
-            main { margin: 20px; }
-        </style>
-    </head>
-    <body>
-    <?php include 'header.php'; ?>
-    <main>
-        <a href="#" onclick="if(document.referrer) { window.location = document.referrer; } else { window.history.back(); }" class="back-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-            </svg>
-            Back
-        </a>
-        <p>You do not have access to this project or it does not exist.</p>
-    </main>
-    </body>
-    </html>
-    <?php
-    exit();
-}
+        $sqlDistinctWH = "
+            SELECT DISTINCT wh.id, wh.name
+            FROM warehouses wh
+            WHERE EXISTS (
+                SELECT 1 FROM inventory_pallets ip 
+                WHERE ip.assigned_project_id = ? AND ip.current_warehouse_id = wh.id AND ip.status = 'In Warehouse'
+            ) 
+            OR EXISTS (
+                SELECT 1 FROM deliveries d
+                JOIN delivery_pallets dp ON d.id = dp.delivery_id
+                JOIN inventory_pallets ip_d ON dp.inventory_pallet_id = ip_d.id
+                WHERE ip_d.assigned_project_id = ? 
+                  AND d.warehouse_id = wh.id 
+                  AND d.status_of_delivery LIKE 'In Transit%'
+                  AND d.warehouse_arrival_date IS NULL
+            )
+            ORDER BY wh.name ASC
+        ";
+        $stmtDistinctWH = $conn->prepare($sqlDistinctWH);
+        if (!$stmtDistinctWH) throw new Exception("Prepare distinct warehouses failed: " . $conn->error);
+        $stmtDistinctWH->bind_param("ii", $project_id, $project_id);
+        $stmtDistinctWH->execute();
+        $resultDistinctWH = $stmtDistinctWH->get_result();
 
-// Now fetch warehouse info for the project
-$stmt = $conn->prepare("
-    SELECT w.id AS warehouse_id, w.name, w.address, w.image_url, 
-           w.in_fee, w.out_fee, w.monthly_storage_fee
-    FROM warehouses w
-    JOIN projects p ON p.warehouse_id = w.id
-    WHERE p.id = ?
-    LIMIT 1
-");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$warehouse_result = $stmt->get_result();
-$stmt->close();
+        while ($wh_row = $resultDistinctWH->fetch_assoc()) {
+            $relevant_warehouses[] = $wh_row;
+        }
+        $stmtDistinctWH->close();
 
-// If no warehouse is associated
-if ($warehouse_result->num_rows == 0) {
-    ?>
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>No Warehouse Information</title>
-        <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
-        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-        <link rel="stylesheet" href="portal.css">
-        <style>
-            .back-icon { text-decoration: none; color: #333; display: inline-flex; align-items: center; margin-bottom: 20px; }
-            .back-icon svg { width: 24px; height: 24px; margin-right: 5px; }
-            main { margin: 20px; }
-        </style>
-    </head>
-    <body>
-    <?php include 'header.php'; ?>
-    <main>
-        <a href="#" onclick="if(document.referrer) { window.location = document.referrer; } else { window.history.back(); }" class="back-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-            </svg>
-            Back
-        </a>
-        <h1>Warehouse information not found for project <?php echo htmlspecialchars($project_name); ?>.</h1>
-    </main>
-    </body>
-    </html>
-    <?php
-    exit();
-}
+        $warehouse_count = count($relevant_warehouses);
 
-// Warehouse found
-$warehouse = $warehouse_result->fetch_assoc();
+        if ($warehouse_count === 0) {
+            $errorMessage = "No inventory for Project '" . htmlspecialchars($project_name_for_title) . "' is currently tracked in any warehouse.";
+            $page_title = "Inventory for Project: " . htmlspecialchars($project_name_for_title);
+        } elseif ($warehouse_count === 1) {
+            $single_warehouse_id = $relevant_warehouses[0]['id'];
+            header("Location: warehouse_info.php?warehouse_id={$single_warehouse_id}&project_id={$project_id}");
+            exit();
+        } else {
+            $show_warehouse_list = true;
+            $page_title = "Inventory Locations for Project: " . htmlspecialchars($project_name_for_title);
+        }
 
-// We'll gather additional info about warehousing costs, deliveries, etc.
-// ... the rest is your original logic ...
-
-$warehouse_id = $warehouse['warehouse_id'];
-
-// Count inbound deliveries
-$stmt = $conn->prepare("
-    SELECT COUNT(*) AS total_deliveries
-    FROM deliveries
-    WHERE project_id = ? AND warehouse_arrival_date IS NOT NULL
-");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$stmt->bind_result($total_deliveries);
-$stmt->fetch();
-$stmt->close();
-
-// Count outbound deliveries
-$stmt = $conn->prepare("
-    SELECT COUNT(*) AS total_deliveries_out
-    FROM deliveries
-    WHERE project_id = ? AND left_warehouse_date IS NOT NULL AND warehouse_arrival_date IS NOT NULL
-");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$stmt->bind_result($total_deliveries_out);
-$stmt->fetch();
-$stmt->close();
-
-// Calculate in/out fee cost
-$in_fee_cost  = $warehouse['in_fee']  * $total_deliveries;
-$out_fee_cost = $warehouse['out_fee'] * $total_deliveries_out;
-
-// Modules in storage
-$stmt = $conn->prepare("
-    SELECT SUM(quantity) AS total_modules
-    FROM deliveries
-    WHERE project_id = ? 
-      AND warehouse_arrival_date IS NOT NULL
-      AND left_warehouse_date IS NULL
-");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$stmt->bind_result($total_modules);
-$stmt->fetch();
-$stmt->close();
-$total_modules = $total_modules ?: 0;
-
-// Deliveries in storage
-$stmt = $conn->prepare("
-    SELECT COUNT(*) AS deliveries_in_storage
-    FROM deliveries
-    WHERE project_id = ?
-      AND warehouse_arrival_date IS NOT NULL
-      AND left_warehouse_date IS NULL
-");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$stmt->bind_result($deliveries_in_storage);
-$stmt->fetch();
-$stmt->close();
-$deliveries_in_storage = $deliveries_in_storage ?: 0;
-
-// Current monthly storage cost
-$monthly_storage_cost = $deliveries_in_storage * $warehouse['monthly_storage_fee'];
-
-// Calculate total storage cost to date for all deliveries that have been in the warehouse
-$stmt = $conn->prepare("
-    SELECT id, warehouse_arrival_date, left_warehouse_date
-    FROM deliveries
-    WHERE project_id = ?
-      AND warehouse_arrival_date IS NOT NULL
-");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$all_deliveries_result = $stmt->get_result();
-$stmt->close();
-
-$total_storage_cost = 0;
-while ($delivery = $all_deliveries_result->fetch_assoc()) {
-    $start_date = new DateTime($delivery['warehouse_arrival_date']);
-    $end_date   = !empty($delivery['left_warehouse_date'])
-                    ? new DateTime($delivery['left_warehouse_date'])
-                    : new DateTime();
-
-    $interval        = $start_date->diff($end_date);
-    $days_in_storage = $interval->days + 1;
-    $daily_storage   = $warehouse['monthly_storage_fee'] / 30;
-    $total_storage_cost += ($days_in_storage * $daily_storage);
-}
-
-// Sum it all
-$total_cost_to_date = $in_fee_cost + $out_fee_cost + $total_storage_cost;
-
-// Now fetch all deliveries that have arrived
-$stmt = $conn->prepare("
-    SELECT 
-      id, supplier, wattage, quantity, bol_number, 
-      warehouse_arrival_date, left_warehouse_date, proof_of_delivery
-    FROM deliveries
-    WHERE project_id = ?
-      AND warehouse_arrival_date IS NOT NULL
-    ORDER BY warehouse_arrival_date ASC
-");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$deliveries_result = $stmt->get_result();
-$stmt->close();
-
-$deliveries = [];
-$supplier_values              = [];
-$wattage_values               = [];
-$bol_number_values            = [];
-$warehouse_arrival_date_values= [];
-$left_warehouse_date_values   = [];
-
-while ($drow = $deliveries_result->fetch_assoc()) {
-    $deliveries[] = $drow;
-    $supplier_values[]    = $drow['supplier']            ?? '';
-    $wattage_values[]     = $drow['wattage']             ?? '';
-    $bol_number_values[]  = $drow['bol_number']          ?? '';
-    $warehouse_arrival_date_values[] = $drow['warehouse_arrival_date'] ?? '';
-    $left_warehouse_date_values[]    = $drow['left_warehouse_date']    ?? '';
-}
-
-// --- NEW: Fetch Inventory Pallets in this Warehouse ---
-$inventory_pallets = [];
-$stmt_pallets = $conn->prepare("
-    SELECT 
-        ip.id AS pallet_id,
-        ip.pallet_identifier,
-        ip.wattage,
-        ip.quantity,
-        ip.arrival_date,
-        m.vendor_name AS origin_vendor 
-    FROM inventory_pallets ip
-    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
-    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-    WHERE ip.current_warehouse_id = ? AND ip.status = 'In Warehouse'
-    ORDER BY ip.arrival_date DESC, ip.id DESC
-");
-if ($stmt_pallets) {
-    $stmt_pallets->bind_param("i", $warehouse_id);
-    $stmt_pallets->execute();
-    $result_pallets = $stmt_pallets->get_result();
-    while ($pallet_row = $result_pallets->fetch_assoc()) {
-        $inventory_pallets[] = $pallet_row;
+    } else {
+        $errorMessage = "Please specify a Warehouse ID or a Project ID.";
     }
-    $stmt_pallets->close();
-} else {
-    // Optionally log an error or display a message
-    error_log("Failed to prepare pallet inventory query: " . $conn->error);
+
+} catch (Exception $e) {
+    $errorMessage = "Error: " . $e->getMessage();
+    $warehouse_data = null; 
 }
-// --- END NEW ---
 
-$conn->close();
+// --- Proceed only if we are displaying a single warehouse view --- 
+$inventory_pallets = [];
+$delivered_deliveries = []; 
+$left_warehouse_deliveries = []; 
+$arrived_date_values = []; 
+$left_warehouse_date_values = []; 
+$total_cost_to_date = 0;
+$in_fee_cost = 0;
+$out_fee_cost = 0;
+$monthly_storage_cost = 0; 
+$total_modules = 0; 
+$total_pallets_count = 0; // Added for clarity in cost summary
 
-// Remove duplicates
-$supplier_values               = array_unique($supplier_values);
-$wattage_values                = array_unique($wattage_values);
-$bol_number_values             = array_unique($bol_number_values);
-$warehouse_arrival_date_values = array_unique($warehouse_arrival_date_values);
-$left_warehouse_date_values    = array_unique($left_warehouse_date_values);
+if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
+    // This ensures $warehouse_id is set if $warehouse_data is available
+    $warehouse_id = $warehouse_data['id']; 
+
+    try {
+        // Fetch Stored Pallets (Inventory View)
+        $sql_pallets = "
+            SELECT 
+                ip.id AS pallet_id, ip.pallet_identifier, ip.wattage, ip.quantity, 
+                ip.arrival_date, m.vendor_name AS origin_vendor 
+            FROM inventory_pallets ip
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            WHERE ip.current_warehouse_id = ? AND ip.status = 'In Warehouse'
+        ";
+        $pallet_params = [$warehouse_id];
+        $pallet_types = "i";
+
+        if ($project_id) {
+            $sql_pallets .= " AND ip.assigned_project_id = ?";
+            $pallet_params[] = $project_id;
+            $pallet_types .= "i";
+        }
+        $sql_pallets .= " ORDER BY ip.arrival_date DESC, ip.id DESC";
+
+        $stmt_pallets = $conn->prepare($sql_pallets);
+        if (!$stmt_pallets) throw new Exception("Prepare stored pallets failed: ".$conn->error);
+        $stmt_pallets->bind_param($pallet_types, ...$pallet_params);
+        $stmt_pallets->execute();
+        $result_pallets = $stmt_pallets->get_result();
+        while ($row = $result_pallets->fetch_assoc()) {
+            $inventory_pallets[] = $row;
+            $total_pallets_count++;
+            $total_modules += $row['quantity'];
+        }
+        $stmt_pallets->close();
+
+        // Fetch Deliveries Arrived (for Truckload View)
+        $sql_deliveries_arrived = "
+            SELECT 
+                d.id, d.supplier, d.wattage, d.quantity, d.bol_number, 
+                d.warehouse_arrival_date, d.left_warehouse_date, d.proof_of_delivery
+            FROM deliveries d
+            WHERE d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL
+        ";
+        $delivered_params = [$warehouse_id];
+        $delivered_types = "i";
+        if ($project_id) {
+             $sql_deliveries_arrived .= " AND d.project_id = ?";
+             $delivered_params[] = $project_id;
+             $delivered_types .= "i";
+        }
+         $sql_deliveries_arrived .= " ORDER BY d.warehouse_arrival_date DESC";
+        
+        $stmt_delivered = $conn->prepare($sql_deliveries_arrived);
+        if (!$stmt_delivered) throw new Exception("Prepare arrived deliveries failed: ".$conn->error);
+        $stmt_delivered->bind_param($delivered_types, ...$delivered_params);
+        $stmt_delivered->execute();
+        $result_delivered = $stmt_delivered->get_result();
+        $total_inbound_deliveries = 0;
+        while ($drow = $result_delivered->fetch_assoc()) {
+            $delivered_deliveries[] = $drow;
+            $arrived_date_values[] = $drow['warehouse_arrival_date'] ?? '';
+            $total_inbound_deliveries++;
+        }
+        $stmt_delivered->close();
+        $arrived_date_values = array_unique(array_filter($arrived_date_values));
+        sort($arrived_date_values);
+        
+        // Fetch Deliveries Departed (for Truckload View)
+        // We need deliveries that arrived AND left THIS warehouse
+        $sql_deliveries_left = "
+            SELECT 
+                d.id, d.supplier, d.wattage, d.quantity, d.bol_number, 
+                d.warehouse_arrival_date, d.left_warehouse_date, d.proof_of_delivery
+            FROM deliveries d
+            WHERE d.warehouse_id = ? AND d.left_warehouse_date IS NOT NULL 
+        ";
+        $left_params = [$warehouse_id];
+        $left_types = "i";
+        if ($project_id) {
+             $sql_deliveries_left .= " AND d.project_id = ?";
+             $left_params[] = $project_id;
+             $left_types .= "i";
+        }
+        $sql_deliveries_left .= " ORDER BY d.left_warehouse_date DESC";
+        
+        $stmt_left = $conn->prepare($sql_deliveries_left);
+        if (!$stmt_left) throw new Exception("Prepare left deliveries failed: ".$conn->error);
+        $stmt_left->bind_param($left_types, ...$left_params);
+        $stmt_left->execute();
+        $result_left = $stmt_left->get_result();
+        $total_outbound_deliveries = 0;
+        while ($drow = $result_left->fetch_assoc()) {
+            // Avoid duplicating if it was fetched in 'arrived' already
+            // Simple check: if already in $delivered_deliveries (by ID), maybe update it, else add
+            $found = false;
+            foreach ($delivered_deliveries as &$existing_d) {
+                if ($existing_d['id'] === $drow['id']) {
+                    // Update the existing record with left date if it wasn't there
+                    if (empty($existing_d['left_warehouse_date'])) {
+                         $existing_d['left_warehouse_date'] = $drow['left_warehouse_date'];
+                    }
+                    $found = true;
+                    break;
+                }
+            }
+            unset($existing_d);
+            if (!$found) {
+                 $left_warehouse_deliveries[] = $drow; // Only add if not already in arrived list
+            }
+            $left_warehouse_date_values[] = $drow['left_warehouse_date'] ?? '';
+            $total_outbound_deliveries++; // Count all that left
+        }
+        $stmt_left->close();
+        $left_warehouse_date_values = array_unique(array_filter($left_warehouse_date_values));
+        sort($left_warehouse_date_values);
+        
+        // Calculate Costs (Based on this specific warehouse's fees)
+        $in_fee_cost  = ($warehouse_data['in_fee'] ?? 0)  * $total_inbound_deliveries;
+        $out_fee_cost = ($warehouse_data['out_fee'] ?? 0) * $total_outbound_deliveries;
+        
+        // Monthly Storage Cost Estimate (based on current pallet count)
+        $monthly_storage_cost = $total_pallets_count * ($warehouse_data['monthly_storage_fee'] ?? 0);
+        
+        // Calculate total historical storage cost (more complex - loop through pallets)
+        $storage_cost_to_date = 0;
+        if ($total_pallets_count > 0) {
+            $daily_storage_rate = ($warehouse_data['monthly_storage_fee'] ?? 0) / 30;
+            if ($daily_storage_rate > 0) {
+                 // Need arrival date for each pallet (already fetched in $inventory_pallets)
+                 // For simplicity, let's calculate based on stored pallets only for now
+                 // A more accurate calc would need pallet arrival/departure history
+                 $today = new DateTime();
+                 foreach ($inventory_pallets as $pallet) {
+                     if (!empty($pallet['arrival_date'])) {
+                         try {
+                             $arrival_dt = new DateTime($pallet['arrival_date']);
+                             $interval = $arrival_dt->diff($today);
+                             $days_in_storage = $interval->days + 1; // Include arrival day
+                             $storage_cost_to_date += ($days_in_storage * $daily_storage_rate);
+                         } catch (Exception $dateEx) { /* Ignore invalid date */ }
+                     }
+                 }
+            }
+        }
+        
+        $total_cost_to_date = $in_fee_cost + $out_fee_cost + $storage_cost_to_date; // Use calculated historical
+
+    } catch (Exception $e) {
+        $errorMessage = "Error fetching inventory data: " . $e->getMessage();
+    }
+
+} // End if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data)
+
+// Final connection close
+if ($conn) {
+    $conn->close();
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Warehousing Information for <?php echo htmlspecialchars($project_name); ?></title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo $page_title; ?></title> <!-- Use dynamic page title -->
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         .back-icon {
-            text-decoration: none; 
-            color: #333; 
-            display: inline-flex; 
-            align-items: center; 
+            text-decoration: none;
+            color: #333;
+            display: inline-flex;
+            align-items: center;
             margin-bottom: 20px;
         }
         .back-icon svg {
-            width: 24px; 
-            height: 24px; 
+            width: 24px;
+            height: 24px;
             margin-right: 5px;
         }
-
-        .warehouse-info {
+        .warehouse-info-container { 
             display: flex;
-            align-items: center;
+            align-items: flex-start; 
             flex-wrap: wrap;
             margin-bottom: 20px;
+            background-color: #f9f9f9;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #e0e0e0;
         }
         .warehouse-image img {
             display: block;
+            border-radius: 4px;
+            margin-right: 20px; 
         }
         .warehouse-details {
-            margin-left: 20px;
+            flex: 1; 
+            min-width: 300px; 
         }
-        .warehouse-details p {
-            margin: 5px 0;
+        .warehouse-details h1 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.6em;
+            color: #293E4C;
         }
-        .cost-summary {
-            margin-bottom: 20px;
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .cost-summary th,
-        .cost-summary td {
-            border: 1px solid #ccc;
-            padding: 8px;
-            text-align: center;
-            white-space: nowrap;
-        }
-        .table-responsive {
-            width: 100%;
-            overflow-x: auto;
-            position: relative;
-        }
-        .scroll-note {
-            display: none;
-            font-size: 14px;
-            color: #666;
-            margin-top: 5px;
-        }
-        @media screen and (max-width: 768px) {
-            .warehouse-info {
-                flex-direction: column;
-                align-items: center;
-            }
-            .warehouse-image img {
-                max-width: 100%;
-                margin-bottom: 20px;
-                margin-left: auto;
-                margin-right: auto;
-            }
-            .cost-summary th, .cost-summary td {
-                font-size: 14px;
-                white-space: normal;
-            }
-            .scroll-note {
-                display: block;
-            }
-        }
-        .controls-container {
-            text-align: right;
-            margin-bottom: 20px;
-        }
-        .controls-container form,
-        .controls-container input[type="text"] {
-            display: inline-block;
-            vertical-align: middle;
-        }
-        .btn-edit-warehouse {
-            color: #488C9A;
-            text-decoration: none;
-            font-weight: bold;
-        }
-        /* Sorting/Filtering styles */
-        .sort-dropdown {
-            position: relative;
-            display: inline-block;
-            cursor: pointer;
-        }
-        .sort-dropdown-content {
-            display: none;
-            position: absolute;
-            right: 0;
-            background-color: #f9f9f9;
-            min-width: 200px;
-            max-height: 300px;
-            overflow-y: auto;
-            box-shadow: 0px 8px 16px rgba(0,0,0,0.2);
-            z-index: 1;
-        }
-        .sort-dropdown-content a,
-        .sort-dropdown-content div {
-            color: black;
-            padding: 8px 12px;
-            text-decoration: none;
-            display: block;
-        }
-        .sort-dropdown-content a:hover,
-        .sort-dropdown-content div:hover {
-            background-color: #f1f1f1;
-        }
-        .sort-dropdown.open .sort-dropdown-content {
-            display: block;
-        }
-        .sort-icon {
-            margin-left: 5px;
-        }
-        .filter-checkbox {
-            margin-right: 5px;
-        }
-        table, th, td {
-            border: 1px solid #ccc;
-        }
-        th, td {
-            padding: 8px;
-        }
-        tr:hover {
-            background-color: #f1f1f1;
-        }
-        /* --- NEW Tab Styles --- */
+         .warehouse-details p {
+             margin: 5px 0;
+             line-height: 1.5;
+         }
         .tabs-container {
             text-align: center; /* Center the tabs */
             width: 100%;
@@ -466,545 +376,539 @@ $left_warehouse_date_values    = array_unique($left_warehouse_date_values);
             color: #293E4C; /* Darker color for active text */
             border-bottom: 1px solid #fff; /* Make bottom border white to blend */
         }
-        .tab-section {
+        .tab-content { /* Combined style for both sections */
             display: none; /* Hide sections by default */
             margin-top: 10px; /* Space above section content */
         }
-        .tab-section.active {
+        .tab-content.active { /* Style for the active section */
             display: block; /* Show active section */
         }
-        /* --- END NEW Tab Styles --- */
+         .table-responsive {
+             width: 100%;
+             overflow-x: auto;
+             margin-bottom: 10px;
+         }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+             padding: 8px 10px;
+             border: 1px solid #ddd;
+             text-align: left;
+             white-space: nowrap;
+        }
+         th {
+             background-color: #e9ecef;
+             font-weight: 600;
+         }
+         tr:nth-child(even) {
+             background-color: #f8f9fa;
+         }
+        .filter-controls {
+             display: flex;
+             flex-wrap: wrap;
+             gap: 15px;
+             margin-bottom: 15px;
+             align-items: center;
+         }
+         .filter-controls label {
+             font-weight: 500;
+             margin-right: 5px;
+         }
+         .filter-controls input[type="text"],
+         .filter-controls select {
+             padding: 6px;
+             border: 1px solid #ccc;
+             border-radius: 4px;
+             height: 34px; /* Align height */
+         }
+        .message { 
+             padding: 15px;
+             margin: 20px 0;
+             border: 1px solid transparent;
+             border-radius: 4px;
+             text-align: center;
+        }
+        .error-message {
+             color: #721c24;
+             background-color: #f8d7da;
+             border-color: #f5c6cb;
+        }
+        .info-message { 
+             color: #0c5460;
+             background-color: #d1ecf1;
+             border-color: #bee5eb;
+        }
+         .warehouse-list {
+             list-style: none;
+             padding: 0;
+             margin-top: 15px;
+         }
+         .warehouse-list li {
+             background-color: #f8f9fa;
+             margin-bottom: 10px;
+             padding: 10px 15px;
+             border: 1px solid #dee2e6;
+             border-radius: 4px;
+         }
+         .warehouse-list li a {
+             text-decoration: none;
+             color: #007bff;
+             font-weight: 500;
+         }
+         .warehouse-list li a:hover {
+             text-decoration: underline;
+         }
+         .cost-summary {
+            margin-bottom: 20px;
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .cost-summary th,
+        .cost-summary td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 768px) {
+             .filter-controls {
+                 flex-direction: column;
+                 align-items: stretch;
+             }
+             .filter-controls label {
+                  margin-right: 0;
+                  margin-bottom: 5px;
+             }
+             .filter-controls input[type="text"],
+             .filter-controls select {
+                  width: 100%;
+             }
+             .cost-summary th, .cost-summary td {
+                font-size: 14px;
+                white-space: normal;
+            }
+        }
+         @media (max-width: 600px) {
+             .warehouse-info-container {
+                 flex-direction: column; 
+                 align-items: center; 
+             }
+             .warehouse-image img {
+                 margin-right: 0;
+                 margin-bottom: 15px; 
+                 max-width: 150px; /* Smaller image on mobile */
+             }
+             .warehouse-details {
+                  margin-left: 0;
+                  text-align: center; 
+             }
+         }
     </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <a href="#" onclick="if(document.referrer) window.location=document.referrer; else window.history.back();" class="back-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-        </svg>
-        Back
-    </a>
+     <?php
+     // Determine back link based on context
+     $back_link = "manage_warehouses.php"; // Default back link
+     if ($project_id && !$warehouse_id) { // If only project_id is given and we show warehouse list OR error for project
+         $back_link = "project_overview.php?id=" . $project_id;
+     } elseif ($warehouse_id && $project_id) { // If warehouse and project are given (specific view)
+         $back_link = "warehouse_info.php?project_id=" . $project_id; // Link back to project's warehouse list
+     } elseif ($warehouse_id) { // If only warehouse_id is given
+         $back_link = "manage_warehouses.php";
+     }
+     ?>
+     <a href="<?php echo $back_link; ?>" class="back-icon">
+         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="fill: currentColor; width: 24px; height: 24px;">
+             <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
+         </svg>
+         Back
+     </a>
 
-    <h1>Warehousing Information for <?php echo htmlspecialchars($project_name); ?></h1>
+    <h1><?php echo $page_title; ?></h1>
 
-    <div class="warehouse-info">
-        <div class="warehouse-image">
-            <?php if (!empty($warehouse['image_url'])): ?>
-                <img src="<?php echo htmlspecialchars($warehouse['image_url']); ?>" alt="Warehouse Image">
-            <?php endif; ?>
+    <?php if (!empty($errorMessage)): ?>
+        <p class="message error-message"><?php echo htmlspecialchars($errorMessage); ?></p>
+
+    <?php elseif ($show_warehouse_list): ?>
+        <p>Inventory for Project '<?php echo htmlspecialchars($project_name_for_title); ?>' is located in the following warehouses:</p>
+        <ul class="warehouse-list">
+            <?php foreach ($relevant_warehouses as $wh): ?>
+                <li>
+                    <a href="warehouse_info.php?warehouse_id=<?php echo $wh['id']; ?>&project_id=<?php echo $project_id; ?>">
+                        <?php echo htmlspecialchars($wh['name']); ?> (ID: <?php echo $wh['id']; ?>)
+                    </a>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+
+    <?php elseif ($warehouse_data): ?>
+        <!-- === START Standard Warehouse View === -->
+
+        <div class="warehouse-info-container">
+            <div class="warehouse-image">
+                <?php 
+                $image_path = "pictures/warehouse-default.png"; // Default image
+                if (!empty($warehouse_data['image_url'])) {
+                    // Check if the image_url is a full URL or a relative path
+                    if (filter_var($warehouse_data['image_url'], FILTER_VALIDATE_URL)) {
+                        $image_path = $warehouse_data['image_url'];
+                    } else {
+                        // Assuming it's a relative path from the webroot, adjust if structure is different
+                        // If image_url already includes a base path like 'uploads/', that's fine.
+                        $image_path = htmlspecialchars($warehouse_data['image_url']); 
+                    }
+                }
+                ?>
+                <img src="<?php echo $image_path; ?>" alt="<?php echo htmlspecialchars($warehouse_data['name']); ?> Warehouse">
+            </div>
+            <div class="warehouse-details">
+                <h1><?php echo htmlspecialchars($warehouse_data['name']); ?></h1>
+                 <?php if ($project_name_for_title): ?>
+                    <h2 style="font-size: 1.1em; color: #555; margin-top: 5px;">Viewing Inventory for Project: <?php echo htmlspecialchars($project_name_for_title); ?></h2>
+                 <?php endif; ?>
+                <p><strong>Address:</strong> <?php echo htmlspecialchars($warehouse_data['address']); ?></p>
+                <p><strong>In Fee:</strong> $<?php echo number_format($warehouse_data['in_fee'] ?? 0, 2); ?></p>
+                <p><strong>Out Fee:</strong> $<?php echo number_format($warehouse_data['out_fee'] ?? 0, 2); ?></p>
+                <p><strong>Monthly Storage Fee (per Pallet):</strong> $<?php echo number_format($warehouse_data['monthly_storage_fee'] ?? 0, 2); ?></p>
+                <?php if (($_SESSION['role'] ?? '') === 'global_admin'): // Only allow edit for global admin ?>
+                    <p style="margin-top:10px;"><a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="action-button">Edit Warehouse Info</a></p>
+                <?php endif; ?>
+            </div>
         </div>
-        <div class="warehouse-details">
-            <h2><?php echo htmlspecialchars($warehouse['name']); ?></h2>
-            <p><strong>Address:</strong> <?php echo htmlspecialchars($warehouse['address']); ?></p>
-            <p><strong>In Fee:</strong> $<?php echo number_format($warehouse['in_fee'], 2); ?></p>
-            <p><strong>Out Fee:</strong> $<?php echo number_format($warehouse['out_fee'], 2); ?></p>
-            <p><strong>Monthly Storage Fee:</strong> $<?php echo number_format($warehouse['monthly_storage_fee'], 2); ?></p>
-            <?php if ($role === 'admin'): ?>
-                <p><a href="edit_warehouse?warehouse_id=<?php echo $warehouse_id; ?>" class="btn-edit-warehouse">Edit Warehouse Information</a></p>
-            <?php endif; ?>
-        </div>
-    </div>
-
-    <?php
-    // Show cost summary
-    ?>
-    <div class="table-responsive">
-        <table class="cost-summary">
-            <tr>
-                <th>Total Modules in Storage</th>
-                <th>In Fee Cost</th>
-                <th>Out Fee Cost</th>
-                <th>Monthly Storage Cost</th>
-                <th>Total Cost to Date</th>
-            </tr>
-            <tr>
-                <td><?php echo number_format($total_modules); ?></td>
-                <td>$<?php echo number_format($in_fee_cost, 2); ?></td>
-                <td>$<?php echo number_format($out_fee_cost, 2); ?></td>
-                <td>$<?php echo number_format($monthly_storage_cost, 2); ?></td>
-                <td>$<?php echo number_format($total_cost_to_date, 2); ?></td>
-            </tr>
-        </table>
-    </div>
-    <div class="scroll-note">Swipe or scroll horizontally to see more columns.</div>
-
-    <div class="controls-container">
-        <!-- Potential future controls (search, etc.) -->
-    </div>
-
-    <!-- NEW: TABS -->
-    <div class="tabs-container">
-        <div class="tabs">
-            <button id="toggleTruckloadBtn" class="active" onclick="showTabView('truckload')">Truckload View</button>
-            <button id="toggleInventoryBtn" onclick="showTabView('inventory')">Inventory View</button>
-        </div>
-    </div>
-    <!-- END NEW: TABS -->
-
-    <!-- TRUCKLOAD VIEW SECTION (Existing Table) -->
-    <div id="truckloadViewSection" class="tab-section active">
-        <h2>Deliveries Arrived at Warehouse</h2>
+        
+        <!-- Cost Summary -->
         <div class="table-responsive">
-            <table id="warehouse-table">
-                <thead>
-                    <tr>
-                        <th>
-                            Supplier
-                            <div class="sort-dropdown">
-                                <span class="sort-icon">&#9660;</span>
-                                <div class="sort-dropdown-content">
-                                    <a href="#" onclick="sortTable(0, 'string', 'asc'); return false;">Sort A-Z</a>
-                                    <a href="#" onclick="sortTable(0, 'string', 'desc'); return false;">Sort Z-A</a>
-                                    <hr>
-                                    <div>
-                                        <label><input type="checkbox" class="filter-checkbox" data-column="0" value="all" checked> Select All</label>
-                                    </div>
-                                    <?php foreach ($supplier_values as $value): ?>
-                                        <?php if (trim($value) !== ''): ?>
-                                            <div>
-                                                <label>
-                                                    <input type="checkbox" class="filter-checkbox" data-column="0" value="<?php echo htmlspecialchars($value); ?>" checked>
-                                                    <?php echo htmlspecialchars($value); ?>
-                                                </label>
-                                            </div>
-                                        <?php endif; ?>
-                                    <?php endforeach; ?>
-                                </div>
-                            </div>
-                        </th>
-                        <th>
-                            Wattage
-                            <div class="sort-dropdown">
-                                <span class="sort-icon">&#9660;</span>
-                                <div class="sort-dropdown-content">
-                                    <a href="#" onclick="sortTable(1, 'num', 'asc'); return false;">Sort Asc</a>
-                                    <a href="#" onclick="sortTable(1, 'num', 'desc'); return false;">Sort Desc</a>
-                                    <hr>
-                                    <div>
-                                        <label><input type="checkbox" class="filter-checkbox" data-column="1" value="all" checked> Select All</label>
-                                    </div>
-                                    <?php foreach ($wattage_values as $value): ?>
-                                        <?php if (trim($value) !== ''): ?>
-                                            <div>
-                                                <label>
-                                                    <input type="checkbox" class="filter-checkbox" data-column="1" value="<?php echo htmlspecialchars($value); ?>" checked>
-                                                    <?php echo htmlspecialchars($value); ?>
-                                                </label>
-                                            </div>
-                                        <?php endif; ?>
-                                    <?php endforeach; ?>
-                                </div>
-                            </div>
-                        </th>
-                        <th>
-                            Quantity
-                            <div class="sort-dropdown">
-                                <span class="sort-icon">&#9660;</span>
-                                <div class="sort-dropdown-content">
-                                    <a href="#" onclick="sortTable(2, 'num', 'asc'); return false;">Sort Asc</a>
-                                    <a href="#" onclick="sortTable(2, 'num', 'desc'); return false;">Sort Desc</a>
-                                </div>
-                            </div>
-                        </th>
-                        <th>
-                            BOL Number
-                            <div class="sort-dropdown">
-                                <span class="sort-icon">&#9660;</span>
-                                <div class="sort-dropdown-content">
-                                    <a href="#" onclick="sortTable(3, 'string', 'asc'); return false;">Sort A-Z</a>
-                                    <a href="#" onclick="sortTable(3, 'string', 'desc'); return false;">Sort Z-A</a>
-                                    <hr>
-                                    <div>
-                                        <label><input type="checkbox" class="filter-checkbox" data-column="3" value="all" checked> Select All</label>
-                                    </div>
-                                    <?php foreach ($bol_number_values as $value): ?>
-                                        <?php if (trim($value) !== ''): ?>
-                                            <div>
-                                                <label>
-                                                    <input type="checkbox" class="filter-checkbox" data-column="3" value="<?php echo htmlspecialchars($value); ?>" checked>
-                                                    <?php echo htmlspecialchars($value); ?>
-                                                </label>
-                                            </div>
-                                        <?php endif; ?>
-                                    <?php endforeach; ?>
-                                </div>
-                            </div>
-                        </th>
-                        <th>
-                            Warehouse Arrival Date
-                            <div class="sort-dropdown">
-                                <span class="sort-icon">&#9660;</span>
-                                <div class="sort-dropdown-content">
-                                    <a href="#" onclick="sortTable(4, 'date', 'asc'); return false;">Sort Asc</a>
-                                    <a href="#" onclick="sortTable(4, 'date', 'desc'); return false;">Sort Desc</a>
-                                    <hr>
-                                    <div>
-                                        <label><input type="checkbox" class="filter-checkbox" data-column="4" value="all" checked> Select All</label>
-                                    </div>
-                                    <?php foreach ($warehouse_arrival_date_values as $value): ?>
-                                        <?php if (trim($value) !== ''): ?>
-                                            <div>
-                                                <label>
-                                                    <input type="checkbox" class="filter-checkbox" data-column="4" value="<?php echo htmlspecialchars($value); ?>" checked>
-                                                    <?php echo htmlspecialchars($value); ?>
-                                                </label>
-                                            </div>
-                                        <?php endif; ?>
-                                    <?php endforeach; ?>
-                                </div>
-                            </div>
-                        </th>
-                        <th>
-                            Left Warehouse Date
-                            <div class="sort-dropdown">
-                                <span class="sort-icon">&#9660;</span>
-                                <div class="sort-dropdown-content">
-                                    <a href="#" onclick="sortTable(5, 'date', 'asc'); return false;">Sort Asc</a>
-                                    <a href="#" onclick="sortTable(5, 'date', 'desc'); return false;">Sort Desc</a>
-                                    <hr>
-                                    <div>
-                                        <label><input type="checkbox" class="filter-checkbox" data-column="5" value="all" checked> Select All</label>
-                                    </div>
-                                    <?php foreach ($left_warehouse_date_values as $value): ?>
-                                        <?php if (trim($value) !== ''): ?>
-                                            <div>
-                                                <label>
-                                                    <input type="checkbox" class="filter-checkbox" data-column="5" value="<?php echo htmlspecialchars($value); ?>" checked>
-                                                    <?php echo htmlspecialchars($value); ?>
-                                                </label>
-                                            </div>
-                                        <?php endif; ?>
-                                    <?php endforeach; ?>
-                                </div>
-                            </div>
-                        </th>
-                        <th>Proof of Delivery</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if (!empty($deliveries)): ?>
-                        <?php foreach ($deliveries as $d): ?>
-                            <tr>
-                                <td><?php echo htmlspecialchars($d['supplier'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($d['wattage'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($d['quantity'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($d['bol_number'] ?? ''); ?></td>
-                                <td><?php echo !empty($d['warehouse_arrival_date']) ? htmlspecialchars($d['warehouse_arrival_date']) : 'N/A'; ?></td>
-                                <td><?php echo !empty($d['left_warehouse_date']) ? htmlspecialchars($d['left_warehouse_date']) : 'N/A'; ?></td>
-                                <td>
-                                    <?php if (!empty($d['proof_of_delivery'])): ?>
-                                        <a href="view_pod?delivery_id=<?php echo $d['id']; ?>" target="_blank">View POD</a>
-                                    <?php else: ?>
-                                        N/A
-                                    <?php endif; ?>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <tr><td colspan="7">No deliveries found.</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-        <div class="scroll-note">Swipe or scroll horizontally to see more columns.</div>
-    </div> <!-- End Truckload View Section -->
+             <table class="cost-summary">
+                 <thead>
+                     <tr>
+                         <th>Total Pallets Stored</th>
+                         <th>Total Modules Stored</th>
+                         <th>Est. Monthly Storage Cost</th>
+                         <th>In Fee Cost (Total)</th>
+                         <th>Out Fee Cost (Total)</th>
+                         <th>Storage Cost To Date</th>
+                         <th>Total Cost To Date</th>
+                     </tr>
+                 </thead>
+                 <tbody>
+                     <tr>
+                         <td><?php echo number_format($total_pallets_count ?? 0); ?></td>
+                         <td><?php echo number_format($total_modules ?? 0); ?></td>
+                         <td>$<?php echo number_format($monthly_storage_cost, 2); ?></td>
+                         <td>$<?php echo number_format($in_fee_cost, 2); ?></td>
+                         <td>$<?php echo number_format($out_fee_cost, 2); ?></td>
+                         <td>$<?php echo number_format($storage_cost_to_date ?? 0, 2); ?></td>
+                         <td>$<?php echo number_format($total_cost_to_date, 2); ?></td>
+                     </tr>
+                 </tbody>
+             </table>
+         </div>
 
-    <!-- NEW: INVENTORY VIEW SECTION -->
-    <div id="inventoryViewSection" class="tab-section">
-        <h2>Inventory Pallets Stored in Warehouse</h2>
-         <div class="table-controls-header" style="justify-content: flex-start; margin-bottom: 10px;"> <!-- Added basic controls -->
-             <div class="filter-controls">
-                 <label for="inventorySearch">Search:</label>
-                 <input type="text" id="inventorySearch" placeholder="Filter by Identifier, Vendor..." onkeyup="filterInventoryTable()">
-                 <label for="inventoryWattageFilter">Wattage:</label>
-                 <select id="inventoryWattageFilter" onchange="filterInventoryTable()">
-                     <option value="">All</option>
-                     <?php
-                     $invWattages = [];
-                     foreach ($inventory_pallets as $p) { $invWattages[] = $p['wattage']; }
-                     $invWattages = array_unique($invWattages);
-                     sort($invWattages);
-                     foreach ($invWattages as $w) {
-                         echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
-                     }
-                     ?>
-                 </select>
+        <!-- Tabs -->
+        <div class="tabs-container">
+            <div class="tabs">
+                <button class="tab-link active" onclick="openTab(event, 'InventoryView')">Inventory View (<?php echo count($inventory_pallets); ?>)</button>
+                <button class="tab-link" onclick="openTab(event, 'TruckloadView')">Truckload History (<?php echo count(array_unique(array_merge(array_column($delivered_deliveries,'id'),array_column($left_warehouse_deliveries,'id')))); ?>)</button>
+            </div>
+        </div>
+
+        <!-- Tab Content: Inventory View (DEFAULT ACTIVE) -->
+        <div id="InventoryView" class="tab-content active">
+             <h2>Stored Inventory Details</h2>
+              <div class="filter-controls">
+                  <label for="inventorySearch">Search:</label>
+                  <input type="text" id="inventorySearch" placeholder="Filter by Identifier, Vendor...">
+                  <label for="inventoryWattageFilter">Wattage:</label>
+                  <select id="inventoryWattageFilter">
+                       <option value="">All Wattages</option>
+                       <?php
+                       $unique_wattages_inv = [];
+                       if (!empty($inventory_pallets)) {
+                           foreach($inventory_pallets as $p) { $unique_wattages_inv[$p['wattage']] = true; }
+                           ksort($unique_wattages_inv);
+                           foreach (array_keys($unique_wattages_inv) as $wattage):
+                       ?>
+                          <option value="<?php echo htmlspecialchars($wattage); ?>"><?php echo htmlspecialchars($wattage); ?>W</option>
+                       <?php 
+                           endforeach; 
+                       }
+                       ?>
+                  </select>
+             </div>
+             <div class="table-responsive">
+                 <table id="inventoryTable">
+                     <thead>
+                         <tr>
+                             <th>Pallet Identifier</th>
+                             <th>Origin Vendor</th>
+                             <th>Wattage</th>
+                             <th>Quantity</th>
+                             <th>Arrival Date</th>
+                             <th>Actions</th>
+                         </tr>
+                     </thead>
+                     <tbody>
+                         <?php if (!empty($inventory_pallets)): ?>
+                             <?php foreach ($inventory_pallets as $pallet): ?>
+                                 <tr>
+                                     <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
+                                     <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
+                                     <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
+                                     <td><?php echo number_format($pallet['quantity']); ?></td>
+                                     <td><?php echo htmlspecialchars($pallet['arrival_date'] ?? 'N/A'); ?></td>
+                                     <td>
+                                          <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" target="_blank" style="padding: 3px 8px; font-size: 0.9em;">View Details</a>
+                                     </td>
+                                 </tr>
+                             <?php endforeach; ?>
+                         <?php else: ?>
+                             <tr><td colspan="6">No inventory currently stored<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
+                         <?php endif; ?>
+                     </tbody>
+                 </table>
+             </div>
+        </div>
+        
+        <!-- Tab Content: Truckload View -->
+         <div id="TruckloadView" class="tab-content">
+              <h2>Truckload Arrival/Departure History</h2>
+               <div class="filter-controls">
+                   <label for="truckloadSearch">Search:</label>
+                   <input type="text" id="truckloadSearch" placeholder="Filter by BOL, Supplier...">
+                   <label for="arrivedDateFilter">Arrived On:</label>
+                   <select id="arrivedDateFilter">
+                       <option value="">All Dates</option>
+                       <?php foreach ($arrived_date_values as $date): ?>
+                           <option value="<?php echo htmlspecialchars($date); ?>"><?php echo htmlspecialchars($date); ?></option>
+                       <?php endforeach; ?>
+                   </select>
+                   <label for="leftDateFilter">Left On:</label>
+                   <select id="leftDateFilter">
+                       <option value="">All Dates</option>
+                       <?php foreach ($left_warehouse_date_values as $date): ?>
+                           <option value="<?php echo htmlspecialchars($date); ?>"><?php echo htmlspecialchars($date); ?></option>
+                       <?php endforeach; ?>
+                   </select>
+                   <label for="truckloadWattageFilter">Wattage:</label> <!-- Added Wattage Filter for Truckloads -->
+                   <select id="truckloadWattageFilter">
+                       <option value="">All Wattages</option>
+                       <?php
+                       $unique_wattages_truck = [];
+                       if (!empty($combined_deliveries)) { // Assuming $combined_deliveries is available here
+                           foreach($combined_deliveries as $d) { $unique_wattages_truck[$d['wattage']] = true; }
+                           ksort($unique_wattages_truck);
+                           foreach (array_keys($unique_wattages_truck) as $wattage):
+                       ?>
+                          <option value="<?php echo htmlspecialchars($wattage); ?>"><?php echo htmlspecialchars($wattage); ?>W</option>
+                       <?php 
+                           endforeach; 
+                       }
+                       ?>
+                   </select>
+              </div>
+             <div class="table-responsive">
+                 <table id="truckloadsTable">
+                     <thead>
+                         <tr>
+                             <th>BOL Number</th>
+                             <th>Supplier</th>
+                             <th>Wattage</th>
+                             <th>Quantity</th>
+                             <th>Arrival Date</th>
+                             <th>Left Warehouse Date</th>
+                             <th>Proof of Delivery</th>
+                             <th>Actions</th>
+                         </tr>
+                     </thead>
+                     <tbody>
+                         <?php 
+                         // Combine delivered and left deliveries, giving precedence to delivered if ID matches
+                         $combined_deliveries = [];
+                         if (!empty($delivered_deliveries)) {
+                             foreach($delivered_deliveries as $d) { $combined_deliveries[$d['id']] = $d; }
+                         }
+                         if (!empty($left_warehouse_deliveries)){
+                             foreach($left_warehouse_deliveries as $d) { 
+                                 if (!isset($combined_deliveries[$d['id']])) { 
+                                     $combined_deliveries[$d['id']] = $d; 
+                                 } else {
+                                     if (empty($combined_deliveries[$d['id']]['left_warehouse_date']) && !empty($d['left_warehouse_date'])){
+                                         $combined_deliveries[$d['id']]['left_warehouse_date'] = $d['left_warehouse_date'];
+                                     }
+                                 }
+                             }
+                         }
+                         if (!empty($combined_deliveries)) {
+                             uasort($combined_deliveries, function($a, $b) {
+                                 $a_arrival = $a['warehouse_arrival_date'] ?? '9999-12-31';
+                                 $b_arrival = $b['warehouse_arrival_date'] ?? '9999-12-31';
+                                 if ($a_arrival !== $b_arrival) {
+                                     return strcmp($b_arrival, $a_arrival); 
+                                 }
+                                 $a_left = $a['left_warehouse_date'] ?? '9999-12-31';
+                                 $b_left = $b['left_warehouse_date'] ?? '9999-12-31';
+                                 return strcmp($b_left, $a_left); 
+                             });
+                         }
+                         ?>
+                         <?php if (!empty($combined_deliveries)): ?>
+                              <?php foreach ($combined_deliveries as $delivery): ?>
+                                 <tr>
+                                     <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
+                                     <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
+                                     <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
+                                     <td><?php echo number_format($delivery['quantity'] ?? 0); ?></td>
+                                     <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
+                                     <td><?php echo htmlspecialchars($delivery['left_warehouse_date'] ?? 'N/A'); ?></td>
+                                      <td>
+                                          <?php if (!empty($delivery['proof_of_delivery'])): ?>
+                                              <a href="view_pod.php?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">View</a>
+                                          <?php else: ?>
+                                              N/A
+                                          <?php endif; ?>
+                                      </td>
+                                     <td>
+                                         <a href="edit_delivery.php?delivery_id=<?php echo $delivery['id']; ?>&warehouse_id=<?php echo $warehouse_id; ?><?php if($project_id) echo '&project_id='.$project_id; ?>" class="action-button" style="padding: 3px 8px; font-size: 0.9em;">Edit</a>
+                                     </td>
+                                 </tr>
+                             <?php endforeach; ?>
+                         <?php else: ?>
+                             <tr><td colspan="8">No truckload arrivals or departures recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
+                         <?php endif; ?>
+                     </tbody>
+                 </table>
              </div>
          </div>
-        <div class="table-responsive">
-            <table id="inventory-pallets-table">
-                <thead>
-                    <tr>
-                        <th>Identifier</th>
-                        <th>Origin Vendor</th>
-                        <th>Wattage</th>
-                        <th>Quantity</th>
-                        <th>Arrival Date</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if (!empty($inventory_pallets)): ?>
-                        <?php foreach ($inventory_pallets as $pallet): ?>
-                            <tr>
-                                <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
-                                <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
-                                <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
-                                <td><?php echo number_format($pallet['quantity']); ?></td>
-                                <td>
-                                    <?php 
-                                    if (!empty($pallet['arrival_date'])) {
-                                        try {
-                                            $date = new DateTime($pallet['arrival_date']);
-                                            echo $date->format('m-d-Y');
-                                        } catch (Exception $e) {
-                                            echo htmlspecialchars($pallet['arrival_date']); // Fallback
-                                        }
-                                    } else { echo 'N/A'; }
-                                    ?>
-                                </td>
-                                <td>
-                                     <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" style="padding: 3px 8px; font-size: 0.9em;" target="_blank">Details</a>
-                                     <!-- Add other actions if needed -->
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <tr><td colspan="6">No individual pallets currently tracked in storage for this warehouse.</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-        <div class="scroll-note">Swipe or scroll horizontally to see more columns.</div>
-    </div> <!-- End Inventory View Section -->
+         <!-- === END Standard Warehouse View === -->
+    <?php endif; ?>
 
 </main>
 
 <script>
-function sortTable(columnIndex, type, order) {
-    var table = document.getElementById("warehouse-table");
-    var tbody = table.tBodies[0];
-    var rows = Array.from(tbody.rows);
-
-    var compare;
-    switch (type) {
-        case 'num':
-            compare = function(a, b) {
-                var aValue = parseFloat(a.cells[columnIndex].innerText || a.cells[columnIndex].textContent) || 0;
-                var bValue = parseFloat(b.cells[columnIndex].innerText || b.cells[columnIndex].textContent) || 0;
-                return (order === 'asc') ? aValue - bValue : bValue - aValue;
-            };
-            break;
-        case 'string':
-            compare = function(a, b) {
-                var aValue = (a.cells[columnIndex].innerText || a.cells[columnIndex].textContent).toLowerCase();
-                var bValue = (b.cells[columnIndex].innerText || b.cells[columnIndex].textContent).toLowerCase();
-                if (aValue < bValue) return (order === 'asc') ? -1 : 1;
-                if (aValue > bValue) return (order === 'asc') ? 1 : -1;
-                return 0;
-            };
-            break;
-        case 'date':
-            compare = function(a, b) {
-                var aText = a.cells[columnIndex].innerText || a.cells[columnIndex].textContent;
-                var bText = b.cells[columnIndex].innerText || b.cells[columnIndex].textContent;
-                var aValue = new Date(aText.trim() === '' ? '1970-01-01' : aText);
-                var bValue = new Date(bText.trim() === '' ? '1970-01-01' : bText);
-                return (order === 'asc') ? aValue - bValue : bValue - aValue;
-            };
-            break;
-        default:
-            return;
+    // --- Tab Switching --- 
+    function openTab(evt, tabName) {
+        var i, tabcontent, tablinks;
+        tabcontent = document.getElementsByClassName("tab-content");
+        for (i = 0; i < tabcontent.length; i++) {
+            tabcontent[i].style.display = "none";
+            tabcontent[i].classList.remove("active");
+        }
+        tablinks = document.getElementsByClassName("tab-link");
+        for (i = 0; i < tablinks.length; i++) {
+            tablinks[i].className = tablinks[i].className.replace(" active", "");
+        }
+        var activeTab = document.getElementById(tabName);
+        if(activeTab) {
+            activeTab.style.display = "block";
+            activeTab.classList.add("active");
+        }
+        if(evt && evt.currentTarget) {
+            evt.currentTarget.className += " active";
+        }
     }
 
-    rows.sort(compare);
-    while (tbody.firstChild) {
-        tbody.removeChild(tbody.firstChild);
-    }
-    rows.forEach(function(row) {
-        tbody.appendChild(row);
-    });
-    applyFilters();
-}
+     // --- Filtering Logic --- 
+     function filterTable(tableId, searchInputId, wattageSelectId, dateFilterIds = {}) {
+         const table = document.getElementById(tableId);
+         if (!table) return;
+         const searchInput = document.getElementById(searchInputId);
+         const wattageSelect = document.getElementById(wattageSelectId);
+         const searchFilter = searchInput ? searchInput.value.toLowerCase().trim() : '';
+         const wattageFilter = wattageSelect ? wattageSelect.value : '';
 
-document.addEventListener('DOMContentLoaded', function() {
-    var filterCheckboxes = document.querySelectorAll('.filter-checkbox');
-    filterCheckboxes.forEach(function(checkbox) {
-        checkbox.addEventListener('click', function(e) {
-            e.stopPropagation();
-        });
-        checkbox.addEventListener('change', function() {
-            var columnIndex = this.getAttribute('data-column');
-            var value = this.value;
-            if (value === 'all') {
-                var checked = this.checked;
-                var checkboxes = document.querySelectorAll('.filter-checkbox[data-column="' + columnIndex + '"]');
-                checkboxes.forEach(function(cb) {
-                    cb.checked = checked;
-                });
-            } else {
-                var allChecked = true;
-                var checkboxes = document.querySelectorAll('.filter-checkbox[data-column="' + columnIndex + '"]:not([value="all"])');
-                checkboxes.forEach(function(cb) {
-                    if (!cb.checked) {
-                        allChecked = false;
-                    }
-                });
-                var selectAllCheckbox = document.querySelector('.filter-checkbox[data-column="' + columnIndex + '"][value="all"]');
-                selectAllCheckbox.checked = allChecked;
-            }
-            applyFilters();
-        });
-    });
+         const dateFilters = {};
+         if(dateFilterIds) { // Check if dateFilterIds is provided
+             for (const key in dateFilterIds) {
+                 const select = document.getElementById(dateFilterIds[key].selectId);
+                 if (select) {
+                     dateFilters[key] = { value: select.value, cellIndex: dateFilterIds[key].cellIndex };
+                 }
+             }
+         }
 
-    var sortIcons = document.querySelectorAll('.sort-icon');
-    sortIcons.forEach(function(icon) {
-        icon.addEventListener('click', function(event) {
-            event.stopPropagation();
-            closeAllDropdowns();
-            var dropdown = icon.parentElement;
-            dropdown.classList.toggle('open');
-        });
-    });
+         const rows = table.querySelectorAll('tbody tr');
+         let noResultsRow = table.querySelector('tbody tr td[colspan]'); 
 
-    document.addEventListener('click', function(e) {
-        var isInsideContent = e.target.closest('.sort-dropdown-content');
-        if (!isInsideContent) {
-            closeAllDropdowns();
-        }
-    });
+         rows.forEach(row => {
+             if (noResultsRow && row === noResultsRow.parentNode) return;
+             
+             let show = true;
+             const cells = row.cells;
 
-    var dropdownContents = document.querySelectorAll('.sort-dropdown-content');
-    dropdownContents.forEach(function(content) {
-        content.addEventListener('click', function(e) {
-            e.stopPropagation();
-        });
-    });
-});
+             if (searchFilter) {
+                 let rowText = row.textContent.toLowerCase();
+                 if (!rowText.includes(searchFilter)) {
+                     show = false;
+                 }
+             }
 
-function closeAllDropdowns() {
-    var dropdowns = document.querySelectorAll('.sort-dropdown');
-    dropdowns.forEach(function(dd) {
-        dd.classList.remove('open');
-    });
-}
+             if (show && wattageFilter) {
+                 let wattageCellIndex = -1;
+                 if (tableId === 'inventoryTable' && cells.length > 2) wattageCellIndex = 2;
+                 else if (tableId === 'truckloadsTable' && cells.length > 2) wattageCellIndex = 2;
 
-function applyFilters() {
-    var table = document.getElementById('warehouse-table');
-    var tbody = table.tBodies[0];
-    var rows = tbody.getElementsByTagName('tr');
+                 if (wattageCellIndex !== -1 && cells[wattageCellIndex]) {
+                     const wattageText = cells[wattageCellIndex].textContent.replace('W', '').trim();
+                     if (wattageText !== wattageFilter) {
+                         show = false;
+                     }
+                 }
+             }
 
-    var filters = {};
-    var columns = {};
+             if (show && dateFilterIds) {
+                  for (const key in dateFilters) {
+                      const filterInfo = dateFilters[key];
+                      if (filterInfo.value && cells[filterInfo.cellIndex]) {
+                           const cellDate = cells[filterInfo.cellIndex].textContent.trim();
+                           if (cellDate !== filterInfo.value) {
+                                show = false;
+                                break; 
+                           }
+                      }
+                  }
+             }
 
-    var filterCheckboxes = document.querySelectorAll('.filter-checkbox');
-    filterCheckboxes.forEach(function(cb) {
-        var columnIndex = cb.getAttribute('data-column');
-        if (!columns[columnIndex]) {
-            columns[columnIndex] = {
-                checkboxes: [],
-                selectAllCheckbox: null
-            };
-        }
-        if (cb.value === 'all') {
-            columns[columnIndex].selectAllCheckbox = cb;
-        } else {
-            columns[columnIndex].checkboxes.push(cb);
-        }
-    });
+             row.style.display = show ? '' : 'none';
+         });
+     }
 
-    for (var colIndex in columns) {
-        var column = columns[colIndex];
-        var selectedValues = [];
+     document.addEventListener('DOMContentLoaded', function() {
+         // Set Inventory View as default active tab
+         const defaultActiveButton = document.querySelector('.tabs button.active');
+         if (defaultActiveButton) {
+             openTab({ currentTarget: defaultActiveButton }, 'InventoryView');
+         }
+         
+         const arrivedDateFilter = document.getElementById('arrivedDateFilter');
+         const leftDateFilter = document.getElementById('leftDateFilter');
+         const truckloadSearch = document.getElementById('truckloadSearch');
+         const truckloadWattageFilter = document.getElementById('truckloadWattageFilter'); 
 
-        if (column.selectAllCheckbox.checked) {
-            filters[colIndex] = null;
-            column.checkboxes.forEach(function(cb) { cb.checked = true; });
-        } else {
-            column.checkboxes.forEach(function(cb) {
-                if (cb.checked) {
-                    selectedValues.push(cb.value.toLowerCase());
-                }
-            });
-            filters[colIndex] = selectedValues;
-        }
+         const truckloadDateFilters = {};
+         if(arrivedDateFilter) truckloadDateFilters['arrived'] = { selectId: 'arrivedDateFilter', cellIndex: 4 }; 
+         if(leftDateFilter) truckloadDateFilters['left'] = { selectId: 'leftDateFilter', cellIndex: 5 }; 
 
-        var allChecked = column.checkboxes.every(function(cb) { return cb.checked; });
-        column.selectAllCheckbox.checked = allChecked;
-    }
+         if(arrivedDateFilter) arrivedDateFilter.addEventListener('change', () => filterTable('truckloadsTable', 'truckloadSearch', 'truckloadWattageFilter', truckloadDateFilters));
+         if(leftDateFilter) leftDateFilter.addEventListener('change', () => filterTable('truckloadsTable', 'truckloadSearch', 'truckloadWattageFilter', truckloadDateFilters));
+         if(truckloadSearch) truckloadSearch.addEventListener('keyup', () => filterTable('truckloadsTable', 'truckloadSearch', 'truckloadWattageFilter', truckloadDateFilters));
+         if(truckloadWattageFilter) truckloadWattageFilter.addEventListener('change', () => filterTable('truckloadsTable', 'truckloadSearch', 'truckloadWattageFilter', truckloadDateFilters));
 
-    for (var i = 0; i < rows.length; i++) {
-        var row = rows[i];
-        var showRow = true;
-        for (var colIndex in filters) {
-            var selectedVals = filters[colIndex];
-            if (selectedVals !== null) {
-                var cellText = (row.cells[colIndex].innerText || row.cells[colIndex].textContent).toLowerCase();
-                if (selectedVals.indexOf(cellText) === -1) {
-                    showRow = false;
-                    break;
-                }
-            }
-        }
-        row.style.display = showRow ? '' : 'none';
-    }
-}
+         const inventorySearch = document.getElementById('inventorySearch');
+         const inventoryWattageFilter = document.getElementById('inventoryWattageFilter');
 
-// --- NEW Tab Switching Logic ---
-function showTabView(viewType) {
-    // Hide all sections
-    document.querySelectorAll('.tab-section').forEach(sec => sec.classList.remove('active'));
-    // Deactivate all buttons
-    document.querySelectorAll('.tabs button').forEach(btn => btn.classList.remove('active'));
+         if(inventorySearch) inventorySearch.addEventListener('keyup', () => filterTable('inventoryTable', 'inventorySearch', 'inventoryWattageFilter'));
+         if(inventoryWattageFilter) inventoryWattageFilter.addEventListener('change', () => filterTable('inventoryTable', 'inventorySearch', 'inventoryWattageFilter'));
+         
+         filterTable('inventoryTable', 'inventorySearch', 'inventoryWattageFilter');
+         filterTable('truckloadsTable', 'truckloadSearch', 'truckloadWattageFilter', truckloadDateFilters);
+     });
 
-    // Show the selected section
-    const sectionId = viewType === 'truckload' ? 'truckloadViewSection' : 'inventoryViewSection';
-    document.getElementById(sectionId).classList.add('active');
-
-    // Activate the corresponding button
-    const buttonId = viewType === 'truckload' ? 'toggleTruckloadBtn' : 'toggleInventoryBtn';
-    document.getElementById(buttonId).classList.add('active');
-}
-
-// --- NEW Filter Logic for Inventory Table ---
-function filterInventoryTable() {
-    const textFilter = document.getElementById('inventorySearch').value.toLowerCase();
-    const wattageFilter = document.getElementById('inventoryWattageFilter').value;
-    const rows = document.querySelectorAll('#inventory-pallets-table tbody tr');
-
-    rows.forEach(row => {
-        // Handle case where there's only one 'td' (e.g., "No pallets...")
-        if (row.cells.length < 5) {
-             row.style.display = ''; // Always show the 'no results' row
-             return; 
-        }
-
-        let show = true;
-        const identifierText = row.cells[0]?.textContent.toLowerCase() || '';
-        const vendorText = row.cells[1]?.textContent.toLowerCase() || '';
-        const wattageText = row.cells[2]?.textContent.replace('W','').trim() || '';
-        // Add other cells to search if needed
-
-        // Text filter (searches identifier and vendor)
-        if (textFilter && !(identifierText.includes(textFilter) || vendorText.includes(textFilter))) {
-            show = false;
-        }
-        // Wattage filter
-        if (wattageFilter && wattageText !== wattageFilter) {
-            show = false;
-        }
-
-        row.style.display = show ? '' : 'none';
-    });
-}
-
-// Initial call to ensure the correct view is shown on load (Truckload)
-document.addEventListener('DOMContentLoaded', () => {
-    showTabView('truckload');
-    // Add event listeners for inventory filters if needed later
-});
-// --- END NEW ---
 </script>
+
 </body>
 </html>

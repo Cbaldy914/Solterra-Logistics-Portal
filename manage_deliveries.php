@@ -28,9 +28,50 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// --- NEW: Admin Account Fetching and Permission Setup ---
+$account_id_for_admin = null;
+$is_global_admin = ($_SESSION['role'] === 'global_admin');
+
+if (!$is_global_admin) { // User role is 'admin'
+    $stmtAdminAcc = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1");
+    if ($stmtAdminAcc) {
+        $stmtAdminAcc->bind_param("i", $_SESSION['user_id']);
+        $stmtAdminAcc->execute();
+        $stmtAdminAcc->bind_result($acctID);
+        if ($stmtAdminAcc->fetch()) {
+            $account_id_for_admin = $acctID;
+        }
+        $stmtAdminAcc->close();
+    }
+    if (!$account_id_for_admin) {
+        // Optional: Handle admin with no assigned account - perhaps redirect or show error
+        // For now, they won't see any projects or deliveries if $account_id_for_admin remains null.
+         $_SESSION['messages'][] = "<p class='error-message'>Error: Admin user is not associated with an account.</p>";
+        // Consider adding exit() here if needed
+    }
+    // If admin and filter is 'all', reset filter to prevent access issues (or choose a default)
+    if ($filter_project_id === 'all') {
+        $filter_project_id = 'unassigned'; // Default admin view to unassigned if 'all' was somehow selected
+    }
+}
+// --- END NEW --- 
+
 // Fetch all projects for the filter dropdown
 $all_projects_for_filter = [];
-$stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects ORDER BY project_name ASC");
+// --- MODIFIED: Filter projects based on role --- 
+if ($is_global_admin) {
+    $stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects ORDER BY project_name ASC");
+} else { // Admin role
+    if ($account_id_for_admin) {
+        // Only fetch projects for this admin's account
+        $stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC");
+        $stmt_all_proj->bind_param("i", $account_id_for_admin);
+    } else {
+        // Prepare a statement that returns nothing if admin has no account
+        $stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects WHERE 1=0"); 
+    }
+}
+// --- END MODIFIED --- 
 if ($stmt_all_proj) {
     $stmt_all_proj->execute();
     $result_all_proj = $stmt_all_proj->get_result();
@@ -73,6 +114,34 @@ if (is_numeric($filter_project_id)) {
 if (isset($_POST['bulk_edit_submit'])) {
     if (isset($_POST['selected_deliveries']) && !empty($_POST['selected_deliveries'])) {
         $selected_ids = array_map('intval', $_POST['selected_deliveries']);
+
+        // --- NEW: Security check for admin role ---
+        if (!$is_global_admin && $account_id_for_admin) {
+            $valid_ids_for_admin = [];
+            $id_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            $check_stmt = $conn->prepare(
+                "SELECT d.id FROM deliveries d JOIN projects p ON d.project_id = p.id WHERE d.id IN ($id_placeholders) AND p.account_id = ?"
+            );
+            $check_types = str_repeat('i', count($selected_ids)) . 'i';
+            $check_params = array_merge($selected_ids, [$account_id_for_admin]);
+            $check_stmt->bind_param($check_types, ...$check_params);
+            $check_stmt->execute();
+            $result_check = $check_stmt->get_result();
+            while ($row = $result_check->fetch_assoc()) {
+                $valid_ids_for_admin[] = $row['id'];
+            }
+            $check_stmt->close();
+
+            // Filter out any IDs that don't belong to the admin or are unassigned (unassigned handled separately or not allowed for bulk edit by admin)
+            $selected_ids = array_intersect($selected_ids, $valid_ids_for_admin);
+
+            if (empty($selected_ids)) {
+                $_SESSION['messages'][] = "<p class='error-message'>Bulk edit failed: No valid deliveries selected for your account.</p>";
+                header("Location: manage_deliveries?" . $_SERVER['QUERY_STRING']); // Redirect with original query params
+                exit();
+            }
+        }
+        // --- END NEW ---
 
         // Build dynamic SET clauses based on non-empty fields
         $updates = [];
@@ -153,16 +222,62 @@ if (isset($_POST['bulk_edit_submit'])) {
 if (isset($_POST['delete_selected'])) {
     if (isset($_POST['selected_deliveries']) && !empty($_POST['selected_deliveries'])) {
         $selected_ids   = array_map('intval', $_POST['selected_deliveries']);
-        $ids_placeholder = implode(',', array_fill(0, count($selected_ids), '?'));
         
-        // MODIFIED: Bulk delete needs to consider current project filter if not 'all' or 'unassigned'
-        $delete_project_condition = "";
+        // --- Initialize delete parameters based on initially selected IDs ---
         $delete_params = $selected_ids;
         $delete_types = str_repeat('i', count($selected_ids));
+        $ids_placeholder = implode(',', array_fill(0, count($delete_params), '?')); // Placeholder based on initial count
 
+        // --- NEW: Security check for admin role for delete ---
+        if (!$is_global_admin && $account_id_for_admin) {
+             $valid_ids_for_delete = [];
+             $id_placeholders_del = implode(',', array_fill(0, count($selected_ids), '?'));
+             
+             // Check project-assigned deliveries
+             $sql_check_project_deliveries = "SELECT d.id FROM deliveries d JOIN projects p ON d.project_id = p.id WHERE d.id IN ($id_placeholders_del) AND p.account_id = ?";
+             $stmt_check_proj = $conn->prepare($sql_check_project_deliveries);
+             $types_check_proj = str_repeat('i', count($selected_ids)) . 'i';
+             $params_check_proj = array_merge($selected_ids, [$account_id_for_admin]);
+             $stmt_check_proj->bind_param($types_check_proj, ...$params_check_proj);
+             $stmt_check_proj->execute();
+             $res_check_proj = $stmt_check_proj->get_result();
+             while($r = $res_check_proj->fetch_assoc()) { $valid_ids_for_delete[] = $r['id']; }
+             $stmt_check_proj->close();
+
+             // Check unassigned deliveries (admins can delete unassigned too if $filter_project_id === 'unassigned')
+             if ($filter_project_id === 'unassigned') {
+                 $sql_check_unassigned = "SELECT id FROM deliveries WHERE id IN ($id_placeholders_del) AND project_id IS NULL";
+                 $stmt_check_unassigned = $conn->prepare($sql_check_unassigned);
+                 $types_check_unassigned = str_repeat('i', count($selected_ids));
+                 $stmt_check_unassigned->bind_param($types_check_unassigned, ...$selected_ids);
+                 $stmt_check_unassigned->execute();
+                 $res_check_unassigned = $stmt_check_unassigned->get_result();
+                 while($r = $res_check_unassigned->fetch_assoc()) { $valid_ids_for_delete[] = $r['id']; }
+                 $stmt_check_unassigned->close();
+             }
+
+             $selected_ids = array_values(array_unique(array_intersect($selected_ids, $valid_ids_for_delete)));
+
+             if (empty($selected_ids)) {
+                 $_SESSION['messages'][] = "<p class='error-message'>Bulk delete failed: No valid deliveries selected for your account scope.</p>";
+                 // Rebuild redirect_params for safety as it might not be set here
+                 $redirect_params_del = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+                 header("Location: manage_deliveries?" . $redirect_params_del);
+                 exit();
+             }
+             // Re-prepare delete parameters after filtering
+             // --- IMPORTANT: Update params and types ONLY if IDs were filtered ---
+             $delete_params = $selected_ids;
+             $delete_types = str_repeat('i', count($selected_ids));
+             $ids_placeholder = implode(',', array_fill(0, count($delete_params), '?')); // Regenerate placeholder
+        }
+        // --- END NEW ---
+
+        // --- Apply project condition AFTER security check --- 
+        $delete_project_condition = ''; // Initialize
         if (is_numeric($filter_project_id)) {
             $delete_project_condition = " AND project_id = ?";
-            $delete_params[] = $filter_project_id;
+            $delete_params[] = $filter_project_id; // Add to the (potentially filtered) params
             $delete_types .= 'i';
         } elseif ($filter_project_id === 'unassigned') {
             $delete_project_condition = " AND project_id IS NULL";
@@ -422,11 +537,30 @@ $params        = [$default_freight_cost];
 
 if (is_numeric($filter_project_id)) {
     $projectConditionSQL = " AND d.project_id = ?";
+    // NEW: Add account check for admin
+    if (!$is_global_admin && $account_id_for_admin) {
+        $projectConditionSQL .= " AND p.account_id = ?";
+        $paramTypes .= "i";
+        $params[] = $account_id_for_admin;
+    }
     $paramTypes .= "i";
     $params[] = $filter_project_id;
 } elseif ($filter_project_id === 'unassigned') {
     $projectConditionSQL = " AND d.project_id IS NULL";
     // No parameter to add for IS NULL
+} elseif ($filter_project_id === 'all' && $is_global_admin) {
+    // No project condition for global admin viewing all
+    $projectConditionSQL = ""; 
+} else { 
+    // Admin viewing their account's projects implicitly (or error state)
+    // $projectConditionSQL should effectively filter by account_id if $filter_project_id isn't 'unassigned'
+    if (!$is_global_admin && $account_id_for_admin) {
+         $projectConditionSQL = " AND p.account_id = ?"; // Filter by account
+         $paramTypes .= "i";
+         $params[] = $account_id_for_admin;
+    } else {
+         $projectConditionSQL = " AND 1=0 "; // Prevent admin without account from seeing anything if logic reaches here unexpectedly
+    }
 }
 // If $filter_project_id is 'all', $projectConditionSQL remains empty, showing all projects.
 
@@ -500,23 +634,57 @@ $stmt->close();
   5) Calculate Total Freight and Accessorial Costs (unfiltered totals)
   -----------------------------------------------------------------------------
 */
-$stmt = $conn->prepare("
+$currentProjectConditionForCosts = ""; 
+$costParams = [$default_freight_cost];
+$costParamTypes = "d";
+
+// --- REVISED: Build cost conditions based on role and filter ---
+if (!$is_global_admin && !$account_id_for_admin) {
+    // Admin without an account should see no costs
+    $currentProjectConditionForCosts = " AND 1=0 "; // Effectively prevents matching any rows
+} elseif ($is_global_admin) {
+    // Global admin: Filter costs based on the selected project filter
+    if (!$is_global_admin && $account_id_for_admin) {
+        // Costs for a specific project (global admin doesn't need account check)
+        $currentProjectConditionForCosts = " AND d.project_id = ?";
+        $costParams[] = $filter_project_id;
+        $costParamTypes .= "i";
+    } elseif ($filter_project_id === 'unassigned') {
+        // Costs for unassigned deliveries
+        $currentProjectConditionForCosts = " AND d.project_id IS NULL";
+    }
+    // If $filter_project_id is 'all', $currentProjectConditionForCosts remains "" (no extra condition needed)
+} else {
+    // Regular admin with an account: Filter costs based on their account scope
+    if (is_numeric($filter_project_id)) {
+        // Costs for a specific project, ONLY if it belongs to their account
+        $currentProjectConditionForCosts = " AND d.project_id = ? AND d.project_id IN (SELECT id FROM projects WHERE account_id = ?)";
+        $costParams[] = $filter_project_id;
+        // For cost calculation, filter deliveries that belong to projects in the admin's account
+        $costParams[] = $account_id_for_admin;
+        $costParamTypes .= "ii"; // one for project_id, one for account_id in subquery
+    } elseif ($filter_project_id === 'unassigned') {
+        // Costs for unassigned deliveries (admin can see these)
+        $currentProjectConditionForCosts = " AND d.project_id IS NULL";
+    } else {
+        // 'all' filter (or any other unexpected state) for admin: sum costs for ALL projects in their account
+        $currentProjectConditionForCosts = " AND d.project_id IN (SELECT id FROM projects WHERE account_id = ?)";
+        $costParams[] = $account_id_for_admin;
+        $costParamTypes .= "i";
+    }
+}
+// --- END REVISED ---
+
+$sql_costs = "
     SELECT 
         SUM(IF(d.status_of_delivery = 'delivered', IFNULL(d.freight_cost, ?), 0)) AS total_freight_cost,
         SUM(IFNULL(d.accessorial_costs, 0)) AS total_accessorial_costs
     FROM deliveries d
     WHERE 1=1 
-    $projectConditionSQL 
-");
-// Adjust params for this query. It only needs default_freight_cost and potentially project_id
-$costParams = [$default_freight_cost];
-$costParamTypes = "d";
-if (is_numeric($filter_project_id)) {
-    $costParams[] = $filter_project_id;
-    $costParamTypes .= "i";
-}
-// No param for 'unassigned' project_id IS NULL
+    {$currentProjectConditionForCosts}  -- Use the correctly built condition for costs
+";
 
+$stmt = $conn->prepare($sql_costs);
 $stmt->bind_param($costParamTypes, ...$costParams);
 $stmt->execute();
 $stmt->bind_result($total_freight_cost, $total_accessorial_costs);
@@ -865,6 +1033,7 @@ $stmt->close();
         <!-- Bulk Actions Section -->
         <div class="middle-section">
             <h2>Bulk Edit / Bulk Delete</h2>
+            <span id="selectedRowCount" style="margin-left: 10px; font-size: 0.9em; color: #555;"></span>
             <div class="bulk-actions-buttons">
                 <!-- Bulk Edit opens the modal -->
                 <button type="button" id="bulkEditBtn" disabled onclick="openBulkEditModal()">Bulk Edit</button>
@@ -928,13 +1097,16 @@ $stmt->close();
                 <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
             </div>
             <form method="get" action="" style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
-                <input type="hidden" name="ref_date" value="<?php echo $ref_date; ?>">
+                <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
+                <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
+                <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
                 
                 <div style="display: flex; align-items: center; gap: 5px;">
                     <label for="filter_project_id" style="align-self: center;">Project:</label>
                     <select name="filter_project_id" id="filter_project_id" onchange="this.form.submit()">
+                        <?php if ($is_global_admin): // Only show "All Projects" for global admin ?>
                         <option value="all" <?php if($filter_project_id === 'all') echo 'selected'; ?>>All Projects</option>
+                        <?php endif; ?>
                         <option value="unassigned" <?php if($filter_project_id === 'unassigned') echo 'selected'; ?>>Unassigned Deliveries</option>
                         <?php foreach ($all_projects_for_filter as $proj_filter_item): ?>
                             <option value="<?php echo $proj_filter_item['id']; ?>" <?php if (is_numeric($filter_project_id) && $filter_project_id == $proj_filter_item['id']) echo 'selected'; ?>>
@@ -961,9 +1133,9 @@ $stmt->close();
     <!-- Deliveries Form + Table -->
     <form action="manage_deliveries?filter_project_id=<?php echo urlencode($filter_project_id); ?>" method="post" id="deliveriesForm">
         <!-- Preserve filter parameters -->
-        <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter); ?>">
-        <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
-        <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter); ?>">
+        <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
+        <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
+        <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
 
         <div class="table-responsive">
             <table class="deliveries-table" id="deliveriesTable">
@@ -1106,9 +1278,9 @@ $stmt->close();
             
             <form method="post" action="manage_deliveries?filter_project_id=<?php echo urlencode($filter_project_id); ?>">
                 <!-- Keep time/status filters in case you want to preserve them after submit -->
-                <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter); ?>">
-                <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
-                <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter); ?>">
+                <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
+                <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
+                <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
 
                 <!-- Hidden checkboxes for selected_deliveries[] will be appended by JS -->
                 <div id="bulkEditSelectedIds"></div>
@@ -1224,6 +1396,18 @@ $stmt->close();
         }
         document.getElementById('bulkEditBtn').disabled = !anyChecked;
         document.getElementById('bulkDeleteBtn').disabled = !anyChecked;
+
+        // NEW: Update selected row count
+        var count = 0;
+        for (var checkbox of checkboxes) {
+            if (checkbox.checked) {
+                count++;
+            }
+        }
+        var countDisplay = document.getElementById('selectedRowCount');
+        if (countDisplay) {
+            countDisplay.textContent = count > 0 ? count + (count === 1 ? " row selected" : " rows selected") : "";
+        }
     }
 
     // Table search
@@ -1252,7 +1436,7 @@ $stmt->close();
         // Copy selected delivery IDs into hidden inputs in the modal
         var checkboxes = document.getElementsByName('selected_deliveries[]');
         var container = document.getElementById('bulkEditSelectedIds');
-        container.innerHTML = ''; // clear old data
+        container.innerHTML = ''; // Clear old data
 
         for (var checkbox of checkboxes) {
             if (checkbox.checked) {
