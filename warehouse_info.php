@@ -72,26 +72,45 @@ try {
         $stmtPName->close();
 
         $sqlDistinctWH = "
-            SELECT DISTINCT wh.id, wh.name
+            SELECT 
+                wh.id, 
+                wh.name,
+                wh.address, 
+                wh.image_url,
+                SUM(CASE WHEN ip_stored.status = 'In Warehouse' AND ip_stored.current_warehouse_id = wh.id THEN 1 ELSE 0 END) as pallets_in_warehouse,
+                SUM(CASE WHEN ip_stored.status = 'In Warehouse' AND ip_stored.current_warehouse_id = wh.id THEN ip_stored.quantity ELSE 0 END) as modules_in_warehouse,
+                SUM(CASE WHEN d_transit.status_of_delivery LIKE 'In Transit%' AND d_transit.warehouse_id = wh.id AND d_transit.warehouse_arrival_date IS NULL THEN 1 ELSE 0 END) as pallets_in_transit_to_wh,
+                SUM(CASE WHEN d_transit.status_of_delivery LIKE 'In Transit%' AND d_transit.warehouse_id = wh.id AND d_transit.warehouse_arrival_date IS NULL THEN d_pal.quantity_on_delivery END) as modules_in_transit_to_wh
             FROM warehouses wh
-            WHERE EXISTS (
-                SELECT 1 FROM inventory_pallets ip 
-                WHERE ip.assigned_project_id = ? AND ip.current_warehouse_id = wh.id AND ip.status = 'In Warehouse'
-            ) 
-            OR EXISTS (
-                SELECT 1 FROM deliveries d
-                JOIN delivery_pallets dp ON d.id = dp.delivery_id
-                JOIN inventory_pallets ip_d ON dp.inventory_pallet_id = ip_d.id
-                WHERE ip_d.assigned_project_id = ? 
-                  AND d.warehouse_id = wh.id 
-                  AND d.status_of_delivery LIKE 'In Transit%'
-                  AND d.warehouse_arrival_date IS NULL
-            )
+            LEFT JOIN inventory_pallets ip_stored ON ip_stored.current_warehouse_id = wh.id AND ip_stored.assigned_project_id = ?
+            LEFT JOIN deliveries d_transit ON d_transit.warehouse_id = wh.id AND d_transit.project_id = ? AND d_transit.status_of_delivery LIKE 'In Transit%' AND d_transit.warehouse_arrival_date IS NULL
+            LEFT JOIN (
+                SELECT dp.delivery_id, SUM(ip_inner.quantity) as quantity_on_delivery
+                FROM delivery_pallets dp
+                JOIN inventory_pallets ip_inner ON dp.inventory_pallet_id = ip_inner.id
+                WHERE ip_inner.assigned_project_id = ? /* Ensure pallets in transit also belong to the project */
+                GROUP BY dp.delivery_id
+            ) d_pal ON d_transit.id = d_pal.delivery_id
+            WHERE 
+                EXISTS (
+                    SELECT 1 FROM inventory_pallets ip_check_stored
+                    WHERE ip_check_stored.assigned_project_id = ? AND ip_check_stored.current_warehouse_id = wh.id AND ip_check_stored.status = 'In Warehouse'
+                ) 
+                OR EXISTS (
+                    SELECT 1 FROM deliveries d_check_transit
+                    JOIN delivery_pallets dp_check_transit ON d_check_transit.id = dp_check_transit.delivery_id
+                    JOIN inventory_pallets ip_check_d_transit ON dp_check_transit.inventory_pallet_id = ip_check_d_transit.id
+                    WHERE ip_check_d_transit.assigned_project_id = ? 
+                      AND d_check_transit.warehouse_id = wh.id 
+                      AND d_check_transit.status_of_delivery LIKE 'In Transit%'
+                      AND d_check_transit.warehouse_arrival_date IS NULL
+                )
+            GROUP BY wh.id, wh.name, wh.address, wh.image_url
             ORDER BY wh.name ASC
         ";
         $stmtDistinctWH = $conn->prepare($sqlDistinctWH);
         if (!$stmtDistinctWH) throw new Exception("Prepare distinct warehouses failed: " . $conn->error);
-        $stmtDistinctWH->bind_param("ii", $project_id, $project_id);
+        $stmtDistinctWH->bind_param("iiiii", $project_id, $project_id, $project_id, $project_id, $project_id);
         $stmtDistinctWH->execute();
         $resultDistinctWH = $stmtDistinctWH->get_result();
 
@@ -371,16 +390,16 @@ if ($conn) {
             margin-bottom: -1px; /* Overlap the container's bottom border */
         }
         .tabs button.active {
-            background: #fff; /* White background for active tab */
-            color: #293E4C; /* Darker color for active text */
+            background: #fff;
+            color: #293E4C;
             border-bottom: 1px solid #fff; /* Make bottom border white to blend */
         }
         .tab-content { /* Combined style for both sections */
             display: none; /* Hide sections by default */
             margin-top: 10px; /* Space above section content */
         }
-        .tab-content.active { /* Style for the active section */
-            display: block; /* Show active section */
+        .tab-content.active {
+            display: block;
         }
          .table-responsive {
              width: 100%;
@@ -394,7 +413,6 @@ if ($conn) {
         th, td {
              padding: 8px 10px;
              border: 1px solid #ddd;
-             text-align: left;
              white-space: nowrap;
         }
          th {
@@ -434,31 +452,7 @@ if ($conn) {
              background-color: #f8d7da;
              border-color: #f5c6cb;
         }
-        .info-message { 
-             color: #0c5460;
-             background-color: #d1ecf1;
-             border-color: #bee5eb;
-        }
-         .warehouse-list {
-             list-style: none;
-             padding: 0;
-             margin-top: 15px;
-         }
-         .warehouse-list li {
-             background-color: #f8f9fa;
-             margin-bottom: 10px;
-             padding: 10px 15px;
-             border: 1px solid #dee2e6;
-             border-radius: 4px;
-         }
-         .warehouse-list li a {
-             text-decoration: none;
-             color: #007bff;
-             font-weight: 500;
-         }
-         .warehouse-list li a:hover {
-             text-decoration: underline;
-         }
+
          .cost-summary {
             margin-bottom: 20px;
             width: 100%;
@@ -491,6 +485,78 @@ if ($conn) {
             border-bottom: 1px solid #fff; /* To make it look like it merges with content */
             font-weight: bold;
             color: #293E4C; /* Match active main tab text color */
+        }
+
+        /* New styles for warehouse cards */
+        .warehouse-cards-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 75px; /* Space between cards */
+            justify-content: flex-start; /* Align cards to the start */
+            padding: 10px 0; /* Padding around the container */
+        }
+        .warehouse-card {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            overflow: hidden; /* Ensures image corners are rounded if image is larger */
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+            width: 425px;
+            min-width: 280px; /* Minimum width before wrapping */
+            background-color: #fff;
+            display: flex; /* Added for flex column layout */
+            flex-direction: column; /* Added for flex column layout */
+        }
+        .warehouse-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        }
+        .warehouse-card-link {
+            display: flex; /* Make link a flex container */
+            flex-direction: column; /* Stack image, name, details vertically */
+            text-decoration: none;
+            color: inherit; /* Inherit text color from parent */
+            height: 100%; /* Make link fill the card */
+        }
+        .warehouse-card-image {
+            width: 100%;
+            height: 180px; /* Fixed height for images */
+            object-fit: cover; /* Crop image to fit */
+            display: block;
+            border-bottom: 1px solid #eee; /* Separator */
+        }
+        .warehouse-card-name {
+            font-size: 1.15em;
+            font-weight: 600;
+            color: #293E4C;
+            padding: 12px 15px;
+            /* border-bottom: 1px solid #eee; */ /* Removed, image has border now */
+            text-align: center;
+        }
+        .warehouse-card-details {
+            padding: 10px 15px 15px 15px; /* More padding at bottom */
+            font-size: 0.9em;
+            line-height: 1.6;
+            flex-grow: 1; /* Allows details to take up remaining space */
+        }
+        .warehouse-card-details p {
+            margin: 5px 0;
+            color: #555;
+        }
+        .warehouse-card-details p strong {
+            color: #333;
+        }
+
+        /* Responsive adjustments for cards */
+        @media (max-width: 992px) {
+            .warehouse-card {
+                width: calc(50% - 10px); /* 2 cards per row (20px gap * 1/2 items = 10px adjustment) */
+            }
+        }
+        @media (max-width: 600px) {
+            .warehouse-card {
+                width: 100%; /* 1 card per row */
+            }
         }
 
         @media (max-width: 768px) {
@@ -555,16 +621,44 @@ if ($conn) {
         <p class="message error-message"><?php echo htmlspecialchars($errorMessage); ?></p>
 
     <?php elseif ($show_warehouse_list): ?>
-        <p>Inventory for Project '<?php echo htmlspecialchars($project_name_for_title); ?>' is located in the following warehouses:</p>
-        <ul class="warehouse-list">
+        <p class="info-message" style="margin-bottom: 20px;">Inventory for Project '<?php echo htmlspecialchars($project_name_for_title); ?>' is located in the following warehouses:</p>
+        <div class="warehouse-cards-container">
             <?php foreach ($relevant_warehouses as $wh): ?>
-                <li>
-                    <a href="warehouse_info.php?warehouse_id=<?php echo $wh['id']; ?>&project_id=<?php echo $project_id; ?>">
-                        <?php echo htmlspecialchars($wh['name']); ?> (ID: <?php echo $wh['id']; ?>)
+                <div class="warehouse-card">
+                    <a href="warehouse_info.php?warehouse_id=<?php echo $wh['id']; ?>&project_id=<?php echo $project_id; ?>" class="warehouse-card-link">
+                        <?php 
+                        $wh_image_path = "pictures/warehouse-default.png"; // Default image
+                        if (!empty($wh['image_url'])) {
+                            // Basic check if it's a full URL or a relative path
+                            if (filter_var($wh['image_url'], FILTER_VALIDATE_URL)) {
+                                $wh_image_path = $wh['image_url'];
+                            } else {
+                                // Assuming it might be a path relative to a specific directory if not a full URL
+                                // For now, let's prepend 'uploads/warehouse_images/' if it doesn't look like a full URL
+                                // and isn't already starting with a common image path indicator.
+                                if (strpos($wh['image_url'], 'http') !== 0 && strpos($wh['image_url'], 'pictures/') !== 0 && strpos($wh['image_url'], 'uploads/') !== 0) {
+                                   $wh_image_path = 'uploads/warehouse_images/' . ltrim(htmlspecialchars($wh['image_url']), '/');
+                                } else {
+                                   $wh_image_path = htmlspecialchars($wh['image_url']); 
+                                }
+                            }
+                        }
+                        ?>
+                        <img src="<?php echo $wh_image_path; ?>" alt="<?php echo htmlspecialchars($wh['name']); ?>" class="warehouse-card-image">
+                        <div class="warehouse-card-name">
+                            <?php echo htmlspecialchars($wh['name']); ?> (ID: <?php echo $wh['id']; ?>)
+                        </div>
+                        <div class="warehouse-card-details">
+                            <p><strong>Address:</strong> <?php echo htmlspecialchars($wh['address'] ?? 'N/A'); ?></p>
+                            <p><strong>Pallets Stored:</strong> <?php echo number_format($wh['pallets_in_warehouse'] ?? 0); ?> </p>
+                            <p><strong>Modules Stored:</strong> <?php echo number_format($wh['modules_in_warehouse'] ?? 0); ?> </p>
+                            <p><strong>Pallets In Transit:</strong> <?php echo number_format($wh['pallets_in_transit_to_wh'] ?? 0); ?> </p>
+                            <p><strong>Modules In Transit:</strong> <?php echo number_format($wh['modules_in_transit_to_wh'] ?? 0); ?> </p>
+                        </div>
                     </a>
-                </li>
+                </div>
             <?php endforeach; ?>
-        </ul>
+        </div>
 
     <?php elseif ($warehouse_data): ?>
         <!-- === START Standard Warehouse View === -->
