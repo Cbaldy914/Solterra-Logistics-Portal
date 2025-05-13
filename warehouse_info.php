@@ -171,12 +171,13 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         }
         $stmt_pallets->close();
 
-        // Fetch Deliveries Arrived (for Truckload View)
+        // Fetch Deliveries Arrived (for Inbound Truckloads Table)
         $arrived_delivery_ids = [];
+        $inbound_deliveries_for_table = []; // Renamed from $delivered_deliveries
         $sql_deliveries_arrived = "
             SELECT 
                 d.id, d.supplier, d.wattage, d.quantity, d.bol_number, 
-                d.warehouse_arrival_date, d.left_warehouse_date, d.proof_of_delivery
+                d.warehouse_arrival_date, d.proof_of_delivery /* Removed d.left_warehouse_date */
             FROM deliveries d
             WHERE d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL
         ";
@@ -194,12 +195,10 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $stmt_delivered->bind_param($delivered_types, ...$delivered_params);
         $stmt_delivered->execute();
         $result_delivered = $stmt_delivered->get_result();
-        // $total_inbound_pallets = 0; // Old logic based on d.quantity
         while ($drow = $result_delivered->fetch_assoc()) {
-            $delivered_deliveries[] = $drow;
-            $arrived_delivery_ids[] = $drow['id']; // Collect IDs for pallet counting
+            $inbound_deliveries_for_table[] = $drow; // Populate new array
+            $arrived_delivery_ids[] = $drow['id']; 
             $arrived_date_values[] = $drow['warehouse_arrival_date'] ?? '';
-            // $total_inbound_pallets += ($drow['quantity'] ?? 0); // Old logic
         }
         $stmt_delivered->close();
 
@@ -223,15 +222,16 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $arrived_date_values = array_unique(array_filter($arrived_date_values));
         sort($arrived_date_values);
         
-        // Fetch Deliveries Departed (for Truckload View)
+        // Fetch Deliveries Departed (for Outbound Truckloads Table)
         $departed_delivery_ids = [];
+        $outbound_deliveries_for_table = []; // New array for direct use in outbound table
         $sql_deliveries_left = "
             SELECT 
                 d.id, d.supplier, d.wattage, d.quantity, d.bol_number, 
-                d.warehouse_arrival_date, d.left_warehouse_date, d.proof_of_delivery
+                d.left_warehouse_date, d.proof_of_delivery /* Removed d.warehouse_arrival_date */
             FROM deliveries d
             WHERE d.warehouse_id = ? AND d.left_warehouse_date IS NOT NULL 
-        "; // Reverted to d.warehouse_id from d.origin_warehouse_id
+        "; 
         $left_params = [$warehouse_id];
         $left_types = "i";
         if ($project_id) {
@@ -246,25 +246,10 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $stmt_left->bind_param($left_types, ...$left_params);
         $stmt_left->execute();
         $result_left = $stmt_left->get_result();
-        // $total_outbound_pallets = 0; // Old logic based on d.quantity
         while ($drow = $result_left->fetch_assoc()) {
-            $found = false;
-            foreach ($delivered_deliveries as &$existing_d) {
-                if ($existing_d['id'] === $drow['id']) {
-                    if (empty($existing_d['left_warehouse_date'])) {
-                         $existing_d['left_warehouse_date'] = $drow['left_warehouse_date'];
-                    }
-                    $found = true;
-                    break;
-                }
-            }
-            unset($existing_d);
-            if (!$found) {
-                 $left_warehouse_deliveries[] = $drow; 
-            }
-            $departed_delivery_ids[] = $drow['id']; // Collect IDs for pallet counting
+            $outbound_deliveries_for_table[] = $drow; // Populate new array directly
+            $departed_delivery_ids[] = $drow['id']; 
             $left_warehouse_date_values[] = $drow['left_warehouse_date'] ?? '';
-            // $total_outbound_pallets += ($drow['quantity'] ?? 0); // Old logic
         }
         $stmt_left->close();
 
@@ -688,113 +673,151 @@ if ($conn) {
         
         <!-- Tab Content: Truckload View -->
          <div id="TruckloadView" class="tab-content">
-              <h2>Truckload Arrival/Departure History</h2>
-               <div class="filter-controls">
-                   <label for="truckloadSearch">Search:</label>
-                   <input type="text" id="truckloadSearch" placeholder="Filter by BOL, Supplier...">
-                   <label for="arrivedDateFilter">Arrived On:</label>
-                   <select id="arrivedDateFilter">
-                       <option value="">All Dates</option>
-                       <?php foreach ($arrived_date_values as $date): ?>
-                           <option value="<?php echo htmlspecialchars($date); ?>"><?php echo htmlspecialchars($date); ?></option>
-                       <?php endforeach; ?>
-                   </select>
-                   <label for="leftDateFilter">Left On:</label>
-                   <select id="leftDateFilter">
-                       <option value="">All Dates</option>
-                       <?php foreach ($left_warehouse_date_values as $date): ?>
-                           <option value="<?php echo htmlspecialchars($date); ?>"><?php echo htmlspecialchars($date); ?></option>
-                       <?php endforeach; ?>
-                   </select>
-                   <label for="truckloadWattageFilter">Wattage:</label> <!-- Added Wattage Filter for Truckloads -->
-                   <select id="truckloadWattageFilter">
-                       <option value="">All Wattages</option>
-                       <?php
-                       $unique_wattages_truck = [];
-                       if (!empty($combined_deliveries)) { // Assuming $combined_deliveries is available here
-                           foreach($combined_deliveries as $d) { $unique_wattages_truck[$d['wattage']] = true; }
-                           ksort($unique_wattages_truck);
-                           foreach (array_keys($unique_wattages_truck) as $wattage):
-                       ?>
-                          <option value="<?php echo htmlspecialchars($wattage); ?>"><?php echo htmlspecialchars($wattage); ?>W</option>
-                       <?php 
-                           endforeach; 
-                       }
-                       ?>
-                   </select>
-              </div>
-             <div class="table-responsive">
-                 <table id="truckloadsTable">
-                     <thead>
-                         <tr>
-                             <th>BOL Number</th>
-                             <th>Supplier</th>
-                             <th>Wattage</th>
-                             <th>Quantity</th>
-                             <th>Arrival Date</th>
-                             <th>Left Warehouse Date</th>
-                             <th>Proof of Delivery</th>
-                             <th>Actions</th>
-                         </tr>
-                     </thead>
-                     <tbody>
+            <div class="sub-tabs-container" style="text-align: left; margin-bottom: 15px;">
+                <button class="sub-tab-button active" onclick="showTruckloadSubView('arrivals')">View Arrivals</button>
+                <button class="sub-tab-button" onclick="showTruckloadSubView('departures')">View Departures</button>
+            </div>
+
+            <div id="truckloadArrivalsSubView">
+                <h2 style="margin-top:0;">Inbound Truckloads (Arrivals)</h2>
+                 <div class="filter-controls">
+                     <label for="inboundTruckloadSearch">Search:</label>
+                     <input type="text" id="inboundTruckloadSearch" placeholder="Filter by BOL, Supplier...">
+                     <label for="inboundArrivedDateFilter">Arrived On:</label>
+                     <select id="inboundArrivedDateFilter">
+                         <option value="">All Dates</option>
+                         <?php foreach ($arrived_date_values as $date): ?>
+                             <option value="<?php echo htmlspecialchars($date); ?>"><?php echo htmlspecialchars($date); ?></option>
+                         <?php endforeach; ?>
+                     </select>
+                     <label for="inboundTruckloadWattageFilter">Wattage:</label>
+                     <select id="inboundTruckloadWattageFilter">
+                         <option value="">All Wattages</option>
+                         <?php
+                         $unique_wattages_inbound = [];
+                         if (!empty($inbound_deliveries_for_table)) {
+                             foreach($inbound_deliveries_for_table as $d) { $unique_wattages_inbound[$d['wattage']] = true; }
+                             ksort($unique_wattages_inbound);
+                             foreach (array_keys($unique_wattages_inbound) as $wattage):
+                         ?>
+                            <option value="<?php echo htmlspecialchars($wattage); ?>"><?php echo htmlspecialchars($wattage); ?>W</option>
                          <?php 
-                         // Combine delivered and left deliveries, giving precedence to delivered if ID matches
-                         $combined_deliveries = [];
-                         if (!empty($delivered_deliveries)) {
-                             foreach($delivered_deliveries as $d) { $combined_deliveries[$d['id']] = $d; }
-                         }
-                         if (!empty($left_warehouse_deliveries)){
-                             foreach($left_warehouse_deliveries as $d) { 
-                                 if (!isset($combined_deliveries[$d['id']])) { 
-                                     $combined_deliveries[$d['id']] = $d; 
-                                 } else {
-                                     if (empty($combined_deliveries[$d['id']]['left_warehouse_date']) && !empty($d['left_warehouse_date'])){
-                                         $combined_deliveries[$d['id']]['left_warehouse_date'] = $d['left_warehouse_date'];
-                                     }
-                                 }
-                             }
-                         }
-                         if (!empty($combined_deliveries)) {
-                             uasort($combined_deliveries, function($a, $b) {
-                                 $a_arrival = $a['warehouse_arrival_date'] ?? '9999-12-31';
-                                 $b_arrival = $b['warehouse_arrival_date'] ?? '9999-12-31';
-                                 if ($a_arrival !== $b_arrival) {
-                                     return strcmp($b_arrival, $a_arrival); 
-                                 }
-                                 $a_left = $a['left_warehouse_date'] ?? '9999-12-31';
-                                 $b_left = $b['left_warehouse_date'] ?? '9999-12-31';
-                                 return strcmp($b_left, $a_left); 
-                             });
+                             endforeach; 
                          }
                          ?>
-                         <?php if (!empty($combined_deliveries)): ?>
-                              <?php foreach ($combined_deliveries as $delivery): ?>
-                                 <tr>
-                                     <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
-                                     <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
-                                     <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
-                                     <td><?php echo number_format($delivery['quantity'] ?? 0); ?></td>
-                                     <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
-                                     <td><?php echo htmlspecialchars($delivery['left_warehouse_date'] ?? 'N/A'); ?></td>
+                     </select>
+                 </div>
+                 <div class="table-responsive">
+                     <table id="inboundTruckloadsTable">
+                         <thead>
+                             <tr>
+                                 <th>BOL Number</th>
+                                 <th>Supplier</th>
+                                 <th>Wattage</th>
+                                 <th>Total Modules</th>
+                                 <th>Arrival Date</th>
+                                 <th>Proof of Delivery</th>
+                                 <th>Actions</th>
+                             </tr>
+                         </thead>
+                         <tbody>
+                             <?php if (!empty($inbound_deliveries_for_table)): ?>
+                                  <?php foreach ($inbound_deliveries_for_table as $delivery): ?>
+                                     <tr>
+                                         <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
+                                         <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
+                                         <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
+                                         <td><?php echo number_format($delivery['quantity'] ?? 0); ?></td>
+                                         <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
+                                          <td>
+                                              <?php if (!empty($delivery['proof_of_delivery'])): ?>
+                                                  <a href="view_pod.php?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">View</a>
+                                              <?php else: ?>
+                                                  N/A
+                                              <?php endif; ?>
+                                          </td>
+                                         <td>
+                                             <a href="edit_delivery.php?delivery_id=<?php echo $delivery['id']; ?>&warehouse_id=<?php echo $warehouse_id; ?><?php if($project_id) echo '&project_id='.$project_id; ?>" class="action-button" style="padding: 3px 8px; font-size: 0.9em;">Edit</a>
+                                         </td>
+                                     </tr>
+                                 <?php endforeach; ?>
+                             <?php else: ?>
+                                 <tr><td colspan="7">No inbound truckloads recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
+                             <?php endif; ?>
+                         </tbody>
+                     </table>
+                 </div>
+            </div>
+
+            <div id="truckloadDeparturesSubView" style="display: none;">
+                <h2 style="margin-top:0;">Outbound Truckloads (Departures)</h2>
+                <div class="filter-controls">
+                    <label for="outboundTruckloadSearch">Search:</label>
+                    <input type="text" id="outboundTruckloadSearch" placeholder="Filter by BOL, Supplier...">
+                    <label for="outboundLeftDateFilter">Departed On:</label>
+                    <select id="outboundLeftDateFilter">
+                        <option value="">All Dates</option>
+                        <?php foreach ($left_warehouse_date_values as $date): // Assuming $left_warehouse_date_values is populated correctly ?>
+                            <option value="<?php echo htmlspecialchars($date); ?>"><?php echo htmlspecialchars($date); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <label for="outboundTruckloadWattageFilter">Wattage:</label>
+                    <select id="outboundTruckloadWattageFilter">
+                        <option value="">All Wattages</option>
+                        <?php
+                        $unique_wattages_outbound = [];
+                        if (!empty($outbound_deliveries_for_table)) {
+                            foreach($outbound_deliveries_for_table as $d) { $unique_wattages_outbound[$d['wattage']] = true; }
+                            ksort($unique_wattages_outbound);
+                            foreach (array_keys($unique_wattages_outbound) as $wattage):
+                        ?>
+                           <option value="<?php echo htmlspecialchars($wattage); ?>"><?php echo htmlspecialchars($wattage); ?>W</option>
+                        <?php 
+                            endforeach; 
+                        }
+                        ?>
+                    </select>
+               </div>
+              <div class="table-responsive">
+                  <table id="outboundTruckloadsTable">
+                      <thead>
+                          <tr>
+                              <th>BOL Number</th>
+                              <th>Supplier</th>
+                              <th>Wattage</th>
+                              <th>Total Modules</th>
+                              <th>Departure Date</th>
+                              <th>Proof of Delivery</th>
+                              <th>Actions</th>
+                          </tr>
+                      </thead>
+                      <tbody>
+                          <?php if (!empty($outbound_deliveries_for_table)): ?>
+                               <?php foreach ($outbound_deliveries_for_table as $delivery): ?>
+                                  <tr>
+                                      <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
+                                      <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
+                                      <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
+                                      <td><?php echo number_format($delivery['quantity'] ?? 0); ?></td>
+                                      <td><?php echo htmlspecialchars($delivery['left_warehouse_date'] ?? 'N/A'); ?></td>
+                                       <td>
+                                           <?php if (!empty($delivery['proof_of_delivery'])): ?>
+                                               <a href="view_pod.php?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">View</a>
+                                           <?php else: ?>
+                                               N/A
+                                           <?php endif; ?>
+                                       </td>
                                       <td>
-                                          <?php if (!empty($delivery['proof_of_delivery'])): ?>
-                                              <a href="view_pod.php?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">View</a>
-                                          <?php else: ?>
-                                              N/A
-                                          <?php endif; ?>
+                                          <a href="edit_delivery.php?delivery_id=<?php echo $delivery['id']; ?>&warehouse_id=<?php echo $warehouse_id; ?><?php if($project_id) echo '&project_id='.$project_id; ?>" class="action-button" style="padding: 3px 8px; font-size: 0.9em;">Edit</a>
                                       </td>
-                                     <td>
-                                         <a href="edit_delivery.php?delivery_id=<?php echo $delivery['id']; ?>&warehouse_id=<?php echo $warehouse_id; ?><?php if($project_id) echo '&project_id='.$project_id; ?>" class="action-button" style="padding: 3px 8px; font-size: 0.9em;">Edit</a>
-                                     </td>
-                                 </tr>
-                             <?php endforeach; ?>
-                         <?php else: ?>
-                             <tr><td colspan="8">No truckload arrivals or departures recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
-                         <?php endif; ?>
-                     </tbody>
-                 </table>
-             </div>
+                                  </tr>
+                              <?php endforeach; ?>
+                          <?php else: ?>
+                              <tr><td colspan="7">No outbound truckloads recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
+                          <?php endif; ?>
+                      </tbody>
+                  </table>
+              </div>
          </div>
          <!-- === END Standard Warehouse View === -->
     <?php endif; ?>
@@ -821,6 +844,31 @@ if ($conn) {
         }
         if(evt && evt.currentTarget) {
             evt.currentTarget.className += " active";
+        }
+
+        // If opening TruckloadView, default to showing arrivals sub-view
+        if (tabName === 'TruckloadView') {
+            showTruckloadSubView('arrivals');
+        }
+    }
+
+    // --- NEW: Sub-view toggling for Truckload History ---
+    function showTruckloadSubView(viewType) {
+        const arrivalsView = document.getElementById('truckloadArrivalsSubView');
+        const departuresView = document.getElementById('truckloadDeparturesSubView');
+        const arrivalsButton = document.querySelector('.sub-tab-button[onclick*="arrivals"]');
+        const departuresButton = document.querySelector('.sub-tab-button[onclick*="departures"]');
+
+        if (viewType === 'arrivals') {
+            if(arrivalsView) arrivalsView.style.display = 'block';
+            if(departuresView) departuresView.style.display = 'none';
+            if(arrivalsButton) arrivalsButton.classList.add('active');
+            if(departuresButton) departuresButton.classList.remove('active');
+        } else if (viewType === 'departures') {
+            if(arrivalsView) arrivalsView.style.display = 'none';
+            if(departuresView) departuresView.style.display = 'block';
+            if(arrivalsButton) arrivalsButton.classList.remove('active');
+            if(departuresButton) departuresButton.classList.add('active');
         }
     }
 
@@ -862,7 +910,8 @@ if ($conn) {
              if (show && wattageFilter) {
                  let wattageCellIndex = -1;
                  if (tableId === 'inventoryTable' && cells.length > 2) wattageCellIndex = 2;
-                 else if (tableId === 'truckloadsTable' && cells.length > 2) wattageCellIndex = 2;
+                 else if (tableId === 'inboundTruckloadsTable' && cells.length > 2) wattageCellIndex = 2;
+                 else if (tableId === 'outboundTruckloadsTable' && cells.length > 2) wattageCellIndex = 2;
 
                  if (wattageCellIndex !== -1 && cells[wattageCellIndex]) {
                      const wattageText = cells[wattageCellIndex].textContent.replace('W', '').trim();
@@ -893,23 +942,34 @@ if ($conn) {
          // Set Inventory View as default active tab
          const defaultActiveButton = document.querySelector('.tabs button.active');
          if (defaultActiveButton) {
-             openTab({ currentTarget: defaultActiveButton }, 'InventoryView');
+             openTab({ currentTarget: defaultActiveButton }, defaultActiveButton.textContent.includes('Inventory') ? 'InventoryView' : 'TruckloadView');
          }
          
-         const arrivedDateFilter = document.getElementById('arrivedDateFilter');
-         const leftDateFilter = document.getElementById('leftDateFilter');
-         const truckloadSearch = document.getElementById('truckloadSearch');
-         const truckloadWattageFilter = document.getElementById('truckloadWattageFilter'); 
+         // Filters for Inbound Truckloads Table
+         const inboundArrivedDateFilter = document.getElementById('inboundArrivedDateFilter');
+         const inboundTruckloadSearch = document.getElementById('inboundTruckloadSearch');
+         const inboundTruckloadWattageFilter = document.getElementById('inboundTruckloadWattageFilter'); 
 
-         const truckloadDateFilters = {};
-         if(arrivedDateFilter) truckloadDateFilters['arrived'] = { selectId: 'arrivedDateFilter', cellIndex: 4 }; 
-         if(leftDateFilter) truckloadDateFilters['left'] = { selectId: 'leftDateFilter', cellIndex: 5 }; 
+         const inboundDateFilters = {};
+         if(inboundArrivedDateFilter) inboundDateFilters['arrived'] = { selectId: 'inboundArrivedDateFilter', cellIndex: 4 }; 
 
-         if(arrivedDateFilter) arrivedDateFilter.addEventListener('change', () => filterTable('truckloadsTable', 'truckloadSearch', 'truckloadWattageFilter', truckloadDateFilters));
-         if(leftDateFilter) leftDateFilter.addEventListener('change', () => filterTable('truckloadsTable', 'truckloadSearch', 'truckloadWattageFilter', truckloadDateFilters));
-         if(truckloadSearch) truckloadSearch.addEventListener('keyup', () => filterTable('truckloadsTable', 'truckloadSearch', 'truckloadWattageFilter', truckloadDateFilters));
-         if(truckloadWattageFilter) truckloadWattageFilter.addEventListener('change', () => filterTable('truckloadsTable', 'truckloadSearch', 'truckloadWattageFilter', truckloadDateFilters));
+         if(inboundArrivedDateFilter) inboundArrivedDateFilter.addEventListener('change', () => filterTable('inboundTruckloadsTable', 'inboundTruckloadSearch', 'inboundTruckloadWattageFilter', inboundDateFilters));
+         if(inboundTruckloadSearch) inboundTruckloadSearch.addEventListener('keyup', () => filterTable('inboundTruckloadsTable', 'inboundTruckloadSearch', 'inboundTruckloadWattageFilter', inboundDateFilters));
+         if(inboundTruckloadWattageFilter) inboundTruckloadWattageFilter.addEventListener('change', () => filterTable('inboundTruckloadsTable', 'inboundTruckloadSearch', 'inboundTruckloadWattageFilter', inboundDateFilters));
 
+         // Filters for Outbound Truckloads Table
+         const outboundLeftDateFilter = document.getElementById('outboundLeftDateFilter');
+         const outboundTruckloadSearch = document.getElementById('outboundTruckloadSearch');
+         const outboundTruckloadWattageFilter = document.getElementById('outboundTruckloadWattageFilter'); 
+
+         const outboundDateFilters = {};
+         if(outboundLeftDateFilter) outboundDateFilters['left'] = { selectId: 'outboundLeftDateFilter', cellIndex: 4 }; // Departure date is cell index 4 in outbound table
+
+         if(outboundLeftDateFilter) outboundLeftDateFilter.addEventListener('change', () => filterTable('outboundTruckloadsTable', 'outboundTruckloadSearch', 'outboundTruckloadWattageFilter', outboundDateFilters));
+         if(outboundTruckloadSearch) outboundTruckloadSearch.addEventListener('keyup', () => filterTable('outboundTruckloadsTable', 'outboundTruckloadSearch', 'outboundTruckloadWattageFilter', outboundDateFilters));
+         if(outboundTruckloadWattageFilter) outboundTruckloadWattageFilter.addEventListener('change', () => filterTable('outboundTruckloadsTable', 'outboundTruckloadSearch', 'outboundTruckloadWattageFilter', outboundDateFilters));
+
+         // Filters for Inventory Table (remains the same)
          const inventorySearch = document.getElementById('inventorySearch');
          const inventoryWattageFilter = document.getElementById('inventoryWattageFilter');
 
@@ -917,7 +977,8 @@ if ($conn) {
          if(inventoryWattageFilter) inventoryWattageFilter.addEventListener('change', () => filterTable('inventoryTable', 'inventorySearch', 'inventoryWattageFilter'));
          
          filterTable('inventoryTable', 'inventorySearch', 'inventoryWattageFilter');
-         filterTable('truckloadsTable', 'truckloadSearch', 'truckloadWattageFilter', truckloadDateFilters);
+         filterTable('inboundTruckloadsTable', 'inboundTruckloadSearch', 'inboundTruckloadWattageFilter', inboundDateFilters);
+         filterTable('outboundTruckloadsTable', 'outboundTruckloadSearch', 'outboundTruckloadWattageFilter', outboundDateFilters);
      });
 
 </script>
