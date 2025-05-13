@@ -15,14 +15,18 @@ $warehouses = [];
 $errorMessage = '';
 
 try {
-    // Fetch warehouses along with a count of pallets currently stored
+    // Fetch warehouses along with a count of pallets currently stored and in transit
     $sql = "SELECT 
                 w.id, 
                 w.name, 
                 w.address, 
-                COUNT(ip.id) AS current_pallet_count
+                COUNT(DISTINCT CASE WHEN ip_stored.status = 'In Warehouse' THEN ip_stored.id ELSE NULL END) AS current_pallet_count,
+                COUNT(DISTINCT CASE WHEN ip_transit.status = 'In Transit to Warehouse' THEN ip_transit.id ELSE NULL END) AS in_transit_pallet_count
             FROM warehouses w
-            LEFT JOIN inventory_pallets ip ON w.id = ip.current_warehouse_id AND ip.status = 'In Warehouse'
+            LEFT JOIN inventory_pallets ip_stored ON w.id = ip_stored.current_warehouse_id AND ip_stored.status = 'In Warehouse'
+            LEFT JOIN deliveries d_transit ON w.id = d_transit.warehouse_id
+            LEFT JOIN delivery_pallets dp_transit ON d_transit.id = dp_transit.delivery_id
+            LEFT JOIN inventory_pallets ip_transit ON dp_transit.inventory_pallet_id = ip_transit.id AND ip_transit.status = 'In Transit to Warehouse'
             GROUP BY w.id, w.name, w.address
             ORDER BY w.name ASC";
             
@@ -101,6 +105,7 @@ $conn->close();
                     <th>Name</th>
                     <th>Address</th>
                     <th>Current Pallets Stored</th>
+                    <th>In Transit Pallets</th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -111,6 +116,7 @@ $conn->close();
                             <td><?php echo htmlspecialchars($warehouse['name']); ?></td>
                             <td><?php echo htmlspecialchars($warehouse['address']); ?></td>
                             <td><?php echo number_format($warehouse['current_pallet_count']); ?></td>
+                            <td><?php echo number_format($warehouse['in_transit_pallet_count']); ?></td>
                             <td>
                                 <a href="manage_warehouse_inventory.php?warehouse_id=<?php echo $warehouse['id']; ?>" class="action-buttons">View Inventory</a>
                                 <!-- Optional: Add Edit link if needed -->
