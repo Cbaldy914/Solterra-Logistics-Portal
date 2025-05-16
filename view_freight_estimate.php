@@ -52,6 +52,19 @@ $conn->close();
             flex-wrap: wrap;
             margin: 0 auto;
         }
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+            margin-top: 10px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
         .left-side {
             flex: 1 1 50%;
             padding: 20px;
@@ -103,12 +116,13 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <a href="javascript:history.back()" class="back-icon">
-        <!-- SVG for Back Arrow -->
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-        </svg>Back
-    </a>
+    <div class="breadcrumb">
+        <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <span class="separator">&raquo;</span>
+        <a href="freight_estimate.php">Freight Cost Estimator</a>
+        <span class="separator">&raquo;</span>
+        <span><?php echo htmlspecialchars($name); ?></span>
+    </div>
     <h1><?php echo htmlspecialchars($name); ?></h1>
     <p><strong>Created At:</strong> <?php echo htmlspecialchars($created_at); ?></p>
         <!-- Display costs if they have been added by admin -->

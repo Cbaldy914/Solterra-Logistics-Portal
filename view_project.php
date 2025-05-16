@@ -34,8 +34,8 @@ if ($role === 'admin' || $role === 'global_admin') {
     $stmt->bind_param("i", $project_id);
 } else {
     /**
-     * Otherwise (regular user role), we check if this user’s account 
-     * matches the project’s account_id by joining projects.account_id 
+     * Otherwise (regular user role), we check if this user's account 
+     * matches the project's account_id by joining projects.account_id 
      * to customer_account_users.account_id for the same user_id.
      */
     $sql = "
@@ -267,6 +267,20 @@ $conn->close();
             width: 24px; height:24px;
             margin-right: 5px;
         }
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+            margin-top: 10px;
+            margin-left: 20px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
         table {
             width: 100%;
             border-collapse: collapse;
@@ -291,12 +305,13 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <a href="project_overview?id=<?php echo $project_id; ?>" class="back-icon" style="margin:20px;">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-        </svg>
-        Back
-    </a>
+    <div class="breadcrumb">
+        <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <span class="separator">&raquo;</span>
+        <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
+        <span class="separator">&raquo;</span>
+        <span>Delivery Tracker</span>
+    </div>
 
     <div class="container">
         <h1>Delivery Tracker for <?php echo htmlspecialchars($project['project_name']); ?></h1>

@@ -32,7 +32,7 @@ if ($role === 'admin' || $role === 'global_admin') {
     $params = [];
     $paramTypes = "";
 } else {
-    // Regular user => must join with customer_account_users to ensure user_id belongs to the project’s account
+    // Regular user => must join with customer_account_users to ensure user_id belongs to the project's account
     $sql_projects = "
         SELECT p.id, p.project_name, p.image_url
         FROM projects p
@@ -220,11 +220,29 @@ $conn->close();
         .project-details p {
             margin: 4px 0;
         }
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+            margin-top: 10px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
     </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <div class="breadcrumb">
+        <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <span class="separator">&raquo;</span>
+        <span>Sustainability Overview</span>
+    </div>
     <h1>Sustainability Overview
         <span class="info-tooltip">?
             <span class="tooltip-text">
