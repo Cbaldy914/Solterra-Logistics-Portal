@@ -71,6 +71,7 @@ if (isset($_SESSION['role'])) {
                         <a href="modules">Modules</a>
                         <a href="manage_pallets.php">Manage Pallets</a>
                         <a href="manage_deliveries.php">Manage Deliveries</a>
+                        <a href="link_pallet_deliveries.php">Link Pallets to Deliveries</a>
 
                     </div>
                 </li>
