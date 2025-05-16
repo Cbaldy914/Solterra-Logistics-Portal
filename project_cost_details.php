@@ -426,6 +426,18 @@ $conn->close();
             height: 24px;
             margin-right: 5px;
         }
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
     </style>
     <script>
 
@@ -433,12 +445,13 @@ $conn->close();
         var input = document.getElementById("searchInput");
         if (!input) return;
         var filter = input.value.toLowerCase();
-        var table  = document.getElementById("deliveriesTable");
-        var trs    = table.getElementsByTagName("tr");
-        for (var i = 1; i < trs.length; i++) {
+        var table = document.getElementById("deliveriesTable");
+        var trs = table.getElementsByTagName("tr");
+
+        for (var i=1; i<trs.length; i++) {
             var tds = trs[i].getElementsByTagName("td");
             var show = false;
-            for (var j = 0; j < tds.length; j++) {
+            for (var j=0; j<tds.length; j++) {
                 var txtValue = tds[j].textContent || tds[j].innerText;
                 if (txtValue.toLowerCase().indexOf(filter) > -1) {
                     show = true;
@@ -470,12 +483,11 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <a href="#" onclick="goBack()" class="back-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-        </svg>
-        Back
-    </a>
+    <div class="breadcrumb" style="margin: 10px 20px;">
+        <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
+        <span class="separator">&raquo;</span>
+        <span>Cost Details</span>
+    </div>
 
     <h1>Cost Details for <?php echo htmlspecialchars($project_name); ?></h1>
 
@@ -678,15 +690,6 @@ function searchTable() {
             }
         }
         trs[i].style.display = show ? "" : "none";
-    }
-}
-
-function goBack() {
-    var backURL = sessionStorage.getItem('backButtonURL');
-    if (backURL && backURL !== window.location.href) {
-        window.location.href = backURL;
-    } else {
-        window.history.back();
     }
 }
 </script>

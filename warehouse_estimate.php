@@ -199,6 +199,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     <style>
         /* Basic styling for layout */
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+            margin-top: 10px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
         .container {
             display: flex;
             justify-content: left;
@@ -320,6 +333,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <body>
 <?php include 'header.php'; ?>
 <main>
+<div class="breadcrumb">
+    <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+    <span class="separator">&raquo;</span>
+    <span>Warehouse Quote Request</span>
+</div>
+
 <h1>Warehouse Quote Request</h1>
 <!-- Saved Estimates Section -->
 <div id="saved-estimates">

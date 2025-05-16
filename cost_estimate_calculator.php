@@ -194,17 +194,18 @@ for ($w = 0; $w < $max_warehouses; $w++) {
     <style>
         .success-message { color: green; }
         .error-message { color: red; }
-        .back-icon {
-            display: inline-block;
+        .breadcrumb {
+            display: flex;
             margin-bottom: 20px;
-            text-decoration: none;
-            color: #000;
+            margin-top: 10px;
         }
-        .back-icon svg {
-            width: 20px;
-            height: 20px;
-            vertical-align: middle;
-            margin-right: 5px;
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
         }
 
         .section-header {
@@ -332,45 +333,15 @@ for ($w = 0; $w < $max_warehouses; $w++) {
             }
         }
     </style>
-    <script>
-        (function() {
-            var referrer = document.referrer;
-            if (!referrer) {
-                return;
-            }
-            var referrerAnchor = document.createElement('a');
-            referrerAnchor.href = referrer;
-            var currentAnchor = document.createElement('a');
-            currentAnchor.href = window.location.href;
-
-            var referrerPath = referrerAnchor.protocol + '//' + referrerAnchor.host + referrerAnchor.pathname;
-            var currentPath  = currentAnchor.protocol + '//' + currentAnchor.host + currentAnchor.pathname;
-
-            if (referrerPath !== currentPath) {
-                sessionStorage.setItem('backButtonURL', referrer);
-            }
-        })();
-
-        function goBack(){
-            var backURL = sessionStorage.getItem('backButtonURL');
-            if (backURL && backURL !== window.location.href) {
-                window.location.href = backURL;
-            } else {
-                window.history.back();
-            }
-        }
-    </script>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <a href="#" onclick="goBack()" class="back-icon">
-        <!-- SVG for Back Arrow -->
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-        </svg>
-        Back
-    </a>
+    <div class="breadcrumb">
+        <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <span class="separator">&raquo;</span>
+        <span>Cost Estimate Calculator</span>
+    </div>
 
     <h1>Cost Estimate Calculator</h1>
 

@@ -68,18 +68,30 @@ $folders = [
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
+    </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
     <!-- Simple breadcrumb trail -->
-    <nav class="breadcrumb" style="margin: 10px 20px;">
-        <a href="documents.php">Documents</a> &gt; 
-        <a href="project_overview.php?id=<?php echo $project_id; ?>">
-            <?php echo htmlspecialchars($project_name); ?>
-        </a> &gt; 
+    <div class="breadcrumb" style="margin: 10px 20px;">
+        <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
+        <span class="separator">&raquo;</span>
         <span>Documents</span>
-    </nav>
+    </div>
 
     <h1>Documents for <?php echo htmlspecialchars($project_name); ?></h1>
 
