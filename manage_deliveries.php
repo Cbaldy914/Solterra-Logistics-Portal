@@ -1521,9 +1521,6 @@ $stmt->close();
                     viewDetailsBtn.href = `pallet_details.php?pallet_id=${pallet.id}`;
                     viewDetailsBtn.textContent = 'View Details';
                     viewDetailsBtn.className = 'action-button'; 
-                    viewDetailsBtn.target = '_blank';
-                    // action-button class should handle styling, remove inline if not needed
-                    // viewDetailsBtn.style.marginLeft = '15px'; 
                     cellActions.appendChild(viewDetailsBtn);
                 });
 
