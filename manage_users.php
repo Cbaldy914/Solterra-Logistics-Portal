@@ -27,21 +27,37 @@ if (isset($_POST['delete_user'])) {
     if ($user_id_to_delete == $_SESSION['user_id']) {
         $error_message = "You cannot delete your own account.";
     } else {
-        // 1) Delete from bridging table
-        $stmtDelBridge = $conn->prepare("DELETE FROM customer_account_users WHERE user_id = ?");
-        $stmtDelBridge->bind_param("i", $user_id_to_delete);
-        $stmtDelBridge->execute();
-        $stmtDelBridge->close();
+        // Begin transaction for safe deletion
+        $conn->begin_transaction();
+        
+        try {
+            // 1) Delete from forecast_projects table first (remove dependency)
+            $stmtDelProjects = $conn->prepare("DELETE FROM forecast_projects WHERE user_id = ?");
+            $stmtDelProjects->bind_param("i", $user_id_to_delete);
+            $stmtDelProjects->execute();
+            $stmtDelProjects->close();
+            
+            // 2) Delete from bridging table
+            $stmtDelBridge = $conn->prepare("DELETE FROM customer_account_users WHERE user_id = ?");
+            $stmtDelBridge->bind_param("i", $user_id_to_delete);
+            $stmtDelBridge->execute();
+            $stmtDelBridge->close();
 
-        // 2) Delete from users table
-        $stmtDelUser = $conn->prepare("DELETE FROM users WHERE id = ?");
-        $stmtDelUser->bind_param("i", $user_id_to_delete);
-        if ($stmtDelUser->execute()) {
-            $success_message = "User (and related account mapping) deleted successfully.";
-        } else {
-            $error_message = "Error deleting user: " . $stmtDelUser->error;
+            // 3) Delete from users table
+            $stmtDelUser = $conn->prepare("DELETE FROM users WHERE id = ?");
+            $stmtDelUser->bind_param("i", $user_id_to_delete);
+            $stmtDelUser->execute();
+            $stmtDelUser->close();
+            
+            // Commit all changes if successful
+            $conn->commit();
+            $success_message = "User (and related data) deleted successfully.";
+            
+        } catch (Exception $e) {
+            // Rollback changes if any step fails
+            $conn->rollback();
+            $error_message = "Error deleting user: " . $e->getMessage();
         }
-        $stmtDelUser->close();
     }
 }
 
