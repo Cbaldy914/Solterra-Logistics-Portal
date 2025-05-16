@@ -57,10 +57,31 @@ while ($project = $projects_result->fetch_assoc()) {
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+            margin-top: 10px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
+    </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <div class="breadcrumb">
+        <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <span class="separator">&raquo;</span>
+        <span>Documents</span>
+    </div>
+
     <h1>Documents</h1>
     <!-- Filter Input -->
     <input type="text" id="projectFilter" class="filter-input" placeholder="Search Projects...">

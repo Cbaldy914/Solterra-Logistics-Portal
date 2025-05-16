@@ -279,7 +279,7 @@ $total_warehousing       = 0;
 $total_solterra_fee      = 0;
 $total_logistics_cost    = 0;
 
-// Step: fetch user’s projects differently if admin/global_admin or normal user
+// Step: fetch user's projects differently if admin/global_admin or normal user
 if ($role === 'admin' || $role === 'global_admin') {
     // All projects
     $sql_proj = "SELECT p.id, p.project_name, p.image_url FROM projects p";
@@ -410,11 +410,29 @@ $conn->close();
         .project-details p {
             margin: 4px 0;
         }
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+            margin-top: 10px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
     </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <div class="breadcrumb">
+        <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <span class="separator">&raquo;</span>
+        <span>Cost Overview</span>
+    </div>
     <h1>Cost Overview</h1>
     <form method="GET" id="filter-form">
         <label>

@@ -311,11 +311,31 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_project'])) {
         .info-tooltip:hover .tooltip-text {
             visibility: visible;
         }
+        
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+            margin-top: 10px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
     </style>
 </head>
 <body>
     <?php include 'header.php'; ?>
     <main>
+    <div class="breadcrumb">
+        <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <span class="separator">&raquo;</span>
+        <span>Future Projects</span>
+    </div>
+    
     <h1>Future Projects
     <span class="info-tooltip">?
         <span class="tooltip-text">Adding a project is for forecasting and mapping logistics expenses. No costs will be incurred by adding a project. </span>

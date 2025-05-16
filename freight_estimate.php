@@ -149,6 +149,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             display: flex;
             flex-wrap: wrap;
         }
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+            margin-top: 10px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
         .left-side {
             flex: 1 1 50%;
             padding: 20px;
@@ -217,41 +230,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             color: red;
         }
     </style>
-    <script>
-        (function() {
-            var referrer = document.referrer;
-            if (!referrer) {
-                return; // No referrer, nothing to do
-            }
-
-            // Create anchor elements to parse URLs
-            var referrerAnchor = document.createElement('a');
-            referrerAnchor.href = referrer;
-
-            var currentAnchor = document.createElement('a');
-            currentAnchor.href = window.location.href;
-
-            // Compare the protocol, host, and pathname (excluding search and hash)
-            var referrerPath = referrerAnchor.protocol + '//' + referrerAnchor.host + referrerAnchor.pathname;
-            var currentPath = currentAnchor.protocol + '//' + currentAnchor.host + currentAnchor.pathname;
-
-            if (referrerPath !== currentPath) {
-                // Different page, update backButtonURL
-                sessionStorage.setItem('backButtonURL', referrer);
-            }
-        })();
-    </script>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <a href="#" onclick="goBack()" class="back-icon">
-        <!-- SVG for Back Arrow -->
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-        </svg>
-        Back
-    </a>
+    <div class="breadcrumb">
+        <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <span class="separator">&raquo;</span>
+        <span>Freight Cost Estimator</span>
+    </div>
 <h1>Freight Cost Estimator</h1>
 <!-- Saved Estimates Section -->
 <div id="saved-estimates">
@@ -491,15 +478,6 @@ if (isset($error_message)) {
             }
         });
     });
-        // Script for the goBack() function
-        function goBack() {
-        var backURL = sessionStorage.getItem('backButtonURL');
-        if (backURL && backURL !== window.location.href) {
-            window.location.href = backURL;
-        } else {
-            window.history.back();
-        }
-    }
 </script>
 </main>
 </body>
