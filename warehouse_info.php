@@ -336,6 +336,18 @@ if ($conn) {
             height: 24px;
             margin-right: 5px;
         }
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
         .warehouse-info-container { 
             display: flex;
             align-items: flex-start; 
@@ -608,12 +620,27 @@ if ($conn) {
          $back_link = "manage_warehouses.php";
      }
      ?>
-     <a href="<?php echo $back_link; ?>" class="back-icon" style="margin:20px;">
-         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="fill: currentColor; width: 24px; height: 24px;">
-             <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-         </svg>
-         Back
-     </a>
+     <div class="breadcrumb" style="margin: 10px 20px;">
+         <?php if ($project_id && !$warehouse_id): ?>
+             <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
+             <span class="separator">&raquo;</span>
+             <span>Warehouse Locations</span>
+         <?php elseif ($warehouse_id && $project_id): ?>
+             <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
+             <span class="separator">&raquo;</span>
+             <a href="warehouse_info.php?project_id=<?php echo $project_id; ?>">Warehouse Locations</a>
+             <span class="separator">&raquo;</span>
+             <span><?php echo htmlspecialchars($warehouse_data['name'] ?? 'Warehouse Details'); ?></span>
+         <?php elseif ($warehouse_id): ?>
+             <a href="manage_warehouses.php">Warehouses</a>
+             <span class="separator">&raquo;</span>
+             <span><?php echo htmlspecialchars($warehouse_data['name'] ?? 'Warehouse Details'); ?></span>
+         <?php else: ?>
+             <a href="manage_warehouses.php">Warehouses</a>
+             <span class="separator">&raquo;</span>
+             <span>Warehouse Information</span>
+         <?php endif; ?>
+     </div>
 
     <h1><?php echo $page_title; ?></h1>
 

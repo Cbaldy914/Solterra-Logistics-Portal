@@ -25,7 +25,7 @@ if (!$conn) {
  *  - Total # projects with modules in storage
  *
  * If role=admin/global_admin => all
- * Else => must join with customer_account_users => only projects in the user’s account
+ * Else => must join with customer_account_users => only projects in the user's account
  */
 
 // 1) Projects that have modules in storage
@@ -186,6 +186,19 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+            margin-top: 10px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
         .key-figures {
             display: flex;
             flex-wrap: wrap;
@@ -240,6 +253,12 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <div class="breadcrumb">
+        <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <span class="separator">&raquo;</span>
+        <span>Warehousing Overview</span>
+    </div>
+
     <h1>Warehousing Overview</h1>
 
     <div class="key-figures">

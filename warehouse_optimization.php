@@ -143,6 +143,20 @@ $stmt->close();
       margin-bottom: 10px;
     }
 
+    .breadcrumb {
+      display: flex;
+      margin-bottom: 20px;
+      margin-top: 10px;
+    }
+    .breadcrumb a {
+      color: #488C9A;
+      text-decoration: none;
+    }
+    .breadcrumb .separator {
+      margin: 0 8px;
+      color: #6c757d;
+    }
+
     /* Put summary table and Grand Total box on one row, spaced and aligned */
     .summary-container {
       display: flex;
@@ -462,6 +476,12 @@ $stmt->close();
 <body>
   <?php include 'header.php'; ?>
   <main>
+    <div class="breadcrumb">
+      <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+      <span class="separator">&raquo;</span>
+      <span>Warehouse Optimization</span>
+    </div>
+
     <h1>Warehouse Optimization</h1>
 
     <!-- Buttons for saved scenarios -->
