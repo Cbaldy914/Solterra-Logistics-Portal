@@ -19,8 +19,20 @@ if (!$conn) {
 // Initialize any feedback messages
 $success_message = '';
 $error_message = '';
+$form_data = [
+    'account_name' => '',
+    'username' => '',
+    'role' => 'admin'
+]; // Store form values to repopulate after error
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Store form data for repopulation if there's an error
+    $form_data = [
+        'account_name' => trim($_POST['account_name'] ?? ''),
+        'username' => trim($_POST['username'] ?? ''),
+        'role' => trim($_POST['role'] ?? 'admin')
+    ];
+    
     // 1) Grab form inputs
     $account_name = trim($_POST['account_name']);
     $username     = trim($_POST['username']);
@@ -102,6 +114,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->commit();
 
             $success_message = "New account '$account_name' created, and user '$username' assigned as '$role'.";
+            
+            // Clear form data after successful submission
+            $form_data = [
+                'account_name' => '',
+                'username' => '',
+                'role' => 'admin'
+            ];
         } catch (Exception $e) {
             $conn->rollback();
             $error_message = "Error creating account/user: " . $e->getMessage();
@@ -113,41 +132,178 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Add Account</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <style>
+        .container {
+            padding: 20px;
+        }
+        
+        .form-container {
+            background-color: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 25px;
+            margin-top: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            max-width: 700px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .form-group input[type="text"],
+        .form-group input[type="password"],
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input[type="text"]:focus,
+        .form-group input[type="password"]:focus,
+        .form-group select:focus {
+            border-color: #488C9A;
+            outline: none;
+            box-shadow: 0 0 5px rgba(72,140,154,0.3);
+        }
+        
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border-left: 4px solid #dc3545;
+            font-weight: 500;
+        }
+        
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border-left: 4px solid #28a745;
+            font-weight: 500;
+        }
+        
+        .btn-primary {
+            background-color: #488C9A;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            font-weight: 500;
+        }
+        
+        .btn-primary:hover {
+            background-color: #3A7A87;
+        }
+        
+        .required-indicator {
+            color: #dc3545;
+            margin-left: 3px;
+        }
+        
+        .form-title {
+            margin-bottom: 25px;
+            color: #293E4C;
+            font-size: 1.5rem;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
+        
+        small {
+            display: block;
+            margin-top: 5px;
+            color: #6c757d;
+        }
+    </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 
-<h1>Add New Customer Account</h1>
+<main class="container">
+    <div class="breadcrumb">
+        <a href="manage_accounts.php">Accounts</a>
+        <span class="separator">&raquo;</span>
+        <span>Add New Account</span>
+    </div>
 
-<?php if (!empty($success_message)): ?>
-    <div class="success-message"><?php echo htmlspecialchars($success_message); ?></div>
-<?php endif; ?>
-<?php if (!empty($error_message)): ?>
-    <div class="error-message"><?php echo htmlspecialchars($error_message); ?></div>
-<?php endif; ?>
+    <h1>Add New Customer Account</h1>
 
-<form action="" method="POST">
-    <label for="account_name">Account Name:</label><br>
-    <input type="text" name="account_name" required><br><br>
+    <?php if (!empty($success_message)): ?>
+        <div class="success-message"><?php echo htmlspecialchars($success_message); ?></div>
+    <?php endif; ?>
+    <?php if (!empty($error_message)): ?>
+        <div class="error-message"><?php echo htmlspecialchars($error_message); ?></div>
+    <?php endif; ?>
 
-    <label for="username">User to Assign:</label><br>
-    <input type="text" name="username" required><br><br>
+    <div class="form-container">
+        <h2 class="form-title">Account Details</h2>
+        <form action="" method="POST">
+            <div class="form-group">
+                <label for="account_name">Account Name <span class="required-indicator">*</span></label>
+                <input type="text" id="account_name" name="account_name" value="<?php echo htmlspecialchars($form_data['account_name']); ?>" required>
+            </div>
 
-    <label for="password">User's Password:</label><br>
-    <input type="password" name="password" required><br><br>
+            <div class="form-group">
+                <label for="username">User to Assign <span class="required-indicator">*</span></label>
+                <input type="text" id="username" name="username" value="<?php echo htmlspecialchars($form_data['username']); ?>" required>
+                <small>Enter username to assign to this account. Can be new or existing.</small>
+            </div>
 
-    <label for="role">Account Role:</label><br>
-    <select name="role">
-        <option value="admin">Admin</option>
-        <option value="user">User</option>
-        <option value="DDPm">DDPm</option>
-    </select><br><br>
+            <div class="form-group">
+                <label for="password">User's Password <span class="required-indicator">*</span></label>
+                <input type="password" id="password" name="password" required>
+                <small>If an existing user is provided, this will reset their password.</small>
+            </div>
 
-    <input type="submit" value="Create Account & Assign User">
-</form>
+            <div class="form-group">
+                <label for="role">Account Role <span class="required-indicator">*</span></label>
+                <select id="role" name="role">
+                    <option value="admin" <?php echo ($form_data['role'] === 'admin') ? 'selected' : ''; ?>>Admin</option>
+                    <option value="user" <?php echo ($form_data['role'] === 'user') ? 'selected' : ''; ?>>User</option>
+                    <option value="DDPm" <?php echo ($form_data['role'] === 'DDPm') ? 'selected' : ''; ?>>DDPm</option>
+                </select>
+            </div>
+
+            <button type="submit" class="btn-primary">Create Account & Assign User</button>
+        </form>
+    </div>
+</main>
 </body>
 </html>
