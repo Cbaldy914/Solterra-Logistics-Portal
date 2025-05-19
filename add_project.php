@@ -149,33 +149,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $project_id = $stmt->insert_id;
         $stmt->close();
 
-        // Insert wattage+total_orders if provided
-        if (isset($_POST['wattages'], $_POST['total_orders'])) {
-            $wattages     = $_POST['wattages'];
-            $total_orders = $_POST['total_orders'];
+        // If wattage and quantities are provided, create a module batch for them
+        if (isset($_POST['wattages'], $_POST['quantities'])) {
+            $wattages   = $_POST['wattages'];
+            $quantities = $_POST['quantities'];
 
-            if (count($wattages) !== count($total_orders)) {
-                throw new Exception("Mismatch between wattage[] and total_orders[].");
+            if (count($wattages) !== count($quantities)) {
+                throw new Exception("Mismatch between wattage[] and quantities[] arrays.");
             }
-            for ($i=0; $i<count($wattages); $i++) {
-                $w = floatval($wattages[$i]);
-                $t = floatval($total_orders[$i]);
-                if ($w <= 0 || $t <= 0) {
-                    throw new Exception("Wattage and total_order must be > 0.");
-                }
-                $stmt2 = $conn->prepare("
-                    INSERT INTO project_wattage_orders (project_id, wattage, total_order)
-                    VALUES (?, ?, ?)
-                ");
-                if (!$stmt2) {
-                    throw new Exception("Error preparing wattage insert: " . $conn->error);
-                }
-                $stmt2->bind_param("idi", $project_id, $w, $t);
-                if (!$stmt2->execute()) {
-                    throw new Exception("Error inserting wattage: " . $stmt2->error);
-                }
-                $stmt2->close();
+
+            // Define vendor_name and initial_location for the new module batch
+            $default_vendor_name = "Initial Stock - " . htmlspecialchars($project_name);
+            $default_initial_location = htmlspecialchars($project_address);
+
+            // Insert into modules table
+            $stmt_module = $conn->prepare("
+                INSERT INTO modules (account_id, vendor_name, initial_location, project_id) 
+                VALUES (?, ?, ?, ?)
+            ");
+            if (!$stmt_module) {
+                throw new Exception("Error preparing module batch insert: " . $conn->error);
             }
+            $stmt_module->bind_param("issi", $account_id, $default_vendor_name, $default_initial_location, $project_id);
+            if (!$stmt_module->execute()) {
+                throw new Exception("Error inserting module batch for project: " . $stmt_module->error);
+            }
+            $module_batch_id = $stmt_module->insert_id;
+            $stmt_module->close();
+
+            // Insert items into unassigned_module_items
+            $stmt_item = $conn->prepare("
+                INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) 
+                VALUES (?, ?, ?)
+            ");
+            if (!$stmt_item) {
+                throw new Exception("Error preparing module item insert: " . $conn->error);
+            }
+
+            for ($i = 0; $i < count($wattages); $i++) {
+                $w_val = trim($wattages[$i]);
+                $q_val = trim($quantities[$i]);
+
+                // Validate and convert to integers
+                // Wattage might be empty if user adds a row and doesn't fill it, then submits.
+                // Or quantity might be empty.
+                if ($w_val === '' || $q_val === '') {
+                    // Option 1: Skip empty rows silently
+                    // continue; 
+                    // Option 2: Throw error if any are empty after submission attempt
+                    throw new Exception("Wattage and Quantity values cannot be empty for an entry.");
+                }
+
+                $w_int = filter_var($w_val, FILTER_VALIDATE_INT);
+                $q_int = filter_var($q_val, FILTER_VALIDATE_INT);
+
+                if ($w_int === false || $q_int === false) {
+                    throw new Exception("Wattage and Quantity must be valid integers.");
+                }
+                if ($w_int <= 0 || $q_int <= 0) {
+                    throw new Exception("Wattage and Quantity must be positive integers.");
+                }
+                
+                $stmt_item->bind_param("iii", $module_batch_id, $w_int, $q_int);
+                if (!$stmt_item->execute()) {
+                    throw new Exception("Error inserting module item (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_item->error);
+                }
+            }
+            $stmt_item->close();
         }
 
         // Set a success message to be displayed with the form below
@@ -336,15 +376,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             wattageLabel.textContent = 'Wattage:';
             var wattageInput = document.createElement('input');
             wattageInput.type = 'number';
-            wattageInput.step = '0.01';
+            wattageInput.step = '1';
             wattageInput.name = 'wattages[' + index + ']';
             wattageInput.required = true;
 
             var totalOrderLabel = document.createElement('label');
-            totalOrderLabel.textContent = 'Total Order Quantity:';
+            totalOrderLabel.textContent = 'Quantity:';
             var totalOrderInput = document.createElement('input');
             totalOrderInput.type = 'number';
-            totalOrderInput.name = 'total_orders[' + index + ']';
+            totalOrderInput.step = '1';
+            totalOrderInput.name = 'quantities[' + index + ']';
             totalOrderInput.required = true;
 
             var removeButton = document.createElement('button');

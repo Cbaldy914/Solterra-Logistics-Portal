@@ -2,8 +2,9 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure user has role admin or global_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
+// Allow access for admin, global_admin, and user roles.
+// Specific functionalities will be controlled by role checks within the page.
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'user'])) {
     header("Location: unauthorized");
     exit();
 }
@@ -663,7 +664,9 @@ $conn->close();
             </p>
             <p><strong>Batch ID:</strong> <?php echo $batch_data['id']; ?></p>
             <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch_data['created_at'])); ?></p>
+            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
             <button class="edit-button" onclick="window.location.href='edit_module.php?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
+            <?php endif; ?>
         </div>
 
         <div class="summary-section">
@@ -671,32 +674,37 @@ $conn->close();
             
             <!-- Container for wattage blocks -->
             <div class="wattage-blocks-container">
-                <?php if (!empty($wattage_summary)): ?>
-                    <?php foreach ($wattage_summary as $wattage => $data): ?>
+                <?php if (!empty($wattage_summary)):
+                    foreach ($wattage_summary as $wattage => $data):
+                ?>
                         <div class="wattage-summary-block">
                             <h4><?php echo htmlspecialchars($wattage); ?>W Modules</h4>
                             <p><strong>Ordered:</strong> <?php echo number_format($data['ordered_quantity']); ?></p>
                             <p><strong>On Pallets:</strong> <?php echo number_format($data['palletized_quantity']); ?></p>
                             <p><strong>Remaining:</strong> <?php echo number_format($data['remaining_quantity']); ?></p>
                             
-                            <?php if ($data['remaining_quantity'] > 0): ?>
-                                <form method="POST">
-                                    <input type="hidden" name="action" value="generate_pallets">
-                                    <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
-                                    <div>
-                                        <label for="modules_per_pallet_<?php echo $wattage; ?>">Modules per Pallet:</label>
-                                        <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $wattage; ?>" min="1" value="1" required>
-                                        <button type="submit">Generate</button>
-                                    </div>
-                                </form>
-                            <?php else: ?>
+                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <?php if ($data['remaining_quantity'] > 0): ?>
+                                    <form method="POST">
+                                        <input type="hidden" name="action" value="generate_pallets">
+                                        <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
+                                        <div>
+                                            <label for="modules_per_pallet_<?php echo $wattage; ?>">Modules per Pallet:</label>
+                                            <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $wattage; ?>" min="1" value="1" required>
+                                            <button type="submit">Generate</button>
+                                        </div>
+                                    </form>
+                                <?php else: ?>
+                                    <p style="color: green; margin-top: 15px;">All modules palletized.</p>
+                                <?php endif; ?>
+                            <?php elseif ($data['remaining_quantity'] <= 0): // For user role, still show if all palletized ?>
                                 <p style="color: green; margin-top: 15px;">All modules palletized.</p>
-                            <?php endif; ?>
+                            <?php endif; // End role check for pallet generation form ?>
                         </div>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <p>No module items found for this batch.</p>
-                <?php endif; ?>
+                <?php 
+                    endforeach; // End foreach $wattage_summary
+                    endif; // End if !empty($wattage_summary)
+                ?>
             </div>
 
             <!-- Keep Pallet Status Breakdown -->
@@ -716,7 +724,8 @@ $conn->close();
             <?php endif; ?>
         </div>
 
-        <!-- ====== SHIP PALLETS FORM ====== -->
+        <!-- ====== SHIP PALLETS FORM CONDITIONALLY SHOWN ====== -->
+        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
         <form method="POST" id="shipPalletsForm">
             <input type="hidden" name="action" value="ship_pallets">
             
@@ -772,6 +781,53 @@ $conn->close();
                 <?php endif; ?>
             </div>
         </form>
+        <?php else: // For 'user' role, show a simplified, read-only pallet list if pallets exist ?>
+            <?php if (!empty($pallets)): ?>
+            <div class="pallets-section" style="margin-top: 30px;">
+                <h2 class="section-title">Associated Pallets</h2>
+                 <div class="pallet-table-actions" style="justify-content: flex-start; gap: 20px; align-items: center;">
+                    <label>Filter Table:
+                        <input type="text" id="palletSearchUser" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPalletsUserView()">
+                    </label>
+                    <label for="wattageFilterUser">Wattage:</label>
+                    <select id="wattageFilterUser" onchange="filterPalletsUserView()">
+                        <option value="">All</option>
+                        <?php
+                        $user_view_wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
+                        sort($user_view_wattages);
+                        foreach ($user_view_wattages as $w_user) {
+                            echo '<option value="' . htmlspecialchars($w_user) . '">' . htmlspecialchars($w_user) . 'W</option>';
+                        }
+                        ?>
+                    </select>
+                </div>
+                <table id="userPalletsTable">
+                    <thead>
+                        <tr>
+                            <th>Identifier</th>
+                            <th>Wattage</th>
+                            <th>Quantity</th>
+                            <th>Status</th>
+                            <th>Current Location</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($pallets as $pallet): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
+                                <td><?php echo $pallet['wattage']; ?>W</td>
+                                <td><?php echo number_format($pallet['quantity']); ?></td>
+                                <td><?php echo htmlspecialchars($pallet['status']); ?></td>
+                                <td><?php echo htmlspecialchars($pallet['display_location']); ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php elseif (isset($_SESSION['role']) && $_SESSION['role'] === 'user'): // Only show this message to users if no pallets ?>
+                 <p style="margin-top:20px;">No pallets have been created or recorded for this batch yet.</p>
+            <?php endif; // End user role check for no pallets message ?>
+        <?php endif; // End role check for entire ship pallets section ?>
 
     <?php else: ?>
          <p>Batch data could not be loaded.</p>
@@ -908,287 +964,321 @@ document.addEventListener('DOMContentLoaded', function() {
     updateSelectedCount();
 });
 
-// ----------------- PALLET FILTER -----------------
-function filterPallets() {
+// ----------------- PALLET FILTER (ADMIN VIEW) -----------------
+function filterPallets() { // Renamed from filterPallets to filterPalletsAdminView if we have two distinct ones
     let filter = document.getElementById('palletSearch').value.toLowerCase();
     let wattageFilter = document.getElementById('wattageFilter').value;
-    let rows = document.querySelectorAll('.pallets-section table tbody tr');
+    let rows = document.querySelectorAll('#shipPalletsForm table tbody tr'); // Target admin table
 
     rows.forEach(function(row) {
         let show = true;
-        // Check text content
         let textContent = '';
-        for (let i = 1; i < row.cells.length; i++) {
+        for (let i = 1; i < row.cells.length; i++) { // Start from cell 1 to skip checkbox
             textContent += row.cells[i].textContent.toLowerCase() + ' ';
         }
         if (filter && !textContent.includes(filter)) {
             show = false;
         }
-        // Wattage filter
         if (wattageFilter && row.cells[2].textContent.replace('W','').trim() !== wattageFilter) {
             show = false;
         }
         row.style.display = show ? '' : 'none';
     });
-    updateSelectedCount();
+    updateSelectedCount(); // This might need adjustment if selectAll is not present for users
 }
 
-function updateSelectedCount() {
-    let count = document.querySelectorAll('.pallet-checkbox:checked').length;
-    document.getElementById('selectedCount').textContent =
-        count + ' pallet' + (count === 1 ? '' : 's') + ' selected';
+// NEW: PALLET FILTER (USER VIEW)
+function filterPalletsUserView() {
+    let filter = document.getElementById('palletSearchUser').value.toLowerCase();
+    let wattageFilter = document.getElementById('wattageFilterUser').value;
+    let rows = document.querySelectorAll('#userPalletsTable tbody tr'); // Target user table
+
+    rows.forEach(function(row) {
+        let show = true;
+        let textContent = row.textContent.toLowerCase(); // Simpler, as no checkbox cell
+        
+        if (filter && !textContent.includes(filter)) {
+            show = false;
+        }
+        // Wattage filter for user view (cell index 1 for wattage)
+        if (wattageFilter && row.cells[1].textContent.replace('W','').trim() !== wattageFilter) {
+            show = false;
+        }
+        row.style.display = show ? '' : 'none';
+    });
 }
 
-// ----------------- MODAL LOGIC -----------------
+// Conditional event listeners for admin/user filters
+document.addEventListener('DOMContentLoaded', function() {
+    // Admin filters
+    const palletSearchAdmin = document.getElementById('palletSearch');
+    const wattageFilterAdmin = document.getElementById('wattageFilter');
+    if (palletSearchAdmin) palletSearchAdmin.addEventListener('keyup', filterPallets);
+    if (wattageFilterAdmin) wattageFilterAdmin.addEventListener('change', filterPallets);
+
+    // User filters
+    const palletSearchUser = document.getElementById('palletSearchUser');
+    const wattageFilterUser = document.getElementById('wattageFilterUser');
+    if (palletSearchUser) palletSearchUser.addEventListener('keyup', filterPalletsUserView);
+    if (wattageFilterUser) wattageFilterUser.addEventListener('change', filterPalletsUserView);
+
+    // Initial filter application if tables exist
+    if (document.getElementById('shipPalletsForm')) filterPallets();
+    if (document.getElementById('userPalletsTable')) filterPalletsUserView();
+});
+
+
+// ----------------- MODAL LOGIC (ONLY FOR ADMINS) -----------------
 const shipModal = document.getElementById('shipModal');
 const openShipModalBtn = document.getElementById('openShipModalBtn');
-const closeShipModalBtn = shipModal.querySelector('.close-modal-btn');
 
-function openShipModal() {
-    shipModal.style.display = 'block';
-}
-function closeShipModal() {
-    shipModal.style.display = 'none';
-}
+if (openShipModalBtn) { // Button only exists for admins
+    const closeShipModalBtn = shipModal.querySelector('.close-modal-btn');
 
-if (openShipModalBtn) {
-    openShipModalBtn.addEventListener('click', openShipModal);
-}
-if (closeShipModalBtn) {
-    closeShipModalBtn.addEventListener('click', closeShipModal);
-}
-window.addEventListener('click', function(e) {
-    if (e.target === shipModal) {
-        closeShipModal();
+    function openShipModal() {
+        shipModal.style.display = 'block';
     }
-});
+    function closeShipModal() {
+        shipModal.style.display = 'none';
+    }
 
-// ----------------- TAB SWITCHING (SINGLE vs MULTI) -----------------
-const singleTabBtn = document.getElementById('singleTabBtn');
-const multiTabBtn = document.getElementById('multiTabBtn');
-const singleSection = document.getElementById('singleShipmentSection');
-const multiSection = document.getElementById('multiShipmentSection');
+    openShipModalBtn.addEventListener('click', openShipModal);
+    if (closeShipModalBtn) {
+        closeShipModalBtn.addEventListener('click', closeShipModal);
+    }
+    window.addEventListener('click', function(e) {
+        if (e.target === shipModal) {
+            closeShipModal();
+        }
+    });
 
-if (singleTabBtn && multiTabBtn && singleSection && multiSection) {
-    singleTabBtn.addEventListener('click', () => {
-        singleTabBtn.classList.add('active');
-        multiTabBtn.classList.remove('active');
-        singleSection.style.display = '';
-        multiSection.style.display = 'none';
+    // ----------------- TAB SWITCHING (SINGLE vs MULTI) (ADMIN ONLY) -----------------
+    const singleTabBtn = document.getElementById('singleTabBtn');
+    const multiTabBtn = document.getElementById('multiTabBtn');
+    const singleSection = document.getElementById('singleShipmentSection');
+    const multiSection = document.getElementById('multiShipmentSection');
+
+    if (singleTabBtn && multiTabBtn && singleSection && multiSection) {
+        singleTabBtn.addEventListener('click', () => {
+            singleTabBtn.classList.add('active');
+            multiTabBtn.classList.remove('active');
+            singleSection.style.display = '';
+            multiSection.style.display = 'none';
+            singleTabBtn.style.background = '#f39c12';
+            singleTabBtn.style.color = '#000';
+            multiTabBtn.style.background = '#293E4C';
+            multiTabBtn.style.color = '#fff';
+        });
+        multiTabBtn.addEventListener('click', () => {
+            singleTabBtn.classList.remove('active');
+            multiTabBtn.classList.add('active');
+            singleSection.style.display = 'none';
+            multiSection.style.display = '';
+            multiTabBtn.style.background = '#f39c12';
+            multiTabBtn.style.color = '#000';
+            singleTabBtn.style.background = '#293E4C';
+            singleTabBtn.style.color = '#fff';
+        });
+        // Init default tab look
         singleTabBtn.style.background = '#f39c12';
         singleTabBtn.style.color = '#000';
-        multiTabBtn.style.background = '#293E4C';
-        multiTabBtn.style.color = '#fff';
-    });
-    multiTabBtn.addEventListener('click', () => {
-        singleTabBtn.classList.remove('active');
-        multiTabBtn.classList.add('active');
-        singleSection.style.display = 'none';
-        multiSection.style.display = '';
-        multiTabBtn.style.background = '#f39c12';
-        multiTabBtn.style.color = '#000';
-        singleTabBtn.style.background = '#293E4C';
-        singleTabBtn.style.color = '#fff';
-    });
-    // Init default tab look
-    singleTabBtn.style.background = '#f39c12';
-    singleTabBtn.style.color = '#000';
-}
-
-// ----------------- TOGGLE DESTINATION (SINGLE) -----------------
-function toggleDestinationSelectSingle() {
-    const assignType = document.querySelector('input[name="destination_type"]:checked').value;
-    const targetLabel = document.getElementById('destinationLabel');
-    const targetSelect = document.getElementById('destination_id');
-    const data = (assignType === 'project') ? projectsData : warehousesData;
-    const placeholder = (assignType === 'project') ? '-- Select Project --' : '-- Select Warehouse --';
-    const nameField = (assignType === 'project') ? 'project_name' : 'name';
-
-    targetLabel.textContent = (assignType === 'project') ? 'Project:' : 'Warehouse:';
-    targetSelect.innerHTML = '';
-
-    if (!data || data.length === 0) {
-        targetSelect.innerHTML = `<option value="">No ${assignType === 'project' ? 'projects' : 'warehouses'} found</option>`;
-        targetSelect.disabled = true;
-    } else {
-        targetSelect.disabled = false;
-        targetSelect.innerHTML = `<option value="">${placeholder}</option>`;
-        data.forEach(function(item) {
-            const opt = document.createElement('option');
-            opt.value = item.id;
-            opt.textContent = item[nameField];
-            targetSelect.appendChild(opt);
-        });
     }
-}
 
-// ----------------- TOGGLE DESTINATION (MULTI) -----------------
-function toggleDestinationSelectMulti() {
-    const assignType = document.querySelector('input[name="destination_type_multi"]:checked').value;
-    const targetLabel = document.getElementById('destinationLabelMulti');
-    const targetSelect = document.getElementById('destination_id_multi');
-    const data = (assignType === 'project') ? projectsData : warehousesData;
-    const placeholder = (assignType === 'project') ? '-- Select Project --' : '-- Select Warehouse --';
-    const nameField = (assignType === 'project') ? 'project_name' : 'name';
-
-    targetLabel.textContent = (assignType === 'project') ? 'Project:' : 'Warehouse:';
-    targetSelect.innerHTML = '';
-
-    if (!data || data.length === 0) {
-        targetSelect.innerHTML = `<option value="">No ${assignType === 'project' ? 'projects' : 'warehouses'} found</option>`;
-        targetSelect.disabled = true;
-    } else {
-        targetSelect.disabled = false;
-        targetSelect.innerHTML = `<option value="">${placeholder}</option>`;
-        data.forEach(function(item) {
-            const opt = document.createElement('option');
-            opt.value = item.id;
-            opt.textContent = item[nameField];
-            targetSelect.appendChild(opt);
-        });
-    }
-}
-
-// ----------------- CONFIRM BUTTONS (SINGLE & MULTI) -----------------
-const confirmShipmentBtn = document.getElementById('confirmShipmentBtn');
-const confirmMultiShipmentBtn = document.getElementById('confirmMultiShipmentBtn');
-
-if (confirmShipmentBtn) {
-    confirmShipmentBtn.addEventListener('click', function() {
-        const mainForm = document.getElementById('shipPalletsForm');
-        if (!mainForm) return;
-
-        // Single shipment mode
-        let shipmentModeInput = mainForm.querySelector('input[name="shipment_mode"]');
-        if (!shipmentModeInput) {
-            shipmentModeInput = document.createElement('input');
-            shipmentModeInput.type = 'hidden';
-            shipmentModeInput.name = 'shipment_mode';
-            mainForm.appendChild(shipmentModeInput);
-        }
-        shipmentModeInput.value = 'single';
-
-        // Pallets per truck (not used in single, so set blank or 1)
-        let pTruckInput = mainForm.querySelector('input[name="pallets_per_truck"]');
-        if (!pTruckInput) {
-            pTruckInput = document.createElement('input');
-            pTruckInput.type = 'hidden';
-            pTruckInput.name = 'pallets_per_truck';
-            mainForm.appendChild(pTruckInput);
-        }
-        pTruckInput.value = '1';
-
-        // Get single form values
+    // ----------------- TOGGLE DESTINATION (SINGLE - ADMIN ONLY) -----------------
+    function toggleDestinationSelectSingle() {
         const assignType = document.querySelector('input[name="destination_type"]:checked').value;
-        const targetId = document.getElementById('destination_id').value;
-        const bol = document.getElementById('bol_number').value;
-        const departure = document.getElementById('departure_date').value;
-        const arrival = document.getElementById('est_arrival_date').value;
+        const targetLabel = document.getElementById('destinationLabel');
+        const targetSelect = document.getElementById('destination_id');
+        const data = (assignType === 'project') ? projectsData : warehousesData;
+        const placeholder = (assignType === 'project') ? '-- Select Project --' : '-- Select Warehouse --';
+        const nameField = (assignType === 'project') ? 'project_name' : 'name';
 
-        if (!targetId) {
-            alert('Please select a destination (Project/Warehouse).');
-            return;
+        targetLabel.textContent = (assignType === 'project') ? 'Project:' : 'Warehouse:';
+        targetSelect.innerHTML = '';
+
+        if (!data || data.length === 0) {
+            targetSelect.innerHTML = `<option value="">No ${assignType === 'project' ? 'projects' : 'warehouses'} found</option>`;
+            targetSelect.disabled = true;
+        } else {
+            targetSelect.disabled = false;
+            targetSelect.innerHTML = `<option value="">${placeholder}</option>`;
+            data.forEach(function(item) {
+                const opt = document.createElement('option');
+                opt.value = item.id;
+                opt.textContent = item[nameField];
+                targetSelect.appendChild(opt);
+            });
         }
-
-        // Populate hidden inputs
-        setOrCreateHidden(mainForm, 'destination_type', assignType);
-        setOrCreateHidden(mainForm, 'destination_id', targetId);
-        setOrCreateHidden(mainForm, 'bol_number', bol);
-        setOrCreateHidden(mainForm, 'departure_date', departure);
-        setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
-
-        mainForm.submit();
-    });
-}
-
-// *** NEW: Handle Multi‐shipment confirm ***
-if (confirmMultiShipmentBtn) {
-    confirmMultiShipmentBtn.addEventListener('click', function() {
-        const mainForm = document.getElementById('shipPalletsForm');
-        if (!mainForm) return;
-
-        // Multi shipment mode
-        let shipmentModeInput = mainForm.querySelector('input[name="shipment_mode"]');
-        if (!shipmentModeInput) {
-            shipmentModeInput = document.createElement('input');
-            shipmentModeInput.type = 'hidden';
-            shipmentModeInput.name = 'shipment_mode';
-            mainForm.appendChild(shipmentModeInput);
-        }
-        shipmentModeInput.value = 'multi';
-
-        // Pallets per truck
-        let perTruckInput = mainForm.querySelector('input[name="pallets_per_truck"]');
-        if (!perTruckInput) {
-            perTruckInput = document.createElement('input');
-            perTruckInput.type = 'hidden';
-            perTruckInput.name = 'pallets_per_truck';
-            mainForm.appendChild(perTruckInput);
-        }
-        perTruckInput.value = document.getElementById('palletsPerTruck').value || '1';
-
-        // Get multi form values
-        const assignType = document.querySelector('input[name="destination_type_multi"]:checked').value;
-        const targetId = document.getElementById('destination_id_multi').value;
-        const bol = document.getElementById('bol_number_multi').value;
-        const departure = document.getElementById('departure_date_multi').value;
-        const arrival = document.getElementById('est_arrival_date_multi').value;
-
-        if (!targetId) {
-            alert('Please select a destination (Project/Warehouse).');
-            return;
-        }
-
-        // Populate hidden inputs
-        setOrCreateHidden(mainForm, 'destination_type', assignType);
-        setOrCreateHidden(mainForm, 'destination_id', targetId);
-        setOrCreateHidden(mainForm, 'bol_number', bol);
-        setOrCreateHidden(mainForm, 'departure_date', departure);
-        setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
-
-        mainForm.submit();
-    });
-}
-
-function setOrCreateHidden(form, fieldName, fieldValue) {
-    let el = form.querySelector(`input[name="${fieldName}"]`);
-    if (!el) {
-        el = document.createElement('input');
-        el.type = 'hidden';
-        el.name = fieldName;
-        form.appendChild(el);
     }
-    el.value = fieldValue;
-}
 
-// ----------------- MULTI-SHIPMENT SUMMARY -----------------
-const palletsPerTruckInput = document.getElementById('palletsPerTruck');
-const multiShipSummary = document.getElementById('multiShipSummary');
+    // ----------------- TOGGLE DESTINATION (MULTI - ADMIN ONLY) -----------------
+    function toggleDestinationSelectMulti() {
+        const assignType = document.querySelector('input[name="destination_type_multi"]:checked').value;
+        const targetLabel = document.getElementById('destinationLabelMulti');
+        const targetSelect = document.getElementById('destination_id_multi');
+        const data = (assignType === 'project') ? projectsData : warehousesData;
+        const placeholder = (assignType === 'project') ? '-- Select Project --' : '-- Select Warehouse --';
+        const nameField = (assignType === 'project') ? 'project_name' : 'name';
 
-function updateMultiShipSummary() {
-    const selected = document.querySelectorAll('.pallet-checkbox:checked').length;
-    const perTruck = parseInt(palletsPerTruckInput.value, 10) || 1;
-    const numDeliveries = Math.ceil(selected / perTruck);
-    multiShipSummary.textContent = selected > 0
-        ? (numDeliveries + ' deliveries will be created (' + perTruck + ' pallets per truck)')
-        : '';
-}
+        targetLabel.textContent = (assignType === 'project') ? 'Project:' : 'Warehouse:';
+        targetSelect.innerHTML = '';
 
-if (palletsPerTruckInput && multiShipSummary) {
-    palletsPerTruckInput.addEventListener('input', updateMultiShipSummary);
-    document.querySelectorAll('.pallet-checkbox').forEach(function(cb) {
-        cb.addEventListener('change', updateMultiShipSummary);
+        if (!data || data.length === 0) {
+            targetSelect.innerHTML = `<option value="">No ${assignType === 'project' ? 'projects' : 'warehouses'} found</option>`;
+            targetSelect.disabled = true;
+        } else {
+            targetSelect.disabled = false;
+            targetSelect.innerHTML = `<option value="">${placeholder}</option>`;
+            data.forEach(function(item) {
+                const opt = document.createElement('option');
+                opt.value = item.id;
+                opt.textContent = item[nameField];
+                targetSelect.appendChild(opt);
+            });
+        }
+    }
+
+    // ----------------- CONFIRM BUTTONS (SINGLE & MULTI - ADMIN ONLY) -----------------
+    const confirmShipmentBtn = document.getElementById('confirmShipmentBtn');
+    const confirmMultiShipmentBtn = document.getElementById('confirmMultiShipmentBtn');
+
+    if (confirmShipmentBtn) {
+        confirmShipmentBtn.addEventListener('click', function() {
+            const mainForm = document.getElementById('shipPalletsForm');
+            if (!mainForm) return;
+
+            // Single shipment mode
+            let shipmentModeInput = mainForm.querySelector('input[name="shipment_mode"]');
+            if (!shipmentModeInput) {
+                shipmentModeInput = document.createElement('input');
+                shipmentModeInput.type = 'hidden';
+                shipmentModeInput.name = 'shipment_mode';
+                mainForm.appendChild(shipmentModeInput);
+            }
+            shipmentModeInput.value = 'single';
+
+            // Pallets per truck (not used in single, so set blank or 1)
+            let pTruckInput = mainForm.querySelector('input[name="pallets_per_truck"]');
+            if (!pTruckInput) {
+                pTruckInput = document.createElement('input');
+                pTruckInput.type = 'hidden';
+                pTruckInput.name = 'pallets_per_truck';
+                mainForm.appendChild(pTruckInput);
+            }
+            pTruckInput.value = '1';
+
+            // Get single form values
+            const assignType = document.querySelector('input[name="destination_type"]:checked').value;
+            const targetId = document.getElementById('destination_id').value;
+            const bol = document.getElementById('bol_number').value;
+            const departure = document.getElementById('departure_date').value;
+            const arrival = document.getElementById('est_arrival_date').value;
+
+            if (!targetId) {
+                alert('Please select a destination (Project/Warehouse).');
+                return;
+            }
+
+            // Populate hidden inputs
+            setOrCreateHidden(mainForm, 'destination_type', assignType);
+            setOrCreateHidden(mainForm, 'destination_id', targetId);
+            setOrCreateHidden(mainForm, 'bol_number', bol);
+            setOrCreateHidden(mainForm, 'departure_date', departure);
+            setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
+
+            mainForm.submit();
+        });
+    }
+
+    if (confirmMultiShipmentBtn) {
+        confirmMultiShipmentBtn.addEventListener('click', function() {
+            const mainForm = document.getElementById('shipPalletsForm');
+            if (!mainForm) return;
+
+            // Multi shipment mode
+            let shipmentModeInput = mainForm.querySelector('input[name="shipment_mode"]');
+            if (!shipmentModeInput) {
+                shipmentModeInput = document.createElement('input');
+                shipmentModeInput.type = 'hidden';
+                shipmentModeInput.name = 'shipment_mode';
+                mainForm.appendChild(shipmentModeInput);
+            }
+            shipmentModeInput.value = 'multi';
+
+            // Pallets per truck
+            let perTruckInput = mainForm.querySelector('input[name="pallets_per_truck"]');
+            if (!perTruckInput) {
+                perTruckInput = document.createElement('input');
+                perTruckInput.type = 'hidden';
+                perTruckInput.name = 'pallets_per_truck';
+                mainForm.appendChild(perTruckInput);
+            }
+            perTruckInput.value = document.getElementById('palletsPerTruck').value || '1';
+
+            // Get multi form values
+            const assignType = document.querySelector('input[name="destination_type_multi"]:checked').value;
+            const targetId = document.getElementById('destination_id_multi').value;
+            const bol = document.getElementById('bol_number_multi').value;
+            const departure = document.getElementById('departure_date_multi').value;
+            const arrival = document.getElementById('est_arrival_date_multi').value;
+
+            if (!targetId) {
+                alert('Please select a destination (Project/Warehouse).');
+                return;
+            }
+
+            // Populate hidden inputs
+            setOrCreateHidden(mainForm, 'destination_type', assignType);
+            setOrCreateHidden(mainForm, 'destination_id', targetId);
+            setOrCreateHidden(mainForm, 'bol_number', bol);
+            setOrCreateHidden(mainForm, 'departure_date', departure);
+            setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
+
+            mainForm.submit();
+        });
+    }
+
+    function setOrCreateHidden(form, fieldName, fieldValue) {
+        let el = form.querySelector(`input[name="${fieldName}"]`);
+        if (!el) {
+            el = document.createElement('input');
+            el.type = 'hidden';
+            el.name = fieldName;
+            form.appendChild(el);
+        }
+        el.value = fieldValue;
+    }
+
+    // ----------------- MULTI-SHIPMENT SUMMARY (ADMIN ONLY) -----------------
+    const palletsPerTruckInput = document.getElementById('palletsPerTruck');
+    const multiShipSummary = document.getElementById('multiShipSummary');
+
+    function updateMultiShipSummary() {
+        if (!palletsPerTruckInput || !multiShipSummary) return; // Ensure elements exist
+        const selected = document.querySelectorAll('.pallet-checkbox:checked').length;
+        const perTruck = parseInt(palletsPerTruckInput.value, 10) || 1;
+        const numDeliveries = Math.ceil(selected / perTruck);
+        multiShipSummary.textContent = selected > 0
+            ? (numDeliveries + ' deliveries will be created (' + perTruck + ' pallets per truck)')
+            : '';
+    }
+
+    if (palletsPerTruckInput && multiShipSummary) {
+        palletsPerTruckInput.addEventListener('input', updateMultiShipSummary);
+        document.querySelectorAll('.pallet-checkbox').forEach(function(cb) {
+            cb.addEventListener('change', updateMultiShipSummary);
+        });
+        updateMultiShipSummary();
+    }
+
+    // ----------------- INITIALIZE DEFAULT DROPDOWNS (ADMIN ONLY) -----------------
+    document.addEventListener('DOMContentLoaded', () => {
+        // Default load the single shipment dropdown with "project" pre‐selected
+        toggleDestinationSelectSingle();
+        // Default load the multi shipment dropdown with "project" pre‐selected
+        toggleDestinationSelectMulti();
     });
-    updateMultiShipSummary();
-}
-
-// ----------------- INITIALIZE DEFAULT DROPDOWNS -----------------
-document.addEventListener('DOMContentLoaded', () => {
-    // Default load the single shipment dropdown with "project" pre‐selected
-    toggleDestinationSelectSingle();
-    // Default load the multi shipment dropdown with "project" pre‐selected
-    toggleDestinationSelectMulti();
-});
+} // End of admin-only JavaScript block
 </script>
 </body>
 </html>

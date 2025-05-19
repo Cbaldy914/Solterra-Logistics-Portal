@@ -129,13 +129,24 @@ if (isset($_SESSION['role'])) {
                 </li>
 
                 <li class="dropdown">
+                    <a href="#" class="dropbtn">Modules</a>
+                    <div class="dropdown-content">
+                        <a href="modules">Modules</a>
+                        <a href="manage_pallets.php">Manage Pallets</a>
+                        <a href="manage_deliveries.php">Manage Deliveries</a>
+                        <a href="link_pallet_deliveries.php">Link Pallets to Deliveries</a>
+
+                    </div>
+                </li>
+
+                <li class="dropdown">
                     <a href="#" class="dropbtn">Warehousing</a>
                     <div class="dropdown-content">
                         <a href="warehousing_overview">Warehousing Overview</a>
                         <a href="cost_estimate_calculator">Cost Estimate Calculator</a>
                         <a href="warehouse_optimization">Warehouse Optimization (Beta)</a>
                         <a href="warehouse_estimate">Warehouse Quotes</a>
-                        <a href="manage_pallets.php">Manage Pallets</a>
+                        <a href="manage_warehouses.php">Manage Warehouses</a>
                     </div>
                 </li>
 
@@ -189,7 +200,12 @@ if (isset($_SESSION['role'])) {
                         <a href="sustainability_overview">Sustainability</a>
                     </div>
                 </li>
-
+                <li class="dropdown">
+                    <a href="#" class="dropbtn">Modules</a>
+                    <div class="dropdown-content">
+                        <a href="modules">Module Batches</a>
+                    </div>
+                </li>
                 <li class="dropdown">
                     <a href="#" class="dropbtn">Warehousing</a>
                     <div class="dropdown-content">

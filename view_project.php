@@ -11,12 +11,13 @@ if (!isset($_SESSION['user_id'])) {
 $user_id = $_SESSION['user_id'];
 $role    = $_SESSION['role'] ?? 'user';
 
-// Validate the project ID
-if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
-    die("Project ID is missing.");
-}
+// Validate the project ID or origin_batch_id
+$project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : null;
+$origin_batch_id = isset($_GET['origin_batch_id']) ? intval($_GET['origin_batch_id']) : null;
 
-$project_id = intval($_GET['project_id']);
+if (empty($project_id) && empty($origin_batch_id)) {
+    die("Project ID or Origin Batch ID is missing.");
+}
 
 // Database connection
 require_once '../config.php';
@@ -25,40 +26,82 @@ if (!$conn) {
     die("Connection failed");
 }
 
-/**
- * If role is 'admin' or 'global_admin', user can see any project, 
- * so we just check if the project exists:
- */
-if ($role === 'admin' || $role === 'global_admin') {
-    $stmt = $conn->prepare("SELECT * FROM projects WHERE id = ?");
-    $stmt->bind_param("i", $project_id);
-} else {
+$project = null;
+$page_title_info = "Delivery Tracker";
+$breadcrumbs = [];
+$source_vendor_name_for_batch = null;
+
+if ($project_id) {
+    // Existing project-based logic
     /**
-     * Otherwise (regular user role), we check if this user's account 
-     * matches the project's account_id by joining projects.account_id 
-     * to customer_account_users.account_id for the same user_id.
+     * If role is 'admin' or 'global_admin', user can see any project, 
+     * so we just check if the project exists:
      */
-    $sql = "
-       SELECT p.* 
-       FROM projects p
-       JOIN customer_account_users cau ON p.account_id = cau.account_id
-       WHERE p.id = ? 
-         AND cau.user_id = ?
-       LIMIT 1
-    ";
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ii", $project_id, $user_id);
-}
+    if ($role === 'admin' || $role === 'global_admin') {
+        $stmt = $conn->prepare("SELECT * FROM projects WHERE id = ?");
+        $stmt->bind_param("i", $project_id);
+    } else {
+        /**
+         * Otherwise (regular user role), we check if this user's account 
+         * matches the project's account_id by joining projects.account_id 
+         * to customer_account_users.account_id for the same user_id.
+         */
+        $sql_project_access = "
+           SELECT p.* 
+           FROM projects p
+           JOIN customer_account_users cau ON p.account_id = cau.account_id
+           WHERE p.id = ? 
+             AND cau.user_id = ?
+           LIMIT 1
+        ";
+        $stmt = $conn->prepare($sql_project_access);
+        $stmt->bind_param("ii", $project_id, $user_id);
+    }
 
-$stmt->execute();
-$result = $stmt->get_result();
-if ($result->num_rows === 0) {
-    // The user is not allowed to see this project
-    die("You do not have access to this project or it does not exist.");
-}
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($result->num_rows === 0) {
+        die("You do not have access to this project or it does not exist.");
+    }
+    $project = $result->fetch_assoc();
+    $stmt->close();
+    $page_title_info = htmlspecialchars($project['project_name']);
+    $breadcrumbs[] = ['href' => ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php', 'text' => 'Dashboard'];
+    $breadcrumbs[] = ['href' => "project_overview.php?id={$project_id}", 'text' => 'Project Overview'];
+    $breadcrumbs[] = ['text' => 'Delivery Tracker'];
 
-$project = $result->fetch_assoc();
-$stmt->close();
+} elseif ($origin_batch_id) {
+    // New: Logic for origin_batch_id
+    $stmtBatch = $conn->prepare("SELECT vendor_name, account_id FROM modules WHERE id = ?");
+    if (!$stmtBatch) die("Failed to prepare batch query: ".$conn->error);
+    $stmtBatch->bind_param("i", $origin_batch_id);
+    $stmtBatch->execute();
+    $resultBatch = $stmtBatch->get_result();
+    if ($batchDetails = $resultBatch->fetch_assoc()) {
+        $source_vendor_name_for_batch = $batchDetails['vendor_name'];
+        $batch_account_id = $batchDetails['account_id'];
+
+        // Security check for user role: can they see items from this account?
+        if ($role === 'user') {
+            $stmtAccess = $conn->prepare("SELECT 1 FROM customer_account_users WHERE user_id = ? AND account_id = ? LIMIT 1");
+            if ($stmtAccess) {
+                $stmtAccess->bind_param("ii", $user_id, $batch_account_id);
+                $stmtAccess->execute();
+                if ($stmtAccess->get_result()->num_rows === 0) {
+                    die("You do not have access to view deliveries for this batch.");
+                }
+                $stmtAccess->close();
+            }
+        }
+        $page_title_info = "Unassigned Deliveries from Batch: " . htmlspecialchars($source_vendor_name_for_batch) . " (ID: {$origin_batch_id})";
+        $breadcrumbs[] = ['href' => 'modules.php', 'text' => 'Modules'];
+        $breadcrumbs[] = ['href' => "module_overview.php?batch_id={$origin_batch_id}", 'text' => "Batch Details"];
+        $breadcrumbs[] = ['text' => 'Unassigned Deliveries from Batch'];
+    } else {
+        die("Origin batch with ID {$origin_batch_id} not found.");
+    }
+    $stmtBatch->close();
+}
 
 /**
  * TIME FILTER LOGIC 
@@ -70,11 +113,46 @@ $time_filter  = isset($_GET['time_filter']) ? $_GET['time_filter'] : 'all';
 $ref_date     = isset($_GET['ref_date']) ? $_GET['ref_date'] : date('Y-m-d');
 
 $dateCondition = "";
-$paramTypes    = "i";
-$params        = [$project_id];
+$baseQueryConditions = [];
+$paramTypes    = "";
+$params        = [];
 $dateLabel     = "All Deliveries";
 $prev_date     = "";
 $next_date     = "";
+
+// SELECT and FROM clauses (FROM might change based on context)
+$selectClause = "SELECT d.* FROM deliveries d"; // Alias deliveries table as 'd'
+$joinClause = ""; // Default, will be overridden if needed
+
+// Determine base query conditions based on project_id or origin_batch_id
+if ($project_id) {
+    $baseQueryConditions[] = "d.project_id = ?"; // Use alias
+    $paramTypes .= "i";
+    $params[] = $project_id;
+    // For project_id based view, an INNER JOIN might be appropriate if we only want deliveries linked to valid projects
+    // However, to be consistent with how we might handle non-existent projects gracefully,
+    // a LEFT JOIN and checking p.id IS NOT NULL could also be used, but current logic implies project must exist.
+    // For now, keeping it simple for project_id case, assuming project context implies project must be valid.
+    // No explicit join needed here if only filtering by d.project_id and not using p. table fields in WHERE for this simple case.
+    // If other project details were needed in WHERE, a JOIN would be added.
+
+} elseif ($origin_batch_id && $source_vendor_name_for_batch && isset($batch_account_id)) {
+    // When viewing deliveries by origin_batch_id, we are looking for deliveries sourced
+    // from this batch's supplier that are currently unassigned (project_id IS NULL).
+    // The $batch_account_id is used for the initial access check.
+    
+    $joinClause = " LEFT JOIN projects p ON d.project_id = p.id"; // Kept for potential use in SELECT (e.g. p.project_name)
+                                                              // though for project_id IS NULL, p fields will be NULL.
+
+    // Filter by the batch's supplier
+    $baseQueryConditions[] = "d.supplier = ?";
+    $paramTypes .= "s";
+    $params[] = $source_vendor_name_for_batch;
+    
+    // Filter for deliveries that are not assigned to any project
+    $baseQueryConditions[] = "d.project_id IS NULL";
+    // No additional parameters needed for "IS NULL"
+}
 
 // Day/Week/Month filter logic
 if ($time_filter === 'day') {
@@ -124,6 +202,11 @@ if (!empty($status_filter)) {
     $params[]        = $status_filter;
 }
 
+$whereClause = "";
+if (!empty($baseQueryConditions) || !empty($dateCondition) || !empty($statusCondition)) {
+    $whereClause = "WHERE " . implode(" AND ", array_filter(array_merge($baseQueryConditions, [trim(ltrim($dateCondition, ' AND '))], [trim(ltrim($statusCondition, ' AND '))])));
+}
+
 // Handle CSV Export
 if (isset($_GET['export']) && $_GET['export'] == 1) {
     header('Content-Type: text/csv; charset=utf-8');
@@ -136,21 +219,22 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         'Quantity',
         'BOL Number',
         'Anticipated Delivery Date',
-        'Warehouse Arrival Date',
         'Actual Delivery Date',
+        'Associated Pallets',
         'Proof of Delivery'
     ]);
 
+    // Construct the SQL query for export
     $sql_export = "
-        SELECT *
-        FROM deliveries
-        WHERE project_id = ?
-              $dateCondition
-              $statusCondition
+        $selectClause
+        $joinClause 
+        $whereClause
         ORDER BY $filterColumn DESC
     ";
     $stmt_export = $conn->prepare($sql_export);
-    $stmt_export->bind_param($paramTypes, ...$params);
+    if ($stmt_export && !empty($paramTypes)) {
+        $stmt_export->bind_param($paramTypes, ...$params);
+    }
     $stmt_export->execute();
     $res_export = $stmt_export->get_result();
 
@@ -161,9 +245,9 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             $row['status_of_delivery'] ?? '',
             $row['quantity'] ?? '',
             $row['bol_number'] ?? '',
-            $row['anticipated_delivery_date'] ?? '',
-            $row['warehouse_arrival_date'] ?? '',
-            $row['actual_delivery_date'] ?? '',
+            !empty($row['anticipated_delivery_date']) ? date('m-d-Y', strtotime($row['anticipated_delivery_date'])) : '',
+            !empty($row['actual_delivery_date']) ? date('m-d-Y', strtotime($row['actual_delivery_date'])) : '',
+            $row['associated_pallets'] ?? '',
             !empty($row['proof_of_delivery']) ? 'Yes' : 'No'
         ]);
     }
@@ -175,15 +259,15 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
 
 // Retrieve deliveries with the chosen filters
 $sql = "
-    SELECT *
-    FROM deliveries
-    WHERE project_id = ?
-          $dateCondition
-          $statusCondition
+    $selectClause
+    $joinClause
+    $whereClause
     ORDER BY $filterColumn DESC
 ";
 $stmt = $conn->prepare($sql);
-$stmt->bind_param($paramTypes, ...$params);
+if ($stmt && !empty($paramTypes)) {
+    $stmt->bind_param($paramTypes, ...$params);
+}
 $stmt->execute();
 $deliveries_result = $stmt->get_result();
 
@@ -198,7 +282,7 @@ $conn->close();
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title><?php echo htmlspecialchars($project['project_name']); ?> - Delivery Tracker</title>
+    <title><?php echo $page_title_info; ?> - Delivery Tracker</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -306,40 +390,45 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <div class="breadcrumb">
-        <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
-        <span class="separator">&raquo;</span>
-        <span>Delivery Tracker</span>
+        <?php foreach ($breadcrumbs as $index => $crumb): ?>
+            <?php if (isset($crumb['href'])): ?>
+                <a href="<?php echo $crumb['href']; ?>"><?php echo htmlspecialchars($crumb['text']); ?></a>
+            <?php else: ?>
+                <span><?php echo htmlspecialchars($crumb['text']); ?></span>
+            <?php endif; ?>
+            <?php if ($index < count($breadcrumbs) - 1): ?>
+                <span class="separator">&raquo;</span>
+            <?php endif; ?>
+        <?php endforeach; ?>
     </div>
 
     <div class="container">
-        <h1>Delivery Tracker for <?php echo htmlspecialchars($project['project_name']); ?></h1>
+        <h1><?php echo $page_title_info; ?></h1>
 
         <!-- Time Filter Header -->
         <div class="time-filter-header">
             <div class="time-filters">
-                <a href="?project_id=<?php echo $project_id; ?>&time_filter=all"
+                <a href="?<?php echo http_build_query(array_merge($_GET, ['time_filter' => 'all'])); ?>"
                    class="<?php echo ($time_filter === 'all') ? 'active' : ''; ?>">All</a>
-                <a href="?project_id=<?php echo $project_id; ?>&time_filter=day&ref_date=<?php echo $ref_date; ?>"
+                <a href="?<?php echo http_build_query(array_merge($_GET, ['time_filter' => 'day', 'ref_date' => $ref_date])); ?>"
                    class="<?php echo ($time_filter === 'day') ? 'active' : ''; ?>">Day</a>
-                <a href="?project_id=<?php echo $project_id; ?>&time_filter=week&ref_date=<?php echo $ref_date; ?>"
+                <a href="?<?php echo http_build_query(array_merge($_GET, ['time_filter' => 'week', 'ref_date' => $ref_date])); ?>"
                    class="<?php echo ($time_filter === 'week') ? 'active' : ''; ?>">Week</a>
-                <a href="?project_id=<?php echo $project_id; ?>&time_filter=month&ref_date=<?php echo $ref_date; ?>"
+                <a href="?<?php echo http_build_query(array_merge($_GET, ['time_filter' => 'month', 'ref_date' => $ref_date])); ?>"
                    class="<?php echo ($time_filter === 'month') ? 'active' : ''; ?>">Month</a>
             </div>
 
             <div class="date-navigation">
                 <?php if ($time_filter !== 'all'): ?>
                     <button type="button" class="nav-arrow"
-                            onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
+                            onclick="window.location.href='?<?php echo http_build_query(array_merge($_GET, ['ref_date' => $prev_date])); ?>'">
                         &larr;
                     </button>
                 <?php endif; ?>
                 <span class="date-label"><?php echo $dateLabel; ?></span>
                 <?php if ($time_filter !== 'all'): ?>
                     <button type="button" class="nav-arrow"
-                            onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
+                            onclick="window.location.href='?<?php echo http_build_query(array_merge($_GET, ['ref_date' => $next_date])); ?>'">
                         &rarr;
                     </button>
                 <?php endif; ?>
@@ -351,7 +440,11 @@ $conn->close();
                     <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
                 </div>
                 <form method="get" action="" style="display: flex; gap: 10px;">
+                    <?php if ($project_id): ?>
                     <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+                    <?php elseif ($origin_batch_id): ?>
+                    <input type="hidden" name="origin_batch_id" value="<?php echo $origin_batch_id; ?>">
+                    <?php endif; ?>
                     <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
                     <input type="hidden" name="ref_date" value="<?php echo $ref_date; ?>">
 
@@ -382,8 +475,8 @@ $conn->close();
                         <th>Quantity</th>
                         <th>BOL Number</th>
                         <th>Anticipated Delivery Date</th>
-                        <th>Warehouse Arrival Date</th>
                         <th>Actual Delivery Date</th>
+                        <th>Associated Pallets</th>
                         <th>Proof of Delivery</th>
                     </tr>
                 </thead>
@@ -396,9 +489,9 @@ $conn->close();
                                 <td><?php echo htmlspecialchars($delivery['status_of_delivery'] ?? ''); ?></td>
                                 <td><?php echo htmlspecialchars($delivery['quantity'] ?? ''); ?></td>
                                 <td><?php echo htmlspecialchars($delivery['bol_number'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($delivery['anticipated_delivery_date'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($delivery['actual_delivery_date'] ?? ''); ?></td>
+                                <td><?php echo !empty($delivery['anticipated_delivery_date']) ? date('m-d-Y', strtotime($delivery['anticipated_delivery_date'])) : ''; ?></td>
+                                <td><?php echo !empty($delivery['actual_delivery_date']) ? date('m-d-Y', strtotime($delivery['actual_delivery_date'])) : ''; ?></td>
+                                <td><?php echo htmlspecialchars($delivery['associated_pallets'] ?? ''); ?></td>
                                 <td>
                                     <?php if (!empty($delivery['proof_of_delivery'])): ?>
                                         <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">

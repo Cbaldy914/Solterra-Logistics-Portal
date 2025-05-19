@@ -17,6 +17,7 @@ if (!$conn) {
 // Get parameters
 $warehouse_id = isset($_GET['warehouse_id']) ? intval($_GET['warehouse_id']) : null;
 $project_id   = isset($_GET['project_id'])   ? intval($_GET['project_id'])   : null;
+$module_batch_id = isset($_GET['module_batch_id']) ? intval($_GET['module_batch_id']) : null;
 
 // Initialize variables
 $warehouse_data         = null;
@@ -25,11 +26,79 @@ $show_warehouse_list    = false;
 $relevant_warehouses    = []; 
 $errorMessage           = '';
 $page_title             = "Warehouse Information"; 
+$origin_batch_vendor_name = null;
 
 // --- Dispatcher Logic ---
 
 try {
-    if ($warehouse_id) {
+    if ($module_batch_id) {
+        // --- Scenario 3: Module Batch ID provided (for user view of unassigned batches) ---
+        $stmtBatchVendor = $conn->prepare("SELECT vendor_name FROM modules WHERE id = ?");
+        if ($stmtBatchVendor) {
+            $stmtBatchVendor->bind_param("i", $module_batch_id);
+            $stmtBatchVendor->execute();
+            $stmtBatchVendor->bind_result($vendorName);
+            if ($stmtBatchVendor->fetch()) {
+                $origin_batch_vendor_name = $vendorName;
+            }
+            $stmtBatchVendor->close();
+        }
+        if (!$origin_batch_vendor_name) {
+            throw new Exception("Module batch with ID {$module_batch_id} not found or has no vendor name.");
+        }
+
+        $page_title = "Warehouses for Batch: " . htmlspecialchars($origin_batch_vendor_name) . " (ID: {$module_batch_id})";
+
+        // Find warehouses that contain pallets originating from this module batch
+        $sqlDistinctWH_Batch = "
+            SELECT DISTINCT
+                wh.id, 
+                wh.name,
+                wh.address, 
+                wh.image_url,
+                (SELECT COUNT(ip_count.id) FROM inventory_pallets ip_count 
+                 JOIN unassigned_module_items umi_count ON ip_count.unassigned_module_item_id = umi_count.id 
+                 WHERE umi_count.unassigned_module_id = ? AND ip_count.current_warehouse_id = wh.id AND ip_count.status = 'In Warehouse') as pallets_in_warehouse,
+                (SELECT SUM(ip_sum.quantity) FROM inventory_pallets ip_sum 
+                 JOIN unassigned_module_items umi_sum ON ip_sum.unassigned_module_item_id = umi_sum.id 
+                 WHERE umi_sum.unassigned_module_id = ? AND ip_sum.current_warehouse_id = wh.id AND ip_sum.status = 'In Warehouse') as modules_in_warehouse
+            FROM warehouses wh
+            JOIN inventory_pallets ip ON wh.id = ip.current_warehouse_id
+            JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            WHERE umi.unassigned_module_id = ? AND ip.status = 'In Warehouse'
+            ORDER BY wh.name ASC
+        ";
+        // Note: Simplified transit counts for this view, focusing on currently stored.
+
+        $stmtDistinctWH_Batch = $conn->prepare($sqlDistinctWH_Batch);
+        if (!$stmtDistinctWH_Batch) throw new Exception("Prepare distinct warehouses for batch failed: " . $conn->error);
+        // Bind the module_batch_id three times for the subqueries and the main query
+        $stmtDistinctWH_Batch->bind_param("iii", $module_batch_id, $module_batch_id, $module_batch_id);
+        $stmtDistinctWH_Batch->execute();
+        $resultDistinctWH_Batch = $stmtDistinctWH_Batch->get_result();
+
+        while ($wh_row = $resultDistinctWH_Batch->fetch_assoc()) {
+            $relevant_warehouses[] = $wh_row;
+        }
+        $stmtDistinctWH_Batch->close();
+
+        $warehouse_count = count($relevant_warehouses);
+
+        if ($warehouse_count === 0) {
+            $errorMessage = "No inventory from Module Batch '" . htmlspecialchars($origin_batch_vendor_name) . " (ID: {$module_batch_id})' is currently tracked in any warehouse.";
+        } elseif ($warehouse_count === 1) {
+            // If only one warehouse, redirect to its view, but keep the context of the batch if needed
+            $single_warehouse_id = $relevant_warehouses[0]['id'];
+            header("Location: warehouse_info.php?warehouse_id={$single_warehouse_id}&module_batch_id={$module_batch_id}");
+            exit();
+        } else {
+            $show_warehouse_list = true;
+            // Page title already set
+        }
+        // This path (module_batch_id provided) implies we should NOT show a single warehouse detailed view unless redirected.
+        // So, $warehouse_data remains null unless a single warehouse redirect happens and then it behaves like warehouse_id was passed.
+
+    } elseif ($warehouse_id) {
         // --- Scenario 1: Specific Warehouse ID provided ---
         $stmtW = $conn->prepare("SELECT * FROM warehouses WHERE id = ?");
         if (!$stmtW) throw new Exception("Prepare warehouse failed: " . $conn->error);
@@ -175,6 +244,10 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
             $sql_pallets .= " AND ip.assigned_project_id = ?";
             $pallet_params[] = $project_id;
             $pallet_types .= "i";
+        } elseif ($module_batch_id) {
+            $sql_pallets .= " AND umi.unassigned_module_id = ?";
+            $pallet_params[] = $module_batch_id;
+            $pallet_types .= "i";
         }
         $sql_pallets .= " ORDER BY ip.arrival_date DESC, ip.id DESC";
 
@@ -206,6 +279,17 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
              $sql_deliveries_arrived .= " AND d.project_id = ?";
              $delivered_params[] = $project_id;
              $delivered_types .= "i";
+        } elseif ($module_batch_id && !$project_id) {
+            // If viewing warehouse from batch context, show all its deliveries
+            // Potentially too broad. For now, let's assume project_id or general warehouse view for deliveries.
+            // To show deliveries related to a specific module_batch_id that arrived at THIS warehouse:
+            // We would need to link deliveries to module batches, which is not direct.
+            // For now, if module_batch_id is set and warehouse_id is set, but no project_id, 
+            // we show deliveries for THAT WAREHOUSE irrespective of batch, or we might need to adjust.
+            // Keeping it simple: if module_batch_id brought us here, and project_id is NOT set, then the deliveries
+            // shown are for this warehouse, not further filtered by the original batch for this specific table.
+            // The main use case is listing warehouses containing the batch, then drilling into one of those warehouses.
+            // The inventory table inside WILL be filtered by module_batch_id.
         }
          $sql_deliveries_arrived .= " ORDER BY d.warehouse_arrival_date DESC";
         
@@ -257,6 +341,9 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
              $sql_deliveries_left .= " AND d.project_id = ?";
              $left_params[] = $project_id;
              $left_types .= "i";
+        } elseif ($module_batch_id && !$project_id) {
+            // Similar logic as above for arrived deliveries.
+            // If we are here via module_batch_id, then outbound deliveries are for this warehouse.
         }
         $sql_deliveries_left .= " ORDER BY d.left_warehouse_date DESC";
         
@@ -612,16 +699,20 @@ if ($conn) {
      <?php
      // Determine back link based on context
      $back_link = "manage_warehouses.php"; // Default back link
-     if ($project_id && !$warehouse_id) { // If only project_id is given and we show warehouse list OR error for project
+     if ($project_id && !$warehouse_id && !$module_batch_id) { // If only project_id is given and we show warehouse list OR error for project
          $back_link = "project_overview.php?id=" . $project_id;
      } elseif ($warehouse_id && $project_id) { // If warehouse and project are given (specific view)
          $back_link = "warehouse_info.php?project_id=" . $project_id; // Link back to project's warehouse list
+     } elseif ($warehouse_id && $module_batch_id) { // If warehouse and batch are given (specific view from batch context)
+         $back_link = "warehouse_info.php?module_batch_id=" . $module_batch_id; // Link back to batch's warehouse list
+     } elseif ($module_batch_id && !$warehouse_id) { // Listing warehouses for a batch
+         $back_link = "modules.php"; // Or to module_overview.php?batch_id=$module_batch_id
      } elseif ($warehouse_id) { // If only warehouse_id is given
          $back_link = "manage_warehouses.php";
      }
      ?>
      <div class="breadcrumb" style="margin: 10px 20px;">
-         <?php if ($project_id && !$warehouse_id): ?>
+         <?php if ($project_id && !$warehouse_id && !$module_batch_id): ?>
              <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
              <span class="separator">&raquo;</span>
              <span>Warehouse Locations</span>
@@ -631,7 +722,21 @@ if ($conn) {
              <a href="warehouse_info.php?project_id=<?php echo $project_id; ?>">Warehouse Locations</a>
              <span class="separator">&raquo;</span>
              <span><?php echo htmlspecialchars($warehouse_data['name'] ?? 'Warehouse Details'); ?></span>
-         <?php elseif ($warehouse_id): ?>
+         <?php elseif ($module_batch_id && !$warehouse_id): // If module_batch_id is the main context (listing warehouses for it or showing no warehouses for it) ?>
+            <a href="modules.php">Modules</a> 
+            <span class="separator">&raquo;</span>
+            <a href="module_overview.php?batch_id=<?php echo $module_batch_id; ?>">Batch <?php echo htmlspecialchars($origin_batch_vendor_name ?? $module_batch_id); ?></a>
+            <span class="separator">&raquo;</span>
+            <span>Warehouse Locations</span>
+         <?php elseif ($warehouse_id && $module_batch_id): // Viewing a specific warehouse that was reached via a module batch context ?>
+            <a href="modules.php">Modules</a> 
+            <span class="separator">&raquo;</span>
+            <a href="module_overview.php?batch_id=<?php echo $module_batch_id; ?>">Batch <?php echo htmlspecialchars($origin_batch_vendor_name ?? $module_batch_id); ?></a>
+            <span class="separator">&raquo;</span>
+            <a href="warehouse_info.php?module_batch_id=<?php echo $module_batch_id; ?>">Warehouse Locations</a>
+            <span class="separator">&raquo;</span>
+            <span><?php echo htmlspecialchars($warehouse_data['name'] ?? 'Warehouse Details'); ?></span>
+         <?php elseif ($warehouse_id): // Only warehouse_id is present (general warehouse view) ?>
              <a href="manage_warehouses.php">Warehouses</a>
              <span class="separator">&raquo;</span>
              <span><?php echo htmlspecialchars($warehouse_data['name'] ?? 'Warehouse Details'); ?></span>
@@ -711,6 +816,8 @@ if ($conn) {
                 <h1><?php echo htmlspecialchars($warehouse_data['name']); ?></h1>
                  <?php if ($project_name_for_title): ?>
                     <h2 style="font-size: 1.1em; color: #555; margin-top: 5px;">Viewing Inventory for Project: <?php echo htmlspecialchars($project_name_for_title); ?></h2>
+                 <?php elseif ($module_batch_id && $origin_batch_vendor_name): ?>
+                    <h2 style="font-size: 1.1em; color: #555; margin-top: 5px;">Viewing Inventory from Batch: <?php echo htmlspecialchars($origin_batch_vendor_name); ?> (ID: <?php echo $module_batch_id; ?>)</h2>
                  <?php endif; ?>
                 <p><strong>Address:</strong> <?php echo htmlspecialchars($warehouse_data['address']); ?></p>
                 <p><strong>In Fee:</strong> $<?php echo number_format($warehouse_data['in_fee'] ?? 0, 2); ?></p>
@@ -810,12 +917,15 @@ if ($conn) {
                                      <td><?php echo number_format($pallet['quantity']); ?></td>
                                      <td><?php echo htmlspecialchars($pallet['arrival_date'] ?? 'N/A'); ?></td>
                                      <td>
-                                          <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" target="_blank" style="padding: 3px 8px; font-size: 0.9em;">View Details</a>
+                                          <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?><?php if ($module_batch_id) echo '&origin_batch_id='.$module_batch_id; ?>" class="action-button" target="_blank" style="padding: 3px 8px; font-size: 0.9em;">View Details</a>
                                      </td>
                                  </tr>
                              <?php endforeach; ?>
                          <?php else: ?>
-                             <tr><td colspan="6">No inventory currently stored<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
+                             <tr><td colspan="6">No inventory currently stored<?php 
+                                if ($project_id) echo ' for this project'; 
+                                elseif ($module_batch_id) echo ' from this module batch'; 
+                             ?> in this warehouse.</td></tr>
                          <?php endif; ?>
                      </tbody>
                  </table>

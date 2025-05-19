@@ -2,8 +2,9 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure user has role admin or global_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
+// Allow access for admin, global_admin, and user roles.
+// Specific functionalities will be controlled by role checks within the page.
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'user'])) {
     header("Location: unauthorized");
     exit();
 }
@@ -17,12 +18,28 @@ if (!$conn) {
 $role    = $_SESSION['role'];
 $user_id = $_SESSION['user_id'];
 
-// --- Account Fetching Logic (needed for form and potentially for data fetch) ---
+// --- Account and Project Fetching Logic ---
 $account_id_for_admin = null;
-$accounts             = [];
-$projects_for_account = [];
+$account_id_for_user  = null;
+$accounts             = []; // For global_admin account dropdown
+$projects_for_account = []; // For project assignment dropdown
+
+if ($role === 'admin' || $role === 'global_admin') {
+    // Fetch the specific account_id linked to this admin/global_admin user
+    $sqlAdminUserAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1";
+    $stmtAdminUserAcc = $conn->prepare($sqlAdminUserAcc);
+    if (!$stmtAdminUserAcc) die("Error preparing admin account lookup: " . $conn->error);
+    $stmtAdminUserAcc->bind_param("i", $user_id);
+    $stmtAdminUserAcc->execute();
+    $stmtAdminUserAcc->bind_result($adminAcctID);
+    if ($stmtAdminUserAcc->fetch()) {
+        $account_id_for_admin = $adminAcctID;
+    }
+    $stmtAdminUserAcc->close();
+}
 
 if ($role === 'global_admin') {
+    // Global admins can see all accounts and projects in dropdowns
     $sqlAllAcc = "SELECT id, name FROM customer_accounts ORDER BY name ASC";
     $resAllAcc = $conn->query($sqlAllAcc);
     if ($resAllAcc && $resAllAcc->num_rows > 0) {
@@ -37,36 +54,56 @@ if ($role === 'global_admin') {
             $projects_for_account[] = $proj;
         }
     }
-} else { // admin role
-    $sqlOneAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
-    $stmtOneAcc = $conn->prepare($sqlOneAcc);
-    if (!$stmtOneAcc) die("Error preparing account lookup: " . $conn->error);
-    $stmtOneAcc->bind_param("i", $user_id);
-    $stmtOneAcc->execute();
-    $stmtOneAcc->bind_result($acctID);
-    if ($stmtOneAcc->fetch()) {
-        $account_id_for_admin = $acctID;
+} elseif ($role === 'admin' && $account_id_for_admin) {
+    // Admins see projects for their assigned account in dropdown
+    $sqlAdminProjs = "SELECT id, project_name, account_id FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+    $stmtAdminProjs = $conn->prepare($sqlAdminProjs);
+    if (!$stmtAdminProjs) die("Error preparing project lookup for admin: " . $conn->error);
+    $stmtAdminProjs->bind_param("i", $account_id_for_admin);
+    $stmtAdminProjs->execute();
+    $resultAdminProjs = $stmtAdminProjs->get_result();
+    while ($projAdmin = $resultAdminProjs->fetch_assoc()) {
+         $projects_for_account[] = $projAdmin;
     }
-    $stmtOneAcc->close();
+    $stmtAdminProjs->close();
+} elseif ($role === 'user') {
+    // Fetch account_id for the user
+    $sqlUserAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1";
+    $stmtUserAcc = $conn->prepare($sqlUserAcc);
+    if (!$stmtUserAcc) die("Error preparing user account lookup: " . $conn->error);
+    $stmtUserAcc->bind_param("i", $user_id);
+    $stmtUserAcc->execute();
+    $stmtUserAcc->bind_result($userAcctID);
+    if ($stmtUserAcc->fetch()) {
+        $account_id_for_user = $userAcctID;
+    }
+    $stmtUserAcc->close();
 
-    if ($account_id_for_admin) {
-        $sqlOneProj = "SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC";
-        $stmtOneProj = $conn->prepare($sqlOneProj);
-        if (!$stmtOneProj) die("Error preparing project lookup: " . $conn->error);
-        $stmtOneProj->bind_param("i", $account_id_for_admin);
-        $stmtOneProj->execute();
-        $resultProj = $stmtOneProj->get_result();
-        while ($proj = $resultProj->fetch_assoc()) {
-             $projects_for_account[] = $proj;
+    if ($account_id_for_user) {
+        // Fetch projects for this user's account (for the dropdown, if ever needed by user)
+        $sqlUserProj = "SELECT id, project_name, account_id FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+        $stmtUserProj = $conn->prepare($sqlUserProj);
+        if (!$stmtUserProj) die("Error preparing project lookup for user: " . $conn->error);
+        $stmtUserProj->bind_param("i", $account_id_for_user);
+        $stmtUserProj->execute();
+        $resultUserProj = $stmtUserProj->get_result();
+        while ($projUser = $resultUserProj->fetch_assoc()) {
+             $projects_for_account[] = $projUser; // Populate for consistency if dropdown is used
         }
-        $stmtOneProj->close();
-    }
-
-    if (!$account_id_for_admin) {
-        // Handle case where admin has no assigned account - prevent further action
-        // For now, let's allow proceeding, the data fetch below will handle empty results.
+        $stmtUserProj->close();
     }
 }
+// Ensure $projects_for_account has account_id if not already present (e.g. for admin role)
+// For global_admin, account_id is already fetched. For user role, it's fetched.
+// For admin role, we fetched projects WHERE account_id = $account_id_for_admin, so we can add it.
+if ($role === 'admin' && $account_id_for_admin && !empty($projects_for_account)) {
+    foreach ($projects_for_account as $key => $proj) {
+        if (!isset($proj['account_id'])) { // Should already be there from the query
+            $projects_for_account[$key]['account_id'] = $account_id_for_admin;
+        }
+    }
+}
+
 
 // Prepare variables to hold user messages:
 $successMessage = "";
@@ -199,8 +236,20 @@ if ($conn) { // Check connection is still valid
                         ORDER BY um.vendor_name ASC";
         $paramTypesModules = "i";
         $paramsModules     = [$account_id_for_admin];
+    } elseif ($role === 'user' && !empty($account_id_for_user)) { // Added condition for 'user' role
+         $sqlModules = "SELECT 
+                          um.id, um.vendor_name, um.initial_location, um.project_id,
+                          c.name AS account_name,
+                          p.project_name 
+                        FROM modules um 
+                        JOIN customer_accounts c ON um.account_id = c.id
+                        LEFT JOIN projects p ON um.project_id = p.id
+                        WHERE um.account_id = ? 
+                        ORDER BY um.vendor_name ASC";
+        $paramTypesModules = "i";
+        $paramsModules     = [$account_id_for_user];
     } else {
-        // Admin with no account or other roles see no modules
+        // Admin with no account or other unhandled roles see no modules
          $sqlModules = "SELECT NULL LIMIT 0";
     }
     
@@ -236,6 +285,17 @@ if ($conn) { // Check connection is still valid
             $stmtItems->close();
         }
         $stmtModules->close();
+    }
+
+    // Split modulesData into project-assigned and unassigned
+    $projectModulesData = [];
+    $unassignedModulesData = [];
+    foreach ($modulesData as $module) {
+        if (!empty($module['project_id'])) {
+            $projectModulesData[] = $module;
+        } else {
+            $unassignedModulesData[] = $module;
+        }
     }
 } // end if($conn)
 
@@ -569,7 +629,9 @@ if ($conn && $conn instanceof mysqli) {
     ?>
 
     <!-- Button to open the modal -->
+    <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
     <button id="openAddModalBtn" class="action-button" style="font-size: 1em; padding: 10px 20px; margin-bottom: 20px;">Add Module Batch</button>
+    <?php endif; ?>
 
     <!-- The Modal -->
     <div id="addModuleModal" class="modal">
@@ -663,8 +725,8 @@ if ($conn && $conn instanceof mysqli) {
     </div>
 
     <!-- Modules Table -->
-    <h2>Current Module Batches</h2>
-     <table id="modulesTable">
+    <h2>Project-Assigned Module Batches</h2>
+     <table id="projectModulesTable">
         <thead>
             <tr>
                 <th>Customer Account</th>
@@ -677,19 +739,16 @@ if ($conn && $conn instanceof mysqli) {
             </tr>
         </thead>
         <tbody>
-        <?php if (!empty($modulesData)): ?>
-            <?php foreach ($modulesData as $batch): ?>
+        <?php if (!empty($projectModulesData)): ?>
+            <?php foreach ($projectModulesData as $batch): ?>
                 <tr>
                     <td><?php echo htmlspecialchars($batch['account_name']); ?></td>
                     <td><?php echo htmlspecialchars($batch['vendor_name']); ?></td>
                     <td><?php echo htmlspecialchars($batch['initial_location']); ?></td>
                     <td>
                         <?php 
-                          if (!empty($batch['project_id']) && !empty($batch['project_name'])) {
-                              echo htmlspecialchars($batch['project_name']); 
-                          } else {
-                              echo "<em>Unassigned</em>";
-                          }
+                          // This table will always have a project, so we expect project_name to be set.
+                          echo htmlspecialchars($batch['project_name'] ?? 'Error: Missing project name'); 
                         ?>
                     </td>
                     <td><?php echo number_format($batch['total_quantity']); ?></td>
@@ -706,21 +765,86 @@ if ($conn && $conn instanceof mysqli) {
                     </td>
                     <td>
                         <div class="action-forms">
-                            <!-- Updated links to reflect potential filename changes (assuming overview/edit also renamed) -->
                             <button class="action-button" onclick="window.location.href='module_overview.php?batch_id=<?php echo $batch['id']; ?>'" title="View full details and history for this batch">View Details</button>
+                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
                             <button class="action-button" onclick="window.location.href='edit_module.php?batch_id=<?php echo $batch['id']; ?>'" title="Edit vendor, location, assignment, or items in this batch">Edit Batch</button>
-                            <!-- Updated delete form action -->
                             <form action="delete_module_batch.php" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
                                 <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
                                 <button type="submit" class="action-button" style="background-color: #dc3545;" title="Delete this entire batch">Delete Batch</button>
                             </form>
+                            <?php elseif (isset($_SESSION['role']) && $_SESSION['role'] === 'user' && !empty($batch['project_id'])): ?>
+                            <button class="action-button" onclick="window.location.href='project_overview.php?id=<?php echo $batch['project_id']; ?>'" title="View project overview">Project Overview</button>
+                            <?php endif; ?>
                         </div>
                     </td>
                 </tr>
             <?php endforeach; ?>
         <?php else: ?>
             <tr>
-                <td colspan="7">No module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?>.</td>
+                <td colspan="7">No project-assigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?>.</td>
+            </tr>
+        <?php endif; ?>
+        </tbody>
+    </table>
+
+    <h2 style="margin-top: 40px;">Unassigned (Stock) Module Batches</h2>
+     <table id="unassignedModulesTable">
+        <thead>
+            <tr>
+                <th>Customer Account</th>
+                <th>Vendor Name</th>
+                <th>Initial Location</th>
+                <th>Status / Assigned Project</th>
+                <th>Total Quantity</th>
+                <th>Module Details</th>
+                <th>Batch Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php if (!empty($unassignedModulesData)): ?>
+            <?php foreach ($unassignedModulesData as $batch): ?>
+                <tr>
+                    <td><?php echo htmlspecialchars($batch['account_name']); ?></td>
+                    <td><?php echo htmlspecialchars($batch['vendor_name']); ?></td>
+                    <td><?php echo htmlspecialchars($batch['initial_location']); ?></td>
+                    <td>
+                        <?php 
+                          // For this table, project_id and project_name should be empty/null.
+                          echo "<em>Unassigned</em>"; 
+                        ?>
+                    </td>
+                    <td><?php echo number_format($batch['total_quantity']); ?></td>
+                    <td>
+                        <?php
+                            $details = [];
+                            if (!empty($batch['items'])) {
+                                foreach ($batch['items'] as $item) {
+                                     $details[] = htmlspecialchars((int)$item['wattage']) . 'W: ' . number_format((int)$item['quantity']);
+                                }
+                            }
+                            echo implode(', ', $details);
+                        ?>
+                    </td>
+                    <td>
+                        <div class="action-forms">
+                            <button class="action-button" onclick="window.location.href='module_overview.php?batch_id=<?php echo $batch['id']; ?>'" title="View full details and history for this batch">View Details</button>
+                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                            <button class="action-button" onclick="window.location.href='edit_module.php?batch_id=<?php echo $batch['id']; ?>'" title="Edit vendor, location, assignment, or items in this batch">Edit Batch</button>
+                            <form action="delete_module_batch.php" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
+                                <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
+                                <button type="submit" class="action-button" style="background-color: #dc3545;" title="Delete this entire batch">Delete Batch</button>
+                            </form>
+                            <?php elseif (isset($_SESSION['role']) && $_SESSION['role'] === 'user'): ?>
+                            <button class="action-button" onclick="window.location.href='warehouse_info.php?module_batch_id=<?php echo $batch['id']; ?>'" title="View warehouses containing modules from this batch">Warehouse</button>
+                            <button class="action-button" onclick="window.location.href='view_project.php?origin_batch_id=<?php echo $batch['id']; ?>'" title="View deliveries sourced from this batch">Deliveries</button>
+                            <?php endif; ?>
+                        </div>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+        <?php else: ?>
+            <tr>
+                <td colspan="7">No unassigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?>.</td>
             </tr>
         <?php endif; ?>
         </tbody>
