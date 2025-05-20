@@ -562,6 +562,13 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <!-- Add breadcrumb navigation -->
+    <div class="breadcrumb" style="margin: 10px 20px;">
+        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <span>Manage Pallets</span>
+    </div>
+    
     <h1>Manage All Pallets</h1>
 
     <?php if (!empty($successMessage)): /* This is for general page messages, including shipment outcomes */ ?>
