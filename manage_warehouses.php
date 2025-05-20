@@ -87,6 +87,13 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <!-- Add breadcrumb navigation -->
+    <div class="breadcrumb" style="margin: 10px 20px;">
+        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <span>Manage Warehouses</span>
+    </div>
+    
     <div class="header-container">
         <h1>Manage Warehouses</h1>
         <a href="add_warehouse.php" class="action-buttons add-new">Add New Warehouse</a>
