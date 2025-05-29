@@ -231,10 +231,12 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
     try {
         // Fetch Pallets currently IN this warehouse (for Inventory View)
         $sql_pallets = "
-            SELECT ip.id AS pallet_id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.arrival_date, m.vendor_name AS origin_vendor
+            SELECT ip.id AS pallet_id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.arrival_date, m.vendor_name AS origin_vendor,
+                   p.project_name, ip.assigned_project_id
             FROM inventory_pallets ip
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN projects p ON ip.assigned_project_id = p.id
             WHERE ip.current_warehouse_id = ? AND ip.status = 'In Warehouse'
         ";
         $pallet_params = [$warehouse_id];
@@ -894,11 +896,37 @@ if ($conn) {
                        }
                        ?>
                   </select>
+                  <?php if ($warehouse_id && !$project_id && !$module_batch_id): // Show project filter when viewing general warehouse ?>
+                  <label for="inventoryProjectFilter">Project:</label>
+                  <select id="inventoryProjectFilter">
+                       <option value="">All Projects</option>
+                       <option value="UNASSIGNED">Unassigned</option>
+                       <?php
+                       $unique_projects_inv = [];
+                       if (!empty($inventory_pallets)) {
+                           foreach($inventory_pallets as $p) { 
+                               if (!empty($p['project_name'])) {
+                                   $unique_projects_inv[$p['project_name']] = true; 
+                               }
+                           }
+                           ksort($unique_projects_inv);
+                           foreach (array_keys($unique_projects_inv) as $project_name):
+                       ?>
+                          <option value="<?php echo htmlspecialchars($project_name); ?>"><?php echo htmlspecialchars($project_name); ?></option>
+                       <?php 
+                           endforeach; 
+                       }
+                       ?>
+                  </select>
+                  <?php endif; ?>
              </div>
              <div class="table-responsive">
                  <table id="inventoryTable">
                      <thead>
                          <tr>
+                             <?php if ($warehouse_id && !$project_id && !$module_batch_id): // Show project column when viewing general warehouse ?>
+                             <th>Project</th>
+                             <?php endif; ?>
                              <th>Pallet Identifier</th>
                              <th>Origin Vendor</th>
                              <th>Wattage</th>
@@ -911,6 +939,9 @@ if ($conn) {
                          <?php if (!empty($inventory_pallets)): ?>
                              <?php foreach ($inventory_pallets as $pallet): ?>
                                  <tr>
+                                     <?php if ($warehouse_id && !$project_id && !$module_batch_id): // Show project column when viewing general warehouse ?>
+                                     <td><?php echo !empty($pallet['project_name']) ? htmlspecialchars($pallet['project_name']) : 'Unassigned'; ?></td>
+                                     <?php endif; ?>
                                      <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                                      <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
                                      <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
@@ -922,7 +953,7 @@ if ($conn) {
                                  </tr>
                              <?php endforeach; ?>
                          <?php else: ?>
-                             <tr><td colspan="6">No inventory currently stored<?php 
+                             <tr><td colspan="<?php echo ($warehouse_id && !$project_id && !$module_batch_id) ? '7' : '6'; ?>">No inventory currently stored<?php 
                                 if ($project_id) echo ' for this project'; 
                                 elseif ($module_batch_id) echo ' from this module batch'; 
                              ?> in this warehouse.</td></tr>
@@ -1142,6 +1173,10 @@ if ($conn) {
          const searchFilter = searchInput ? searchInput.value.toLowerCase().trim() : '';
          const wattageFilter = wattageSelect ? wattageSelect.value : '';
 
+         // Handle project filter for inventory table
+         const projectSelect = document.getElementById('inventoryProjectFilter');
+         const projectFilter = (tableId === 'inventoryTable' && projectSelect) ? projectSelect.value : '';
+
          const dateFilters = {};
          if(dateFilterIds) { // Check if dateFilterIds is provided
              for (const key in dateFilterIds) {
@@ -1178,6 +1213,25 @@ if ($conn) {
                      const wattageText = cells[wattageCellIndex].textContent.replace('W', '').trim();
                      if (wattageText !== wattageFilter) {
                          show = false;
+                     }
+                 }
+             }
+
+             // Handle project filter for inventory table
+             if (show && projectFilter && tableId === 'inventoryTable') {
+                 // Determine project cell index - check if we have the project column
+                 const hasProjectColumn = document.querySelector('#inventoryTable th:nth-child(1)')?.textContent.includes('Project');
+                 if (hasProjectColumn) {
+                     const projectCellIndex = 0; // 1st column (0-indexed)
+                     if (cells[projectCellIndex]) {
+                         const projectText = cells[projectCellIndex].textContent.trim();
+                         if (projectFilter === 'UNASSIGNED') {
+                             if (projectText !== 'Unassigned') {
+                                 show = false;
+                             }
+                         } else if (projectText !== projectFilter) {
+                             show = false;
+                         }
                      }
                  }
              }
@@ -1233,9 +1287,11 @@ if ($conn) {
          // Filters for Inventory Table (remains the same)
          const inventorySearch = document.getElementById('inventorySearch');
          const inventoryWattageFilter = document.getElementById('inventoryWattageFilter');
+         const inventoryProjectFilter = document.getElementById('inventoryProjectFilter');
 
          if(inventorySearch) inventorySearch.addEventListener('keyup', () => filterTable('inventoryTable', 'inventorySearch', 'inventoryWattageFilter'));
          if(inventoryWattageFilter) inventoryWattageFilter.addEventListener('change', () => filterTable('inventoryTable', 'inventorySearch', 'inventoryWattageFilter'));
+         if(inventoryProjectFilter) inventoryProjectFilter.addEventListener('change', () => filterTable('inventoryTable', 'inventorySearch', 'inventoryWattageFilter'));
          
          filterTable('inventoryTable', 'inventorySearch', 'inventoryWattageFilter');
          filterTable('inboundTruckloadsTable', 'inboundTruckloadSearch', 'inboundTruckloadWattageFilter', inboundDateFilters);
