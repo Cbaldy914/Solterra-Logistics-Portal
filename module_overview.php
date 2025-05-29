@@ -421,6 +421,19 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+            margin-top: 10px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
+        }
         .overview-header {
             position: relative; /* Needed for absolute positioning of child */
             background-color: #f9f9f9;
@@ -648,6 +661,14 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <div class="breadcrumb">
+        <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <span class="separator">&raquo;</span>
+        <a href="modules.php">Modules</a>
+        <span class="separator">&raquo;</span>
+        <span>Batch: <?php echo $batch_data ? htmlspecialchars($batch_data['vendor_name']) : 'Module Batch'; ?></span>
+    </div>
+
     <?php if (!empty($errorMessage)): ?>
         <div class="error-message"><strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?></div>
     <?php elseif ($batch_data): ?>
