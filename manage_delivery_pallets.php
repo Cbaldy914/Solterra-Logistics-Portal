@@ -287,12 +287,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_pallet_associati
         <span>Manage Pallet Association</span>
     </div>
     
-    <!-- 1) Move Back Button just below the site header -->
-    <div style="margin-bottom:20px;">
-      <a href="edit_delivery.php?delivery_id=<?php echo $delivery_id; ?>" class="button button-secondary">
-        Back to Edit Delivery
-      </a>
-    </div>
 
     <h1>Manage Pallet Association</h1>
     <p>Delivery ID: <strong><?php echo $delivery_id; ?></strong></p>
