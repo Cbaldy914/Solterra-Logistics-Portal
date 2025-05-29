@@ -885,6 +885,36 @@ window.addEventListener('click', (e) => {
 function openReceiveModal() {
     const btn = document.getElementById('receivePalletsBtn');
     if (btn.disabled) return;
+    
+    // Auto-populate BOL number from selected pallets
+    const selectedCheckboxes = document.querySelectorAll('.transit-checkbox:checked');
+    const bolNumbers = new Set();
+    
+    selectedCheckboxes.forEach(checkbox => {
+        const row = checkbox.closest('tr');
+        const bolCell = row.cells[5]; // BOL is in the 6th column (index 5)
+        const bolText = bolCell.textContent.trim();
+        if (bolText && bolText !== 'N/A') {
+            bolNumbers.add(bolText);
+        }
+    });
+    
+    // Set BOL number (use the first one if multiple, or leave empty if none/N/A)
+    const bolField = document.getElementById('receive_bol');
+    if (bolNumbers.size > 0) {
+        bolField.value = Array.from(bolNumbers)[0]; // Use first BOL number found
+    } else {
+        bolField.value = ''; // Clear if no valid BOL found
+    }
+    
+    // Auto-populate with today's date
+    const arrivalDateField = document.getElementById('actual_arrival_date');
+    const today = new Date();
+    const todayString = today.getFullYear() + '-' + 
+                       String(today.getMonth() + 1).padStart(2, '0') + '-' + 
+                       String(today.getDate()).padStart(2, '0');
+    arrivalDateField.value = todayString;
+    
     const modalContent = receiveModal.querySelector('.modal-content');
     const header = modalContent.querySelector('.modal-header');
     if (header && receiveFormContainer) {

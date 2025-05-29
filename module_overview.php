@@ -188,7 +188,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         $stmtLink->close();
         $stmtUp->close();
         $conn->commit();
-        $shipMessage = "Successfully created transfer delivery (IDs: " . implode(", ", $createdDeliveryIds) . ") for " . count($palletIds) . " pallets.";
+        
+        $totalDeliveries = count($createdDeliveryIds);
+        $totalPallets = count($palletIds);
+        $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
     } catch (Exception $e) {
         $conn->rollback();
         $shipMessage = "Error creating transfer delivery: " . $e->getMessage();
@@ -722,6 +725,13 @@ $conn->close();
             <?php if (!empty($successMessage)): ?>
                 <div class="success-message" style="margin-top: 15px;"><?php echo htmlspecialchars($successMessage); ?></div>
             <?php endif; ?>
+            
+            <?php if (!empty($shipMessage)): ?>
+                <?php 
+                $messageClass = (strpos(strtolower($shipMessage), 'error') !== false) ? 'error-message' : 'success-message';
+                ?>
+                <div class="<?php echo $messageClass; ?>" style="margin-top: 15px;"><?php echo htmlspecialchars($shipMessage); ?></div>
+            <?php endif; ?>
         </div>
 
         <!-- ====== SHIP PALLETS FORM CONDITIONALLY SHOWN ====== -->
@@ -942,6 +952,14 @@ function updateOpenShipModalButtonState() {
     const checked = document.querySelectorAll('.pallet-checkbox:checked').length;
     if (openBtn) {
         openBtn.disabled = (checked === 0);
+    }
+}
+
+function updateSelectedCount() {
+    let count = document.querySelectorAll('.pallet-checkbox:checked').length;
+    const countEl = document.getElementById('selectedCount');
+    if (countEl) {
+        countEl.textContent = count + ' pallet' + (count === 1 ? '' : 's') + ' selected';
     }
 }
 
