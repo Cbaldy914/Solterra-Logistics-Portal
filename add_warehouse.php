@@ -100,13 +100,8 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
-        /* Styles adapted from add_project.php */
         main {
-            max-width: 800px; /* Adjust as needed */
-            margin: 20px auto; /* Center main content */
-            padding: 20px;
-            background-color: #fff;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            max-width: 800px;
         }
         form label {
             display: block;
@@ -140,11 +135,6 @@ $conn->close();
         .btn-submit:hover {
             background: #488C9A; /* Lighter blue on hover */
         }
-        h1 {
-            color: #293E4C; /* Match button color */
-            text-align: center; /* Center the heading */
-            margin-bottom: 30px;
-        }
         /* Message styling */
         .success-message {
             color: #155724; /* Dark green */
@@ -173,6 +163,15 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <!-- Breadcrumb Navigation -->
+    <div class="breadcrumb" style="margin: 10px 20px;">
+        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <a href="manage_warehouses.php" style="color: #488C9A; text-decoration: none;">Manage Warehouses</a>
+        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <span>Add Warehouse</span>
+    </div>
+    
     <h1>Add Warehouse</h1>
 
     <!-- Display success or error messages -->
