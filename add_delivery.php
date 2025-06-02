@@ -82,19 +82,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
     $supplier           = $conn->real_escape_string($_POST['supplier']          ?? '');
     $bol_number         = $conn->real_escape_string($_POST['bol_number']        ?? '');
     $status_of_delivery = $conn->real_escape_string($_POST['status_of_delivery'] ?? 'Pending'); // Get from form, default to Pending
-    $assignType         = $_POST['assign_type'] ?? 'project';
-    $targetId           = intval($_POST['target_id'] ?? 0);
+    
+    // Handle assign_type and target_id based on context
+    if ($project_id) {
+        // If we're in a project context, automatically assign to that project
+        $assignType = 'project';
+        $targetId = $project_id;
+    } else {
+        // Use form values when not in project context
+        $assignType = $_POST['assign_type'] ?? 'project';
+        $targetId = intval($_POST['target_id'] ?? 0);
+    }
 
-    // Different date fields based on destination
-    $anticipated_delivery_date = ($assignType === 'project') ? ($_POST['anticipated_delivery_date'] ?: null) : null;
-    $actual_delivery_date      = ($assignType === 'project') ? ($_POST['actual_delivery_date']      ?: null) : null;
-    $left_warehouse_date       = ($assignType === 'project') ? ($_POST['left_warehouse_date']       ?: null) : null;
-    $warehouse_arrival_date    = ($assignType === 'warehouse') ? ($_POST['warehouse_arrival_date']    ?: null) : null;
+    // Simplified date handling for project deliveries
+    $anticipated_delivery_date = $_POST['anticipated_delivery_date'] ?: null;
+    $actual_delivery_date = $_POST['actual_delivery_date'] ?: null;
 
     // Total costs for the *entire* shipment (entered by user)
     $total_freight_cost        = ($_POST['freight_cost']        !== '') ? (float)$_POST['freight_cost']        : 0.0;
     $total_accessorial_paid    = ($_POST['accessorial_costs_paid'] !== '') ? (float)$_POST['accessorial_costs_paid'] : 0.0;
     $total_accessorial_charged = ($_POST['accessorial_costs']     !== '') ? (float)$_POST['accessorial_costs']     : 0.0; // From hidden field synced by JS
+    $total_customer_cost       = ($_POST['customer_cost']       !== '') ? (float)$_POST['customer_cost']       : 0.0;
     $total_miles               = ($_POST['miles']               !== '') ? (float)$_POST['miles']               : null;
 
     // --- POD Upload --- 
@@ -151,21 +159,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
         if ($assignType === 'project') {
     $sql = "INSERT INTO deliveries
             (project_id, supplier, wattage, status_of_delivery, quantity, bol_number,
-                     anticipated_delivery_date, actual_delivery_date, left_warehouse_date,
-                     freight_cost, accessorial_costs_paid, accessorial_costs, proof_of_delivery, miles)
+                     anticipated_delivery_date, actual_delivery_date,
+                     freight_cost, accessorial_costs_paid, accessorial_costs, customer_cost, proof_of_delivery, miles)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 14 placeholders
             $stmt = $conn->prepare($sql);
             if (!$stmt) throw new Exception("Prepare project delivery failed: " . $conn->error);
-            $bind_types = "isssissssdddsd";
+            $bind_types = "isssissddddsd";
         } else { // Warehouse
             $sql = "INSERT INTO deliveries
                     (warehouse_id, supplier, wattage, status_of_delivery, quantity, bol_number,
-                     warehouse_arrival_date,
-                     freight_cost, accessorial_costs_paid, accessorial_costs, proof_of_delivery, miles)
+                     freight_cost, accessorial_costs_paid, accessorial_costs, customer_cost, proof_of_delivery, miles)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 12 placeholders
             $stmt = $conn->prepare($sql);
              if (!$stmt) throw new Exception("Prepare warehouse delivery failed: " . $conn->error);
-             $bind_types = "isssisdddsds"; // Note: only warehouse_arrival_date (s) replaces 3 date fields (sss)
+             $bind_types = "isssiddddsd";
         }
 
         // Loop through each wattage entry and insert
@@ -179,22 +186,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
             $proportional_freight = round($total_freight_cost * $proportion, 2);
             $proportional_acc_paid = round($total_accessorial_paid * $proportion, 2);
             $proportional_acc_charged = round($total_accessorial_charged * $proportion, 2);
+            $proportional_customer_cost = round($total_customer_cost * $proportion, 2);
             $proportional_miles = ($total_miles !== null) ? round($total_miles * $proportion, 2) : null;
 
             // Bind parameters dynamically based on type
             if ($assignType === 'project') {
                 $stmt->bind_param($bind_types,
                     $targetId, $supplier, $w, $status_of_delivery, $q, $bol_number,
-                    $anticipated_delivery_date, $actual_delivery_date, $left_warehouse_date,
+                    $anticipated_delivery_date, $actual_delivery_date,
                     $proportional_freight, $proportional_acc_paid, $proportional_acc_charged,
-                    $proof_of_delivery_path, $proportional_miles
+                    $proportional_customer_cost, $proof_of_delivery_path, $proportional_miles
                 );
             } else { // Warehouse
                  $stmt->bind_param($bind_types,
                     $targetId, $supplier, $w, $status_of_delivery, $q, $bol_number,
-                    $warehouse_arrival_date, // Only warehouse arrival date
                     $proportional_freight, $proportional_acc_paid, $proportional_acc_charged,
-                    $proof_of_delivery_path, $proportional_miles
+                    $proportional_customer_cost, $proof_of_delivery_path, $proportional_miles
                 );
             }
 
@@ -339,17 +346,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
 
 <fieldset>
         <legend>Shipment Details</legend>
-        <label>Supplier:<input type="text" name="supplier" required value="<?php echo htmlspecialchars($_POST['supplier'] ?? ''); ?>"></label>
-        <label>BOL Number:<input type="text" name="bol_number" value="<?php echo htmlspecialchars($_POST['bol_number'] ?? ''); ?>"></label>
- <label>Status of Delivery:
-   <select name="status_of_delivery" required>
-                <option value="Produced" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Produced') ? 'selected' : ''; ?>>Produced</option>
-                <option value="In Warehouse" <?php echo (($_POST['status_of_delivery'] ?? '') === 'In Warehouse') ? 'selected' : ''; ?>>In Warehouse</option>
-                <option value="Delivered" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Delivered') ? 'selected' : ''; ?>>Delivered</option>
-                <option value="Canceled" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Canceled') ? 'selected' : ''; ?>>Canceled</option>
-   </select>
- </label>
-
+        
+        <?php if (!$project_id): ?>
         <div>
             <label style="margin-bottom: 10px; display:block;">Destination:</label>
             <label class="radio-label">
@@ -366,9 +364,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
                 <!-- Options loaded by JS -->
             </select>
         </div>
-    </fieldset>
+        <?php endif; ?>
+        
+        <label>Supplier:<input type="text" name="supplier" required value="<?php echo htmlspecialchars($_POST['supplier'] ?? ''); ?>"></label>
+        <label>BOL Number:<input type="text" name="bol_number" value="<?php echo htmlspecialchars($_POST['bol_number'] ?? ''); ?>"></label>
+ <label>Status of Delivery:
+   <select name="status_of_delivery" required>
+                <option value="Produced" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Produced') ? 'selected' : ''; ?>>Produced</option>
+                <option value="In Warehouse" <?php echo (($_POST['status_of_delivery'] ?? '') === 'In Warehouse') ? 'selected' : ''; ?>>In Warehouse</option>
+                <option value="Delivered" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Delivered') ? 'selected' : ''; ?>>Delivered</option>
+                <option value="Canceled" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Canceled') ? 'selected' : ''; ?>>Canceled</option>
+   </select>
+ </label>
+</fieldset>
 
-    <fieldset>
+<fieldset>
         <legend>Wattage & Quantity</legend>
         <div id="wattage-container">
             <!-- Dynamically added fields will go here -->
@@ -392,10 +402,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
 
 <fieldset>
  <legend>Dates</legend>
-         <label>Anticipated Delivery Date (Project Only):<input type="date" name="anticipated_delivery_date" value="<?php echo htmlspecialchars($_POST['anticipated_delivery_date'] ?? ''); ?>"></label>
-         <label>Actual Delivery Date (Project Only):<input type="date" name="actual_delivery_date" value="<?php echo htmlspecialchars($_POST['actual_delivery_date'] ?? ''); ?>"></label>
-         <label>Left Warehouse Date (Project Only):<input type="date" name="left_warehouse_date" value="<?php echo htmlspecialchars($_POST['left_warehouse_date'] ?? ''); ?>"></label>
-         <label>Warehouse Arrival Date (Warehouse Only):<input type="date" name="warehouse_arrival_date" value="<?php echo htmlspecialchars($_POST['warehouse_arrival_date'] ?? ''); ?>"></label>
+         <label>Anticipated Delivery Date:<input type="date" name="anticipated_delivery_date" value="<?php echo htmlspecialchars($_POST['anticipated_delivery_date'] ?? ''); ?>"></label>
+         <label>Actual Delivery Date:<input type="date" name="actual_delivery_date" value="<?php echo htmlspecialchars($_POST['actual_delivery_date'] ?? ''); ?>"></label>
 </fieldset>
 
 <fieldset>
@@ -408,6 +416,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
  </label>
          <!-- Hidden field for customer-facing amount -->
          <input type="hidden" id="accessorial_costs" name="accessorial_costs" value="<?php echo htmlspecialchars($_POST['accessorial_costs'] ?? '0'); ?>">
+         <label>Total Customer Cost:<input type="number" step="0.01" id="customer_cost" name="customer_cost" value="<?php echo htmlspecialchars($_POST['customer_cost'] ?? ''); ?>"></label>
          <label>Total Miles:<input type="number" step="0.01" name="miles" value="<?php echo htmlspecialchars($_POST['miles'] ?? ''); ?>"></label>
 </fieldset>
 
@@ -418,14 +427,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
 
 <input type="submit" name="add_delivery" value="Add Delivery Entry">
 </form>
-
-<div class="back-link" style="margin-top: 20px;">
-    <?php if ($project_id): ?>
-        <a href="manage_deliveries.php?project_id=<?php echo $project_id; ?>">&larr; Back to Manage Deliveries for <?php echo htmlspecialchars($project_name); ?></a>
-    <?php else: ?>
-        <a href="admin_dashboard.php">&larr; Back to Dashboard</a>
-    <?php endif; ?>
-</div>
 
 </main>
 
@@ -461,12 +462,18 @@ function addWattageField() {
     container.appendChild(div);
 }
 
-// Toggle Target Select Dropdown Label and Content
+// Toggle Target Select Dropdown Label and Content (only if not in project context)
 function toggleTargetSelect() {
-    var assignType = document.querySelector('input[name="assign_type"]:checked').value;
+    var assignTypeElement = document.querySelector('input[name="assign_type"]:checked');
     var targetLabel = document.getElementById('targetLabel');
     var targetSelect = document.getElementById('target_id');
+    
+    // Return early if elements don't exist (project context)
+    if (!assignTypeElement || !targetLabel || !targetSelect) {
+        return;
+    }
 
+    var assignType = assignTypeElement.value;
     targetLabel.textContent = (assignType === 'project') ? 'Project:' : 'Warehouse:';
     targetSelect.innerHTML = ''; // Clear existing options
 
@@ -503,9 +510,19 @@ function toggleTargetSelect() {
 const chargeCustomerCheckbox = document.getElementById('charge_customer_ckb');
 const accessorialPaidInput = document.getElementById('accessorial_costs_paid');
 const accessorialChargedHidden = document.getElementById('accessorial_costs');
+const freightCostInput = document.querySelector('input[name="freight_cost"]');
+const customerCostInput = document.getElementById('customer_cost');
 
 function syncCustomerAccessorialField() {
     accessorialChargedHidden.value = chargeCustomerCheckbox.checked ? (parseFloat(accessorialPaidInput.value) || 0) : 0;
+    calculateCustomerCost();
+}
+
+function calculateCustomerCost() {
+    const freightCost = parseFloat(freightCostInput.value) || 0;
+    const accessorialCharged = parseFloat(accessorialChargedHidden.value) || 0;
+    const totalCustomerCost = freightCost + accessorialCharged;
+    customerCostInput.value = totalCustomerCost.toFixed(2);
 }
 
 if (chargeCustomerCheckbox) {
@@ -523,13 +540,25 @@ if (accessorialPaidInput) {
     }
 }
 
+// Add event listener for freight cost changes
+if (freightCostInput) {
+    freightCostInput.addEventListener('input', calculateCustomerCost);
+}
+
 // Initial call to set the dropdown correctly on page load
 document.addEventListener('DOMContentLoaded', function() {
-    toggleTargetSelect(); // This will now use contextProjectId for default
+    // Only set up target selection if we're not in project context
+    if (document.getElementById('targetSelectContainer')) {
+        toggleTargetSelect();
+    }
+    
     // Add at least one wattage field if container is empty on load
     if (document.getElementById('wattage-container').children.length === 0) {
          addWattageField();
     }
+    
+    // Initialize customer cost calculation
+    calculateCustomerCost();
 });
 
 </script>
