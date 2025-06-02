@@ -108,6 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         $freight_cost       = isset($_POST['freight_cost']) ? (float)$_POST['freight_cost'] : $delivery['freight_cost'];
         $access_paid        = isset($_POST['accessorial_costs_paid']) ? (float)$_POST['accessorial_costs_paid'] : $delivery['accessorial_costs_paid'];
         $access_charged     = isset($_POST['accessorial_costs']) ? (float)$_POST['accessorial_costs'] : $delivery['accessorial_costs'];
+        $customer_cost      = isset($_POST['customer_cost']) ? (float)$_POST['customer_cost'] : $delivery['customer_cost'];
         $miles              = isset($_POST['miles']) ? (float)$_POST['miles'] : $delivery['miles'];
 
         // Handle existing POD removal
@@ -135,6 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
                 freight_cost           = ?,
                 accessorial_costs_paid = ?,
                 accessorial_costs      = ?,
+                customer_cost          = ?,
                 proof_of_delivery      = ?,
                 miles                  = ?
             WHERE id = ?
@@ -145,10 +147,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         }
 
         $stmt_update->bind_param(
-            "sssisssssdddsdi",
+            "sssisssssdddddi",
             $supplier, $wattage, $status, $quantity, $bol_number,
             $anticipated_date, $warehouse_arrival, $actual_date, $left_wh_date,
-            $freight_cost, $access_paid, $access_charged, $pod, $miles,
+            $freight_cost, $access_paid, $access_charged, $customer_cost, $pod, $miles,
             $delivery_id
         );
         if (!$stmt_update->execute()) {
@@ -278,18 +280,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 <?php include 'header.php'; ?>
 <main>
 
-<?php 
-// Back link
-$back_link_url = "manage_deliveries.php";
-if ($context_project_id) {
-    $back_link_url .= "?filter_project_id=" . $context_project_id;
-} elseif ($is_unassigned_delivery) {
-    $back_link_url .= "?filter_project_id=unassigned";
-}
-?>
-<p style="margin-top:20px;">
-  <a href="<?php echo $back_link_url; ?>" class="back-link">&larr; Back to Manage Deliveries</a>
-</p>
+    <!-- Breadcrumb Navigation -->
+    <div class="breadcrumb" style="margin: 10px 20px;">
+        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <?php
+        // Build manage deliveries link with proper context
+        $manage_deliveries_url = "manage_deliveries.php";
+        if ($context_project_id) {
+            $manage_deliveries_url .= "?filter_project_id=" . $context_project_id;
+        } elseif ($is_unassigned_delivery) {
+            $manage_deliveries_url .= "?filter_project_id=unassigned";
+        }
+        ?>
+        <a href="<?php echo $manage_deliveries_url; ?>" style="color: #488C9A; text-decoration: none;">Manage Deliveries</a>
+        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <span>Edit Delivery</span>
+    </div>
 
 <h1>
   Edit Delivery
@@ -478,6 +485,16 @@ if ($context_project_id) {
       value="<?php echo $chargedVal;?>"
     >
 
+    <label>Customer Cost:
+      <input 
+        type="number" 
+        step="0.01" 
+        id="customer_cost"
+        name="customer_cost" 
+        value="<?php echo number_format((float)($delivery['customer_cost'] ?? 0), 2, '.', '');?>"
+      >
+    </label>
+
     <label>Miles:
       <input 
         type="number" 
@@ -523,16 +540,28 @@ if ($context_project_id) {
 <script>
 /**
  * Keep the hidden customer charge field in sync 
- * with the 'Charge Customer' checkbox and the paid amount
+ * with the 'Charge Customer' checkbox and the paid amount,
+ * and calculate customer cost automatically
  */
 const ckb       = document.getElementById('charge_customer_ckb');
 const paidInput = document.getElementById('accessorial_costs_paid');
 const hiddenCst = document.getElementById('accessorial_costs');
+const freightCostInput = document.querySelector('input[name="freight_cost"]');
+const customerCostInput = document.getElementById('customer_cost');
 
 function syncAccessorialCharge() {
   if (!ckb || !paidInput || !hiddenCst) return;
   const paidValue = parseFloat(paidInput.value) || 0;
   hiddenCst.value = ckb.checked ? paidValue.toFixed(2) : '0.00';
+  calculateCustomerCost();
+}
+
+function calculateCustomerCost() {
+  if (!freightCostInput || !customerCostInput || !hiddenCst) return;
+  const freightCost = parseFloat(freightCostInput.value) || 0;
+  const accessorialCharged = parseFloat(hiddenCst.value) || 0;
+  const totalCustomerCost = freightCost + accessorialCharged;
+  customerCostInput.value = totalCustomerCost.toFixed(2);
 }
 
 if (ckb) {
@@ -546,8 +575,16 @@ if (paidInput) {
   });
 }
 
+// Add event listener for freight cost changes
+if (freightCostInput) {
+  freightCostInput.addEventListener('input', calculateCustomerCost);
+}
+
 // Initial sync on page load
-document.addEventListener('DOMContentLoaded', syncAccessorialCharge);
+document.addEventListener('DOMContentLoaded', () => {
+  syncAccessorialCharge();
+  calculateCustomerCost();
+});
 </script>
 
 </body>
