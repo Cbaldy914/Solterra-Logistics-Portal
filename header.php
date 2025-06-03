@@ -79,11 +79,18 @@ if (isset($_SESSION['role'])) {
                 <li class="dropdown">
                     <a href="#" class="dropbtn">Warehouses</a>
                     <div class="dropdown-content">
+                        <a href="add_warehouse">Add Warehouse</a>
                         <a href="admin_warehouse_estimate">Admin Warehouse Quote</a>
                         <a href="manage_warehouses.php">Manage Warehouses</a>
                     </div>
                 </li>
-                <li><a href="manufacturers" class="dropbtn">Manufacturers</a></li>
+                <li class="dropdown">
+                    <a href="#" class="dropbtn">Manufacturers</a>
+                    <div class="dropdown-content">
+                        <a href="add_manufacturer">Add Manufacturer</a>
+                        <a href="manufacturers">Manage Manufacturers</a>
+                    </div>
+                </li>
                 <li class="dropdown">
                     <a href="#" class="dropbtn">Freight</a>
                     <div class="dropdown-content">

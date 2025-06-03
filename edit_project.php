@@ -395,6 +395,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <br>
         <a href="admin_dashboard">Back to Admin Dashboard</a>
     </main>
+
+    <!-- Load the Google Maps JavaScript API with Places library -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=REDACTED_GOOGLE_MAPS_KEY&libraries=places"></script>
+
+    <script>
+    function initializeAddressAutocomplete() {
+        // Get the street address input element
+        const streetAddressInput = document.getElementById('street_address');
+        const cityInput = document.getElementById('city');
+        const stateInput = document.getElementById('state');
+        const zipInput = document.getElementById('zip_code');
+        
+        // Only initialize if the street address input exists
+        if (!streetAddressInput) return;
+        
+        // Create the autocomplete object, restricting the search to addresses
+        const autocomplete = new google.maps.places.Autocomplete(streetAddressInput, {
+            types: ['address'],
+            componentRestrictions: { country: 'US' } // Restrict to US addresses
+        });
+        
+        // When the user selects an address from the dropdown, populate the address fields
+        autocomplete.addListener('place_changed', function() {
+            const place = autocomplete.getPlace();
+            
+            // Clear all fields first
+            streetAddressInput.value = '';
+            cityInput.value = '';
+            stateInput.value = '';
+            zipInput.value = '';
+            
+            if (!place.geometry) {
+                // User entered the name of a Place that was not suggested and pressed Enter
+                console.log("No details available for input: '" + place.name + "'");
+                return;
+            }
+            
+            // Get the address components and populate the form fields
+            let streetNumber = '';
+            let route = '';
+            
+            for (let i = 0; i < place.address_components.length; i++) {
+                const addressType = place.address_components[i].types[0];
+                const val = place.address_components[i].long_name;
+                
+                switch (addressType) {
+                    case 'street_number':
+                        streetNumber = val;
+                        break;
+                    case 'route':
+                        route = val;
+                        break;
+                    case 'locality':
+                    case 'administrative_area_level_3':
+                        cityInput.value = val;
+                        break;
+                    case 'administrative_area_level_1':
+                        stateInput.value = place.address_components[i].short_name; // Use short name for state (e.g., "CA" instead of "California")
+                        break;
+                    case 'postal_code':
+                        zipInput.value = val;
+                        break;
+                }
+            }
+            
+            // Combine street number and route for full street address
+            streetAddressInput.value = (streetNumber + ' ' + route).trim();
+        });
+    }
+
+    // Initialize the autocomplete when the page loads
+    google.maps.event.addDomListener(window, 'load', initializeAddressAutocomplete);
+    </script>
+
     </body>
     </html>
     <?php
