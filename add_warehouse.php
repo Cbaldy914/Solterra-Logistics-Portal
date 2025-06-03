@@ -23,13 +23,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit'])) {
     try {
         // Retrieve form data and sanitize
         $name = trim($_POST['name']);
-        $address = trim($_POST['address']);
+        $street_address = trim($_POST['street_address']);
+        $city = trim($_POST['city']);
+        $state = trim($_POST['state']);
+        $zip_code = trim($_POST['zip_code']);
         $in_fee = floatval($_POST['in_fee']);
         $out_fee = floatval($_POST['out_fee']);
         $monthly_storage_fee = floatval($_POST['monthly_storage_fee']);
 
-        if (empty($name) || empty($address)) {
-            throw new Exception("Warehouse Name and Address are required.");
+        if (empty($name)) {
+            throw new Exception("Warehouse Name is required.");
+        }
+        if ($street_address === '' && $city === '' && $state === '' && $zip_code === '') {
+            throw new Exception("At least one address field is required.");
         }
 
         // Handle image upload if provided
@@ -70,12 +76,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit'])) {
              throw new Exception("File upload error code: " . $_FILES['image']['error']);
         }
 
-        // Insert into the database
-        $stmt = $conn->prepare("INSERT INTO warehouses (name, address, image_url, in_fee, out_fee, monthly_storage_fee) VALUES (?, ?, ?, ?, ?, ?)");
+        // Insert into the database with separate address fields (trigger will populate address field)
+        $stmt = $conn->prepare("INSERT INTO warehouses (name, street_address, city, state, zip_code, image_url, in_fee, out_fee, monthly_storage_fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
          if (!$stmt) {
             throw new Exception("Error preparing warehouse insert: " . $conn->error);
         }
-        $stmt->bind_param("sssddd", $name, $address, $image_url, $in_fee, $out_fee, $monthly_storage_fee);
+        $stmt->bind_param("ssssssddd", $name, $street_address, $city, $state, $zip_code, $image_url, $in_fee, $out_fee, $monthly_storage_fee);
         if ($stmt->execute()) {
             $successMessage = "Warehouse added successfully.";
         } else {
@@ -118,6 +124,16 @@ $conn->close();
             border-radius: 4px;
             border: 1px solid #ccc;
             box-sizing: border-box; /* Include padding and border in the element's total width and height */
+        }
+        /* Address grid layout */
+        .address-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 15px;
+            margin-top: 5px;
+        }
+        .address-grid input {
+            margin-top: 0;
         }
         .btn-submit { /* Class for the submit button */
             background: #293E4C; /* Dark blue */
@@ -186,8 +202,25 @@ $conn->close();
         <label for="name">Warehouse Name:</label>
         <input type="text" id="name" name="name" required>
 
-        <label for="address">Address:</label>
-        <input type="text" id="address" name="address" required>
+        <label>Address:</label>
+        <div class="address-grid">
+            <div>
+                <label for="street_address" style="margin-top: 0; font-size: 0.9em; color: #666;">Street Address:</label>
+                <input type="text" id="street_address" name="street_address" placeholder="5430 Franklin Springs Circle">
+            </div>
+            <div>
+                <label for="city" style="margin-top: 0; font-size: 0.9em; color: #666;">City:</label>
+                <input type="text" id="city" name="city" placeholder="Charlotte">
+            </div>
+            <div>
+                <label for="state" style="margin-top: 0; font-size: 0.9em; color: #666;">State:</label>
+                <input type="text" id="state" name="state" placeholder="NC">
+            </div>
+            <div>
+                <label for="zip_code" style="margin-top: 0; font-size: 0.9em; color: #666;">Zip Code:</label>
+                <input type="text" id="zip_code" name="zip_code" placeholder="28217">
+            </div>
+        </div>
 
         <label for="image">Warehouse Image:</label>
         <input type="file" id="image" name="image" accept="image/*"> <!-- Accept only image files -->
