@@ -68,7 +68,8 @@ if (isset($_SESSION['role'])) {
                 <li class="dropdown">
                     <a href="#" class="dropbtn">Modules</a>
                     <div class="dropdown-content">
-                        <a href="modules">Modules</a>
+                        <a href="modules">Manage Modules</a>
+                        <a href="module_movements">Module Movements</a>
                         <a href="manage_pallets.php">Manage Pallets</a>
                         <a href="manage_deliveries.php">Manage Deliveries</a>
                         <a href="link_pallet_deliveries.php">Link Pallets to Deliveries</a>
@@ -139,7 +140,8 @@ if (isset($_SESSION['role'])) {
                 <li class="dropdown">
                     <a href="#" class="dropbtn">Modules</a>
                     <div class="dropdown-content">
-                        <a href="modules">Modules</a>
+                        <a href="modules">Manage Modules</a>
+                        <a href="module_movements">Module Movements</a>
                         <a href="manage_pallets.php">Manage Pallets</a>
                         <a href="manage_deliveries.php">Manage Deliveries</a>
                         <a href="link_pallet_deliveries.php">Link Pallets to Deliveries</a>
