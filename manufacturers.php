@@ -2,37 +2,37 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure user has role admin or global_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
-    header("Location: unauthorized.php"); // Redirect to an unauthorized page
+// Ensure user has role global_admin only
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'global_admin') {
+    header("Location: unauthorized.php");
     exit();
 }
 
 require_once '../config.php';
 $conn = getDBConnection();
 
-$warehouses = [];
+$manufacturers = [];
 $errorMessage = '';
 $successMessage = '';
 
 // Handle delete action
 if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
     try {
-        $warehouse_id = intval($_GET['id']);
+        $manufacturer_id = intval($_GET['id']);
         
-        // Check if warehouse is being used anywhere (optional - you can add checks later)
+        // Check if manufacturer is being used anywhere (optional - you can add checks later)
         // For now, we'll allow deletion
         
-        $stmt = $conn->prepare("DELETE FROM warehouses WHERE id = ?");
+        $stmt = $conn->prepare("DELETE FROM manufacturers WHERE id = ?");
         if (!$stmt) {
             throw new Exception("Error preparing delete statement: " . $conn->error);
         }
         
-        $stmt->bind_param("i", $warehouse_id);
+        $stmt->bind_param("i", $manufacturer_id);
         if ($stmt->execute()) {
-            $successMessage = "Warehouse deleted successfully.";
+            $successMessage = "Manufacturer deleted successfully.";
         } else {
-            throw new Exception("Error deleting warehouse: " . $stmt->error);
+            throw new Exception("Error deleting manufacturer: " . $stmt->error);
         }
         $stmt->close();
         
@@ -42,32 +42,29 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
 }
 
 try {
-    // Fetch warehouses along with a count of pallets currently stored and in transit
+    // Fetch all manufacturers
     $sql = "SELECT 
-                w.id, 
-                w.name, 
-                w.address, 
-                w.in_fee,
-                w.out_fee,
-                w.monthly_storage_fee,
-                COUNT(DISTINCT CASE WHEN ip_stored.status = 'In Warehouse' THEN ip_stored.id ELSE NULL END) AS current_pallet_count,
-                COUNT(DISTINCT CASE WHEN ip_transit.status = 'In Transit to Warehouse' THEN ip_transit.id ELSE NULL END) AS in_transit_pallet_count
-            FROM warehouses w
-            LEFT JOIN inventory_pallets ip_stored ON w.id = ip_stored.current_warehouse_id AND ip_stored.status = 'In Warehouse'
-            LEFT JOIN deliveries d_transit ON w.id = d_transit.warehouse_id
-            LEFT JOIN delivery_pallets dp_transit ON d_transit.id = dp_transit.delivery_id
-            LEFT JOIN inventory_pallets ip_transit ON dp_transit.inventory_pallet_id = ip_transit.id AND ip_transit.status = 'In Transit to Warehouse'
-            GROUP BY w.id, w.name, w.address, w.in_fee, w.out_fee, w.monthly_storage_fee
-            ORDER BY w.name ASC";
+                id, 
+                name, 
+                short_name,
+                contact_person,
+                phone,
+                email,
+                website,
+                address,
+                is_active,
+                created_at
+            FROM manufacturers 
+            ORDER BY is_active DESC, name ASC";
             
     $result = $conn->query($sql);
 
     if ($result) {
         while ($row = $result->fetch_assoc()) {
-            $warehouses[] = $row;
+            $manufacturers[] = $row;
         }
     } else {
-        throw new Exception("Error fetching warehouses: " . $conn->error);
+        throw new Exception("Error fetching manufacturers: " . $conn->error);
     }
 
 } catch (Exception $e) {
@@ -81,7 +78,7 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Warehouses</title>
+    <title>Manage Manufacturers</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
@@ -130,17 +127,19 @@ $conn->close();
         .action-buttons.delete:hover {
             background-color: #c82333;
         }
-        .action-buttons.view {
-            background-color: #488C9A;
-            color: white;
-            padding: 4px 8px;
-            text-decoration: none;
+        .status-badge {
+            padding: 3px 8px;
             border-radius: 3px;
-            font-size: 0.9em;
-            margin-right: 5px;
+            font-size: 0.85em;
+            font-weight: 500;
         }
-        .action-buttons.view:hover {
-            background-color: #293E4C;
+        .status-active {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-inactive {
+            background-color: #f8d7da;
+            color: #721c24;
         }
         .error-message {
             color: #721c24;
@@ -158,21 +157,16 @@ $conn->close();
             border-radius: 4px;
             margin-bottom: 20px;
         }
-        .fee-info {
+        .contact-info {
             font-size: 0.9em;
             color: #666;
         }
-        .pallet-count {
-            font-weight: 500;
+        .website-link {
+            color: #488C9A;
+            text-decoration: none;
         }
-        .pallet-count.high {
-            color: #dc3545;
-        }
-        .pallet-count.medium {
-            color: #ffc107;
-        }
-        .pallet-count.low {
-            color: #28a745;
+        .website-link:hover {
+            text-decoration: underline;
         }
         
         /* Dropdown menu styling */
@@ -181,18 +175,17 @@ $conn->close();
             display: inline-block;
         }
         .dropdown-toggle {
-            background: none;
+            background-color: #6c757d;
+            color: white;
+            padding: 4px 8px;
             border: none;
-            color: #488C9A;
-            padding: 4px;
-            cursor: pointer;
-            font-size: 1.1em;
             border-radius: 3px;
-            transition: all 0.2s ease;
+            font-size: 0.9em;
+            cursor: pointer;
+            font-weight: bold;
         }
         .dropdown-toggle:hover {
-            background-color: #f8f9fa;
-            color: #293E4C;
+            background-color: #545b62;
         }
         .dropdown-menu {
             display: none;
@@ -236,21 +229,11 @@ $conn->close();
         .dropdown-item:last-child {
             border-radius: 0 0 4px 4px;
         }
-        
-        /* Actions cell styling */
-        .actions-cell {
-            position: relative;
-        }
-        .actions-cell .dropdown {
-            position: absolute;
-            top: 4px;
-            right: 4px;
-        }
     </style>
     <script>
-        function confirmDelete(warehouseName, warehouseId) {
-            if (confirm(`Are you sure you want to delete the warehouse "${warehouseName}"? This action cannot be undone.`)) {
-                window.location.href = `manage_warehouses.php?action=delete&id=${warehouseId}`;
+        function confirmDelete(manufacturerName, manufacturerId) {
+            if (confirm(`Are you sure you want to delete the manufacturer "${manufacturerName}"? This action cannot be undone.`)) {
+                window.location.href = `manufacturers.php?action=delete&id=${manufacturerId}`;
             }
         }
         
@@ -285,12 +268,12 @@ $conn->close();
     <div class="breadcrumb" style="margin: 10px 20px;">
         <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <span>Manage Warehouses</span>
+        <span>Manage Manufacturers</span>
     </div>
     
     <div class="header-container">
-        <h1>Manage Warehouses</h1>
-        <a href="add_warehouse.php" class="action-buttons add-new">Add New Warehouse</a>
+        <h1>Manage Manufacturers</h1>
+        <a href="add_manufacturer.php" class="action-buttons add-new">Add New Manufacturer</a>
     </div>
 
     <?php if (!empty($errorMessage)): ?>
@@ -309,50 +292,58 @@ $conn->close();
         <table>
             <thead>
                 <tr>
-                    <th>Warehouse</th>
-                    <th>Fee Information</th>
+                    <th>Manufacturer</th>
+                    <th>Contact Information</th>
                     <th>Address</th>
-                    <th>Current Inventory</th>
+                    <th>Website</th>
+                    <th>Status</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if (!empty($warehouses)): ?>
-                    <?php foreach ($warehouses as $warehouse): ?>
+                <?php if (!empty($manufacturers)): ?>
+                    <?php foreach ($manufacturers as $manufacturer): ?>
                         <tr>
                             <td>
-                                <strong><?php echo htmlspecialchars($warehouse['name']); ?></strong>
-                            </td>
-                            <td class="fee-info">
-                                <strong>In Fee:</strong> $<?php echo number_format($warehouse['in_fee'], 2); ?><br>
-                                <strong>Out Fee:</strong> $<?php echo number_format($warehouse['out_fee'], 2); ?><br>
-                                <strong>Monthly Storage:</strong> $<?php echo number_format($warehouse['monthly_storage_fee'], 2); ?>
-                            </td>
-                            <td><?php echo htmlspecialchars($warehouse['address']); ?></td>
-                            <td>
-                                <?php 
-                                    $total_pallets = $warehouse['current_pallet_count'];
-                                    $in_transit = $warehouse['in_transit_pallet_count'];
-                                    $pallet_class = 'low';
-                                    if ($total_pallets > 100) $pallet_class = 'high';
-                                    elseif ($total_pallets > 50) $pallet_class = 'medium';
-                                ?>
-                                <div class="pallet-count <?php echo $pallet_class; ?>">
-                                    📦 <?php echo number_format($total_pallets); ?> stored
-                                </div>
-                                <?php if ($in_transit > 0): ?>
-                                    <div style="font-size: 0.85em; color: #666;">
-                                        🚛 <?php echo number_format($in_transit); ?> in transit
-                                    </div>
+                                <strong><?php echo htmlspecialchars($manufacturer['name']); ?></strong>
+                                <?php if (!empty($manufacturer['short_name'])): ?>
+                                    <br><small style="color: #666;">(<?php echo htmlspecialchars($manufacturer['short_name']); ?>)</small>
                                 <?php endif; ?>
                             </td>
-                            <td class="actions-cell">
-                                <a href="manage_warehouse_inventory.php?warehouse_id=<?php echo $warehouse['id']; ?>" class="action-buttons view">View Inventory</a>
+                            <td class="contact-info">
+                                <?php if (!empty($manufacturer['contact_person'])): ?>
+                                    <strong><?php echo htmlspecialchars($manufacturer['contact_person']); ?></strong><br>
+                                <?php endif; ?>
+                                <?php if (!empty($manufacturer['phone'])): ?>
+                                    📞 <?php echo htmlspecialchars($manufacturer['phone']); ?><br>
+                                <?php endif; ?>
+                                <?php if (!empty($manufacturer['email'])): ?>
+                                    ✉️ <?php echo htmlspecialchars($manufacturer['email']); ?>
+                                <?php endif; ?>
+                            </td>
+                            <td><?php echo htmlspecialchars($manufacturer['address'] ?? 'Not specified'); ?></td>
+                            <td>
+                                <?php if (!empty($manufacturer['website'])): ?>
+                                    <a href="<?php echo htmlspecialchars($manufacturer['website']); ?>" target="_blank" class="website-link">
+                                        🌐 Visit Website
+                                    </a>
+                                <?php else: ?>
+                                    <span style="color: #999;">Not specified</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <span class="status-badge <?php echo $manufacturer['is_active'] ? 'status-active' : 'status-inactive'; ?>">
+                                    <?php echo $manufacturer['is_active'] ? 'Active' : 'Inactive'; ?>
+                                </span>
+                            </td>
+                            <td>
                                 <div class="dropdown">
-                                    <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $warehouse['id']; ?>')" title="More actions">✏️</button>
-                                    <div id="dropdown-menu-<?php echo $warehouse['id']; ?>" class="dropdown-menu">
-                                        <a href="edit_warehouse.php?id=<?php echo $warehouse['id']; ?>" class="dropdown-item edit">Edit</a>
-                                        <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($warehouse['name'], ENT_QUOTES); ?>', <?php echo $warehouse['id']; ?>)" class="dropdown-item delete">Delete</a>
+                                    <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $manufacturer['id']; ?>')">
+                                        Actions
+                                    </button>
+                                    <div id="dropdown-menu-<?php echo $manufacturer['id']; ?>" class="dropdown-menu">
+                                        <a href="edit_manufacturer.php?id=<?php echo $manufacturer['id']; ?>" class="dropdown-item edit">Edit</a>
+                                        <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($manufacturer['name'], ENT_QUOTES); ?>', <?php echo $manufacturer['id']; ?>)" class="dropdown-item delete">Delete</a>
                                     </div>
                                 </div>
                             </td>
@@ -360,16 +351,14 @@ $conn->close();
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="5" style="text-align: center; padding: 20px; color: #666;">
-                            No warehouses found. <a href="add_warehouse.php">Add the first warehouse</a>
+                        <td colspan="6" style="text-align: center; padding: 20px; color: #666;">
+                            No manufacturers found. <a href="add_manufacturer.php">Add the first manufacturer</a>
                         </td>
                     </tr>
                 <?php endif; ?>
             </tbody>
         </table>
     </div>
-    
-
 </main>
 </body>
 </html> 

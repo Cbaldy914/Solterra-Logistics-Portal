@@ -62,6 +62,16 @@ if ($role === 'global_admin') {
     }
 }
 
+// Fetch manufacturers for dropdown
+$manufacturers = [];
+$sqlManufacturers = "SELECT id, name, short_name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC";
+$resManufacturers = $conn->query($sqlManufacturers);
+if ($resManufacturers && $resManufacturers->num_rows > 0) {
+    while ($row = $resManufacturers->fetch_assoc()) {
+        $manufacturers[] = $row;
+    }
+}
+
 // Prepare variables to hold user messages:
 $successMessage = "";
 $errorMessage   = "";
@@ -82,12 +92,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Gather fields
         $project_name              = trim($_POST['project_name'] ?? '');
-        $project_address           = trim($_POST['project_address'] ?? '');
+        $manufacturer_id           = isset($_POST['manufacturer_id']) ? intval($_POST['manufacturer_id']) : null;
+        $street_address            = trim($_POST['street_address'] ?? '');
+        $city                      = trim($_POST['city'] ?? '');
+        $state                     = trim($_POST['state'] ?? '');
+        $zip_code                  = trim($_POST['zip_code'] ?? '');
         $estimated_completion_date = trim($_POST['estimated_completion_date'] ?? '');
         $solterra_fee              = isset($_POST['solterra_fee']) ? floatval($_POST['solterra_fee']) : 0.0000;
 
-        if ($project_name === '' || $project_address === '') {
-            throw new Exception("Project Name and Address are required.");
+        if ($project_name === '') {
+            throw new Exception("Project Name is required.");
+        }
+        if ($street_address === '' && $city === '' && $state === '' && $zip_code === '') {
+            throw new Exception("At least one address field is required.");
         }
 
         // Optional image (default to pictures/test.png if none uploaded)
@@ -120,25 +137,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Insert into projects
+        // Insert into projects with separate address fields (trigger will populate project_address)
         $stmt = $conn->prepare("
             INSERT INTO projects (
                 account_id,
                 project_name,
-                project_address,
+                manufacturer_id,
+                street_address,
+                city,
+                state,
+                zip_code,
                 estimated_completion_date,
                 image_url,
                 solterra_fee
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         if (!$stmt) {
             throw new Exception("Error preparing project insert: " . $conn->error);
         }
         $stmt->bind_param(
-            "issssd",
+            "isissssss d",
             $account_id,
             $project_name,
-            $project_address,
+            $manufacturer_id,
+            $street_address,
+            $city,
+            $state,
+            $zip_code,
             $estimated_completion_date,
             $image_url,
             $solterra_fee
@@ -158,9 +183,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Mismatch between wattage[] and quantities[] arrays.");
             }
 
+            // First, create entries in project_wattage_orders table for project size calculation
+            $stmt_wattage = $conn->prepare("
+                INSERT INTO project_wattage_orders (project_id, wattage, total_order) 
+                VALUES (?, ?, ?)
+            ");
+            if (!$stmt_wattage) {
+                throw new Exception("Error preparing wattage orders insert: " . $conn->error);
+            }
+
+            for ($i = 0; $i < count($wattages); $i++) {
+                $w_val = trim($wattages[$i]);
+                $q_val = trim($quantities[$i]);
+
+                // Validate and convert to integers
+                if ($w_val === '' || $q_val === '') {
+                    throw new Exception("Wattage and Quantity values cannot be empty for an entry.");
+                }
+
+                $w_int = filter_var($w_val, FILTER_VALIDATE_INT);
+                $q_int = filter_var($q_val, FILTER_VALIDATE_INT);
+
+                if ($w_int === false || $q_int === false) {
+                    throw new Exception("Wattage and Quantity must be valid integers.");
+                }
+                if ($w_int <= 0 || $q_int <= 0) {
+                    throw new Exception("Wattage and Quantity must be positive integers.");
+                }
+                
+                // Insert into project_wattage_orders for project size calculation
+                $stmt_wattage->bind_param("iii", $project_id, $w_int, $q_int);
+                if (!$stmt_wattage->execute()) {
+                    throw new Exception("Error inserting wattage order (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_wattage->error);
+                }
+            }
+            $stmt_wattage->close();
+
             // Define vendor_name and initial_location for the new module batch
-            $default_vendor_name = "Initial Stock - " . htmlspecialchars($project_name);
-            $default_initial_location = htmlspecialchars($project_address);
+            $manufacturer_name = "Unknown Manufacturer";
+            if ($manufacturer_id) {
+                // Get manufacturer details for vendor name and initial location
+                $stmt_mfg = $conn->prepare("SELECT name, address FROM manufacturers WHERE id = ?");
+                if ($stmt_mfg) {
+                    $stmt_mfg->bind_param("i", $manufacturer_id);
+                    $stmt_mfg->execute();
+                    $stmt_mfg->bind_result($mfg_name, $mfg_address);
+                    if ($stmt_mfg->fetch()) {
+                        $manufacturer_name = $mfg_name;
+                        $default_initial_location = $mfg_address ?: "Unknown Location";
+                    }
+                    $stmt_mfg->close();
+                }
+            }
+            
+            $default_vendor_name = $manufacturer_name . " - " . htmlspecialchars($project_name);
+            
+            // Build initial_location from manufacturer address or project address as fallback
+            if (!isset($default_initial_location)) {
+                $address_parts = array_filter([$street_address, $city, $state, $zip_code]);
+                $default_initial_location = implode(', ', $address_parts);
+            }
 
             // Insert into modules table
             $stmt_module = $conn->prepare("
@@ -190,25 +272,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $w_val = trim($wattages[$i]);
                 $q_val = trim($quantities[$i]);
 
-                // Validate and convert to integers
-                // Wattage might be empty if user adds a row and doesn't fill it, then submits.
-                // Or quantity might be empty.
-                if ($w_val === '' || $q_val === '') {
-                    // Option 1: Skip empty rows silently
-                    // continue; 
-                    // Option 2: Throw error if any are empty after submission attempt
-                    throw new Exception("Wattage and Quantity values cannot be empty for an entry.");
-                }
-
+                // We already validated these above, so we can use the same validation
                 $w_int = filter_var($w_val, FILTER_VALIDATE_INT);
                 $q_int = filter_var($q_val, FILTER_VALIDATE_INT);
-
-                if ($w_int === false || $q_int === false) {
-                    throw new Exception("Wattage and Quantity must be valid integers.");
-                }
-                if ($w_int <= 0 || $q_int <= 0) {
-                    throw new Exception("Wattage and Quantity must be positive integers.");
-                }
                 
                 $stmt_item->bind_param("iii", $module_batch_id, $w_int, $q_int);
                 if (!$stmt_item->execute()) {
@@ -257,6 +323,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             border-radius: 4px;
             border: 1px solid #ccc;
             box-sizing: border-box; /* Include padding and border in the element's total width and height */
+        }
+        /* Address grid layout */
+        .address-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 15px;
+            margin-top: 5px;
+        }
+        .address-grid input {
+            margin-top: 0;
         }
         /* Keep specific wattage entry styles */
         .wattage-entry {
@@ -439,8 +515,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <label for="project_name">Project Name:</label>
         <input type="text" id="project_name" name="project_name" required>
 
-        <label for="project_address">Project Address:</label>
-        <input type="text" id="project_address" name="project_address" required>
+        <label for="manufacturer_id">Manufacturer:</label>
+        <select name="manufacturer_id" id="manufacturer_id">
+            <option value="">--Select Manufacturer (Optional)--</option>
+            <?php foreach ($manufacturers as $mfg): ?>
+                <option value="<?php echo $mfg['id']; ?>">
+                    <?php echo htmlspecialchars($mfg['name']); ?>
+                    <?php if (!empty($mfg['short_name'])): ?>
+                        (<?php echo htmlspecialchars($mfg['short_name']); ?>)
+                    <?php endif; ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+
+        <label>Project Address:</label>
+        <div class="address-grid">
+            <div>
+                <label for="street_address" style="margin-top: 0; font-size: 0.9em; color: #666;">Street Address:</label>
+                <input type="text" id="street_address" name="street_address" placeholder="1107 W Manresa Way">
+            </div>
+            <div>
+                <label for="city" style="margin-top: 0; font-size: 0.9em; color: #666;">City:</label>
+                <input type="text" id="city" name="city" placeholder="Huachuca City">
+            </div>
+            <div>
+                <label for="state" style="margin-top: 0; font-size: 0.9em; color: #666;">State:</label>
+                <input type="text" id="state" name="state" placeholder="AZ">
+            </div>
+            <div>
+                <label for="zip_code" style="margin-top: 0; font-size: 0.9em; color: #666;">Zip Code:</label>
+                <input type="text" id="zip_code" name="zip_code" placeholder="85616">
+            </div>
+        </div>
 
         <label for="image_file">Project Image:</label>
         <input type="file" id="image_file" name="image_file" accept="image/*">

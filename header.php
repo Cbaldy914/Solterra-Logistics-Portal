@@ -83,6 +83,7 @@ if (isset($_SESSION['role'])) {
                         <a href="manage_warehouses.php">Manage Warehouses</a>
                     </div>
                 </li>
+                <li><a href="manufacturers" class="dropbtn">Manufacturers</a></li>
                 <li class="dropdown">
                     <a href="#" class="dropbtn">Freight</a>
                     <div class="dropdown-content">
