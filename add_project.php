@@ -62,7 +62,7 @@ if ($role === 'global_admin') {
     }
 }
 
-// Fetch manufacturers for dropdown
+// Fetch manufacturers for dropdown (for initial module batch)
 $manufacturers = [];
 $sqlManufacturers = "SELECT id, name, short_name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC";
 $resManufacturers = $conn->query($sqlManufacturers);
@@ -92,7 +92,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Gather fields
         $project_name              = trim($_POST['project_name'] ?? '');
-        $manufacturer_id           = isset($_POST['manufacturer_id']) ? intval($_POST['manufacturer_id']) : null;
         $street_address            = trim($_POST['street_address'] ?? '');
         $city                      = trim($_POST['city'] ?? '');
         $state                     = trim($_POST['state'] ?? '');
@@ -142,7 +141,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             INSERT INTO projects (
                 account_id,
                 project_name,
-                manufacturer_id,
                 street_address,
                 city,
                 state,
@@ -150,16 +148,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 estimated_completion_date,
                 image_url,
                 solterra_fee
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         if (!$stmt) {
             throw new Exception("Error preparing project insert: " . $conn->error);
         }
         $stmt->bind_param(
-            "isissssss d",
+            "isssssssd",
             $account_id,
             $project_name,
-            $manufacturer_id,
             $street_address,
             $city,
             $state,
@@ -178,6 +175,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (isset($_POST['wattages'], $_POST['quantities'])) {
             $wattages   = $_POST['wattages'];
             $quantities = $_POST['quantities'];
+            $manufacturer_id_for_batch = isset($_POST['manufacturer_id']) ? intval($_POST['manufacturer_id']) : null;
 
             if (count($wattages) !== count($quantities)) {
                 throw new Exception("Mismatch between wattage[] and quantities[] arrays.");
@@ -221,16 +219,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Define vendor_name and initial_location for the new module batch
             $manufacturer_name = "Unknown Manufacturer";
-            if ($manufacturer_id) {
+            $manufacturer_address = "";
+            
+            if ($manufacturer_id_for_batch) {
                 // Get manufacturer details for vendor name and initial location
-                $stmt_mfg = $conn->prepare("SELECT name, address FROM manufacturers WHERE id = ?");
+                $stmt_mfg = $conn->prepare("SELECT name, street_address, city, state, zip_code FROM manufacturers WHERE id = ?");
                 if ($stmt_mfg) {
-                    $stmt_mfg->bind_param("i", $manufacturer_id);
+                    $stmt_mfg->bind_param("i", $manufacturer_id_for_batch);
                     $stmt_mfg->execute();
-                    $stmt_mfg->bind_result($mfg_name, $mfg_address);
+                    $stmt_mfg->bind_result($mfg_name, $mfg_street, $mfg_city, $mfg_state, $mfg_zip);
                     if ($stmt_mfg->fetch()) {
                         $manufacturer_name = $mfg_name;
-                        $default_initial_location = $mfg_address ?: "Unknown Location";
+                        $address_parts = array_filter([$mfg_street, $mfg_city, $mfg_state, $mfg_zip]);
+                        $manufacturer_address = implode(', ', $address_parts);
                     }
                     $stmt_mfg->close();
                 }
@@ -238,13 +239,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $default_vendor_name = $manufacturer_name . " - " . htmlspecialchars($project_name);
             
-            // Build initial_location from manufacturer address or project address as fallback
-            if (!isset($default_initial_location)) {
+            // Use manufacturer address as initial location, fallback to project address
+            if (!empty($manufacturer_address)) {
+                $default_initial_location = $manufacturer_address;
+            } else {
                 $address_parts = array_filter([$street_address, $city, $state, $zip_code]);
                 $default_initial_location = implode(', ', $address_parts);
             }
 
-            // Insert into modules table
+            // Insert into modules table for the initial batch
             $stmt_module = $conn->prepare("
                 INSERT INTO modules (account_id, vendor_name, initial_location, project_id) 
                 VALUES (?, ?, ?, ?)
@@ -253,6 +256,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Error preparing module batch insert: " . $conn->error);
             }
             $stmt_module->bind_param("issi", $account_id, $default_vendor_name, $default_initial_location, $project_id);
+            
             if (!$stmt_module->execute()) {
                 throw new Exception("Error inserting module batch for project: " . $stmt_module->error);
             }
@@ -515,19 +519,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <label for="project_name">Project Name:</label>
         <input type="text" id="project_name" name="project_name" required>
 
-        <label for="manufacturer_id">Manufacturer:</label>
-        <select name="manufacturer_id" id="manufacturer_id">
-            <option value="">--Select Manufacturer (Optional)--</option>
-            <?php foreach ($manufacturers as $mfg): ?>
-                <option value="<?php echo $mfg['id']; ?>">
-                    <?php echo htmlspecialchars($mfg['name']); ?>
-                    <?php if (!empty($mfg['short_name'])): ?>
-                        (<?php echo htmlspecialchars($mfg['short_name']); ?>)
-                    <?php endif; ?>
-                </option>
-            <?php endforeach; ?>
-        </select>
-
         <label>Project Address:</label>
         <div class="address-grid">
             <div>
@@ -556,6 +547,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         <label for="solterra_fee">Solterra Fee (per watt):</label>
         <input type="number" id="solterra_fee" step="0.0001" name="solterra_fee" value="0.0000" required>
+
+        <div class="section-title">Initial Module Batch (Optional)</div>
+        <p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">
+            Create an initial module batch for this project. You can add more batches from different manufacturers later via "Manage Modules".
+        </p>
+        
+        <label for="manufacturer_id">Manufacturer (for initial batch):</label>
+        <select name="manufacturer_id" id="manufacturer_id">
+            <option value="">--Select Manufacturer (Optional)--</option>
+            <?php foreach ($manufacturers as $mfg): ?>
+                <option value="<?php echo $mfg['id']; ?>">
+                    <?php echo htmlspecialchars($mfg['name']); ?>
+                    <?php if (!empty($mfg['short_name'])): ?>
+                        (<?php echo htmlspecialchars($mfg['short_name']); ?>)
+                    <?php endif; ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
 
         <div class="section-title">Wattage and Total Order Quantities</div>
         <div id="wattage-container">
