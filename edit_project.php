@@ -24,7 +24,10 @@ $project_id = intval($_REQUEST['project_id']);
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Gather form fields
     $project_name             = trim($_POST['project_name'] ?? '');
-    $project_address          = trim($_POST['project_address'] ?? '');
+    $street_address           = trim($_POST['street_address'] ?? '');
+    $city                     = trim($_POST['city'] ?? '');
+    $state                    = trim($_POST['state'] ?? '');
+    $zip_code                 = trim($_POST['zip_code'] ?? '');
     $estimated_completion_date= trim($_POST['estimated_completion_date'] ?? '');
     $solterra_fee             = isset($_POST['solterra_fee']) ? floatval($_POST['solterra_fee']) : 0.0000;
 
@@ -74,19 +77,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Update the project (user_id removed; not needed anymore)
+    // Update the project with separate address fields (trigger will populate project_address)
     $stmtUp = $conn->prepare("
         UPDATE projects
            SET project_name = ?,
-               project_address = ?,
+               street_address = ?,
+               city = ?,
+               state = ?,
+               zip_code = ?,
                estimated_completion_date = ?,
                image_url = ?,
                solterra_fee = ?
          WHERE id = ?
     ");
-    $stmtUp->bind_param("ssssdi",
+    $stmtUp->bind_param("sssssssdi",
         $project_name,
-        $project_address,
+        $street_address,
+        $city,
+        $state,
+        $zip_code,
         $estimated_completion_date,
         $image_url,
         $solterra_fee,
@@ -192,6 +201,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
         <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
         <style>
+            /* Address grid layout */
+            .address-grid {
+                display: grid;
+                grid-template-columns: 2fr 1fr 1fr;
+                gap: 15px;
+                margin-top: 5px;
+            }
+            .address-grid input {
+                margin-top: 0;
+                width: 100%;
+                padding: 10px;
+                border-radius: 4px;
+                border: 1px solid #ccc;
+                box-sizing: border-box;
+            }
             .wattage-entry {
                 display: flex;
                 flex-wrap: wrap;
@@ -226,6 +250,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             .btn-submit:hover {
                 background: #488C9A;
+            }
+            /* Form styling */
+            form label {
+                display: block;
+                margin-top: 15px;
+                font-weight: 600;
+                color: #333;
+            }
+            form input[type="text"],
+            form input[type="number"],
+            form input[type="date"],
+            form input[type="file"] {
+                width: 100%;
+                padding: 10px;
+                margin-top: 5px;
+                border-radius: 4px;
+                border: 1px solid #ccc;
+                box-sizing: border-box;
             }
         </style>
         <script>
@@ -285,11 +327,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             <label for="project_name">Project Name:</label>
             <input type="text" name="project_name" value="<?php echo htmlspecialchars($project['project_name']); ?>" required>
-            <br><br>
 
-            <label for="project_address">Project Address:</label>
-            <input type="text" name="project_address" value="<?php echo htmlspecialchars($project['project_address']); ?>" required>
-            <br><br>
+            <label>Project Address:</label>
+            <div class="address-grid">
+                <div>
+                    <label style="margin-top: 0; font-size: 0.9em; color: #666;">Street Address:</label>
+                    <input type="text" name="street_address" value="<?php echo htmlspecialchars($project['street_address'] ?? ''); ?>" placeholder="1107 W Manresa Way">
+                </div>
+                <div>
+                    <label style="margin-top: 0; font-size: 0.9em; color: #666;">City:</label>
+                    <input type="text" name="city" value="<?php echo htmlspecialchars($project['city'] ?? ''); ?>" placeholder="Huachuca City">
+                </div>
+                <div>
+                    <label style="margin-top: 0; font-size: 0.9em; color: #666;">State:</label>
+                    <input type="text" name="state" value="<?php echo htmlspecialchars($project['state'] ?? ''); ?>" placeholder="AZ">
+                </div>
+                <div>
+                    <label style="margin-top: 0; font-size: 0.9em; color: #666;">Zip Code:</label>
+                    <input type="text" name="zip_code" value="<?php echo htmlspecialchars($project['zip_code'] ?? ''); ?>" placeholder="85616">
+                </div>
+            </div>
 
             <label for="image_file">Project Image:</label>
             <?php if (!empty($project['image_url'])): ?>
@@ -298,18 +355,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             <?php endif; ?>
             <input type="file" name="image_file" accept="image/*">
-            <br><br>
 
             <label for="estimated_completion_date">Estimated Completion Date:</label>
             <input type="date" name="estimated_completion_date" value="<?php echo htmlspecialchars($project['estimated_completion_date']); ?>">
-            <br><br>
 
             <label for="solterra_fee">Solterra Fee (per watt):</label>
             <input type="number" step="0.0001" name="solterra_fee"
                    value="<?php echo isset($project['solterra_fee']) ? htmlspecialchars($project['solterra_fee']) : '0.0000'; ?>"
                    required
             >
-            <br><br>
 
             <h2>Wattage and Total Order Quantities</h2>
             <div id="wattage-container">
@@ -335,7 +389,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endforeach; ?>
             </div>
             <button type="button" class="btn-add-wattage" onclick="addWattageField()">Add Wattage</button>
-            <br><br>
 
             <button type="submit" class="btn-submit">Update Project</button>
         </form>

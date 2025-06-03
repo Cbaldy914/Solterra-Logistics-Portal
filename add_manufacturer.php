@@ -1,0 +1,360 @@
+<?php
+session_name("logistics_session");
+session_start();
+
+// Ensure user has role global_admin only
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'global_admin') {
+    header("Location: unauthorized.php");
+    exit();
+}
+
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Database connection failed.");
+}
+
+// Prepare variables to hold user messages:
+$successMessage = "";
+$errorMessage   = "";
+
+// Process form submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        // Gather form fields
+        $name = trim($_POST['name'] ?? '');
+        $short_name = trim($_POST['short_name'] ?? '');
+        $contact_person = trim($_POST['contact_person'] ?? '');
+        $phone = trim($_POST['phone'] ?? '');
+        $email = trim($_POST['email'] ?? '');
+        $website = trim($_POST['website'] ?? '');
+        $street_address = trim($_POST['street_address'] ?? '');
+        $city = trim($_POST['city'] ?? '');
+        $state = trim($_POST['state'] ?? '');
+        $zip_code = trim($_POST['zip_code'] ?? '');
+        $country = trim($_POST['country'] ?? 'USA');
+        $is_active = isset($_POST['is_active']) ? 1 : 0;
+        $notes = trim($_POST['notes'] ?? '');
+
+        // Validation
+        if ($name === '') {
+            throw new Exception("Manufacturer Name is required.");
+        }
+        if ($street_address === '' && $city === '' && $state === '' && $zip_code === '') {
+            throw new Exception("At least one address field is required.");
+        }
+
+        // Handle logo upload if provided
+        $logo_url = null; // Default to no logo
+        if (isset($_FILES['logo_file']) && $_FILES['logo_file']['error'] !== UPLOAD_ERR_NO_FILE) {
+            if ($_FILES['logo_file']['error'] === UPLOAD_ERR_OK) {
+                $allowed_ext = ['jpg','jpeg','png','gif','svg'];
+                $file_name   = $_FILES['logo_file']['name'];
+                $file_tmp    = $_FILES['logo_file']['tmp_name'];
+                $file_size   = $_FILES['logo_file']['size'];
+                $file_ext    = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
+
+                if (!in_array($file_ext, $allowed_ext)) {
+                    throw new Exception("Invalid file type. Only JPG, JPEG, PNG, GIF, SVG allowed.");
+                }
+                if ($file_size > 5*1024*1024) {
+                    throw new Exception("File exceeds 5MB limit.");
+                }
+
+                // Ensure the uploads directory exists
+                $target_dir = "uploads/manufacturer_logos/";
+                if (!is_dir($target_dir)) {
+                    if (!mkdir($target_dir, 0755, true)) {
+                        throw new Exception("Failed to create upload directory.");
+                    }
+                }
+
+                $unique_name = uniqid('mfg_', true).'.'.$file_ext;
+                $target_file = $target_dir . $unique_name;
+
+                if (!move_uploaded_file($file_tmp, $target_file)) {
+                    throw new Exception("Error uploading logo file.");
+                }
+                $logo_url = $target_file;
+            } else {
+                throw new Exception("File upload error code: " . $_FILES['logo_file']['error']);
+            }
+        }
+
+        // Insert into manufacturers table (trigger will populate address field)
+        $stmt = $conn->prepare("
+            INSERT INTO manufacturers (
+                name, 
+                short_name, 
+                contact_person, 
+                phone, 
+                email, 
+                website, 
+                street_address, 
+                city, 
+                state, 
+                zip_code, 
+                country, 
+                logo_url, 
+                is_active, 
+                notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        if (!$stmt) {
+            throw new Exception("Error preparing manufacturer insert: " . $conn->error);
+        }
+
+        $stmt->bind_param(
+            "ssssssssssssds",
+            $name,
+            $short_name,
+            $contact_person,
+            $phone,
+            $email,
+            $website,
+            $street_address,
+            $city,
+            $state,
+            $zip_code,
+            $country,
+            $logo_url,
+            $is_active,
+            $notes
+        );
+
+        if (!$stmt->execute()) {
+            throw new Exception("Error inserting manufacturer: " . $stmt->error);
+        }
+        $stmt->close();
+
+        $successMessage = "Manufacturer added successfully!";
+
+    } catch (Exception $ex) {
+        $errorMessage = $ex->getMessage();
+    }
+}
+
+$conn->close();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Manufacturer</title>
+    <link rel="stylesheet" href="portal.css">
+    <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
+    <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <style>
+        main {
+            max-width: 800px;
+        }
+        form label {
+            display: block;
+            margin-top: 15px;
+            font-weight: 600;
+            color: #333;
+        }
+        form input[type="text"],
+        form input[type="email"],
+        form input[type="tel"],
+        form input[type="url"],
+        form input[type="file"],
+        form select,
+        form textarea {
+            width: 100%;
+            padding: 10px;
+            margin-top: 5px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            box-sizing: border-box;
+        }
+        form textarea {
+            height: 80px;
+            resize: vertical;
+        }
+        /* Address grid layout */
+        .address-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 15px;
+            margin-top: 5px;
+        }
+        .address-grid input {
+            margin-top: 0;
+        }
+        /* Contact grid layout */
+        .contact-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 5px;
+        }
+        .contact-grid input {
+            margin-top: 0;
+        }
+        /* Checkbox styling */
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .checkbox-container input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
+        }
+        .btn-submit {
+            background: #293E4C;
+            color: #fff;
+            border: none;
+            padding: 12px 20px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 1rem;
+            font-weight: 600;
+            margin-top: 20px;
+            display: inline-block;
+            transition: background-color 0.3s ease;
+        }
+        .btn-submit:hover {
+            background: #488C9A;
+        }
+        .section-title {
+            margin-top: 30px;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .success-message {
+            color: #155724;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: center;
+            border-radius: 4px;
+        }
+        .error-message {
+            color: #721c24;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: center;
+            border-radius: 4px;
+        }
+        .form-note {
+            font-size: 0.9em;
+            color: #666;
+            font-style: italic;
+            margin-top: 3px;
+        }
+        form br {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<?php include 'header.php'; ?>
+<main>
+    <!-- Breadcrumb Navigation -->
+    <div class="breadcrumb" style="margin: 10px 20px;">
+        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <a href="manufacturers.php" style="color: #488C9A; text-decoration: none;">Manage Manufacturers</a>
+        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <span>Add Manufacturer</span>
+    </div>
+
+    <h1>Add Manufacturer</h1>
+
+    <!-- Display success or error messages if any -->
+    <?php if (!empty($successMessage)): ?>
+        <div class="success-message"><strong><?php echo htmlspecialchars($successMessage); ?></strong></div>
+    <?php endif; ?>
+
+    <?php if (!empty($errorMessage)): ?>
+        <div class="error-message"><strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?></div>
+    <?php endif; ?>
+
+    <!-- The manufacturer form -->
+    <form action="" method="POST" enctype="multipart/form-data">
+        <div class="section-title">Basic Information</div>
+        
+        <label for="name">Manufacturer Name: <span style="color: red;">*</span></label>
+        <input type="text" id="name" name="name" required placeholder="e.g., JinkoSolar Holding Co., Ltd.">
+
+        <label for="short_name">Short Name/Abbreviation:</label>
+        <input type="text" id="short_name" name="short_name" placeholder="e.g., JinkoSolar">
+        <div class="form-note">Optional short name or common abbreviation</div>
+
+        <div class="section-title">Contact Information</div>
+        
+        <label for="contact_person">Contact Person:</label>
+        <input type="text" id="contact_person" name="contact_person" placeholder="e.g., John Smith">
+
+        <div class="contact-grid">
+            <div>
+                <label for="phone" style="margin-top: 0; font-size: 0.9em; color: #666;">Phone:</label>
+                <input type="tel" id="phone" name="phone" placeholder="(555) 123-4567">
+            </div>
+            <div>
+                <label for="email" style="margin-top: 0; font-size: 0.9em; color: #666;">Email:</label>
+                <input type="email" id="email" name="email" placeholder="contact@manufacturer.com">
+            </div>
+        </div>
+
+        <label for="website">Website:</label>
+        <input type="url" id="website" name="website" placeholder="https://www.manufacturer.com">
+
+        <div class="section-title">Address <span style="color: red;">*</span></div>
+        <div class="form-note">At least one address field is required</div>
+        
+        <div class="address-grid">
+            <div>
+                <label for="street_address" style="margin-top: 0; font-size: 0.9em; color: #666;">Street Address:</label>
+                <input type="text" id="street_address" name="street_address" placeholder="123 Manufacturing Blvd">
+            </div>
+            <div>
+                <label for="city" style="margin-top: 0; font-size: 0.9em; color: #666;">City:</label>
+                <input type="text" id="city" name="city" placeholder="Phoenix">
+            </div>
+            <div>
+                <label for="state" style="margin-top: 0; font-size: 0.9em; color: #666;">State/Province:</label>
+                <input type="text" id="state" name="state" placeholder="AZ">
+            </div>
+            <div>
+                <label for="zip_code" style="margin-top: 0; font-size: 0.9em; color: #666;">Zip/Postal Code:</label>
+                <input type="text" id="zip_code" name="zip_code" placeholder="85281">
+            </div>
+        </div>
+
+        <label for="country">Country:</label>
+        <input type="text" id="country" name="country" value="USA" placeholder="USA">
+
+        <div class="section-title">Additional Information</div>
+        
+        <label for="logo_file">Company Logo:</label>
+        <input type="file" id="logo_file" name="logo_file" accept="image/*">
+        <div class="form-note">Optional company logo (JPG, PNG, GIF, SVG - Max 5MB)</div>
+
+        <div class="checkbox-container">
+            <input type="checkbox" id="is_active" name="is_active" checked>
+            <label for="is_active" style="margin-top: 0;">Active Manufacturer</label>
+        </div>
+        <div class="form-note">Uncheck to mark as inactive</div>
+
+        <label for="notes">Notes:</label>
+        <textarea id="notes" name="notes" placeholder="Additional notes about this manufacturer..."></textarea>
+
+        <div class="btn-submit-container">
+            <input type="submit" value="Add Manufacturer" class="btn-submit">
+        </div>
+    </form>
+</main>
+</body>
+</html> 
