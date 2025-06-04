@@ -17,6 +17,7 @@ if (!$conn) {
 $role = $_SESSION['role'];
 $user_id = $_SESSION['user_id'];
 $selected_project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
+$batch_id = isset($_GET['batch_id']) ? intval($_GET['batch_id']) : 0;
 
 // Account filtering for admin users
 $account_id_for_admin = null;
@@ -37,6 +38,20 @@ $available_projects = [];
 $project_data = null;
 $movement_data = [];
 $errorMessage = '';
+
+// If batch_id is provided but project_id is not, try to get project_id from the batch
+if ($batch_id > 0 && $selected_project_id == 0) {
+    $stmtBatch = $conn->prepare("SELECT project_id FROM modules WHERE id = ?");
+    if ($stmtBatch) {
+        $stmtBatch->bind_param("i", $batch_id);
+        $stmtBatch->execute();
+        $stmtBatch->bind_result($project_from_batch);
+        if ($stmtBatch->fetch()) {
+            $selected_project_id = $project_from_batch;
+        }
+        $stmtBatch->close();
+    }
+}
 
 try {
     // Get projects based on role
@@ -175,6 +190,51 @@ try {
                 $movement_data[] = $movement;
             }
             $stmtMovements->close();
+        }
+        
+        // Calculate detailed breakdown similar to module_overview.php
+        $detailed_breakdown = [];
+        foreach ($movement_data as $movement) {
+            $status = $movement['status'];
+            $wattage = $movement['wattage'];
+            $quantity = $movement['quantity'];
+            
+            // Create location-specific key for breakdown
+            $breakdown_key = '';
+            if ($status === 'In Warehouse' && $movement['current_warehouse_name']) {
+                $breakdown_key = 'In Warehouse - ' . $movement['current_warehouse_name'];
+            } elseif ($status === 'Delivered to Project' && $movement['project_name']) {
+                $breakdown_key = 'Delivered to Project - ' . $movement['project_name'];
+            } elseif ($status === 'In Transit to Project' && $movement['project_name']) {
+                $breakdown_key = 'In Transit to Project - ' . $movement['project_name'];
+            } elseif ($status === 'In Transit to Warehouse' && $movement['delivery_warehouse_name']) {
+                $breakdown_key = 'In Transit to Warehouse - ' . $movement['delivery_warehouse_name'];
+            } else {
+                $breakdown_key = $status;
+            }
+            
+            // Initialize if not exists
+            if (!isset($detailed_breakdown[$breakdown_key])) {
+                $detailed_breakdown[$breakdown_key] = [
+                    'pallet_count' => 0,
+                    'total_modules' => 0,
+                    'wattage_breakdown' => []
+                ];
+            }
+            
+            // Update counts
+            $detailed_breakdown[$breakdown_key]['pallet_count']++;
+            $detailed_breakdown[$breakdown_key]['total_modules'] += $quantity;
+            
+            // Track wattage breakdown
+            if (!isset($detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage])) {
+                $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage] = [
+                    'pallets' => 0,
+                    'modules' => 0
+                ];
+            }
+            $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['pallets']++;
+            $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $quantity;
         }
     }
 
@@ -366,6 +426,10 @@ $conn->close();
     <div class="breadcrumb">
         <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
         <span class="separator">&raquo;</span>
+        <?php if ($batch_id > 0): ?>
+            <a href="module_overview.php?batch_id=<?php echo $batch_id; ?>">Module Batch Overview</a>
+            <span class="separator">&raquo;</span>
+        <?php endif; ?>
         <span>Module Movements</span>
     </div>
 
@@ -380,6 +444,9 @@ $conn->close();
     <div class="controls-section">
         <h2>Project Selection</h2>
         <form method="GET" class="project-selector">
+            <?php if ($batch_id > 0): ?>
+                <input type="hidden" name="batch_id" value="<?php echo $batch_id; ?>">
+            <?php endif; ?>
             <label for="project_id">Select Project:</label>
             <select name="project_id" id="project_id" required>
                 <option value="">-- Choose a Project --</option>
@@ -416,59 +483,104 @@ $conn->close();
         </div>
 
         <?php if (!empty($movement_data)): ?>
-            <!-- Map Legend -->
-            <div class="map-legend">
-                <h3>Map Legend</h3>
-                <div class="legend-item">
-                    <div class="legend-marker manufacturer-marker"></div>
-                    <span>Manufacturer (Starting Point)</span>
+            <!-- Map Legend and Status Breakdown Container -->
+            <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+                <!-- Map Legend -->
+                <div class="map-legend" style="flex: 1; margin-bottom: 0;">
+                    <h3>Map Legend</h3>
+                    <div class="legend-item">
+                        <div class="legend-marker manufacturer-marker"></div>
+                        <span>Manufacturer (Starting Point)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-marker warehouse-marker"></div>
+                        <span>Warehouse (Intermediate Stop)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-marker project-marker"></div>
+                        <span>Project Site (Final Destination)</span>
+                    </div>
                 </div>
-                <div class="legend-item">
-                    <div class="legend-marker warehouse-marker"></div>
-                    <span>Warehouse (Intermediate Stop)</span>
-                </div>
-                <div class="legend-item">
-                    <div class="legend-marker project-marker"></div>
-                    <span>Project Site (Final Destination)</span>
+
+                <!-- Pallet Status Breakdown -->
+                <div class="movement-summary" style="flex: 1; margin-bottom: 0;">
+                    <h3>Pallet Status Breakdown</h3>
+                    <?php 
+                    // Calculate totals for each main status
+                    $status_totals = [
+                        'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
+                        'In Warehouse' => ['pallets' => 0, 'modules' => 0],
+                        'Delivered to Project' => ['pallets' => 0, 'modules' => 0]
+                    ];
+                    
+                    // Process the detailed breakdown to get totals
+                    if (!empty($detailed_breakdown)) {
+                        foreach ($detailed_breakdown as $status => $data) {
+                            if (strpos($status, 'At Manufacturer') !== false) {
+                                $status_totals['At Manufacturer']['pallets'] += $data['pallet_count'];
+                                $status_totals['At Manufacturer']['modules'] += $data['total_modules'];
+                            } elseif (strpos($status, 'In Warehouse') !== false) {
+                                $status_totals['In Warehouse']['pallets'] += $data['pallet_count'];
+                                $status_totals['In Warehouse']['modules'] += $data['total_modules'];
+                            } elseif (strpos($status, 'Delivered to Project') !== false) {
+                                $status_totals['Delivered to Project']['pallets'] += $data['pallet_count'];
+                                $status_totals['Delivered to Project']['modules'] += $data['total_modules'];
+                            }
+                        }
+                    }
+                    ?>
+                    
+                    <div style="display: flex; justify-content: space-between; gap: 15px; align-items: center;">
+                        <!-- At Manufacturer -->
+                        <div onclick="showDetailedBreakdown('manufacturer')" style="flex: 1; text-align: center; padding: 12px; background-color: #e3f2fd; border-radius: 8px; border: 2px solid #3498db; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                            <div style="font-weight: 600; color: #1565c0; margin-bottom: 6px; font-size: 0.9em;">
+                                📍 At Manufacturer
+                            </div>
+                            <div style="color: #1976d2; font-size: 1.1em; font-weight: bold;">
+                                <?php echo $status_totals['At Manufacturer']['pallets']; ?> pallets
+                            </div>
+                            <div style="color: #666; font-size: 0.85em;">
+                                <?php echo number_format($status_totals['At Manufacturer']['modules']); ?> modules
+                            </div>
+                        </div>
+                        
+                        <!-- Arrow -->
+                        <div style="color: #666; font-size: 1.5em;">→</div>
+                        
+                        <!-- In Warehouse -->
+                        <div onclick="showDetailedBreakdown('warehouse')" style="flex: 1; text-align: center; padding: 12px; background-color: #fff3e0; border-radius: 8px; border: 2px solid #f39c12; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                            <div style="font-weight: 600; color: #e65100; margin-bottom: 6px; font-size: 0.9em;">
+                                🏢 In Warehouse
+                            </div>
+                            <div style="color: #f57c00; font-size: 1.1em; font-weight: bold;">
+                                <?php echo $status_totals['In Warehouse']['pallets']; ?> pallets
+                            </div>
+                            <div style="color: #666; font-size: 0.85em;">
+                                <?php echo number_format($status_totals['In Warehouse']['modules']); ?> modules
+                            </div>
+                        </div>
+                        
+                        <!-- Arrow -->
+                        <div style="color: #666; font-size: 1.5em;">→</div>
+                        
+                        <!-- Delivered to Project -->
+                        <div onclick="showDetailedBreakdown('project')" style="flex: 1; text-align: center; padding: 12px; background-color: #e8f5e8; border-radius: 8px; border: 2px solid #27ae60; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                            <div style="font-weight: 600; color: #1b5e20; margin-bottom: 6px; font-size: 0.9em;">
+                                🎯 Delivered to Project
+                            </div>
+                            <div style="color: #2e7d32; font-size: 1.1em; font-weight: bold;">
+                                <?php echo $status_totals['Delivered to Project']['pallets']; ?> pallets
+                            </div>
+                            <div style="color: #666; font-size: 0.85em;">
+                                <?php echo number_format($status_totals['Delivered to Project']['modules']); ?> modules
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <!-- Google Map -->
             <div id="map" class="map-container"></div>
-
-            <!-- Movement Summary -->
-            <div class="movement-summary">
-                <h3>Movement Summary</h3>
-                <div class="pallet-count">
-                    <?php
-                    $total_pallets = count($movement_data);
-                    $total_modules = array_sum(array_column($movement_data, 'quantity'));
-                    $unique_wattages = array_unique(array_column($movement_data, 'wattage'));
-                    $manufacturers = array_unique(array_filter(array_column($movement_data, 'manufacturer_name')));
-                    $warehouses = array_unique(array_filter(array_column($movement_data, 'delivery_warehouse_name')));
-                    ?>
-                    <div class="count-item">
-                        <div class="count-number"><?php echo number_format($total_pallets); ?></div>
-                        <div class="count-label">Total Pallets</div>
-                    </div>
-                    <div class="count-item">
-                        <div class="count-number"><?php echo number_format($total_modules); ?></div>
-                        <div class="count-label">Total Modules</div>
-                    </div>
-                    <div class="count-item">
-                        <div class="count-number"><?php echo count($unique_wattages); ?></div>
-                        <div class="count-label">Wattage Types</div>
-                    </div>
-                    <div class="count-item">
-                        <div class="count-number"><?php echo count($manufacturers); ?></div>
-                        <div class="count-label">Manufacturers</div>
-                    </div>
-                    <div class="count-item">
-                        <div class="count-number"><?php echo count($warehouses); ?></div>
-                        <div class="count-label">Warehouses Used</div>
-                    </div>
-                </div>
-            </div>
         <?php else: ?>
             <div class="no-project-message">
                 <p>No pallet movement data found for this project.</p>
@@ -487,6 +599,15 @@ $conn->close();
 
 </main>
 
+<!-- Detailed Breakdown Modal -->
+<div id="detailModal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5);">
+    <div style="background-color: #fefefe; margin: 5% auto; padding: 30px; border: 1px solid #888; width: 80%; max-width: 600px; border-radius: 8px; position: relative;">
+        <span onclick="closeDetailModal()" style="color: #aaa; position: absolute; top: 15px; right: 25px; font-size: 28px; font-weight: bold; cursor: pointer;">&times;</span>
+        <h2 id="modalTitle" style="margin-top: 0; color: #293E4C; border-bottom: 2px solid #488C9A; padding-bottom: 10px;"></h2>
+        <div id="modalContent"></div>
+    </div>
+</div>
+
 <!-- Load Google Maps JavaScript API -->
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCYF3qz_6niMzpTd0yklUX9YNpk73KviBM&libraries=places"></script>
 
@@ -494,6 +615,7 @@ $conn->close();
 // Movement data from PHP
 const movementData = <?php echo json_encode($movement_data); ?>;
 const projectData = <?php echo json_encode($project_data); ?>;
+const detailedBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
 
 let map;
 let directionsService;
@@ -963,22 +1085,63 @@ function createRouteLines(locations) {
         const toLocation = locations.get(route.to);
         
         if (fromLocation && toLocation && fromLocation.position && toLocation.position && route.modules > 0) {
-            // Slimmer line width scaling for better visual appeal
-            const baseWidth = 2; // Reduced minimum line width
-            const scaleFactor = Math.max(0.5, route.modules / 2000); // Reduced scaling - every 2000 modules
-            const lineWidth = Math.min(8, baseWidth + scaleFactor * 1.5); // Max width of 8px, slower growth
+            // Calculate the total modules in the project to determine volume percentage
+            const totalProjectModules = movementData.reduce((sum, movement) => sum + parseInt(movement.quantity), 0);
+            const volumePercentage = route.modules / totalProjectModules;
             
-            console.log(`Creating route from ${fromLocation.name} to ${toLocation.name}: ${route.modules} modules, width: ${lineWidth}`);
+            // Determine dash pattern based on volume (4 levels + solid)
+            let strokePattern = null; // Default is solid line
             
-            const polyline = new google.maps.Polyline({
+            if (volumePercentage >= 0.9) {
+                // Very high volume: solid line
+                strokePattern = null;
+            } else if (volumePercentage >= 0.65) {
+                // High volume: mostly solid with tiny gaps
+                strokePattern = [25, 2]; // 25px dash, 2px gap
+            } else if (volumePercentage >= 0.35) {
+                // Medium volume: moderately solid
+                strokePattern = [20, 4]; // 20px dash, 4px gap
+            } else if (volumePercentage >= 0.15) {
+                // Low volume: more dashed
+                strokePattern = [12, 8]; // 12px dash, 8px gap
+            } else {
+                // Very low volume: heavily dashed
+                strokePattern = [8, 12]; // 8px dash, 12px gap
+            }
+            
+            console.log(`Creating route from ${fromLocation.name} to ${toLocation.name}: ${route.modules} modules (${Math.round(volumePercentage * 100)}% of total), pattern: ${strokePattern ? strokePattern.join(',') : 'solid'}`);
+            
+            const polylineOptions = {
                 path: [fromLocation.position, toLocation.position],
                 geodesic: true,
                 strokeColor: route.color,
-                strokeOpacity: 0.8, // Slightly reduced opacity for cleaner look
-                strokeWeight: lineWidth,
+                strokeOpacity: 0.8,
+                strokeWeight: 4, // Fixed width for all lines
                 map: map,
-                zIndex: 10 // Ensure lines appear above the map
-            });
+                zIndex: 10
+            };
+            
+            // Add dash pattern if not solid
+            if (strokePattern) {
+                // Create a dashed line using symbols
+                polylineOptions.strokeOpacity = 0.1; // Very faint base line
+                polylineOptions.icons = [
+                    {
+                        icon: {
+                            path: 'M 0,-2 0,2',
+                            strokeOpacity: 1,
+                            strokeWeight: 4,
+                            strokeColor: route.color
+                        },
+                        offset: '0',
+                        repeat: (strokePattern[0] + strokePattern[1]) + 'px'
+                    }
+                ];
+            } else {
+                // Solid line - no changes needed
+            }
+            
+            const polyline = new google.maps.Polyline(polylineOptions);
             
             // Add hover info window for routes
             const routeInfoWindow = new google.maps.InfoWindow();
@@ -1017,6 +1180,145 @@ function createRouteLines(locations) {
 
 // Initialize map when page loads
 google.maps.event.addDomListener(window, 'load', initMap);
+
+// Modal functions
+function showDetailedBreakdown(type) {
+    const modal = document.getElementById('detailModal');
+    const title = document.getElementById('modalTitle');
+    const content = document.getElementById('modalContent');
+    
+    let titleText = '';
+    let contentHtml = '';
+    
+    if (type === 'manufacturer') {
+        titleText = '📍 At Manufacturer - Detailed Breakdown';
+        contentHtml = generateManufacturerBreakdown();
+    } else if (type === 'warehouse') {
+        titleText = '🏢 In Warehouse - Detailed Breakdown';
+        contentHtml = generateWarehouseBreakdown();
+    } else if (type === 'project') {
+        titleText = '🎯 Delivered to Project - Detailed Breakdown';
+        contentHtml = generateProjectBreakdown();
+    }
+    
+    title.textContent = titleText;
+    content.innerHTML = contentHtml;
+    modal.style.display = 'block';
+}
+
+function closeDetailModal() {
+    document.getElementById('detailModal').style.display = 'none';
+}
+
+function generateManufacturerBreakdown() {
+    let html = '<div style="max-height: 400px; overflow-y: auto;">';
+    let hasData = false;
+    
+    Object.keys(detailedBreakdown).forEach(status => {
+        if (status.includes('At Manufacturer')) {
+            hasData = true;
+            const data = detailedBreakdown[status];
+            html += `
+                <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #3498db;">
+                    <h4 style="margin-top: 0; color: #1565c0;">${status}</h4>
+                    <p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>
+            `;
+            
+            if (data.wattage_breakdown && Object.keys(data.wattage_breakdown).length > 0) {
+                html += '<p><strong>Wattage Breakdown:</strong></p><ul>';
+                Object.keys(data.wattage_breakdown).forEach(wattage => {
+                    const wattData = data.wattage_breakdown[wattage];
+                    html += `<li>${wattage}W: ${wattData.pallets} pallets (${wattData.modules.toLocaleString()} modules)</li>`;
+                });
+                html += '</ul>';
+            }
+            html += '</div>';
+        }
+    });
+    
+    if (!hasData) {
+        html += '<p style="text-align: center; color: #666; font-style: italic;">No modules currently at manufacturer.</p>';
+    }
+    
+    html += '</div>';
+    return html;
+}
+
+function generateWarehouseBreakdown() {
+    let html = '<div style="max-height: 400px; overflow-y: auto;">';
+    let hasData = false;
+    
+    Object.keys(detailedBreakdown).forEach(status => {
+        if (status.includes('In Warehouse')) {
+            hasData = true;
+            const data = detailedBreakdown[status];
+            html += `
+                <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #f39c12;">
+                    <h4 style="margin-top: 0; color: #e65100;">${status}</h4>
+                    <p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>
+            `;
+            
+            if (data.wattage_breakdown && Object.keys(data.wattage_breakdown).length > 0) {
+                html += '<p><strong>Wattage Breakdown:</strong></p><ul>';
+                Object.keys(data.wattage_breakdown).forEach(wattage => {
+                    const wattData = data.wattage_breakdown[wattage];
+                    html += `<li>${wattage}W: ${wattData.pallets} pallets (${wattData.modules.toLocaleString()} modules)</li>`;
+                });
+                html += '</ul>';
+            }
+            html += '</div>';
+        }
+    });
+    
+    if (!hasData) {
+        html += '<p style="text-align: center; color: #666; font-style: italic;">No modules currently in warehouse.</p>';
+    }
+    
+    html += '</div>';
+    return html;
+}
+
+function generateProjectBreakdown() {
+    let html = '<div style="max-height: 400px; overflow-y: auto;">';
+    let hasData = false;
+    
+    Object.keys(detailedBreakdown).forEach(status => {
+        if (status.includes('Delivered to Project')) {
+            hasData = true;
+            const data = detailedBreakdown[status];
+            html += `
+                <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #27ae60;">
+                    <h4 style="margin-top: 0; color: #1b5e20;">${status}</h4>
+                    <p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>
+            `;
+            
+            if (data.wattage_breakdown && Object.keys(data.wattage_breakdown).length > 0) {
+                html += '<p><strong>Wattage Breakdown:</strong></p><ul>';
+                Object.keys(data.wattage_breakdown).forEach(wattage => {
+                    const wattData = data.wattage_breakdown[wattage];
+                    html += `<li>${wattage}W: ${wattData.pallets} pallets (${wattData.modules.toLocaleString()} modules)</li>`;
+                });
+                html += '</ul>';
+            }
+            html += '</div>';
+        }
+    });
+    
+    if (!hasData) {
+        html += '<p style="text-align: center; color: #666; font-style: italic;">No modules have been delivered to project yet.</p>';
+    }
+    
+    html += '</div>';
+    return html;
+}
+
+// Close modal when clicking outside of it
+window.onclick = function(event) {
+    const modal = document.getElementById('detailModal');
+    if (event.target === modal) {
+        closeDetailModal();
+    }
+}
 </script>
 </body>
 </html> 
