@@ -632,8 +632,11 @@ function processMovementData() {
             });
         }
         
+        // Prevent marker overlap by adjusting positions
+        adjustMarkerPositions(locations);
+        
         // Create route lines after markers are positioned
-        createRouteLines();
+        createRouteLines(locations);
     });
 }
 
@@ -658,40 +661,58 @@ function createMarker(location) {
     if (!location.position) return;
 
     let icon;
-    const iconSize = 32; // Made bigger as requested
+    const iconSize = 40; // Larger, more prominent bubble-style markers
     
     switch (location.type) {
         case 'manufacturer':
             icon = {
                 url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
-                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 24 24" fill="#3498db" xmlns="http://www.w3.org/2000/svg">' +
-                    '<circle cx="12" cy="12" r="10" fill="#3498db" stroke="white" stroke-width="2"/>' +
-                    '<text x="12" y="16" text-anchor="middle" fill="white" font-size="10" font-weight="bold">M</text>' +
+                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
+                    '<defs>' +
+                    '<filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">' +
+                    '<feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>' +
+                    '</filter>' +
+                    '</defs>' +
+                    '<circle cx="20" cy="20" r="18" fill="#3498db" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
+                    '<text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">M</text>' +
                     '</svg>'
                 ),
-                scaledSize: new google.maps.Size(iconSize, iconSize)
+                scaledSize: new google.maps.Size(iconSize, iconSize),
+                anchor: new google.maps.Point(iconSize/2, iconSize/2)
             };
             break;
         case 'warehouse':
             icon = {
                 url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
-                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 24 24" fill="#f39c12" xmlns="http://www.w3.org/2000/svg">' +
-                    '<circle cx="12" cy="12" r="10" fill="#f39c12" stroke="white" stroke-width="2"/>' +
-                    '<text x="12" y="16" text-anchor="middle" fill="white" font-size="10" font-weight="bold">W</text>' +
+                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
+                    '<defs>' +
+                    '<filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">' +
+                    '<feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>' +
+                    '</filter>' +
+                    '</defs>' +
+                    '<circle cx="20" cy="20" r="18" fill="#f39c12" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
+                    '<text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">W</text>' +
                     '</svg>'
                 ),
-                scaledSize: new google.maps.Size(iconSize, iconSize)
+                scaledSize: new google.maps.Size(iconSize, iconSize),
+                anchor: new google.maps.Point(iconSize/2, iconSize/2)
             };
             break;
         case 'project':
             icon = {
                 url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
-                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 24 24" fill="#27ae60" xmlns="http://www.w3.org/2000/svg">' +
-                    '<circle cx="12" cy="12" r="10" fill="#27ae60" stroke="white" stroke-width="2"/>' +
-                    '<text x="12" y="16" text-anchor="middle" fill="white" font-size="10" font-weight="bold">P</text>' +
+                    '<svg width="' + iconSize + '" height="' + iconSize + '" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
+                    '<defs>' +
+                    '<filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">' +
+                    '<feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>' +
+                    '</filter>' +
+                    '</defs>' +
+                    '<circle cx="20" cy="20" r="18" fill="#27ae60" stroke="#FFFFFF" stroke-width="3" filter="url(#shadow)"/>' +
+                    '<text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">P</text>' +
                     '</svg>'
                 ),
-                scaledSize: new google.maps.Size(iconSize, iconSize)
+                scaledSize: new google.maps.Size(iconSize, iconSize),
+                anchor: new google.maps.Point(iconSize/2, iconSize/2)
             };
             break;
     }
@@ -700,7 +721,8 @@ function createMarker(location) {
         position: location.position,
         map: map,
         title: location.name,
-        icon: icon
+        icon: icon,
+        zIndex: 20 // Ensure markers are on top
     });
 
     // Create enhanced info window with current quantities and wattages
@@ -724,15 +746,17 @@ function createMarker(location) {
         .join('<br>');
 
     const infoContent = `
-        <div style="max-width: 300px;">
-            <h3 style="margin-top: 0; color: #293E4C;">${location.name}</h3>
-            <p><strong>Type:</strong> ${location.type.charAt(0).toUpperCase() + location.type.slice(1)}</p>
-            <p><strong>Address:</strong> ${location.address}</p>
-            <hr style="margin: 10px 0;">
-            <p><strong>Current Inventory:</strong></p>
-            <p><strong>Pallets:</strong> ${totalPallets.toLocaleString()}</p>
-            <p><strong>Total Modules:</strong> ${totalModules.toLocaleString()}</p>
-            <p><strong>Breakdown:</strong><br>${wattageDetails}</p>
+        <div style="max-width: 300px; font-family: 'Poppins', Arial, sans-serif;">
+            <h3 style="margin-top: 0; color: #293E4C; font-size: 18px;">${location.name}</h3>
+            <p style="margin: 8px 0; color: #666;"><strong>Type:</strong> ${location.type.charAt(0).toUpperCase() + location.type.slice(1)}</p>
+            <p style="margin: 8px 0; color: #666; font-size: 14px;"><strong>Address:</strong> ${location.address}</p>
+            <hr style="margin: 15px 0; border: none; border-top: 1px solid #eee;">
+            <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin: 10px 0;">
+                <p style="margin: 0 0 8px 0; font-weight: 600; color: #293E4C;">Current Inventory:</p>
+                <p style="margin: 4px 0; color: #333;"><strong>Pallets:</strong> ${totalPallets.toLocaleString()}</p>
+                <p style="margin: 4px 0; color: #333;"><strong>Total Modules:</strong> ${totalModules.toLocaleString()}</p>
+                ${wattageDetails ? `<p style="margin: 8px 0 0 0; color: #666; font-size: 13px;"><strong>Breakdown:</strong><br>${wattageDetails}</p>` : ''}
+            </div>
         </div>
     `;
 
@@ -747,8 +771,123 @@ function createMarker(location) {
     location.marker = marker;
 }
 
+function adjustMarkerPositions(locations) {
+    const markerPositions = [];
+    const minDistance = 0.2; // Even more separation for clean bubble layout
+    
+    // Collect all markers with their positions
+    locations.forEach((location, key) => {
+        if (location.marker && location.position) {
+            markerPositions.push({
+                key: key,
+                location: location,
+                lat: location.position.lat(),
+                lng: location.position.lng(),
+                originalLat: location.position.lat(),
+                originalLng: location.position.lng()
+            });
+        }
+    });
+    
+    // Check for overlaps and create clean bubble layout
+    for (let i = 0; i < markerPositions.length; i++) {
+        for (let j = i + 1; j < markerPositions.length; j++) {
+            const marker1 = markerPositions[i];
+            const marker2 = markerPositions[j];
+            
+            const distance = Math.sqrt(
+                Math.pow(marker1.lat - marker2.lat, 2) + 
+                Math.pow(marker1.lng - marker2.lng, 2)
+            );
+            
+            if (distance < minDistance) {
+                // Create a clean radial layout around the center point
+                const centerLat = (marker1.originalLat + marker2.originalLat) / 2;
+                const centerLng = (marker1.originalLng + marker2.originalLng) / 2;
+                
+                const offsetDistance = minDistance * 0.8;
+                
+                // Position markers in a clean circle around center
+                const angle1 = (i * Math.PI * 2) / markerPositions.length;
+                const angle2 = (j * Math.PI * 2) / markerPositions.length;
+                
+                marker1.lat = centerLat + Math.sin(angle1) * offsetDistance;
+                marker1.lng = centerLng + Math.cos(angle1) * offsetDistance;
+                
+                marker2.lat = centerLat + Math.sin(angle2) * offsetDistance;
+                marker2.lng = centerLng + Math.cos(angle2) * offsetDistance;
+                
+                // Update marker positions
+                const newPosition1 = new google.maps.LatLng(marker1.lat, marker1.lng);
+                const newPosition2 = new google.maps.LatLng(marker2.lat, marker2.lng);
+                
+                marker1.location.marker.setPosition(newPosition1);
+                marker1.location.position = newPosition1;
+                
+                marker2.location.marker.setPosition(newPosition2);
+                marker2.location.position = newPosition2;
+            }
+        }
+    }
+    
+    // Add clean pointer lines from displaced markers back to their actual locations
+    markerPositions.forEach(markerPos => {
+        const wasDisplaced = (markerPos.lat !== markerPos.originalLat || markerPos.lng !== markerPos.originalLng);
+        
+        if (wasDisplaced) {
+            const originalPosition = new google.maps.LatLng(markerPos.originalLat, markerPos.originalLng);
+            const currentPosition = new google.maps.LatLng(markerPos.lat, markerPos.lng);
+            
+            // Create a clean, simple pointer line (like in the examples)
+            const pointerLine = new google.maps.Polyline({
+                path: [currentPosition, originalPosition],
+                geodesic: false,
+                strokeColor: '#FFFFFF', // White line for clean look
+                strokeOpacity: 0.9,
+                strokeWeight: 3,
+                map: map,
+                zIndex: 8 // Above routes but below markers
+            });
+            
+            // Add a subtle shadow/outline to the pointer line
+            const shadowLine = new google.maps.Polyline({
+                path: [currentPosition, originalPosition],
+                geodesic: false,
+                strokeColor: '#000000',
+                strokeOpacity: 0.3,
+                strokeWeight: 5,
+                map: map,
+                zIndex: 7 // Behind the white line
+            });
+            
+            // Add a small dot at the actual location (cleaner than the previous version)
+            const actualLocationDot = new google.maps.Marker({
+                position: originalPosition,
+                map: map,
+                icon: {
+                    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
+                        '<svg width="12" height="12" viewBox="0 0 12 12" xmlns="http://www.w3.org/2000/svg">' +
+                        '<circle cx="6" cy="6" r="4" fill="#FFFFFF" stroke="#333333" stroke-width="2"/>' +
+                        '<circle cx="6" cy="6" r="2" fill="#333333"/>' +
+                        '</svg>'
+                    ),
+                    scaledSize: new google.maps.Size(12, 12),
+                    anchor: new google.maps.Point(6, 6)
+                },
+                title: `Exact location: ${markerPos.location.name}`,
+                zIndex: 15 // Highest priority
+            });
+            
+            // Store references
+            markerPos.location.pointerLine = pointerLine;
+            markerPos.location.shadowLine = shadowLine;
+            markerPos.location.actualLocationDot = actualLocationDot;
+        }
+    });
+}
+
 // Add route visualization after all markers are created
-function createRouteLines() {
+function createRouteLines(locations) {
     if (!map) return;
     
     const routes = new Map();
@@ -824,15 +963,21 @@ function createRouteLines() {
         const toLocation = locations.get(route.to);
         
         if (fromLocation && toLocation && fromLocation.position && toLocation.position && route.modules > 0) {
-            const lineWidth = Math.max(2, Math.min(10, route.modules / 500)); // Scale line width by volume
+            // Slimmer line width scaling for better visual appeal
+            const baseWidth = 2; // Reduced minimum line width
+            const scaleFactor = Math.max(0.5, route.modules / 2000); // Reduced scaling - every 2000 modules
+            const lineWidth = Math.min(8, baseWidth + scaleFactor * 1.5); // Max width of 8px, slower growth
+            
+            console.log(`Creating route from ${fromLocation.name} to ${toLocation.name}: ${route.modules} modules, width: ${lineWidth}`);
             
             const polyline = new google.maps.Polyline({
                 path: [fromLocation.position, toLocation.position],
                 geodesic: true,
                 strokeColor: route.color,
-                strokeOpacity: 0.8,
+                strokeOpacity: 0.8, // Slightly reduced opacity for cleaner look
                 strokeWeight: lineWidth,
-                map: map
+                map: map,
+                zIndex: 10 // Ensure lines appear above the map
             });
             
             // Add hover info window for routes
@@ -844,12 +989,13 @@ function createRouteLines() {
                                      'Manufacturer → Project (Direct)';
                 
                 const routeInfo = `
-                    <div style="padding: 5px;">
-                        <strong>${routeTypeLabel}</strong><br>
+                    <div style="padding: 10px; min-width: 200px;">
+                        <strong style="color: ${route.color};">${routeTypeLabel}</strong><br>
                         <strong>From:</strong> ${fromLocation.name}<br>
                         <strong>To:</strong> ${toLocation.name}<br>
-                        <strong>Pallets:</strong> ${route.pallets.length}<br>
-                        <strong>Modules:</strong> ${route.modules.toLocaleString()}
+                        <strong>Pallets Moved:</strong> ${route.pallets.length.toLocaleString()}<br>
+                        <strong>Modules Moved:</strong> ${route.modules.toLocaleString()}<br>
+                        <em>Line width represents volume</em>
                     </div>
                 `;
                 routeInfoWindow.setContent(routeInfo);
@@ -860,8 +1006,13 @@ function createRouteLines() {
             polyline.addListener('mouseout', () => {
                 routeInfoWindow.close();
             });
+            
+            // Store route reference for debugging
+            route.polyline = polyline;
         }
     });
+    
+    console.log(`Created ${routes.size} routes:`, routes);
 }
 
 // Initialize map when page loads
