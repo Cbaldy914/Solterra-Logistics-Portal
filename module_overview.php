@@ -269,6 +269,7 @@ $batch_items = []; // Keep this to store raw items if needed elsewhere, but we'l
 $pallets = [];     // Keep this raw pallet data
 $summary_stats = [ // Keep overall status counts
     'status_counts' => [],
+    'detailed_breakdown' => [],
 ];
 $wattage_summary = []; // NEW: Array to hold summary data per wattage
 
@@ -365,8 +366,50 @@ try {
                 $pallet['display_location'] = $pallet['status'];
             }
             $pallets[] = $pallet; // Store raw pallet data
-            // Update overall status counts
+            
+            // Create detailed status breakdown with location and wattage info
             $status = $pallet['status'];
+            $wattage = $pallet['wattage'];
+            $quantity = $pallet['quantity'];
+            
+            // Create location-specific key for breakdown
+            $breakdown_key = '';
+            if ($status === 'In Warehouse' && $pallet['warehouse_name']) {
+                $breakdown_key = 'In Warehouse - ' . $pallet['warehouse_name'];
+            } elseif ($status === 'Delivered to Project' && $pallet['project_name']) {
+                $breakdown_key = 'Delivered to Project - ' . $pallet['project_name'];
+            } elseif ($status === 'In Transit to Project' && $pallet['project_name']) {
+                $breakdown_key = 'In Transit to Project - ' . $pallet['project_name'];
+            } elseif ($status === 'In Transit to Warehouse' && $pallet['warehouse_name']) {
+                $breakdown_key = 'In Transit to Warehouse - ' . $pallet['warehouse_name'];
+            } else {
+                $breakdown_key = $status;
+            }
+            
+            // Initialize if not exists
+            if (!isset($summary_stats['detailed_breakdown'][$breakdown_key])) {
+                $summary_stats['detailed_breakdown'][$breakdown_key] = [
+                    'pallet_count' => 0,
+                    'total_modules' => 0,
+                    'wattage_breakdown' => []
+                ];
+            }
+            
+            // Update counts
+            $summary_stats['detailed_breakdown'][$breakdown_key]['pallet_count']++;
+            $summary_stats['detailed_breakdown'][$breakdown_key]['total_modules'] += $quantity;
+            
+            // Track wattage breakdown
+            if (!isset($summary_stats['detailed_breakdown'][$breakdown_key]['wattage_breakdown'][$wattage])) {
+                $summary_stats['detailed_breakdown'][$breakdown_key]['wattage_breakdown'][$wattage] = [
+                    'pallets' => 0,
+                    'modules' => 0
+                ];
+            }
+            $summary_stats['detailed_breakdown'][$breakdown_key]['wattage_breakdown'][$wattage]['pallets']++;
+            $summary_stats['detailed_breakdown'][$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $quantity;
+            
+            // Keep legacy simple count for compatibility
             $summary_stats['status_counts'][$status] = ($summary_stats['status_counts'][$status] ?? 0) + 1;
         }
         $stmtPallets->close();
@@ -733,12 +776,45 @@ $conn->close();
 
             <!-- Keep Pallet Status Breakdown -->
             <h3 style="margin-top: 30px;">Overall Pallet Status Breakdown:</h3>
-            <?php if (!empty($summary_stats['status_counts'])): ?>
-                <ul class="status-counts">
-                    <?php foreach ($summary_stats['status_counts'] as $status => $count): ?>
-                        <li><?php echo htmlspecialchars($status); ?>: <?php echo $count; ?></li>
+            <?php if (!empty($summary_stats['detailed_breakdown'])): ?>
+                <div class="status-breakdown-detailed">
+                    <?php foreach ($summary_stats['detailed_breakdown'] as $status => $data): ?>
+                        <div class="status-item" style="margin-bottom: 15px; padding: 12px; background-color: #f8f9fa; border-left: 4px solid #488C9A; border-radius: 4px;">
+                            <div style="font-weight: 600; color: #293E4C; margin-bottom: 8px;">
+                                <?php echo htmlspecialchars($status); ?>: 
+                                <span style="color: #488C9A;"><?php echo $data['pallet_count']; ?> pallets, <?php echo number_format($data['total_modules']); ?> modules</span>
+                            </div>
+                            <?php if (!empty($data['wattage_breakdown'])): ?>
+                                <div style="margin-left: 20px; font-size: 0.9em; color: #666;">
+                                    <strong>Breakdown by Wattage:</strong>
+                                    <?php 
+                                    $wattage_details = [];
+                                    foreach ($data['wattage_breakdown'] as $wattage => $watt_data) {
+                                        $wattage_details[] = "{$wattage}W: {$watt_data['pallets']} pallets (" . number_format($watt_data['modules']) . " modules)";
+                                    }
+                                    echo implode(' • ', $wattage_details);
+                                    ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
                     <?php endforeach; ?>
-                </ul>
+                </div>
+                
+                <!-- Link to detailed movement view -->
+                <div style="margin-top: 20px; text-align: center;">
+                    <?php 
+                    $movement_url = "module_movements.php?batch_id=" . urlencode($batch_id);
+                    if (!empty($batch_data['project_id'])) {
+                        $movement_url .= "&project_id=" . urlencode($batch_data['project_id']);
+                    }
+                    ?>
+                    <a href="<?php echo $movement_url; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 12px 24px; font-size: 1em; text-decoration: none; display: inline-block;">
+                        <strong>📍 View Module Movement Map</strong>
+                    </a>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 8px;">
+                        See detailed movement tracking and geographic flow of these modules
+                    </p>
+                </div>
             <?php else: ?>
                 <p>No pallets have been created/recorded for this batch yet.</p>
             <?php endif; ?>
