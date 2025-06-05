@@ -540,14 +540,14 @@ $params        = [$default_freight_cost];
 
 if (is_numeric($filter_project_id)) {
     $projectConditionSQL = " AND d.project_id = ?";
+    $paramTypes .= "i";
+    $params[] = $filter_project_id;
     // NEW: Add account check for admin
     if (!$is_global_admin && $account_id_for_admin) {
         $projectConditionSQL .= " AND p.account_id = ?";
         $paramTypes .= "i";
         $params[] = $account_id_for_admin;
     }
-    $paramTypes .= "i";
-    $params[] = $filter_project_id;
 } elseif ($filter_project_id === 'unassigned') {
     $projectConditionSQL = " AND d.project_id IS NULL";
     // No parameter to add for IS NULL
@@ -627,10 +627,19 @@ if ($delivery_type === 'project') {
 $sql = "
     SELECT d.*, p.project_name AS project_name_from_join,
            IFNULL(d.freight_cost, ?) AS freight_cost_with_default,
-           COALESCE(
-               GROUP_CONCAT(DISTINCT m.vendor_name ORDER BY m.vendor_name SEPARATOR ', '),
-               d.supplier
-           ) AS manufacturer_name
+           CASE 
+               WHEN COALESCE(
+                   GROUP_CONCAT(DISTINCT m.vendor_name ORDER BY m.vendor_name SEPARATOR ', '),
+                   d.supplier
+               ) LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(COALESCE(
+                   GROUP_CONCAT(DISTINCT m.vendor_name ORDER BY m.vendor_name SEPARATOR ', '),
+                   d.supplier
+               ), '-', 1))
+               ELSE COALESCE(
+                   GROUP_CONCAT(DISTINCT m.vendor_name ORDER BY m.vendor_name SEPARATOR ', '),
+                   d.supplier
+               )
+           END AS manufacturer_name
     FROM deliveries d
     LEFT JOIN projects p ON d.project_id = p.id
     LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
@@ -726,12 +735,12 @@ $count_types = "";
 
 // Add project condition parameters
 if (is_numeric($filter_project_id)) {
+    $count_types .= "i";
+    $count_params[] = $filter_project_id;
     if (!$is_global_admin && $account_id_for_admin) {
         $count_types .= "i";
         $count_params[] = $account_id_for_admin;
     }
-    $count_types .= "i";
-    $count_params[] = $filter_project_id;
 } elseif ($filter_project_id === 'all' && !$is_global_admin && $account_id_for_admin) {
     $count_types .= "i";
     $count_params[] = $account_id_for_admin;
