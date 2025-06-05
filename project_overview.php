@@ -233,9 +233,9 @@ while ($row = $del_st_res->fetch_assoc()) {
 
     if (!isset($delivery_totals[$lbl])) {
         $delivery_totals[$lbl] = [
-            'Delivered'    => 0,
-            'In Warehouse' => 0,
-            'Produced'     => 0,
+            'Delivered to Project'    => 0,
+            'Delivered to Warehouse' => 0,
+            'Pending'     => 0,
         ];
     }
     if (isset($delivery_totals[$lbl][$st])) {
@@ -251,9 +251,9 @@ $produced_combined         = 0;
 $not_yet_produced_combined = 0;
 
 $pieChartData = [
-    'Delivered to Site' => 0,
-    'In Warehouse'      => 0,
-    'Produced'          => 0,
+    'Delivered to Project' => 0,
+    'Delivered to Warehouse'      => 0,
+    'Pending'          => 0,
     'Not Yet Produced'  => 0,
 ];
 
@@ -264,9 +264,9 @@ foreach ($total_orders as $lbl => $info) {
     $w  = (float)$info['wattage'];
     $to = (float)$info['total_order'];
 
-    $del = $delivery_totals[$lbl]['Delivered']    ?? 0;
-    $inw = $delivery_totals[$lbl]['In Warehouse'] ?? 0;
-    $prd = $delivery_totals[$lbl]['Produced']     ?? 0;
+    $del = $delivery_totals[$lbl]['Delivered to Project']    ?? 0;
+    $inw = $delivery_totals[$lbl]['Delivered to Warehouse'] ?? 0;
+    $prd = $delivery_totals[$lbl]['Pending']     ?? 0;
     $nyp = $to - ($del + $inw + $prd);
 
     // Next 5 Weeks
@@ -292,9 +292,9 @@ foreach ($total_orders as $lbl => $info) {
     $produced_combined         += $prd;
     $not_yet_produced_combined += $nyp;
 
-    $pieChartData['Delivered to Site'] += $del;
-    $pieChartData['In Warehouse']      += $inw;
-    $pieChartData['Produced']          += $prd;
+    $pieChartData['Delivered to Project'] += $del;
+    $pieChartData['Delivered to Warehouse']      += $inw;
+    $pieChartData['Pending']          += $prd;
     $pieChartData['Not Yet Produced']  += $nyp;
 }
 $total_pie = array_sum($pieChartData);
@@ -905,9 +905,9 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <th>Project</th>
                                 <th>Module Type</th>
                                 <th>Total Order</th>
-                                <th>Delivered</th>
-                                <th>In Warehouse</th>
-                                <th>Produced</th>
+                                <th>Delivered to Project</th>
+                                <th>Delivered to Warehouse</th>
+                                <th>Pending</th>
                                 <th>Not Yet Produced</th>
                             </tr>
                         </thead>

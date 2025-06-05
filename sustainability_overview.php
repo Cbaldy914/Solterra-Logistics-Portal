@@ -88,7 +88,7 @@ while ($project = $projects_result->fetch_assoc()) {
 
     while ($delivery = $deliveries_result->fetch_assoc()) {
         // If "Delivered", increment truckloads
-        if (($delivery['status_of_delivery'] ?? '') === 'Delivered') {
+        if (in_array($delivery['status_of_delivery'] ?? '', ['Delivered to Project', 'Delivered to Warehouse'])) {
             $project_total_truckloads += 1;
         }
 

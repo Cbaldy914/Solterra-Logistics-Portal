@@ -202,9 +202,19 @@ if (!empty($status_filter)) {
     $params[]        = $status_filter;
 }
 
+// DELIVERY TYPE FILTER
+$delivery_type = isset($_GET['delivery_type']) ? $_GET['delivery_type'] : 'all';
+$deliveryTypeCondition = "";
+if ($delivery_type === 'project') {
+    $deliveryTypeCondition = " AND (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project')";
+} elseif ($delivery_type === 'warehouse') {
+    $deliveryTypeCondition = " AND d.warehouse_id IS NOT NULL";
+}
+// For 'all', no additional condition needed
+
 $whereClause = "";
-if (!empty($baseQueryConditions) || !empty($dateCondition) || !empty($statusCondition)) {
-    $whereClause = "WHERE " . implode(" AND ", array_filter(array_merge($baseQueryConditions, [trim(ltrim($dateCondition, ' AND '))], [trim(ltrim($statusCondition, ' AND '))])));
+if (!empty($baseQueryConditions) || !empty($dateCondition) || !empty($statusCondition) || !empty($deliveryTypeCondition)) {
+    $whereClause = "WHERE " . implode(" AND ", array_filter(array_merge($baseQueryConditions, [trim(ltrim($dateCondition, ' AND '))], [trim(ltrim($statusCondition, ' AND '))], [trim(ltrim($deliveryTypeCondition, ' AND '))])));
 }
 
 // Handle CSV Export
@@ -276,6 +286,42 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $deliveries[] = $delivery;
 }
 $stmt->close();
+
+// Get delivery counts for tabs
+$delivery_counts = ['project' => 0, 'warehouse' => 0, 'all' => 0];
+
+// Build base query for counts (without delivery type filter)
+$count_base_query = "
+    SELECT 
+        SUM(CASE WHEN (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project') THEN 1 ELSE 0 END) as project_count,
+        SUM(CASE WHEN d.warehouse_id IS NOT NULL THEN 1 ELSE 0 END) as warehouse_count,
+        COUNT(d.id) as total_count
+    FROM deliveries d
+    $joinClause
+";
+
+// Build count query WHERE clause (excluding delivery type condition)
+$count_where_conditions = array_filter(array_merge($baseQueryConditions, [trim(ltrim($dateCondition, ' AND '))], [trim(ltrim($statusCondition, ' AND '))]));
+$count_where_clause = "";
+if (!empty($count_where_conditions)) {
+    $count_where_clause = "WHERE " . implode(" AND ", $count_where_conditions);
+}
+
+$count_sql = $count_base_query . " " . $count_where_clause;
+$count_stmt = $conn->prepare($count_sql);
+if ($count_stmt && !empty($paramTypes)) {
+    // Remove delivery type parameters since we're not using delivery type filter for counts
+    $count_stmt->bind_param($paramTypes, ...$params);
+}
+$count_stmt->execute();
+$count_stmt->bind_result($project_count, $warehouse_count, $total_count);
+$count_stmt->fetch();
+$count_stmt->close();
+
+$delivery_counts['project'] = $project_count ?: 0;
+$delivery_counts['warehouse'] = $warehouse_count ?: 0;
+$delivery_counts['all'] = $total_count ?: 0;
+
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -405,6 +451,39 @@ $conn->close();
     <div class="container">
         <h1><?php echo $page_title_info; ?></h1>
 
+        <!-- Delivery Type Tabs -->
+        <div class="delivery-type-tabs" style="margin: 20px 0; border-bottom: 2px solid #eee;">
+            <div style="display: flex; gap: 0;">
+                <?php
+                // Build base parameters for tab links
+                $base_params = $_GET;
+                $base_params['delivery_type'] = 'project';
+                $project_link = '?' . http_build_query($base_params);
+                
+                $base_params['delivery_type'] = 'warehouse'; 
+                $warehouse_link = '?' . http_build_query($base_params);
+                
+                $base_params['delivery_type'] = 'all';
+                $all_link = '?' . http_build_query($base_params);
+                ?>
+                <a href="<?php echo $project_link; ?>" 
+                   class="delivery-tab <?php echo ($delivery_type === 'project') ? 'active' : ''; ?>"
+                   style="padding: 12px 24px; background: <?php echo ($delivery_type === 'project') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'project') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; margin-right: 2px;">
+                    🏗️ Project Deliveries (<?php echo $delivery_counts['project']; ?>)
+                </a>
+                <a href="<?php echo $warehouse_link; ?>" 
+                   class="delivery-tab <?php echo ($delivery_type === 'warehouse') ? 'active' : ''; ?>"
+                   style="padding: 12px 24px; background: <?php echo ($delivery_type === 'warehouse') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'warehouse') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; margin-right: 2px;">
+                    🏢 Warehouse Deliveries (<?php echo $delivery_counts['warehouse']; ?>)
+                </a>
+                <a href="<?php echo $all_link; ?>" 
+                   class="delivery-tab <?php echo ($delivery_type === 'all') ? 'active' : ''; ?>"
+                   style="padding: 12px 24px; background: <?php echo ($delivery_type === 'all') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'all') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0;">
+                    📦 All Deliveries (<?php echo $delivery_counts['all']; ?>)
+                </a>
+            </div>
+        </div>
+
         <!-- Time Filter Header -->
         <div class="time-filter-header">
             <div class="time-filters">
@@ -447,14 +526,17 @@ $conn->close();
                     <?php endif; ?>
                     <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
                     <input type="hidden" name="ref_date" value="<?php echo $ref_date; ?>">
+                    <input type="hidden" name="delivery_type" value="<?php echo $delivery_type; ?>">
 
                     <label for="status_filter" style="align-self: center;">Filter by Status:</label>
                     <select name="status_filter" id="status_filter" onchange="this.form.submit()">
                         <option value="">All</option>
-                        <option value="Pending"        <?php if($status_filter === 'Pending')        echo 'selected'; ?>>Pending</option>
-                        <option value="Produced"       <?php if($status_filter === 'Produced')       echo 'selected'; ?>>Produced</option>
-                        <option value="In Warehouse"   <?php if($status_filter === 'In Warehouse')   echo 'selected'; ?>>In Warehouse</option>
-                        <option value="Delivered"      <?php if($status_filter === 'Delivered')      echo 'selected'; ?>>Delivered</option>
+                        <option value="Pending" <?php if($status_filter === 'Pending') echo 'selected'; ?>>Pending</option>
+                        <option value="In Transit to Warehouse" <?php if($status_filter === 'In Transit to Warehouse') echo 'selected'; ?>>In Transit to Warehouse</option>
+                        <option value="Delivered to Warehouse" <?php if($status_filter === 'Delivered to Warehouse') echo 'selected'; ?>>Delivered to Warehouse</option>
+                        <option value="In Transit to Project" <?php if($status_filter === 'In Transit to Project') echo 'selected'; ?>>In Transit to Project</option>
+                        <option value="Delivered to Project" <?php if($status_filter === 'Delivered to Project') echo 'selected'; ?>>Delivered to Project</option>
+                        <option value="Canceled" <?php if($status_filter === 'Canceled') echo 'selected'; ?>>Canceled</option>
                     </select>
 
                     <span class="mobile-hide">
@@ -498,7 +580,7 @@ $conn->close();
                                             View POD
                                         </a>
                                     <?php else: ?>
-                                        <?php if ($role === 'admin'): ?>
+                                        <?php if ($role === 'global_admin'): ?>
                                             <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>">
                                                 Upload POD
                                             </a>

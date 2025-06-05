@@ -476,7 +476,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
     <label>Status:
       <select name="status_of_delivery">
         <?php
-        $statuses = ['Produced', 'In Warehouse', 'Delivered', 'Canceled'];
+        $statuses = ['Pending', 'In Transit to Warehouse', 'Delivered to Warehouse', 'In Transit to Project', 'Delivered to Project', 'Canceled'];
         foreach ($statuses as $st):
         ?>
           <option value="<?php echo $st;?>" 
