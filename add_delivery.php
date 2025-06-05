@@ -370,9 +370,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
         <label>BOL Number:<input type="text" name="bol_number" value="<?php echo htmlspecialchars($_POST['bol_number'] ?? ''); ?>"></label>
  <label>Status of Delivery:
    <select name="status_of_delivery" required>
-                <option value="Produced" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Produced') ? 'selected' : ''; ?>>Produced</option>
-                <option value="In Warehouse" <?php echo (($_POST['status_of_delivery'] ?? '') === 'In Warehouse') ? 'selected' : ''; ?>>In Warehouse</option>
-                <option value="Delivered" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Delivered') ? 'selected' : ''; ?>>Delivered</option>
+                <option value="Pending" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Pending') ? 'selected' : ''; ?>>Pending</option>
+                <option value="In Transit to Warehouse" <?php echo (($_POST['status_of_delivery'] ?? '') === 'In Transit to Warehouse') ? 'selected' : ''; ?>>In Transit to Warehouse</option>
+                <option value="Delivered to Warehouse" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Delivered to Warehouse') ? 'selected' : ''; ?>>Delivered to Warehouse</option>
+                <option value="In Transit to Project" <?php echo (($_POST['status_of_delivery'] ?? '') === 'In Transit to Project') ? 'selected' : ''; ?>>In Transit to Project</option>
+                <option value="Delivered to Project" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Delivered to Project') ? 'selected' : ''; ?>>Delivered to Project</option>
                 <option value="Canceled" <?php echo (($_POST['status_of_delivery'] ?? '') === 'Canceled') ? 'selected' : ''; ?>>Canceled</option>
    </select>
  </label>

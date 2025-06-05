@@ -265,7 +265,7 @@ $resOrd->close();
 $sqlDel = "
     SELECT project_id, SUM(quantity) AS sum_delivered
       FROM deliveries
-     WHERE status_of_delivery='Delivered'
+     WHERE status_of_delivery IN ('Delivered to Project', 'Delivered to Warehouse')
      GROUP BY project_id
 ";
 $resDel = $conn->query($sqlDel);

@@ -167,7 +167,7 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $miles_driven = (float)($delivery['miles']   ?? 0);
 
     // If "Delivered" with miles>0 => count a truckload
-    if (($delivery['status_of_delivery'] ?? '') === 'Delivered' && $miles_driven > 0) {
+    if (in_array($delivery['status_of_delivery'] ?? '', ['Delivered to Project', 'Delivered to Warehouse']) && $miles_driven > 0) {
         $total_truckloads += 1;
     }
 

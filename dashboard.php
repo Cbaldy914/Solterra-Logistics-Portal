@@ -90,7 +90,7 @@ if (count($accountIds) > 0) {
         $stmt_delivered = $conn->prepare("
             SELECT SUM(quantity) AS total_delivered
             FROM deliveries
-            WHERE project_id = ? AND status_of_delivery = 'Delivered'
+            WHERE project_id = ? AND status_of_delivery = 'Delivered to Project'
         ");
         $stmt_delivered->bind_param("i", $project_id);
         $stmt_delivered->execute();
@@ -109,7 +109,7 @@ if (count($accountIds) > 0) {
         $stmt_in_storage = $conn->prepare("
             SELECT SUM(quantity) AS total_in_storage
             FROM deliveries
-            WHERE project_id = ? AND status_of_delivery = 'In Warehouse'
+            WHERE project_id = ? AND status_of_delivery = 'Delivered to Warehouse'
         ");
         $stmt_in_storage->bind_param("i", $project_id);
         $stmt_in_storage->execute();
