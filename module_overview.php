@@ -206,7 +206,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
             }
             $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets. Pallets are now in transit to {$warehouseName}. To receive pallets at the warehouse, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline; font-weight: 600;'>click here</a>.";
         } else {
-            $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
+        $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
         }
     } catch (Exception $e) {
         $conn->rollback();
@@ -911,28 +911,28 @@ $conn->close();
                 <h2 class="section-title">Select Inventory Pallets to Include in Shipment</h2>
                 <div class="pallet-table-actions" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                     <div style="display: flex; gap: 20px; align-items: center;">
-                        <label>Filter Table:
-                            <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()">
-                        </label>
-                        <label for="wattageFilter">Wattage:</label>
-                        <select id="wattageFilter" onchange="filterPallets()">
-                            <option value="">All</option>
-                            <?php
-                            $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
-                            sort($wattages);
-                            foreach ($wattages as $w) {
-                                echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
-                            }
-                            ?>
-                        </select>
+                    <label>Filter Table:
+                        <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()">
+                    </label>
+                    <label for="wattageFilter">Wattage:</label>
+                    <select id="wattageFilter" onchange="filterPallets()">
+                        <option value="">All</option>
+                        <?php
+                        $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
+                        sort($wattages);
+                        foreach ($wattages as $w) {
+                            echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
+                        }
+                        ?>
+                    </select>
                     </div>
                     <div style="text-align: center;">
                         <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
                     </div>
                     <div>
                         <button type="button" id="openShipModalBtn" class="action-button" disabled>
-                            Create Delivery for Selected Pallets
-                        </button>
+                        Create Delivery for Selected Pallets
+                    </button>
                     </div>
                 </div>
                 <?php if (!empty($pallets)): ?>
