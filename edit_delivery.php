@@ -94,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
     $conn->begin_transaction();
     try {
         /* Collect inputs */
-        $supplier           = $_POST['supplier']          ?? '';
+        $supplier           = $_POST['manufacturer']          ?? ''; // Map manufacturer to supplier for backward compatibility
         $wattage            = $delivery['wattage']; // Keep original wattage, not editable here
         $status             = $_POST['status_of_delivery'] ?? '';
         $quantity           = (int)($_POST['quantity']     ?? 0);
@@ -460,8 +460,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
   <!-- Delivery Details -->
   <fieldset>
     <legend>Delivery Details</legend>
-    <label>Supplier:
-      <input type="text" name="supplier" value="<?php echo htmlspecialchars($delivery['supplier']);?>" required>
+            <label>Manufacturer:
+            <input type="text" name="manufacturer" value="<?php echo htmlspecialchars($delivery['supplier']);?>" required>
     </label>
     <label>Wattage:
       <input 
