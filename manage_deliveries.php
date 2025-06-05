@@ -618,7 +618,7 @@ if (!empty($status_filter)) {
 // Add delivery type condition
 $deliveryTypeCondition = "";
 if ($delivery_type === 'project') {
-    $deliveryTypeCondition = " AND d.project_id IS NOT NULL";
+    $deliveryTypeCondition = " AND (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project')";
 } elseif ($delivery_type === 'warehouse') {
     $deliveryTypeCondition = " AND d.warehouse_id IS NOT NULL";
 }
@@ -759,7 +759,7 @@ if (!empty($status_filter)) {
 
 $count_sql = "
     SELECT 
-        SUM(CASE WHEN d.project_id IS NOT NULL THEN 1 ELSE 0 END) as project_count,
+        SUM(CASE WHEN (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project') THEN 1 ELSE 0 END) as project_count,
         SUM(CASE WHEN d.warehouse_id IS NOT NULL THEN 1 ELSE 0 END) as warehouse_count,
         COUNT(d.id) as total_count
     FROM deliveries d
@@ -1101,12 +1101,12 @@ $delivery_counts['all'] = $total_count ?: 0;
             <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=project" 
                class="delivery-tab <?php echo ($delivery_type === 'project') ? 'active' : ''; ?>"
                style="padding: 12px 24px; background: <?php echo ($delivery_type === 'project') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'project') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; margin-right: 2px;">
-                🏗️ Delivered to Project (<?php echo $delivery_counts['project']; ?>)
+                🏗️ Project Deliveries (<?php echo $delivery_counts['project']; ?>)
             </a>
             <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=warehouse" 
                class="delivery-tab <?php echo ($delivery_type === 'warehouse') ? 'active' : ''; ?>"
                style="padding: 12px 24px; background: <?php echo ($delivery_type === 'warehouse') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'warehouse') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; margin-right: 2px;">
-                🏢 Delivered to Warehouse (<?php echo $delivery_counts['warehouse']; ?>)
+                🏢 Warehouse Deliveries (<?php echo $delivery_counts['warehouse']; ?>)
             </a>
             <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=all" 
                class="delivery-tab <?php echo ($delivery_type === 'all') ? 'active' : ''; ?>"
@@ -1130,6 +1130,7 @@ $delivery_counts['all'] = $total_count ?: 0;
         <!-- Add Deliveries Section -->
         <div class="left-section">
             <h2>Add Deliveries</h2>
+            <?php if ($is_global_admin): ?>
             <h3>Upload via CSV</h3>
             <p style="font-size: 0.9em; color: #666; margin: 5px 0;">
                 CSV should include: manufacturer, wattage, status_of_delivery, quantity, bol_number, anticipated_delivery_date
@@ -1139,6 +1140,7 @@ $delivery_counts['all'] = $total_count ?: 0;
                 <input type="file" name="csv_file" accept=".csv" required>
                 <button type="submit" name="upload_csv">Upload CSV</button>
             </form>
+            <?php endif; ?>
             <div class="single-entry">
                 <h3>Add Single Entry:
                     <button type="button" class="add-single-entry-button"
@@ -1328,13 +1330,7 @@ $delivery_counts['all'] = $total_count ?: 0;
                             <?php endif; ?>
                             <td>
                                 <?php 
-                                // Add delivery type badge
-                                if (!empty($delivery['project_id'])) {
-                                    echo '<span style="background: #e3f2fd; color: #1976d2; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 8px;">🏗️ Project</span>';
-                                } elseif (!empty($delivery['warehouse_id'])) {
-                                    echo '<span style="background: #f3e5f5; color: #7b1fa2; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 8px;">🏢 Warehouse</span>';
-                                }
-                                // Display manufacturer name from modules, fallback to supplier field
+                                // Display only manufacturer name from modules, fallback to supplier field
                                 echo htmlspecialchars($delivery['manufacturer_name']); 
                                 ?>
                             </td>
