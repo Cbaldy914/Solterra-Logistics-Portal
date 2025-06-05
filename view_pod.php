@@ -25,35 +25,38 @@ if (!$conn) {
  *  d.proof_of_delivery,
  *  p.account_id,
  *  c.name as account_name,
- *  p.id as project_id
+ *  p.id as project_id,
+ *  d.warehouse_id
  */
 $sql = "
     SELECT d.proof_of_delivery,
            p.account_id,
            c.name       AS account_name,
-           p.id         AS project_id
+           p.id         AS project_id,
+           d.warehouse_id
       FROM deliveries d
-      JOIN projects p            ON d.project_id = p.id
-      JOIN customer_accounts c   ON p.account_id = c.id
+      LEFT JOIN projects p            ON d.project_id = p.id
+      LEFT JOIN customer_accounts c   ON p.account_id = c.id
      WHERE d.id = ?
 ";
 $stmt = $conn->prepare($sql);
 $stmt->bind_param("i", $delivery_id);
 $stmt->execute();
-$stmt->bind_result($pod_path, $account_id, $account_name, $project_id);
+$stmt->bind_result($pod_path, $account_id, $account_name, $project_id, $warehouse_id);
 $stmt->fetch();
 $stmt->close();
 
-// If there's no record, bail out
-if (empty($pod_path) || empty($account_id)) {
+// If there's no record or no POD, bail out
+if (empty($pod_path)) {
     die("POD file not found or invalid delivery ID.");
 }
 
 /**
  * If user is NOT admin/global_admin, we must verify they belong to this same account
  * so that they have permission to view the POD.
+ * Skip this check for warehouse deliveries (no account association)
  */
-if (!in_array($current_role, $allowed_admin_roles)) {
+if (!in_array($current_role, $allowed_admin_roles) && $account_id) {
     // Check if user is in the same account in the bridging table
     $checkSql = "
         SELECT COUNT(*)
@@ -73,6 +76,9 @@ if (!in_array($current_role, $allowed_admin_roles)) {
         // The user does not belong to this account => no access
         die("Access denied: You do not belong to this account.");
     }
+} elseif (!in_array($current_role, $allowed_admin_roles) && $warehouse_id) {
+    // For warehouse deliveries, only admin/global_admin can view PODs
+    die("Access denied: Only administrators can view warehouse PODs.");
 }
 
 // Now serve the file if it exists

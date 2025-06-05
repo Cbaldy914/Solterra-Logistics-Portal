@@ -119,7 +119,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
             }
             $pod = null;
         }
-        // Handle file upload for new POD here if desired
+        
+        // Handle file upload for new POD
+        if (isset($_FILES['pod_file']) && $_FILES['pod_file']['error'] === UPLOAD_ERR_OK) {
+            // Get delivery info to determine storage path
+            $project_id = $delivery['project_id'];
+            $warehouse_id = $delivery['warehouse_id'];
+            
+            // Get account name if this is a project delivery
+            $account_name = null;
+            if ($project_id) {
+                $stmt_account = $conn->prepare("
+                    SELECT c.name 
+                    FROM projects p 
+                    JOIN customer_accounts c ON p.account_id = c.id 
+                    WHERE p.id = ?
+                ");
+                if ($stmt_account) {
+                    $stmt_account->bind_param("i", $project_id);
+                    $stmt_account->execute();
+                    $stmt_account->bind_result($account_name);
+                    $stmt_account->fetch();
+                    $stmt_account->close();
+                }
+            }
+            
+            $original_name = $_FILES['pod_file']['name'];
+            $file_extension = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
+            $allowed_extensions = ['pdf', 'jpg', 'jpeg', 'png'];
+            
+            if (!in_array($file_extension, $allowed_extensions)) {
+                throw new Exception("Invalid file type for POD. Only PDF, JPG, PNG allowed.");
+            }
+            
+            if ($_FILES['pod_file']['size'] > 5 * 1024 * 1024) { // 5MB limit
+                throw new Exception("POD file exceeds 5MB limit.");
+            }
+            
+            // Use existing directory structure
+            if ($project_id && $account_name) {
+                // Project delivery - use project-based structure
+                $account_dir = preg_replace('/[^A-Za-z0-9_-]/', '_', $account_name);
+                $upload_dir = "customers/{$account_dir}/projects/{$project_id}/documents/pods/";
+            } else {
+                // Warehouse delivery - use warehouse-based structure
+                $upload_dir = "warehouse_documents/pods/";
+            }
+            
+            if (!is_dir($upload_dir)) {
+                if (!mkdir($upload_dir, 0755, true)) {
+                    throw new Exception("Failed to create upload directory.");
+                }
+            }
+            
+            // Create filename using existing pattern
+            $original_filename = pathinfo($original_name, PATHINFO_FILENAME);
+            $sanitized = preg_replace('/[^A-Za-z0-9_-]/', '_', $original_filename);
+            $sanitized = substr($sanitized, 0, 100);
+            
+            $final_filename = $delivery_id . '_' . $sanitized . '.' . $file_extension;
+            $new_pod_path = $upload_dir . $final_filename;
+            
+            if (!move_uploaded_file($_FILES['pod_file']['tmp_name'], $new_pod_path)) {
+                throw new Exception("Failed to upload POD file.");
+            }
+            
+            // Remove old POD file if exists
+            if ($pod && file_exists($pod)) {
+                @unlink($pod);
+            }
+            
+            $pod = $new_pod_path;
+        }
 
         /* Update Delivery */
         $sql = "
