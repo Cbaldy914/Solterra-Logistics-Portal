@@ -69,30 +69,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // 4) Retrieve account name from the project -> account
-            //    Instead of user_id, we now join projects p -> customer_accounts c
-            //    Then we get c.name as the directory sub-folder
+            //    Handle both project deliveries and warehouse deliveries
             $sql = "
-                SELECT d.project_id, c.name AS account_name
+                SELECT d.project_id, c.name AS account_name, d.warehouse_id
                   FROM deliveries d
-                  JOIN projects p ON d.project_id = p.id
-                  JOIN customer_accounts c ON p.account_id = c.id
+                  LEFT JOIN projects p ON d.project_id = p.id
+                  LEFT JOIN customer_accounts c ON p.account_id = c.id
                  WHERE d.id = ?
             ";
             $stmt = $conn->prepare($sql);
             $stmt->bind_param("i", $delivery_id);
             $stmt->execute();
-            $stmt->bind_result($project_id, $account_name);
+            $stmt->bind_result($project_id, $account_name, $warehouse_id);
             $stmt->fetch();
             $stmt->close();
 
-            if (empty($project_id) || empty($account_name)) {
-                throw new \Exception("Could not locate the associated account or project.");
+            // 5) Build the upload directory 
+            if ($project_id && $account_name) {
+                // Project delivery - use existing structure
+                $account_dir = preg_replace('/[^A-Za-z0-9_-]/', '_', $account_name);
+                $upload_dir  = "customers/{$account_dir}/projects/{$project_id}/documents/pods/";
+            } elseif ($warehouse_id) {
+                // Warehouse delivery - use warehouse structure
+                $upload_dir = "warehouse_documents/pods/";
+            } else {
+                throw new \Exception("Could not determine delivery type (no project or warehouse found).");
             }
-
-            // 5) Build the upload directory using the account name
-            //    Sanitize the account name to be safe in file paths
-            $account_dir = preg_replace('/[^A-Za-z0-9_-]/', '_', $account_name);
-            $upload_dir  = "customers/{$account_dir}/projects/{$project_id}/documents/pods/";
 
             if (!is_dir($upload_dir)) {
                 if (!mkdir($upload_dir, 0755, true)) {
@@ -116,8 +118,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmtUpd->execute();
                 $stmtUpd->close();
 
-                // Go back to manage_deliveries for the relevant project
-                header("Location: manage_deliveries?project_id=$project_id");
+                // Redirect based on delivery type
+                if ($project_id) {
+                    header("Location: manage_deliveries?project_id=$project_id");
+                } elseif ($warehouse_id) {
+                    header("Location: manage_warehouse_inventory?warehouse_id=$warehouse_id");
+                } else {
+                    header("Location: admin_dashboard");
+                }
                 exit();
             } else {
                 throw new \Exception("Failed to move uploaded file.");

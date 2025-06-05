@@ -10,7 +10,8 @@ session_start();
 
 // 2) Ensure user has role admin or global_admin
 if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
-    die("Unauthorized: You must be 'admin' or 'global_admin' to add projects.");
+    header("Location: unauthorized");
+     exit();
 }
 
 // Database connection
@@ -290,6 +291,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Set a success message to be displayed with the form below
         $successMessage = "Project added successfully!";
+        
+        // If modules were created, enhance the success message
+        if (isset($_POST['wattages'], $_POST['quantities'])) {
+            $totalModulesCreated = 0;
+            for ($i = 0; $i < count($quantities); $i++) {
+                $totalModulesCreated += filter_var($quantities[$i], FILTER_VALIDATE_INT);
+            }
+            $successMessage = "Project added successfully! " . number_format($totalModulesCreated) . " modules created for this project. <a href='modules.php' style='color: #488C9A; text-decoration: underline;'>Modules can be viewed here</a>.";
+        }
     } catch (Exception $ex) {
         // Set the error message to be displayed with the form below
         $errorMessage = $ex->getMessage();
@@ -493,7 +503,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <!-- Display success or error messages if any -->
     <?php if (!empty($successMessage)): ?>
-        <div class="success-message"><strong><?php echo htmlspecialchars($successMessage); ?></strong></div>
+        <div class="success-message"><strong><?php 
+            // Check if the message contains HTML (specifically a link) and display accordingly
+            if (strpos($successMessage, '<a href=') !== false) {
+                echo $successMessage; // Don't escape if it contains HTML links
+            } else {
+                echo htmlspecialchars($successMessage); // Escape for safety if no HTML
+            }
+        ?></strong></div>
     <?php endif; ?>
 
     <?php if (!empty($errorMessage)): ?>
@@ -545,8 +562,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <label for="estimated_completion_date">Estimated Completion Date:</label>
         <input type="date" id="estimated_completion_date" name="estimated_completion_date">
 
-        <label for="solterra_fee">Solterra Fee (per watt):</label>
-        <input type="number" id="solterra_fee" step="0.0001" name="solterra_fee" value="0.0000" required>
+        <?php if ($role === 'global_admin'): ?>
+            <label for="solterra_fee">Solterra Fee (per watt):</label>
+            <input type="number" id="solterra_fee" step="0.0001" name="solterra_fee" value="0.0000" required>
+        <?php else: ?>
+            <!-- Hidden input for admin users - defaults to 0.0000 -->
+            <input type="hidden" name="solterra_fee" value="0.0000">
+        <?php endif; ?>
 
         <div class="section-title">Initial Module Batch (Optional)</div>
         <p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">

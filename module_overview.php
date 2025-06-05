@@ -191,7 +191,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         
         $totalDeliveries = count($createdDeliveryIds);
         $totalPallets = count($palletIds);
-        $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
+        
+        // Enhanced success message with warehouse handling
+        if ($destinationType === 'warehouse') {
+            // Get warehouse name for the message
+            $warehouseName = 'the selected warehouse';
+            if (!empty($all_warehouses)) {
+                foreach ($all_warehouses as $warehouse) {
+                    if ($warehouse['id'] == $destinationId) {
+                        $warehouseName = $warehouse['name'];
+                        break;
+                    }
+                }
+            }
+            $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets. Pallets are now in transit to {$warehouseName}. To receive pallets at the warehouse, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline; font-weight: 600;'>click here</a>.";
+        } else {
+            $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
+        }
     } catch (Exception $e) {
         $conn->rollback();
         $shipMessage = "Error creating transfer delivery: " . $e->getMessage();
@@ -699,6 +715,53 @@ $conn->close();
             background: #f39c12;
             color: #000;
         }
+        
+        /* Portal-style action buttons */
+        .action-button {
+            background: #488C9A !important;
+            color: #fff !important;
+            border: none !important;
+            padding: 12px 20px !important;
+            cursor: pointer !important;
+            border-radius: 4px !important;
+            font-weight: 600 !important;
+            font-size: 1em !important;
+            text-decoration: none !important;
+            display: inline-block !important;
+            transition: background-color 0.3s ease !important;
+            margin: 0 !important;
+        }
+        .action-button:hover {
+            background: #293E4C !important;
+            color: #fff !important;
+        }
+        .action-button:disabled {
+            background: #cccccc !important;
+            color: #666666 !important;
+            cursor: not-allowed !important;
+        }
+        .action-button:disabled:hover {
+            background: #cccccc !important;
+            color: #666666 !important;
+        }
+        
+        /* Success and error message styling consistency */
+        .success-message {
+            color: #155724;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .error-message {
+            color: #721c24;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -715,6 +778,25 @@ $conn->close();
     <?php if (!empty($errorMessage)): ?>
         <div class="error-message"><strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?></div>
     <?php elseif ($batch_data): ?>
+        
+        <!-- SUCCESS/ERROR MESSAGES AT TOP -->
+        <?php if (!empty($successMessage)): ?>
+            <div class="success-message" style="margin-bottom: 20px;"><strong><?php echo htmlspecialchars($successMessage); ?></strong></div>
+        <?php endif; ?>
+        
+        <?php if (!empty($shipMessage)): ?>
+            <?php 
+            $messageClass = (strpos(strtolower($shipMessage), 'error') !== false) ? 'error-message' : 'success-message';
+            ?>
+            <div class="<?php echo $messageClass; ?>" style="margin-bottom: 20px;"><strong><?php 
+                // Check if the message contains HTML (specifically a link) and display accordingly
+                if (strpos($shipMessage, '<a href=') !== false) {
+                    echo $shipMessage; // Don't escape if it contains HTML links
+                } else {
+                    echo htmlspecialchars($shipMessage); // Escape for safety if no HTML
+                }
+            ?></strong></div>
+        <?php endif; ?>
         
         <div class="overview-header">
             <h1>Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?></h1>
@@ -818,17 +900,6 @@ $conn->close();
             <?php else: ?>
                 <p>No pallets have been created/recorded for this batch yet.</p>
             <?php endif; ?>
-
-            <?php if (!empty($successMessage)): ?>
-                <div class="success-message" style="margin-top: 15px;"><?php echo htmlspecialchars($successMessage); ?></div>
-            <?php endif; ?>
-            
-            <?php if (!empty($shipMessage)): ?>
-                <?php 
-                $messageClass = (strpos(strtolower($shipMessage), 'error') !== false) ? 'error-message' : 'success-message';
-                ?>
-                <div class="<?php echo $messageClass; ?>" style="margin-top: 15px;"><?php echo htmlspecialchars($shipMessage); ?></div>
-            <?php endif; ?>
         </div>
 
         <!-- ====== SHIP PALLETS FORM CONDITIONALLY SHOWN ====== -->
@@ -838,25 +909,31 @@ $conn->close();
             
             <div class="pallets-section">
                 <h2 class="section-title">Select Inventory Pallets to Include in Shipment</h2>
-                <div class="pallet-table-actions" style="justify-content: flex-start; gap: 20px; align-items: center;">
-                    <label>Filter Table:
-                        <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()">
-                    </label>
-                    <label for="wattageFilter">Wattage:</label>
-                    <select id="wattageFilter" onchange="filterPallets()">
-                        <option value="">All</option>
-                        <?php
-                        $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
-                        sort($wattages);
-                        foreach ($wattages as $w) {
-                            echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
-                        }
-                        ?>
-                    </select>
-                    <span id="selectedCount" style="margin-left: 20px; font-weight: bold; color: #488C9A;">0 pallets selected</span>
-                    <button type="button" id="openShipModalBtn" class="action-button" style="padding: 10px 20px; font-size: 1em; margin-left:auto;" disabled>
-                        Create Delivery for Selected Pallets
-                    </button>
+                <div class="pallet-table-actions" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <div style="display: flex; gap: 20px; align-items: center;">
+                        <label>Filter Table:
+                            <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()">
+                        </label>
+                        <label for="wattageFilter">Wattage:</label>
+                        <select id="wattageFilter" onchange="filterPallets()">
+                            <option value="">All</option>
+                            <?php
+                            $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
+                            sort($wattages);
+                            foreach ($wattages as $w) {
+                                echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
+                            }
+                            ?>
+                        </select>
+                    </div>
+                    <div style="text-align: center;">
+                        <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
+                    </div>
+                    <div>
+                        <button type="button" id="openShipModalBtn" class="action-button" disabled>
+                            Create Delivery for Selected Pallets
+                        </button>
+                    </div>
                 </div>
                 <?php if (!empty($pallets)): ?>
                     <table>
@@ -892,7 +969,7 @@ $conn->close();
             <?php if (!empty($pallets)): ?>
             <div class="pallets-section" style="margin-top: 30px;">
                 <h2 class="section-title">Associated Pallets</h2>
-                 <div class="pallet-table-actions" style="justify-content: flex-start; gap: 20px; align-items: center;">
+                 <div class="pallet-table-actions" style="display: flex; justify-content: flex-start; gap: 20px; align-items: center; margin-bottom: 10px;">
                     <label>Filter Table:
                         <input type="text" id="palletSearchUser" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPalletsUserView()">
                     </label>

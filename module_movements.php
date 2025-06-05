@@ -513,6 +513,26 @@ $conn->close();
                         'Delivered to Project' => ['pallets' => 0, 'modules' => 0]
                     ];
                     
+                    // NEW: Check if any modules ever went through a warehouse
+                    $warehouse_ever_used = false;
+                    foreach ($movement_data as $movement) {
+                        if (strpos($movement['status'], 'Warehouse') !== false || 
+                            !empty($movement['current_warehouse_id_info']) ||
+                            !empty($movement['delivery_warehouse_id'])) {
+                            $warehouse_ever_used = true;
+                            break;
+                        }
+                    }
+                    // Also check detailed breakdown for any warehouse-related statuses
+                    if (!$warehouse_ever_used && !empty($detailed_breakdown)) {
+                        foreach ($detailed_breakdown as $status => $data) {
+                            if (strpos($status, 'Warehouse') !== false) {
+                                $warehouse_ever_used = true;
+                                break;
+                            }
+                        }
+                    }
+                    
                     // Process the detailed breakdown to get totals
                     if (!empty($detailed_breakdown)) {
                         foreach ($detailed_breakdown as $status => $data) {
@@ -544,21 +564,23 @@ $conn->close();
                             </div>
                         </div>
                         
-                        <!-- Arrow -->
-                        <div style="color: #666; font-size: 1.5em;">→</div>
-                        
-                        <!-- In Warehouse -->
-                        <div onclick="showDetailedBreakdown('warehouse')" style="flex: 1; text-align: center; padding: 12px; background-color: #fff3e0; border-radius: 8px; border: 2px solid #f39c12; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
-                            <div style="font-weight: 600; color: #e65100; margin-bottom: 6px; font-size: 0.9em;">
-                                🏢 In Warehouse
+                        <?php if ($warehouse_ever_used): ?>
+                            <!-- Arrow -->
+                            <div style="color: #666; font-size: 1.5em;">→</div>
+                            
+                            <!-- In Warehouse -->
+                            <div onclick="showDetailedBreakdown('warehouse')" style="flex: 1; text-align: center; padding: 12px; background-color: #fff3e0; border-radius: 8px; border: 2px solid #f39c12; cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                                <div style="font-weight: 600; color: #e65100; margin-bottom: 6px; font-size: 0.9em;">
+                                    🏢 In Warehouse
+                                </div>
+                                <div style="color: #f57c00; font-size: 1.1em; font-weight: bold;">
+                                    <?php echo $status_totals['In Warehouse']['pallets']; ?> pallets
+                                </div>
+                                <div style="color: #666; font-size: 0.85em;">
+                                    <?php echo number_format($status_totals['In Warehouse']['modules']); ?> modules
+                                </div>
                             </div>
-                            <div style="color: #f57c00; font-size: 1.1em; font-weight: bold;">
-                                <?php echo $status_totals['In Warehouse']['pallets']; ?> pallets
-                            </div>
-                            <div style="color: #666; font-size: 0.85em;">
-                                <?php echo number_format($status_totals['In Warehouse']['modules']); ?> modules
-                            </div>
-                        </div>
+                        <?php endif; ?>
                         
                         <!-- Arrow -->
                         <div style="color: #666; font-size: 1.5em;">→</div>
