@@ -708,7 +708,7 @@ if (!$is_global_admin && !$account_id_for_admin) {
 
 $sql_costs = "
     SELECT 
-        SUM(IF(d.status_of_delivery = 'delivered', IFNULL(d.freight_cost, ?), 0)) AS total_freight_cost,
+        SUM(IF(d.status_of_delivery IN ('Delivered to Project', 'Delivered to Warehouse'), IFNULL(d.freight_cost, ?), 0)) AS total_freight_cost,
         SUM(IFNULL(d.accessorial_costs, 0)) AS total_accessorial_costs
     FROM deliveries d
     WHERE 1=1 
@@ -1250,9 +1250,11 @@ $delivery_counts['all'] = $total_count ?: 0;
                     <select name="status_filter" id="status_filter" onchange="this.form.submit()">
                         <option value="">All</option>
                         <option value="Pending" <?php if($status_filter === 'Pending') echo 'selected'; ?>>Pending</option>
-                        <option value="In Transit" <?php if($status_filter === 'In Transit') echo 'selected'; ?>>In Transit</option>
-                        <option value="Delivered" <?php if($status_filter === 'Delivered') echo 'selected'; ?>>Delivered</option>
-                        <option value="Complete" <?php if($status_filter === 'Complete') echo 'selected'; ?>>Complete</option>
+                        <option value="In Transit to Warehouse" <?php if($status_filter === 'In Transit to Warehouse') echo 'selected'; ?>>In Transit to Warehouse</option>
+                        <option value="Delivered to Warehouse" <?php if($status_filter === 'Delivered to Warehouse') echo 'selected'; ?>>Delivered to Warehouse</option>
+                        <option value="In Transit to Project" <?php if($status_filter === 'In Transit to Project') echo 'selected'; ?>>In Transit to Project</option>
+                        <option value="Delivered to Project" <?php if($status_filter === 'Delivered to Project') echo 'selected'; ?>>Delivered to Project</option>
+                        <option value="Canceled" <?php if($status_filter === 'Canceled') echo 'selected'; ?>>Canceled</option>
                     </select>
                 </div>
             </form>
@@ -1432,7 +1434,15 @@ $delivery_counts['all'] = $total_count ?: 0;
                         </div>
                         <div class="modal-field">
                             <label for="bulk_status_of_delivery">Status</label>
-                            <input type="text" id="bulk_status_of_delivery" name="status_of_delivery">
+                            <select id="bulk_status_of_delivery" name="status_of_delivery">
+                                <option value="">-- No Change --</option>
+                                <option value="Pending">Pending</option>
+                                <option value="In Transit to Warehouse">In Transit to Warehouse</option>
+                                <option value="Delivered to Warehouse">Delivered to Warehouse</option>
+                                <option value="In Transit to Project">In Transit to Project</option>
+                                <option value="Delivered to Project">Delivered to Project</option>
+                                <option value="Canceled">Canceled</option>
+                            </select>
                         </div>
                         <div class="modal-field">
                             <label for="bulk_quantity">Quantity</label>

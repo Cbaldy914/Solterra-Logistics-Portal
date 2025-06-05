@@ -83,7 +83,7 @@ while ($row = $result->fetch_assoc()) {
     $stmt_delivered = $conn->prepare("
         SELECT SUM(quantity) AS total_delivered
         FROM deliveries
-        WHERE project_id = ? AND status_of_delivery = 'Delivered'
+        WHERE project_id = ? AND status_of_delivery = 'Delivered to Project'
     ");
      if($stmt_delivered === false) die("Prepare failed: (delivered) " . $conn->error);
     $stmt_delivered->bind_param("i", $project_id);
@@ -103,7 +103,7 @@ while ($row = $result->fetch_assoc()) {
     $stmt_in_storage = $conn->prepare("
         SELECT SUM(quantity) AS total_in_storage
         FROM deliveries
-        WHERE project_id = ? AND status_of_delivery = 'In Warehouse'
+        WHERE project_id = ? AND status_of_delivery = 'Delivered to Warehouse'
     ");
      if($stmt_in_storage === false) die("Prepare failed: (storage) " . $conn->error);
     $stmt_in_storage->bind_param("i", $project_id);
