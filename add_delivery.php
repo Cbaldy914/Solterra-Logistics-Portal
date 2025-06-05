@@ -79,7 +79,7 @@ $messageIsError = false;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
 
     // --- Get Common Data ---
-    $supplier           = $conn->real_escape_string($_POST['supplier']          ?? '');
+    $supplier           = $conn->real_escape_string($_POST['manufacturer']          ?? ''); // Map manufacturer to supplier for backward compatibility
     $bol_number         = $conn->real_escape_string($_POST['bol_number']        ?? '');
     $status_of_delivery = $conn->real_escape_string($_POST['status_of_delivery'] ?? 'Pending'); // Get from form, default to Pending
     
@@ -142,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
              throw new Exception($pod_upload_error);
     }
         if (empty($supplier) || $targetId <= 0 || empty($wattages) || count($wattages) !== count($quantities)) {
-            throw new Exception("Missing required fields: Supplier, Destination, or valid Wattage/Quantity pairs.");
+            throw new Exception("Missing required fields: Manufacturer, Destination, or valid Wattage/Quantity pairs.");
         }
 
         // Calculate total quantity
@@ -366,7 +366,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
         </div>
         <?php endif; ?>
         
-        <label>Supplier:<input type="text" name="supplier" required value="<?php echo htmlspecialchars($_POST['supplier'] ?? ''); ?>"></label>
+        <label>Manufacturer:<input type="text" name="manufacturer" required value="<?php echo htmlspecialchars($_POST['manufacturer'] ?? ''); ?>"></label>
         <label>BOL Number:<input type="text" name="bol_number" value="<?php echo htmlspecialchars($_POST['bol_number'] ?? ''); ?>"></label>
  <label>Status of Delivery:
    <select name="status_of_delivery" required>
