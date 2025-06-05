@@ -307,6 +307,42 @@ if ($conn) { // Check connection is still valid
                     $batch['items'][] = $item;
                     $batch['total_quantity'] += $item['quantity'];
                 }
+                
+                // NEW: Fetch palletization status for this batch
+                $batch['total_palletized'] = 0;
+                $batch['palletization_percentage'] = 0;
+                $batch['palletization_status'] = 'Not Palletized';
+                
+                // Query to get total palletized quantity for this batch
+                $stmtPallets = $conn->prepare("
+                    SELECT COALESCE(SUM(ip.quantity), 0) as total_palletized
+                    FROM inventory_pallets ip
+                    JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+                    WHERE umi.unassigned_module_id = ?
+                ");
+                if ($stmtPallets) {
+                    $stmtPallets->bind_param("i", $batch_id);
+                    $stmtPallets->execute();
+                    $stmtPallets->bind_result($total_palletized);
+                    if ($stmtPallets->fetch()) {
+                        $batch['total_palletized'] = $total_palletized ?: 0;
+                    }
+                    $stmtPallets->close();
+                    
+                    // Calculate palletization percentage and status
+                    if ($batch['total_quantity'] > 0) {
+                        $batch['palletization_percentage'] = ($batch['total_palletized'] / $batch['total_quantity']) * 100;
+                        
+                        if ($batch['total_palletized'] == 0) {
+                            $batch['palletization_status'] = 'Not Palletized';
+                        } elseif ($batch['total_palletized'] >= $batch['total_quantity']) {
+                            $batch['palletization_status'] = 'Fully Palletized';
+                        } else {
+                            $batch['palletization_status'] = 'Partially Palletized';
+                        }
+                    }
+                }
+                
                 $modulesData[] = $batch;
             }
             $stmtItems->close();
@@ -447,16 +483,45 @@ if ($conn && $conn instanceof mysqli) {
             color: #488C9A;
         }
         .assignment-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
             font-size: 0.85em;
-            color: #666;
+            font-weight: 500;
         }
         .assignment-status.assigned {
-            color: #28a745;
-            font-weight: 500;
+            background-color: #d4edda;
+            color: #155724;
         }
         .assignment-status.unassigned {
-            color: #ffc107;
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        /* NEW: Palletization status styles */
+        .palletization-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.85em;
             font-weight: 500;
+            margin-top: 5px;
+        }
+        .palletization-status.not-palletized {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .palletization-status.partially-palletized {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .palletization-status.fully-palletized {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .palletization-details {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 3px;
         }
         
         /* Dropdown menu styling */
@@ -933,6 +998,7 @@ if ($conn && $conn instanceof mysqli) {
                     <th>Vendor & Location</th>
                     <th>Assigned Project</th>
                     <th>Module Details</th>
+                    <th>Palletization Status</th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -969,6 +1035,17 @@ if ($conn && $conn instanceof mysqli) {
                                     ?>
                                 </div>
                             </td>
+                            <td>
+                                <div class="palletization-status <?php 
+                                    echo strtolower(str_replace(' ', '-', $batch['palletization_status'])); 
+                                ?>">
+                                    <?php echo htmlspecialchars($batch['palletization_status']); ?>
+                                </div>
+                                <div class="palletization-details">
+                                    <?php echo number_format($batch['palletization_percentage'], 1); ?>% 
+                                    (<?php echo number_format($batch['total_palletized']); ?>/<?php echo number_format($batch['total_quantity']); ?>)
+                                </div>
+                            </td>
                             <td class="actions-cell">
                                 <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="action-buttons view">View Details</a>
                                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
@@ -990,7 +1067,7 @@ if ($conn && $conn instanceof mysqli) {
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="5" style="text-align: center; padding: 20px; color: #666;">
+                        <td colspan="6" style="text-align: center; padding: 20px; color: #666;">
                             No project-assigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?>. <a href="#" onclick="document.getElementById('openAddModalBtn').click()">Add the first batch</a>
                         </td>
                     </tr>
@@ -1009,6 +1086,7 @@ if ($conn && $conn instanceof mysqli) {
                     <th>Vendor & Location</th>
                     <th>Status</th>
                     <th>Module Details</th>
+                    <th>Palletization Status</th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -1045,6 +1123,17 @@ if ($conn && $conn instanceof mysqli) {
                                     ?>
                                 </div>
                             </td>
+                            <td>
+                                <div class="palletization-status <?php 
+                                    echo strtolower(str_replace(' ', '-', $batch['palletization_status'])); 
+                                ?>">
+                                    <?php echo htmlspecialchars($batch['palletization_status']); ?>
+                                </div>
+                                <div class="palletization-details">
+                                    <?php echo number_format($batch['palletization_percentage'], 1); ?>% 
+                                    (<?php echo number_format($batch['total_palletized']); ?>/<?php echo number_format($batch['total_quantity']); ?>)
+                                </div>
+                            </td>
                             <td class="actions-cell">
                                 <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="action-buttons view">View Details</a>
                                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
@@ -1067,7 +1156,7 @@ if ($conn && $conn instanceof mysqli) {
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="5" style="text-align: center; padding: 20px; color: #666;">
+                        <td colspan="6" style="text-align: center; padding: 20px; color: #666;">
                             No unassigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?>. <a href="#" onclick="document.getElementById('openAddModalBtn').click()">Add the first batch</a>
                         </td>
                     </tr>
