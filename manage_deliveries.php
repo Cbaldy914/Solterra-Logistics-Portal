@@ -20,6 +20,7 @@ if (isset($_GET['project_id']) && empty($_GET['filter_project_id'])) {
 $time_filter   = isset($_GET['time_filter']) ? $_GET['time_filter'] : 'all';
 $ref_date      = isset($_GET['ref_date']) ? $_GET['ref_date'] : date('Y-m-d');
 $status_filter = isset($_GET['status_filter']) ? $_GET['status_filter'] : '';
+$delivery_type = isset($_GET['delivery_type']) ? $_GET['delivery_type'] : 'all';
 
 // Database connection
 require_once '../config.php';
@@ -148,9 +149,9 @@ if (isset($_POST['bulk_edit_submit'])) {
         $types   = '';
         $values  = [];
 
-        // List of possible fields to update
+        // List of possible fields to update - map manufacturer to supplier for backward compatibility
         $fields_to_update = [
-            'supplier'                => 's',
+            'manufacturer'            => 's',  // This will update the supplier field
             'wattage'                 => 's',
             'status_of_delivery'      => 's',
             'quantity'                => 'i',
@@ -166,7 +167,9 @@ if (isset($_POST['bulk_edit_submit'])) {
         // For each field, if user has provided a value, add to the update set
         foreach ($fields_to_update as $field => $bindType) {
             if (isset($_POST[$field]) && $_POST[$field] !== '') {
-                $updates[] = "$field = ?";
+                // Map manufacturer field to supplier column in database
+                $db_field = ($field === 'manufacturer') ? 'supplier' : $field;
+                $updates[] = "$db_field = ?";
                 $types    .= $bindType;
 
                 // Convert to proper type if needed
@@ -209,7 +212,7 @@ if (isset($_POST['bulk_edit_submit'])) {
     }
 
     // Redirect back
-    $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+    $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
     header("Location: manage_deliveries?" . $redirect_params);
     exit();
 }
@@ -261,7 +264,7 @@ if (isset($_POST['delete_selected'])) {
              if (empty($selected_ids)) {
                  $_SESSION['messages'][] = "<p class='error-message'>Bulk delete failed: No valid deliveries selected for your account scope.</p>";
                  // Rebuild redirect_params for safety as it might not be set here
-                 $redirect_params_del = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+                 $redirect_params_del = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
                  header("Location: manage_deliveries?" . $redirect_params_del);
                  exit();
              }
@@ -297,7 +300,7 @@ if (isset($_POST['delete_selected'])) {
         $_SESSION['messages'][] = "<p>No deliveries selected for deletion.</p>";
     }
 
-    $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+    $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
     header("Location: manage_deliveries?" . $redirect_params);
     exit();
 }
@@ -364,7 +367,7 @@ if (isset($_POST['upload_csv'])) {
                 $rowNumber = $rowIndex + 2; // +2 because header is row 1, array index starts at 0
 
                 // Required fields
-                $requiredFields = ['supplier', 'wattage', 'status_of_delivery', 'quantity', 'bol_number', 'anticipated_delivery_date'];
+                $requiredFields = ['manufacturer', 'wattage', 'status_of_delivery', 'quantity', 'bol_number', 'anticipated_delivery_date'];
                 foreach ($requiredFields as $field) {
                     if (!isset($rowData[$field]) || trim($rowData[$field]) === '') {
                         $importErrors[] = "Row $rowNumber: Missing required field '$field'.";
@@ -372,8 +375,8 @@ if (isset($_POST['upload_csv'])) {
                     }
                 }
 
-                // Gather required
-                $supplier                = $rowData['supplier'];
+                // Gather required - map manufacturer to supplier for backward compatibility
+                $supplier                = $rowData['manufacturer'];
                 $wattage                 = $rowData['wattage'];
                 $status_of_delivery      = $rowData['status_of_delivery'];
                 $quantity                = intval($rowData['quantity']);
@@ -409,7 +412,7 @@ if (isset($_POST['upload_csv'])) {
                 } else {
                     // Potentially disallow CSV upload when "All Projects" is selected, or require a project_id column in CSV
                      $_SESSION['messages'][] = "<p>CSV Upload is not supported when 'All Projects' is selected without a project identifier in the CSV.</p>";
-                     $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+                     $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
                      header("Location: manage_deliveries?" . $redirect_params);
                      exit();
                 }
@@ -506,19 +509,19 @@ if (isset($_POST['upload_csv'])) {
             }
 
             $_SESSION['messages'][] = "<p>Successfully imported $insertedRows new entries and updated $updatedRows existing entries.</p>";
-            $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+            $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
             header("Location: manage_deliveries?" . $redirect_params);
             exit();
 
         } else {
             $_SESSION['messages'][] = "<p>Invalid file type or file too large. Please upload a valid CSV file (max 2MB).</p>";
-            $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+            $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
             header("Location: manage_deliveries?" . $redirect_params);
             exit();
         }
     } else {
         $_SESSION['messages'][] = "<p>Error uploading the file. Please try again.</p>";
-        $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+        $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
         header("Location: manage_deliveries?" . $redirect_params);
         exit();
     }
@@ -612,15 +615,34 @@ if (!empty($status_filter)) {
     $statusCondition = "";
 }
 
+// Add delivery type condition
+$deliveryTypeCondition = "";
+if ($delivery_type === 'project') {
+    $deliveryTypeCondition = " AND d.project_id IS NOT NULL";
+} elseif ($delivery_type === 'warehouse') {
+    $deliveryTypeCondition = " AND d.warehouse_id IS NOT NULL";
+}
+// For 'all', no additional condition needed
+
 $sql = "
     SELECT d.*, p.project_name AS project_name_from_join,
-           IFNULL(d.freight_cost, ?) AS freight_cost_with_default 
+           IFNULL(d.freight_cost, ?) AS freight_cost_with_default,
+           COALESCE(
+               GROUP_CONCAT(DISTINCT m.vendor_name ORDER BY m.vendor_name SEPARATOR ', '),
+               d.supplier
+           ) AS manufacturer_name
     FROM deliveries d
     LEFT JOIN projects p ON d.project_id = p.id
+    LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+    LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
     WHERE 1=1
     $projectConditionSQL
     $dateCondition
     $statusCondition
+    $deliveryTypeCondition
+    GROUP BY d.id, p.project_name
     ORDER BY $filterColumn DESC
 ";
 $stmt = $conn->prepare($sql);
@@ -690,6 +712,76 @@ $stmt->execute();
 $stmt->bind_result($total_freight_cost, $total_accessorial_costs);
 $stmt->fetch();
 $stmt->close();
+
+/*
+  -----------------------------------------------------------------------------
+  6) Get Delivery Counts for Tabs
+  -----------------------------------------------------------------------------
+*/
+$delivery_counts = ['project' => 0, 'warehouse' => 0, 'all' => 0];
+
+// Build count query parameters (no freight cost parameter needed)
+$count_params = [];
+$count_types = "";
+
+// Add project condition parameters
+if (is_numeric($filter_project_id)) {
+    if (!$is_global_admin && $account_id_for_admin) {
+        $count_types .= "i";
+        $count_params[] = $account_id_for_admin;
+    }
+    $count_types .= "i";
+    $count_params[] = $filter_project_id;
+} elseif ($filter_project_id === 'all' && !$is_global_admin && $account_id_for_admin) {
+    $count_types .= "i";
+    $count_params[] = $account_id_for_admin;
+}
+
+// Add date condition params if needed
+if ($time_filter === 'day') {
+    $count_types .= "s";
+    $count_params[] = $ref_date;
+} elseif ($time_filter === 'week') {
+    $count_types .= "ss";
+    $count_params[] = $startOfWeek;
+    $count_params[] = $endOfWeek;
+} elseif ($time_filter === 'month') {
+    $count_types .= "ss";
+    $count_params[] = $startOfMonth;
+    $count_params[] = $endOfMonth;
+}
+
+// Add status condition param if needed
+if (!empty($status_filter)) {
+    $count_types .= "s";
+    $count_params[] = $status_filter;
+}
+
+$count_sql = "
+    SELECT 
+        SUM(CASE WHEN d.project_id IS NOT NULL THEN 1 ELSE 0 END) as project_count,
+        SUM(CASE WHEN d.warehouse_id IS NOT NULL THEN 1 ELSE 0 END) as warehouse_count,
+        COUNT(d.id) as total_count
+    FROM deliveries d
+    LEFT JOIN projects p ON d.project_id = p.id
+    WHERE 1=1
+    $projectConditionSQL
+    $dateCondition
+    $statusCondition
+";
+
+$count_stmt = $conn->prepare($count_sql);
+if (!empty($count_params)) {
+    $count_stmt->bind_param($count_types, ...$count_params);
+}
+$count_stmt->execute();
+$count_stmt->bind_result($project_count, $warehouse_count, $total_count);
+$count_stmt->fetch();
+$count_stmt->close();
+
+$delivery_counts['project'] = $project_count ?: 0;
+$delivery_counts['warehouse'] = $warehouse_count ?: 0;
+$delivery_counts['all'] = $total_count ?: 0;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1003,6 +1095,27 @@ $stmt->close();
 
     <h1>Manage Deliveries: <?php echo htmlspecialchars($project_name); ?></h1>
 
+    <!-- Delivery Type Tabs -->
+    <div class="delivery-type-tabs" style="margin: 20px; border-bottom: 2px solid #eee;">
+        <div style="display: flex; gap: 0;">
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=project" 
+               class="delivery-tab <?php echo ($delivery_type === 'project') ? 'active' : ''; ?>"
+               style="padding: 12px 24px; background: <?php echo ($delivery_type === 'project') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'project') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; margin-right: 2px;">
+                🏗️ Delivered to Project (<?php echo $delivery_counts['project']; ?>)
+            </a>
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=warehouse" 
+               class="delivery-tab <?php echo ($delivery_type === 'warehouse') ? 'active' : ''; ?>"
+               style="padding: 12px 24px; background: <?php echo ($delivery_type === 'warehouse') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'warehouse') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; margin-right: 2px;">
+                🏢 Delivered to Warehouse (<?php echo $delivery_counts['warehouse']; ?>)
+            </a>
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=all" 
+               class="delivery-tab <?php echo ($delivery_type === 'all') ? 'active' : ''; ?>"
+               style="padding: 12px 24px; background: <?php echo ($delivery_type === 'all') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'all') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0;">
+                📦 All Deliveries (<?php echo $delivery_counts['all']; ?>)
+            </a>
+        </div>
+    </div>
+
     <!-- Display Messages -->
     <?php
     if (isset($_SESSION['messages']) && !empty($_SESSION['messages'])) {
@@ -1018,6 +1131,9 @@ $stmt->close();
         <div class="left-section">
             <h2>Add Deliveries</h2>
             <h3>Upload via CSV</h3>
+            <p style="font-size: 0.9em; color: #666; margin: 5px 0;">
+                CSV should include: manufacturer, wattage, status_of_delivery, quantity, bol_number, anticipated_delivery_date
+            </p>
             <!-- CSV Upload Form -->
             <form action="manage_deliveries?filter_project_id=<?php echo urlencode($filter_project_id); ?>" method="post" enctype="multipart/form-data">
                 <input type="file" name="csv_file" accept=".csv" required>
@@ -1066,27 +1182,27 @@ $stmt->close();
     <div class="time-filter-header">
         <!-- Left: Time Filters -->
         <div class="time-filters">
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=all"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=all&delivery_type=<?php echo urlencode($delivery_type); ?>&status_filter=<?php echo urlencode($status_filter); ?>"
                class="<?php echo ($time_filter === 'all') ? 'active' : ''; ?>">All</a>
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=day&ref_date=<?php echo $ref_date; ?>"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=day&ref_date=<?php echo $ref_date; ?>&delivery_type=<?php echo urlencode($delivery_type); ?>&status_filter=<?php echo urlencode($status_filter); ?>"
                class="<?php echo ($time_filter === 'day') ? 'active' : ''; ?>">Day</a>
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=week&ref_date=<?php echo $ref_date; ?>"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=week&ref_date=<?php echo $ref_date; ?>&delivery_type=<?php echo urlencode($delivery_type); ?>&status_filter=<?php echo urlencode($status_filter); ?>"
                class="<?php echo ($time_filter === 'week') ? 'active' : ''; ?>">Week</a>
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=month&ref_date=<?php echo $ref_date; ?>"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=month&ref_date=<?php echo $ref_date; ?>&delivery_type=<?php echo urlencode($delivery_type); ?>&status_filter=<?php echo urlencode($status_filter); ?>"
                class="<?php echo ($time_filter === 'month') ? 'active' : ''; ?>">Month</a>
         </div>
         <!-- Center: Date Navigation -->
         <div class="date-navigation">
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
+                        onclick="window.location.href='?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=<?php echo urlencode($delivery_type); ?>'">
                     &larr;
                 </button>
             <?php endif; ?>
             <span class="date-label"><?php echo $dateLabel; ?></span>
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>'">
+                        onclick="window.location.href='?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=<?php echo urlencode($delivery_type); ?>'">
                     &rarr;
                 </button>
             <?php endif; ?>
@@ -1101,6 +1217,7 @@ $stmt->close();
                 <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
                 <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
                 <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
+                <input type="hidden" name="delivery_type" value="<?php echo htmlspecialchars($delivery_type ?? ''); ?>">
                 
                 <div style="display: flex; align-items: center; gap: 5px;">
                     <label for="filter_project_id" style="align-self: center;">Project:</label>
@@ -1137,6 +1254,7 @@ $stmt->close();
         <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
         <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
         <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
+        <input type="hidden" name="delivery_type" value="<?php echo htmlspecialchars($delivery_type ?? ''); ?>">
 
         <div class="table-responsive">
             <table class="deliveries-table" id="deliveriesTable">
@@ -1145,7 +1263,7 @@ $stmt->close();
                     <?php if ($filter_project_id === 'all' || $filter_project_id === 'unassigned'): ?>
                         <th>Project</th>
                     <?php endif; ?>
-                    <th>Supplier</th>
+                    <th>Manufacturer</th>
                     <th>Wattage</th>
                     <th>Status of Delivery</th>
                     <th>Quantity</th>
@@ -1208,7 +1326,18 @@ $stmt->close();
                                     ?>
                                 </td>
                             <?php endif; ?>
-                            <td><?php echo htmlspecialchars($delivery['supplier']); ?></td>
+                            <td>
+                                <?php 
+                                // Add delivery type badge
+                                if (!empty($delivery['project_id'])) {
+                                    echo '<span style="background: #e3f2fd; color: #1976d2; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 8px;">🏗️ Project</span>';
+                                } elseif (!empty($delivery['warehouse_id'])) {
+                                    echo '<span style="background: #f3e5f5; color: #7b1fa2; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 8px;">🏢 Warehouse</span>';
+                                }
+                                // Display manufacturer name from modules, fallback to supplier field
+                                echo htmlspecialchars($delivery['manufacturer_name']); 
+                                ?>
+                            </td>
                             <td><?php echo htmlspecialchars($delivery['wattage']); ?></td>
                             <td><?php echo htmlspecialchars($delivery['status_of_delivery']); ?></td>
                             <td><?php echo htmlspecialchars($delivery['quantity']); ?></td>
@@ -1279,6 +1408,7 @@ $stmt->close();
                 <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
                 <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
                 <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
+                <input type="hidden" name="delivery_type" value="<?php echo htmlspecialchars($delivery_type ?? ''); ?>">
 
                 <!-- Hidden checkboxes for selected_deliveries[] will be appended by JS -->
                 <div id="bulkEditSelectedIds"></div>
@@ -1288,8 +1418,8 @@ $stmt->close();
                     <div class="modal-section">
                         <div class="section-header">Delivery Details</div>
                         <div class="modal-field">
-                            <label for="bulk_supplier">Supplier</label>
-                            <input type="text" id="bulk_supplier" name="supplier">
+                            <label for="bulk_manufacturer">Manufacturer</label>
+                            <input type="text" id="bulk_manufacturer" name="manufacturer">
                         </div>
                         <div class="modal-field">
                             <label for="bulk_wattage">Wattage</label>
