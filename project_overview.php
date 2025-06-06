@@ -702,39 +702,149 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
+/* Modern Toggle Buttons */
 .toggle-buttons {
-    margin: 20px 0;
-    text-align: center;
+    margin: 30px auto;
+    max-width: fit-content;
+    background: #ffffff;
+    padding: 8px;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    display: flex;
+    gap: 4px;
+    border: 1px solid #e9ecef;
 }
+
 .toggle-buttons button {
-    padding: 10px 20px;
-    margin: 0 10px;
+    padding: 12px 28px;
+    margin: 0;
     cursor: pointer;
     font-size: 16px;
+    font-weight: 500;
+    border: none;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    background: transparent;
+    color: #6c757d;
+    position: relative;
 }
+
 .toggle-buttons button.active {
-    background-color: #293E4C;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
     color: #fff;
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+    transform: translateY(-1px);
+}
+
+.toggle-buttons button:not(.active):hover {
+    background: #f8f9fa;
+    color: #495057;
 }
 #financial-info {
     display: none;
 }
-.tables-and-charts table tr:hover {
-    background-color: #f1f1f1;
+/* Enhanced Layout Containers */
+.tables-and-charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 30px;
+    margin: 20px;
 }
-.tables-and-charts table tr {
-    cursor: pointer;
+
+.left-side, .right-side {
+    background: #ffffff;
+    padding: 25px;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+    border: 1px solid #e9ecef;
+}
+
+.left-side h2, .right-side h2 {
+    color: #293E4C;
+    margin-bottom: 20px;
+    font-weight: 600;
+    font-size: 1.4em;
+    padding-bottom: 12px;
+    border-bottom: 3px solid #488C9A;
+    position: relative;
+}
+
+.left-side h2::after, .right-side h2::after {
+    content: '';
+    position: absolute;
+    bottom: -3px;
+    left: 0;
+    width: 40px;
+    height: 3px;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    border-radius: 2px;
 }
 .chart-container {
     max-width: 400px;
     margin: 0 auto;
 }
+/* Enhanced Table Styling */
 .table-responsive {
     overflow-x: auto;
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    margin-bottom: 25px;
+    border: 1px solid #e9ecef;
 }
+
 .table-responsive table {
     width: 100%;
     border-collapse: collapse;
+    font-size: 0.95em;
+}
+
+.table-responsive th {
+    background: #488C9A;
+    color: #ffffff;
+    padding: 16px 12px;
+    font-weight: 600;
+    text-align: left;
+    font-size: 0.9em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border: none;
+}
+
+.table-responsive th:first-child {
+    border-top-left-radius: 12px;
+}
+
+.table-responsive th:last-child {
+    border-top-right-radius: 12px;
+}
+
+.table-responsive td {
+    padding: 14px 12px;
+    border-bottom: 1px solid #f1f3f4;
+    color: #495057;
+    font-weight: 500;
+}
+
+.table-responsive tbody tr {
+    transition: all 0.2s ease;
+}
+
+.table-responsive tbody tr:hover {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    transform: translateX(2px);
+}
+
+.table-responsive tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.table-responsive tbody tr:last-child td:first-child {
+    border-bottom-left-radius: 12px;
+}
+
+.table-responsive tbody tr:last-child td:last-child {
+    border-bottom-right-radius: 12px;
 }
 .project-overview-container {
     display: flex;
@@ -756,6 +866,30 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 .breadcrumb .separator {
     margin: 0 8px;
     color: #6c757d;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+    .tables-and-charts {
+        grid-template-columns: 1fr;
+        gap: 20px;
+        margin: 15px;
+    }
+    
+    .left-side, .right-side {
+        padding: 20px;
+    }
+    
+    .toggle-buttons {
+        margin: 20px 15px;
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .toggle-buttons button {
+        padding: 12px 20px;
+        width: 100%;
+    }
 }
 
 @media (max-width: 580px) {
@@ -792,6 +926,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     .back-icon {
         margin-top: 20px;
         margin-left: 20px;
+    }
+    
+    .table-responsive th,
+    .table-responsive td {
+        padding: 12px 8px;
+        font-size: 0.9em;
     }
 }
 </style>
