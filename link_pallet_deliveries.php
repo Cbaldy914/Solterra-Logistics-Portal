@@ -169,6 +169,154 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
 }
 // End CSV Upload Handling
 
+// --- Handle Bulk Linking ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'bulk_link') {
+    header('Content-Type: application/json');
+    
+    $conn_bulk = getDBConnection();
+    if (!$conn_bulk) {
+        echo json_encode(['success' => false, 'message' => 'Database connection failed.']);
+        exit();
+    }
+    
+    try {
+        $delivery_ids = json_decode($_POST['delivery_ids'], true);
+        $pallet_ids = json_decode($_POST['pallet_ids'], true);
+        $strategy = $_POST['strategy'] ?? 'one_to_one';
+        $wattage = $_POST['wattage'] ?? '';
+        
+        if (empty($delivery_ids) || empty($pallet_ids)) {
+            throw new Exception('No deliveries or pallets selected for bulk linking.');
+        }
+        
+        $conn_bulk->begin_transaction();
+        
+        $linked_pairs = [];
+        $linked_count = 0;
+        
+        // Fetch delivery and pallet details
+        $delivery_placeholders = implode(',', array_fill(0, count($delivery_ids), '?'));
+        $pallet_placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
+        
+        $stmt_deliveries = $conn_bulk->prepare("SELECT id, wattage FROM deliveries WHERE id IN ($delivery_placeholders)");
+        $stmt_deliveries->bind_param(str_repeat('i', count($delivery_ids)), ...$delivery_ids);
+        $stmt_deliveries->execute();
+        $deliveries_data = $stmt_deliveries->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt_deliveries->close();
+        
+        $stmt_pallets = $conn_bulk->prepare("SELECT id, pallet_identifier, wattage FROM inventory_pallets WHERE id IN ($pallet_placeholders)");
+        $stmt_pallets->bind_param(str_repeat('i', count($pallet_ids)), ...$pallet_ids);
+        $stmt_pallets->execute();
+        $pallets_data = $stmt_pallets->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt_pallets->close();
+        
+        // Prepare linking statements
+        $stmt_check_existing = $conn_bulk->prepare("SELECT COUNT(*) FROM delivery_pallets WHERE delivery_id = ? AND inventory_pallet_id = ?");
+        $stmt_insert_link = $conn_bulk->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
+        $stmt_update_pallet = $conn_bulk->prepare("UPDATE inventory_pallets SET status = 'Assigned to Delivery', current_delivery_id = ? WHERE id = ?");
+        
+        if ($strategy === 'one_to_one') {
+            // Link one pallet to one delivery (up to minimum count)
+            $max_links = min(count($deliveries_data), count($pallets_data));
+            
+            for ($i = 0; $i < $max_links; $i++) {
+                $delivery = $deliveries_data[$i];
+                $pallet = $pallets_data[$i];
+                
+                // Check if already linked
+                $stmt_check_existing->bind_param("ii", $delivery['id'], $pallet['id']);
+                $stmt_check_existing->execute();
+                $stmt_check_existing->bind_result($existing_count);
+                $stmt_check_existing->fetch();
+                
+                if ($existing_count > 0) {
+                    continue; // Skip if already linked
+                }
+                
+                // Create link
+                $stmt_insert_link->bind_param("ii", $delivery['id'], $pallet['id']);
+                if ($stmt_insert_link->execute()) {
+                    // Update pallet status
+                    $stmt_update_pallet->bind_param("ii", $delivery['id'], $pallet['id']);
+                    $stmt_update_pallet->execute();
+                    
+                    $linked_pairs[] = [
+                        'delivery_id' => $delivery['id'],
+                        'pallet_id' => $pallet['id'],
+                        'pallet_identifier' => $pallet['pallet_identifier']
+                    ];
+                    $linked_count++;
+                }
+            }
+            
+        } else if ($strategy === 'distribute') {
+            // Distribute pallets evenly among deliveries
+            $pallet_index = 0;
+            
+            foreach ($deliveries_data as $delivery) {
+                if ($pallet_index >= count($pallets_data)) {
+                    break; // No more pallets to assign
+                }
+                
+                $pallet = $pallets_data[$pallet_index];
+                
+                // Check if already linked
+                $stmt_check_existing->bind_param("ii", $delivery['id'], $pallet['id']);
+                $stmt_check_existing->execute();
+                $stmt_check_existing->bind_result($existing_count);
+                $stmt_check_existing->fetch();
+                
+                if ($existing_count == 0) {
+                    // Create link
+                    $stmt_insert_link->bind_param("ii", $delivery['id'], $pallet['id']);
+                    if ($stmt_insert_link->execute()) {
+                        // Update pallet status
+                        $stmt_update_pallet->bind_param("ii", $delivery['id'], $pallet['id']);
+                        $stmt_update_pallet->execute();
+                        
+                        $linked_pairs[] = [
+                            'delivery_id' => $delivery['id'],
+                            'pallet_id' => $pallet['id'],
+                            'pallet_identifier' => $pallet['pallet_identifier']
+                        ];
+                        $linked_count++;
+                    }
+                }
+                
+                $pallet_index++;
+            }
+        }
+        
+        $stmt_check_existing->close();
+        $stmt_insert_link->close();
+        $stmt_update_pallet->close();
+        
+        $conn_bulk->commit();
+        
+        $response = [
+            'success' => true,
+            'message' => "Successfully linked $linked_count pallet(s) to deliveries using the $strategy strategy.",
+            'details' => "Wattage: {$wattage}W | Strategy: " . ucfirst(str_replace('_', ' ', $strategy)),
+            'linked_pairs' => $linked_pairs,
+            'linked_count' => $linked_count
+        ];
+        
+        echo json_encode($response);
+        
+    } catch (Exception $e) {
+        $conn_bulk->rollback();
+        echo json_encode([
+            'success' => false,
+            'message' => 'Bulk linking failed: ' . $e->getMessage(),
+            'details' => 'Please try again or use CSV upload for more complex linking requirements.'
+        ]);
+    }
+    
+    $conn_bulk->close();
+    exit();
+}
+// End Bulk Linking Handling
+
 // Filter parameters (must be after potential redirect from CSV upload)
 $filter_project_id = isset($_GET['filter_project_id']) ? $_GET['filter_project_id'] : 'all';
 $search_term = isset($_GET['search_term']) ? trim($_GET['search_term']) : '';
@@ -248,7 +396,9 @@ if (is_numeric($filter_project_id)) {
 $sql = "
     SELECT d.id, d.project_id, d.supplier, d.wattage, d.status_of_delivery, 
            d.quantity, d.bol_number, d.proof_of_delivery,
-           p.project_name AS project_name_from_join
+           p.project_name AS project_name_from_join,
+           COALESCE(d.actual_delivery_date, d.anticipated_delivery_date) AS relevant_date,
+           (SELECT COUNT(*) FROM delivery_pallets dp_count WHERE dp_count.delivery_id = d.id) AS linked_pallet_count
     FROM deliveries d
     LEFT JOIN projects p ON d.project_id = p.id
     WHERE 1=1
@@ -324,11 +474,29 @@ $sql_pallets_available_base = "
         ip.arrival_date AS pallet_status_timestamp, /* Use arrival_date as the status timestamp */
         w.name AS current_warehouse_name,
         p_assigned.project_name AS assigned_project_name,
-        ip.assigned_project_id
+        ip.assigned_project_id,
+        GROUP_CONCAT(
+            CASE 
+                WHEN d_compatible.id IS NOT NULL 
+                THEN CONCAT(d_compatible.id, ' (', COALESCE(p_compatible.project_name, 'Unassigned'), ')')
+                ELSE NULL 
+            END 
+            ORDER BY d_compatible.id SEPARATOR ', '
+        ) AS compatible_deliveries
     FROM inventory_pallets ip
     LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
     LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
     LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+    LEFT JOIN deliveries d_compatible ON (
+        d_compatible.wattage = ip.wattage 
+        AND (
+            d_compatible.project_id = ip.assigned_project_id 
+            OR ip.assigned_project_id IS NULL 
+            OR d_compatible.project_id IS NULL
+        )
+        AND NOT EXISTS (SELECT 1 FROM delivery_pallets dp_check WHERE dp_check.delivery_id = d_compatible.id)
+    )
+    LEFT JOIN projects p_compatible ON d_compatible.project_id = p_compatible.id
     WHERE dp.inventory_pallet_id IS NULL  /* Pallet is not in delivery_pallets */
     AND ip.status IN ('In Warehouse', 'Produced', 'At Manufacturer')
 ";
@@ -368,7 +536,7 @@ $sql_pallets_available = $sql_pallets_available_base;
 if (!empty($pallets_available_conditions)) {
     $sql_pallets_available .= " AND (" . implode(" AND ", $pallets_available_conditions) . ")";
 }
-$sql_pallets_available .= " ORDER BY ip.id DESC";
+$sql_pallets_available .= " GROUP BY ip.id ORDER BY ip.id DESC";
 
 $stmt_pallets_available = $conn->prepare($sql_pallets_available);
 if ($stmt_pallets_available) {
@@ -385,6 +553,129 @@ if ($stmt_pallets_available) {
     $_SESSION['messages'][] = "<p class='error-message'>Error fetching available pallets: " . $conn->error . "</p>";
 }
 // --- END NEW: Fetch Available Pallets ---
+
+// --- NEW: Fetch Bulk Linking Data ---
+$delivery_groups = [];
+$pallet_groups = [];
+
+// Group deliveries by wattage that need pallets
+$sql_delivery_groups = "
+    SELECT 
+        d.wattage,
+        d.project_id,
+        p.project_name,
+        COUNT(*) as delivery_count,
+        GROUP_CONCAT(d.id ORDER BY d.id SEPARATOR ',') as delivery_ids
+    FROM deliveries d
+    LEFT JOIN projects p ON d.project_id = p.id
+    WHERE NOT EXISTS (SELECT 1 FROM delivery_pallets dp WHERE dp.delivery_id = d.id)
+";
+
+$group_conditions = [];
+$group_params = [];
+$group_types = "";
+
+// Apply same project filtering as main deliveries query
+if (is_numeric($filter_project_id)) {
+    $group_conditions[] = "d.project_id = ?";
+    if (!$is_global_admin && $account_id_for_admin) {
+        $group_conditions[] = "p.account_id = ?";
+        $group_params[] = $account_id_for_admin;
+        $group_types .= "i";
+    }
+    $group_params[] = $filter_project_id;
+    $group_types .= "i";
+} elseif ($filter_project_id === 'unassigned') {
+    $group_conditions[] = "d.project_id IS NULL";
+} elseif ($filter_project_id === 'all' && !$is_global_admin && $account_id_for_admin) {
+    $group_conditions[] = "p.account_id = ?";
+    $group_params[] = $account_id_for_admin;
+    $group_types .= "i";
+}
+
+if (!empty($group_conditions)) {
+    $sql_delivery_groups .= " AND " . implode(" AND ", $group_conditions);
+}
+
+$sql_delivery_groups .= " GROUP BY d.wattage, d.project_id, p.project_name ORDER BY d.wattage ASC, p.project_name ASC";
+
+$stmt_delivery_groups = $conn->prepare($sql_delivery_groups);
+if ($stmt_delivery_groups) {
+    if (!empty($group_types)) {
+        $stmt_delivery_groups->bind_param($group_types, ...$group_params);
+    }
+    $stmt_delivery_groups->execute();
+    $result_delivery_groups = $stmt_delivery_groups->get_result();
+    while ($row = $result_delivery_groups->fetch_assoc()) {
+        $delivery_groups[] = $row;
+    }
+    $stmt_delivery_groups->close();
+}
+
+// Group available pallets by wattage (filtered for bulk linking)
+$sql_pallet_groups = "
+    SELECT 
+        ip.wattage,
+        ip.assigned_project_id,
+        p_assigned.project_name as assigned_project_name,
+        COUNT(*) as pallet_count,
+        SUM(ip.quantity) as total_modules,
+        GROUP_CONCAT(ip.id ORDER BY ip.id SEPARATOR ',') as pallet_ids
+    FROM inventory_pallets ip
+    LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+    LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+    WHERE dp.inventory_pallet_id IS NULL
+    AND ip.status IN ('In Warehouse', 'Produced', 'At Manufacturer')
+";
+
+// Enhanced filtering for bulk linking - only show pallets for current project filter or unassigned
+$bulk_pallet_conditions = [];
+$bulk_pallet_params = [];
+$bulk_pallet_types = "";
+
+if (is_numeric($filter_project_id)) {
+    // Show pallets assigned to this project OR unassigned pallets
+    $bulk_pallet_conditions[] = "(ip.assigned_project_id = ? OR ip.assigned_project_id IS NULL)";
+    $bulk_pallet_params[] = $filter_project_id;
+    $bulk_pallet_types .= "i";
+    
+    // Admin account filtering
+    if (!$is_global_admin && $account_id_for_admin) {
+        $bulk_pallet_conditions[] = "(p_assigned.account_id = ? OR ip.assigned_project_id IS NULL)";
+        $bulk_pallet_params[] = $account_id_for_admin;
+        $bulk_pallet_types .= "i";
+    }
+} elseif ($filter_project_id === 'unassigned') {
+    // Only show unassigned pallets when viewing unassigned deliveries
+    $bulk_pallet_conditions[] = "ip.assigned_project_id IS NULL";
+} elseif ($filter_project_id === 'all') {
+    // For "all projects" view, apply account filtering for admins
+    if (!$is_global_admin && $account_id_for_admin) {
+        $bulk_pallet_conditions[] = "(p_assigned.account_id = ? OR ip.assigned_project_id IS NULL)";
+        $bulk_pallet_params[] = $account_id_for_admin;
+        $bulk_pallet_types .= "i";
+    }
+}
+
+if (!empty($bulk_pallet_conditions)) {
+    $sql_pallet_groups .= " AND (" . implode(" AND ", $bulk_pallet_conditions) . ")";
+}
+
+$sql_pallet_groups .= " GROUP BY ip.wattage, ip.assigned_project_id, p_assigned.project_name ORDER BY ip.wattage ASC, p_assigned.project_name ASC";
+
+$stmt_pallet_groups = $conn->prepare($sql_pallet_groups);
+if ($stmt_pallet_groups) {
+    if (!empty($bulk_pallet_types)) {
+        $stmt_pallet_groups->bind_param($bulk_pallet_types, ...$bulk_pallet_params);
+    }
+    $stmt_pallet_groups->execute();
+    $result_pallet_groups = $stmt_pallet_groups->get_result();
+    while ($row = $result_pallet_groups->fetch_assoc()) {
+        $pallet_groups[] = $row;
+    }
+    $stmt_pallet_groups->close();
+}
+// --- END NEW: Fetch Bulk Linking Data ---
 
 
 // Determine project name for page title (remains largely the same)
@@ -583,6 +874,72 @@ if (is_numeric($filter_project_id)) {
             border-radius: 4px;
             height: 34px; /* Align height */
         }
+        
+        /* Bulk Linking Tab Specific Styles */
+        .group-item {
+            transition: all 0.2s ease;
+        }
+        .group-item:hover {
+            background-color: #f8f9fa !important;
+            cursor: pointer;
+        }
+        .group-item.selected-delivery {
+            background-color: #e3f2fd !important;
+            border-left: 4px solid #488C9A !important;
+        }
+        .group-item.selected-pallet {
+            background-color: #fff3e0 !important;
+            border-left: 4px solid #f39c12 !important;
+        }
+        .bulk-matching-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 20px;
+        }
+        @media (max-width: 768px) {
+            .bulk-matching-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+        }
+        .quick-match-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        .quick-match-btn {
+            background: linear-gradient(135deg, #488C9A, #6ab7c7);
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .quick-match-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+            background: linear-gradient(135deg, #3A6E7F, #488C9A);
+        }
+        .strategy-selection {
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            margin-top: 15px;
+        }
+        .wattage-highlight {
+            background: linear-gradient(135deg, #488C9A, #6ab7c7);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -600,20 +957,14 @@ if (is_numeric($filter_project_id)) {
     }
     ?>
 
-    <!-- CSV Upload for Linking -->
-    <div class="csv-upload-section" style="margin-bottom: 20px; padding: 15px; background-color: #f0f0f0; border: 1px solid #ddd; border-radius: 5px;">
-        <h3>Link Pallets via CSV</h3>
-        <form action="link_pallet_deliveries.php" method="post" enctype="multipart/form-data">
-            <input type="file" name="link_csv_file" accept=".csv" required>
-            <button type="submit" name="upload_link_csv" class="action-button">Upload CSV to Link</button>
-        </form>
-    </div>
+
 
     <!-- Tab Buttons MOVED HERE -->
     <div class="tabs-container">
         <div class="tabs">
             <button class="tab-link active" data-tab="deliveriesTab">Deliveries (<?php echo $deliveries_result ? $deliveries_result->num_rows : 0; ?>)</button>
             <button class="tab-link" data-tab="palletsTab">Available Pallets (<?php echo count($available_pallets); ?>)</button>
+            <button class="tab-link" data-tab="bulkLinkingTab">Bulk Linking</button>
         </div>
     </div>
 
@@ -623,7 +974,7 @@ if (is_numeric($filter_project_id)) {
         <div class="filter-container">
             <form action="link_pallet_deliveries.php" method="get" id="filterFormDeliveries" class="filter-group-left">
                 <label for="search_term_deliveries">Search Deliveries:</label>
-                <input type="text" name="search_term" id="search_term_deliveries" value="<?php echo htmlspecialchars($search_term); ?>" placeholder="BOL, Supplier, Project...">
+                <input type="text" name="search_term" id="search_term_deliveries" value="<?php echo htmlspecialchars($search_term); ?>" placeholder="BOL, Manufacturer, Project...">
                 
                 <label for="filter_project_id_deliveries">Project:</label>
                 <select name="filter_project_id" id="filter_project_id_deliveries">
@@ -659,11 +1010,10 @@ if (is_numeric($filter_project_id)) {
                         <?php if ($filter_project_id === 'all' || $filter_project_id === 'unassigned'): ?>
                             <th>Project</th>
                         <?php endif; ?>
-                        <th>Supplier</th>
+                        <th>Manufacturer</th>
                         <th>BOL Number</th>
                         <th>Delivery Wattage</th>
                         <th>Status</th>
-                        <th>Relevant Date</th>
                         <th>Associated Pallets</th>
                         <th>Actions</th>
                     </tr>
@@ -686,21 +1036,31 @@ if (is_numeric($filter_project_id)) {
                             }
                             $palletDataJson = htmlspecialchars(json_encode($current_delivery_pallets), ENT_QUOTES, 'UTF-8');
                             $linked_pallet_display_count = $delivery['linked_pallet_count']; // Use pre-fetched count
+                            
+                            // Extract manufacturer name (remove anything after " - ")
+                            $manufacturer = $delivery['supplier'] ?? 'N/A';
+                            if (strpos($manufacturer, ' - ') !== false) {
+                                $manufacturer = trim(explode(' - ', $manufacturer)[0]);
+                            }
+                            // Handle specific cases where supplier might be a warehouse name instead of manufacturer
+                            if (in_array(strtolower($manufacturer), ['phoenix wh', 'phoenix warehouse'])) {
+                                $manufacturer = 'Meyer Burger'; // Default to Meyer Burger for warehouse entries
+                            }
                             ?>
                             <tr>
                                 <td><?php echo $delivery['id']; ?></td>
                                 <?php if ($filter_project_id === 'all' || $filter_project_id === 'unassigned'): ?>
-                                    <td><?php echo htmlspecialchars($delivery['project_name'] ?? 'N/A'); ?></td>
+                                    <td><?php echo htmlspecialchars($delivery['project_name_from_join'] ?? 'N/A'); ?></td>
                                 <?php endif; ?>
-                                <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
+                                <td><?php echo htmlspecialchars($manufacturer); ?></td>
                                 <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
                                 <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
                                 <td><?php echo htmlspecialchars($delivery['status_of_delivery'] ?? 'N/A'); ?></td>
-                                <td><?php echo htmlspecialchars($delivery['relevant_date'] ?? 'N/A'); ?></td>
                                 <td>
                                     <?php if ($linked_pallet_display_count > 0): ?>
                                         <button type="button" class="action-button view-pallets-btn"
-                                                data-pallets='<?php echo $palletDataJson; ?>'>
+                                                data-pallets='<?php echo $palletDataJson; ?>'
+                                                onclick="showAssociatedPalletsModal(this)">
                                             View (<?php echo $linked_pallet_display_count; ?>)
                                         </button>
                                     <?php else: ?>
@@ -708,17 +1068,25 @@ if (is_numeric($filter_project_id)) {
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <a href="manage_delivery_pallets.php?delivery_id=<?php echo $delivery['id']; ?>&wattage=<?php echo urlencode($delivery['wattage']); ?><?php if(is_numeric($filter_project_id) && $filter_project_id > 0) { echo '&project_id=' . $filter_project_id; } elseif (!empty($delivery['project_id'])) { echo '&project_id=' . $delivery['project_id'];} ?>"
-                                       class="action-button"
-                                       title="Manage pallet associations for this delivery">
-                                       Manage Links
-                                    </a>
+                                    <?php if ($linked_pallet_display_count > 0): ?>
+                                        <a href="manage_delivery_pallets.php?delivery_id=<?php echo $delivery['id']; ?>&wattage=<?php echo urlencode($delivery['wattage']); ?><?php if(is_numeric($filter_project_id) && $filter_project_id > 0) { echo '&project_id=' . $filter_project_id; } elseif (!empty($delivery['project_id'])) { echo '&project_id=' . $delivery['project_id'];} ?>"
+                                           class="action-button"
+                                           title="Edit pallet associations for this delivery">
+                                           Edit
+                                        </a>
+                                    <?php else: ?>
+                                        <a href="manage_delivery_pallets.php?delivery_id=<?php echo $delivery['id']; ?>&wattage=<?php echo urlencode($delivery['wattage']); ?><?php if(is_numeric($filter_project_id) && $filter_project_id > 0) { echo '&project_id=' . $filter_project_id; } elseif (!empty($delivery['project_id'])) { echo '&project_id=' . $delivery['project_id'];} ?>"
+                                           class="action-button"
+                                           title="Add pallets to this delivery">
+                                           Add Pallets
+                                        </a>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="<?php echo ($filter_project_id === 'all' || $filter_project_id === 'unassigned') ? '9' : '8'; ?>">No deliveries found matching your criteria.</td>
+                            <td colspan="<?php echo ($filter_project_id === 'all' || $filter_project_id === 'unassigned') ? '8' : '7'; ?>">No deliveries found matching your criteria.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -728,12 +1096,13 @@ if (is_numeric($filter_project_id)) {
 
     <!-- Pallets Tab Content -->
     <div id="palletsTab" class="tab-content">
-        <h2>Available Pallets for Linking</h2>
-        <form method="POST" action="export_available_pallets_csv.php" style="margin-bottom: 15px;">
-            <input type="hidden" name="filter_project_id_export" value="<?php echo htmlspecialchars($filter_project_id); ?>">
-            <!-- Add other active filters as hidden inputs if export_available_pallets_csv.php needs them -->
-            <button type="submit" name="export_pallets_csv" class="action-button">Export Available Pallets CSV</button>
-        </form>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h2 style="margin: 0;">Available Pallets for Linking</h2>
+            <form method="POST" action="export_available_pallets_csv.php" style="margin: 0;">
+                <input type="hidden" name="filter_project_id_export" value="<?php echo htmlspecialchars($filter_project_id); ?>">
+                <button type="submit" name="export_pallets_csv" class="action-button">Export Available Pallets CSV</button>
+            </form>
+        </div>
 
         <div class="filter-controls">
             <label for="palletSearchInput">Search Pallets:</label>
@@ -772,6 +1141,7 @@ if (is_numeric($filter_project_id)) {
                         <th>Arrival Date</th>
                         <th>Current Warehouse</th>
                         <th>Assigned Project</th>
+                        <th>Compatible Deliveries</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -786,6 +1156,7 @@ if (is_numeric($filter_project_id)) {
                                 <td><?php echo htmlspecialchars($pallet_item['pallet_status_timestamp'] ?? 'N/A'); ?></td>
                                 <td><?php echo htmlspecialchars($pallet_item['current_warehouse_name'] ?? 'N/A'); ?></td>
                                 <td><?php echo htmlspecialchars($pallet_item['assigned_project_name'] ?? 'Unassigned'); ?></td>
+                                <td><?php echo htmlspecialchars($pallet_item['compatible_deliveries'] ?? 'None'); ?></td>
                                 <td>
                                     <a href="pallet_details.php?pallet_id=<?php echo $pallet_item['pallet_id']; ?>" class="action-button" target="_blank">View Details</a>
                                 </td>
@@ -793,7 +1164,7 @@ if (is_numeric($filter_project_id)) {
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="8">No available pallets found matching the criteria.</td>
+                            <td colspan="9">No available pallets found matching the criteria.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -801,10 +1172,152 @@ if (is_numeric($filter_project_id)) {
         </div>
     </div> <!-- End Pallets Tab -->
 
+    <!-- Bulk Linking Tab Content -->
+    <div id="bulkLinkingTab" class="tab-content">
+        <h2>Bulk Linking</h2>
+        <p style="color: #666; margin-bottom: 20px;">Efficiently link existing pallets to existing deliveries using smart matching or CSV upload.</p>
+        
+        <!-- CSV Upload Section (moved here) -->
+        <div class="csv-upload-section" style="margin-bottom: 30px; padding: 20px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
+            <h3 style="margin-top: 0; color: #488C9A;">📄 Link Pallets via CSV</h3>
+            <p style="font-size: 0.9em; color: #666; margin-bottom: 15px;">
+                Upload a CSV file with columns: <code>delivery_id,pallet_identifier</code>
+            </p>
+            <form action="link_pallet_deliveries.php" method="post" enctype="multipart/form-data" style="display: flex; gap: 15px; align-items: center;">
+                <input type="file" name="link_csv_file" accept=".csv" required style="flex: 1; padding: 8px;">
+                <button type="submit" name="upload_link_csv" class="action-button">Upload CSV to Link</button>
+            </form>
+        </div>
+
+        <!-- Smart Matching Section -->
+        <div class="smart-matching-section" style="margin-bottom: 30px;">
+            <h3 style="color: #293E4C; margin-bottom: 15px; font-size: 1.3em;">Smart Matching</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px;">
+                
+                <!-- Left Panel: Deliveries Needing Pallets -->
+                <div>
+                    <h4 style="margin-bottom: 15px; color: #293E4C;">📦 Deliveries Needing Pallets</h4>
+                    <div class="delivery-groups" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px;">
+                        <?php if (!empty($delivery_groups)): ?>
+                            <?php foreach ($delivery_groups as $group): ?>
+                                <div class="group-item" data-wattage="<?php echo $group['wattage']; ?>" 
+                                     data-project-id="<?php echo $group['project_id']; ?>"
+                                     data-delivery-ids="<?php echo $group['delivery_ids']; ?>"
+                                     style="padding: 15px; border-bottom: 1px solid #eee; cursor: pointer; transition: background-color 0.2s;"
+                                     onclick="selectDeliveryGroup(this)">
+                                    <div style="font-weight: 600; color: #488C9A; margin-bottom: 5px;">
+                                        <?php echo htmlspecialchars($group['wattage']); ?>W Deliveries
+                                    </div>
+                                    <div style="font-size: 0.9em; color: #666;">
+                                        <strong><?php echo $group['delivery_count']; ?> deliveries</strong> need pallets
+                                    </div>
+                                    <div style="font-size: 0.85em; color: #666; margin-top: 3px;">
+                                        Project: <?php echo htmlspecialchars($group['project_name'] ?? 'Unassigned'); ?>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <div style="padding: 20px; text-align: center; color: #666;">
+                                No deliveries found that need pallets.
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+                <!-- Right Panel: Available Pallets -->
+                <div>
+                    <h4 style="margin-bottom: 15px; color: #293E4C;">🏗️ Available Pallets</h4>
+                    <div class="pallet-groups" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px;">
+                        <?php if (!empty($pallet_groups)): ?>
+                            <?php foreach ($pallet_groups as $group): ?>
+                                <div class="group-item" data-wattage="<?php echo $group['wattage']; ?>" 
+                                     data-project-id="<?php echo $group['assigned_project_id']; ?>"
+                                     data-pallet-ids="<?php echo $group['pallet_ids']; ?>"
+                                     style="padding: 15px; border-bottom: 1px solid #eee; cursor: pointer; transition: background-color 0.2s;"
+                                     onclick="selectPalletGroup(this)">
+                                    <div style="font-weight: 600; color: #f39c12; margin-bottom: 5px;">
+                                        <?php echo htmlspecialchars($group['wattage']); ?>W Pallets
+                                    </div>
+                                    <div style="font-size: 0.9em; color: #666;">
+                                        <strong><?php echo $group['pallet_count']; ?> pallets</strong> 
+                                        (<?php echo number_format($group['total_modules']); ?> modules)
+                                    </div>
+                                    <div style="font-size: 0.85em; color: #666; margin-top: 3px;">
+                                        Project: <?php echo htmlspecialchars($group['assigned_project_name'] ?? 'Unassigned'); ?>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <div style="padding: 20px; text-align: center; color: #666;">
+                                No available pallets found.
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Match Buttons -->
+            <div class="quick-match-buttons">
+                <button class="quick-match-btn" onclick="clearSelections()">
+                    🔄 Clear Selections
+                </button>
+            </div>
+
+            <!-- Bulk Action Controls -->
+            <div style="margin-top: 20px; padding: 20px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <div>
+                        <strong>Selected:</strong> 
+                        <span id="selectedDeliveryGroup" style="color: #488C9A;">No delivery group selected</span>
+                        <span style="margin: 0 10px;">+</span>
+                        <span id="selectedPalletGroup" style="color: #f39c12;">No pallet group selected</span>
+                    </div>
+                    <div>
+                        <button id="bulkLinkButton" class="action-button" disabled onclick="performBulkLink()">
+                            Link Selected Groups
+                        </button>
+                    </div>
+                </div>
+                <div id="linkingStrategy" class="strategy-selection" style="display: none;">
+                    <label style="font-weight: 500; margin-bottom: 10px; display: block;">Linking Strategy:</label>
+                    <label style="font-weight: normal; margin-right: 20px;">
+                        <input type="radio" name="link_strategy" value="one_to_one" checked> 
+                        1:1 (One pallet per delivery)
+                    </label>
+                    <label style="font-weight: normal;">
+                        <input type="radio" name="link_strategy" value="distribute"> 
+                        Distribute evenly
+                    </label>
+                    <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                        <strong>1:1:</strong> Links one pallet to one delivery (best for exact matching)<br>
+                        <strong>Distribute:</strong> Assigns pallets evenly across all deliveries
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="bulkLinkResults" style="display: none; margin-top: 20px; padding: 15px; border-radius: 8px;">
+            <h4 style="margin-top: 0;">Bulk Linking Results</h4>
+            <div id="bulkLinkResultsContent"></div>
+        </div>
+    </div> <!-- End Bulk Linking Tab -->
+
+    <!-- Associated Pallets Modal -->
+    <div id="associatedPalletsModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeAssociatedPalletsModal()">&times;</span>
+            <h2>Associated Pallets</h2>
+            <div id="palletListContainer"> 
+                <!-- Pallet details will be loaded here by JS -->
+            </div>
+        </div>
+    </div>
+
 </main>
 
 <script>
-    // Show Associated Pallets Modal (copied from manage_deliveries.php, target palletListContainer)
+    // Show Associated Pallets Modal
     var associatedPalletsModal = document.getElementById('associatedPalletsModal');
     var palletListContainerDiv = document.getElementById('palletListContainer'); 
 
@@ -816,28 +1329,54 @@ if (is_numeric($filter_project_id)) {
 
             if (pallets.length > 0) {
                 var table = document.createElement('table');
-                // ... (table creation identical to manage_deliveries.php, targeting palletListContainerDiv) ...
+                table.style.width = '100%';
+                table.style.borderCollapse = 'collapse';
+
                 var thead = table.createTHead();
                 var headerRow = thead.insertRow();
-                var headers = ['Identifier', 'Wattage', 'Quantity', 'Actions']; // Action could be 'View Details' or 'Unlink'
+                var headers = ['Identifier', 'Wattage', 'Quantity', 'Actions'];
                 headers.forEach(function(headerText) {
                     var th = document.createElement('th');
-                    th.textContent = headerText; headerRow.appendChild(th);
+                    th.textContent = headerText;
+                    th.style.border = '1px solid #ddd';
+                    th.style.padding = '8px';
+                    th.style.textAlign = 'left';
+                    th.style.backgroundColor = '#e9ecef';
+                    headerRow.appendChild(th);
                 });
+
                 var tbody = table.createTBody();
                 pallets.forEach(function(pallet) {
                     var row = tbody.insertRow();
-                    row.insertCell().textContent = pallet.pallet_identifier ? pallet.pallet_identifier : `ID: ${pallet.id}`;
-                    row.insertCell().textContent = pallet.wattage ? `${pallet.wattage}W` : 'N/A';
-                    row.insertCell().textContent = pallet.quantity ? pallet.quantity : 'N/A';
-                    var actionCell = row.insertCell();
+                    
+                    var cellIdentifier = row.insertCell();
+                    cellIdentifier.textContent = pallet.pallet_identifier ? pallet.pallet_identifier : `ID: ${pallet.id}`;
+                    cellIdentifier.style.border = '1px solid #ddd';
+                    cellIdentifier.style.padding = '8px';
+
+                    var cellWattage = row.insertCell();
+                    cellWattage.textContent = pallet.wattage ? `${pallet.wattage}W` : 'N/A';
+                    cellWattage.style.border = '1px solid #ddd';
+                    cellWattage.style.padding = '8px';
+
+                    var cellQuantity = row.insertCell();
+                    cellQuantity.textContent = pallet.quantity ? pallet.quantity : 'N/A';
+                    cellQuantity.style.border = '1px solid #ddd';
+                    cellQuantity.style.padding = '8px';
+
+                    var cellActions = row.insertCell();
+                    cellActions.style.border = '1px solid #ddd';
+                    cellActions.style.padding = '8px';
+                    cellActions.style.textAlign = 'center';
+
                     var viewBtn = document.createElement('a');
                     viewBtn.href = `pallet_details.php?pallet_id=${pallet.id}`;
                     viewBtn.textContent = 'View Details';
                     viewBtn.className = 'action-button';
-                    // No target='_blank' needed here if manage_deliveries was updated
-                    actionCell.appendChild(viewBtn);
+                    viewBtn.target = '_blank';
+                    cellActions.appendChild(viewBtn);
                 });
+
                 palletListContainerDiv.appendChild(table); 
             } else {
                  palletListContainerDiv.innerHTML = '<p>No pallets currently associated.</p>';
@@ -1046,6 +1585,204 @@ if (is_numeric($filter_project_id)) {
         currentUrl.searchParams.set('export_available_pallets_csv', '1');
         window.location.href = currentUrl.toString();
     });
+
+    // --- BULK LINKING FUNCTIONALITY ---
+    let selectedDeliveryGroup = null;
+    let selectedPalletGroup = null;
+
+    window.selectDeliveryGroup = function(element) {
+        // Remove previous selection
+        document.querySelectorAll('.delivery-groups .group-item').forEach(item => {
+            item.style.backgroundColor = '';
+            item.style.borderLeft = '';
+        });
+        
+        // Highlight selected
+        element.style.backgroundColor = '#e3f2fd';
+        element.style.borderLeft = '4px solid #488C9A';
+        
+        // Store selection
+        selectedDeliveryGroup = {
+            wattage: element.dataset.wattage,
+            projectId: element.dataset.projectId,
+            deliveryIds: element.dataset.deliveryIds.split(','),
+            element: element
+        };
+        
+        updateBulkLinkUI();
+    };
+
+    window.selectPalletGroup = function(element) {
+        // Remove previous selection
+        document.querySelectorAll('.pallet-groups .group-item').forEach(item => {
+            item.style.backgroundColor = '';
+            item.style.borderLeft = '';
+        });
+        
+        // Highlight selected
+        element.style.backgroundColor = '#fff3e0';
+        element.style.borderLeft = '4px solid #f39c12';
+        
+        // Store selection
+        selectedPalletGroup = {
+            wattage: element.dataset.wattage,
+            projectId: element.dataset.projectId,
+            palletIds: element.dataset.palletIds.split(','),
+            element: element
+        };
+        
+        updateBulkLinkUI();
+    };
+
+    function updateBulkLinkUI() {
+        const deliverySpan = document.getElementById('selectedDeliveryGroup');
+        const palletSpan = document.getElementById('selectedPalletGroup');
+        const linkButton = document.getElementById('bulkLinkButton');
+        const strategyDiv = document.getElementById('linkingStrategy');
+        
+        // Update delivery selection display
+        if (selectedDeliveryGroup) {
+            const projectName = selectedDeliveryGroup.element.querySelector('div:last-child').textContent.replace('Project: ', '');
+            deliverySpan.textContent = `${selectedDeliveryGroup.wattage}W - ${selectedDeliveryGroup.deliveryIds.length} deliveries (${projectName})`;
+        } else {
+            deliverySpan.textContent = 'No delivery group selected';
+        }
+        
+        // Update pallet selection display
+        if (selectedPalletGroup) {
+            const projectName = selectedPalletGroup.element.querySelector('div:last-child').textContent.replace('Project: ', '');
+            palletSpan.textContent = `${selectedPalletGroup.wattage}W - ${selectedPalletGroup.palletIds.length} pallets (${projectName})`;
+        } else {
+            palletSpan.textContent = 'No pallet group selected';
+        }
+        
+        // Enable/disable link button and show strategy options
+        const canLink = selectedDeliveryGroup && selectedPalletGroup && 
+                       selectedDeliveryGroup.wattage === selectedPalletGroup.wattage;
+        
+        linkButton.disabled = !canLink;
+        strategyDiv.style.display = canLink ? 'block' : 'none';
+        
+        if (canLink && selectedDeliveryGroup.wattage !== selectedPalletGroup.wattage) {
+            linkButton.textContent = 'Wattage Mismatch!';
+            linkButton.disabled = true;
+        } else if (canLink) {
+            linkButton.textContent = 'Link Selected Groups';
+            linkButton.disabled = false;
+        }
+    }
+
+    window.performBulkLink = function() {
+        if (!selectedDeliveryGroup || !selectedPalletGroup) {
+            alert('Please select both a delivery group and a pallet group.');
+            return;
+        }
+        
+        if (selectedDeliveryGroup.wattage !== selectedPalletGroup.wattage) {
+            alert('Wattage mismatch! Please select groups with matching wattage.');
+            return;
+        }
+        
+        const strategy = document.querySelector('input[name="link_strategy"]:checked').value;
+        const deliveryIds = selectedDeliveryGroup.deliveryIds;
+        const palletIds = selectedPalletGroup.palletIds;
+        
+        // Show loading state
+        document.getElementById('bulkLinkButton').textContent = 'Linking...';
+        document.getElementById('bulkLinkButton').disabled = true;
+        
+        // Prepare data for submission
+        const formData = new FormData();
+        formData.append('action', 'bulk_link');
+        formData.append('delivery_ids', JSON.stringify(deliveryIds));
+        formData.append('pallet_ids', JSON.stringify(palletIds));
+        formData.append('strategy', strategy);
+        formData.append('wattage', selectedDeliveryGroup.wattage);
+        
+        // Submit via fetch
+        fetch('link_pallet_deliveries.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            showBulkLinkResults(data);
+            // Reset selections
+            selectedDeliveryGroup = null;
+            selectedPalletGroup = null;
+            document.querySelectorAll('.group-item').forEach(item => {
+                item.style.backgroundColor = '';
+                item.style.borderLeft = '';
+            });
+            updateBulkLinkUI();
+            
+            // Refresh page to show updated counts
+            setTimeout(() => {
+                window.location.reload();
+            }, 3000);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showBulkLinkResults({
+                success: false,
+                message: 'An error occurred during bulk linking.',
+                details: error.message
+            });
+        })
+        .finally(() => {
+            document.getElementById('bulkLinkButton').textContent = 'Link Selected Groups';
+            document.getElementById('bulkLinkButton').disabled = false;
+        });
+    };
+
+    function showBulkLinkResults(data) {
+        const resultsDiv = document.getElementById('bulkLinkResults');
+        const contentDiv = document.getElementById('bulkLinkResultsContent');
+        
+        resultsDiv.style.display = 'block';
+        resultsDiv.style.backgroundColor = data.success ? '#d4edda' : '#f8d7da';
+        resultsDiv.style.border = data.success ? '1px solid #c3e6cb' : '1px solid #f5c6cb';
+        resultsDiv.style.color = data.success ? '#155724' : '#721c24';
+        
+        let html = `<p><strong>${data.message}</strong></p>`;
+        
+        if (data.details) {
+            html += `<div style="margin-top: 10px; font-size: 0.9em;">${data.details}</div>`;
+        }
+        
+        if (data.linked_pairs && data.linked_pairs.length > 0) {
+            html += '<div style="margin-top: 15px;"><strong>Linked:</strong><ul style="margin: 5px 0;">';
+            data.linked_pairs.forEach(pair => {
+                html += `<li>Delivery ${pair.delivery_id} ↔ Pallet ${pair.pallet_identifier}</li>`;
+            });
+            html += '</ul></div>';
+        }
+        
+        contentDiv.innerHTML = html;
+        
+                 // Scroll to results
+         resultsDiv.scrollIntoView({ behavior: 'smooth' });
+     }
+
+     // Quick match functions
+
+     window.clearSelections = function() {
+         selectedDeliveryGroup = null;
+         selectedPalletGroup = null;
+         
+         document.querySelectorAll('.group-item').forEach(item => {
+             item.style.backgroundColor = '';
+             item.style.borderLeft = '';
+         });
+         
+         updateBulkLinkUI();
+         
+         // Hide results if visible
+         const resultsDiv = document.getElementById('bulkLinkResults');
+         if (resultsDiv) {
+             resultsDiv.style.display = 'none';
+         }
+     };
 
 </script>
 </body>
