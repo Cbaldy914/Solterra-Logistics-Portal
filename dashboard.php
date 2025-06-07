@@ -39,7 +39,33 @@ while ($row = $resultAccts->fetch_assoc()) {
 }
 $stmtAccts->close();
 
-// 2) If user has accounts, fetch projects for those accounts
+// 2) Calculate unassigned modules
+$unassigned_modules_count = 0;
+if (count($accountIds) > 0) {
+    $placeholders_unassigned = implode(',', array_fill(0, count($accountIds), '?'));
+    $sqlUnassigned = "
+        SELECT COUNT(DISTINCT umi.id) as unassigned_count
+        FROM unassigned_module_items umi
+        JOIN modules m ON umi.unassigned_module_id = m.id
+        LEFT JOIN projects p ON p.account_id IN ($placeholders_unassigned)
+        WHERE umi.id NOT IN (
+            SELECT ip.unassigned_module_item_id 
+            FROM inventory_pallets ip 
+            WHERE ip.assigned_project_id IS NOT NULL 
+            AND ip.unassigned_module_item_id IS NOT NULL
+        )
+    ";
+    $stmtUnassigned = $conn->prepare($sqlUnassigned);
+    $types_unassigned = str_repeat('i', count($accountIds));
+    $stmtUnassigned->bind_param($types_unassigned, ...$accountIds);
+    $stmtUnassigned->execute();
+    $stmtUnassigned->bind_result($unassigned_modules_count);
+    $stmtUnassigned->fetch();
+    $stmtUnassigned->close();
+    $unassigned_modules_count = $unassigned_modules_count ?: 0;
+}
+
+// 3) If user has accounts, fetch projects for those accounts
 $projects = [];
 if (count($accountIds) > 0) {
     // Build an IN() clause with placeholders
@@ -145,52 +171,516 @@ $conn->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Modern Dashboard Styling */
+        .dashboard-header {
+            background: #ffffff;
+            color: #293E4C;
+            padding: 30px 20px;
+            border-radius: 16px;
+            margin: 20px 0 30px 0;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e9ecef;
+            border-left: 6px solid #488C9A;
+        }
+
+        .dashboard-header h1 {
+            margin: 0 0 8px 0;
+            font-size: 2.5em;
+            font-weight: 600;
+            color: #293E4C;
+        }
+
+        .dashboard-header p {
+            margin: 0;
+            font-size: 1.1em;
+            color: #6c757d;
+        }
+
+        /* Dashboard Stats Cards */
+        .dashboard-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #ffffff;
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e9ecef;
+            text-align: center;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .stat-card.clickable {
+            cursor: pointer;
+        }
+
+        .stat-number {
+            font-size: 2.5em;
+            font-weight: 700;
+            color: #488C9A;
+            margin: 0;
+        }
+
+        .stat-label {
+            font-size: 1em;
+            color: #6c757d;
+            margin: 8px 0 0 0;
+            font-weight: 500;
+        }
+
+        .stat-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+            opacity: 0.3;
+        }
+
+        /* Enhanced Project Cards */
+        .projects-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px;
+            margin-top: 20px;
+        }
+
+        .project-item {
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e9ecef;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .project-item:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
+        }
+
+        .project-image {
+            width: 100%;
+            height: 200px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .project-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+
+        .project-item:hover .project-image img {
+            transform: scale(1.05);
+        }
+
+        .project-title {
+            padding: 20px 20px 15px 20px;
+            background: #ffffff;
+            border-bottom: 1px solid #f1f3f4;
+        }
+
+        .project-title h3 {
+            margin: 0;
+            font-size: 1.4em;
+            color: #293E4C;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .project-title h3 a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .project-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, rgba(72, 140, 154, 0.9), rgba(58, 110, 127, 0.9));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 3;
+        }
+
+        .project-item:hover .project-overlay {
+            opacity: 1;
+        }
+
+        .project-overlay-text {
+            color: white;
+            font-size: 1.2em;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .project-content {
+            padding: 15px;
+            background: #fafbfc;
+            border-top: 1px solid #f1f3f4;
+        }
+
+        .project-details {
+            background: #ffffff;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #f1f3f4;
+        }
+
+        .project-details p {
+            margin: 8px 0;
+            color: #495057;
+            font-size: 0.95em;
+            line-height: 1.5;
+        }
+
+        .project-details strong {
+            color: #293E4C;
+            font-weight: 600;
+        }
+
+        /* Progress Bars */
+        .progress-container {
+            margin: 15px 0;
+        }
+
+        .progress-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+            font-weight: 500;
+            color: #495057;
+        }
+
+        .progress-bar {
+            background: #e9ecef;
+            border-radius: 10px;
+            height: 8px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.8s ease;
+        }
+
+        .progress-delivery {
+            background: linear-gradient(90deg, #488C9A, #5AA8B7);
+        }
+
+        .progress-storage {
+            background: linear-gradient(90deg, #fbb040, #FFC857);
+        }
+
+        /* Project Status Badge */
+        .project-status {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 15px;
+        }
+
+        .status-on-track {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-behind {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-completed {
+            background: #cce7ff;
+            color: #004085;
+        }
+
+        /* Quick Actions Section */
+        .quick-actions {
+            background: #ffffff;
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e9ecef;
+            margin-bottom: 30px;
+        }
+
+        .quick-actions h2 {
+            margin: 0 0 20px 0;
+            color: #293E4C;
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+
+        .action-buttons {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .action-btn {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 15px 20px;
+            border: none;
+            border-radius: 12px;
+            font-weight: 600;
+            text-decoration: none;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .action-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(72, 140, 154, 0.4);
+        }
+
+        /* Mobile Responsiveness */
+        @media (max-width: 768px) {
+            .dashboard-header {
+                padding: 20px 15px;
+                margin: 15px 0 20px 0;
+            }
+
+            .dashboard-header h1 {
+                font-size: 2em;
+            }
+
+            .user-info {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .projects-container {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+
+            .dashboard-stats {
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+            }
+
+            .project-content {
+                padding: 20px;
+            }
+        }
+
+        /* Section Headers */
+        .section-header {
+            color: #293E4C;
+            font-size: 1.8em;
+            font-weight: 600;
+            margin: 30px 0 20px 0;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #488C9A;
+            position: relative;
+        }
+
+        .section-header::after {
+            content: '';
+            position: absolute;
+            bottom: -3px;
+            left: 0;
+            width: 60px;
+            height: 3px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 2px;
+        }
+    </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <h1>Welcome, <?php echo htmlspecialchars($_SESSION['username']); ?>!</h1>
-    <p>This is your dashboard.</p>
+    <!-- Enhanced Welcome Header -->
+    <div class="dashboard-header">
+        <h1>Welcome back, <?php echo htmlspecialchars($_SESSION['username']); ?>!</h1>
+        <p>Here's an overview of your projects and recent activity</p>
+    </div>
 
-    <h2>Active Projects:</h2>
-    <!-- Projects will be displayed here -->
-    <div class="projects-container">
-        <?php if (!empty($projects)): ?>
+    <!-- Dashboard Statistics -->
+    <div class="dashboard-stats">
+        <div class="stat-card clickable" onclick="document.getElementById('projects-section').scrollIntoView({behavior: 'smooth'});">
+            <div class="stat-icon">🏗️</div>
+            <h3 class="stat-number"><?php echo count($projects); ?></h3>
+            <p class="stat-label">Active Projects</p>
+        </div>
+        <a href="modules.php" class="stat-card clickable">
+            <div class="stat-icon">📋</div>
+            <h3 class="stat-number"><?php echo number_format($unassigned_modules_count); ?></h3>
+            <p class="stat-label">Unassigned Modules</p>
+        </a>
+        <a href="warehousing_overview.php" class="stat-card clickable">
+            <div class="stat-icon">🏭</div>
+            <h3 class="stat-number">
+                <?php 
+                $total_storage = 0;
+                foreach ($projects as $project) {
+                    $total_storage += $project['modules_in_storage'];
+                }
+                echo !empty($projects) ? round($total_storage / count($projects), 1) : 0;
+                ?>%
+            </h3>
+            <p class="stat-label">Modules in Storage</p>
+        </a>
+        <div class="stat-card">
+            <div class="stat-icon">⚡</div>
+            <h3 class="stat-number">
+                <?php 
+                $total_mw = 0;
+                foreach ($projects as $project) {
+                    $total_mw += $project['project_size'];
+                }
+                echo number_format($total_mw, 1);
+                ?>
+            </h3>
+            <p class="stat-label">Total MW</p>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+    <div class="quick-actions">
+        <h2>🚀 Quick Actions</h2>
+        <div class="action-buttons">
+            <?php if ($role === 'global_admin'): ?>
+                <a href="admin_dashboard.php" class="action-btn">
+                    📊 Admin Dashboard
+                </a>
+                <a href="manage_warehouses.php" class="action-btn">
+                    🏢 Manage Warehouses
+                </a>
+            <?php endif; ?>
+            <a href="modules.php" class="action-btn">
+                📦 View Modules
+            </a>
+            <a href="freight.php" class="action-btn">
+                🚛 Freight Management
+            </a>
+            <a href="documents.php" class="action-btn">
+                📄 Documents
+            </a>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Enhanced Projects Section -->
+    <?php if (!empty($projects)): ?>
+        <h2 class="section-header" id="projects-section">Your Active Projects</h2>
+        <div class="projects-container">
             <?php 
-            // CHANGED: Use role-based page link
+            // Use role-based page link
             $target_page = ($role === 'DDPm') ? 'DDPm_overview' : 'project_overview';
-            ?>
-            <?php foreach ($projects as $project): ?>
-                <?php
-                // Format completion date if not null
+            
+            foreach ($projects as $project): 
+                // Format completion date
                 $estimated_completion_date_display = 'N/A';
                 if (!empty($project['estimated_completion_date'])) {
                     $dateObj = new DateTime($project['estimated_completion_date']);
                     $estimated_completion_date_display = $dateObj->format('F j, Y');
                 }
-                ?>
-                <div class="project-item">
-                    <h3>
-                        <a href="<?php echo $target_page; ?>?id=<?php echo $project['id']; ?>">
-                            <?php echo htmlspecialchars($project['project_name']); ?>
-                        </a>
-                    </h3>
-                    <div class="project-image">
-                        <a href="<?php echo $target_page; ?>?id=<?php echo $project['id']; ?>">
-                            <img src="<?php echo htmlspecialchars($project['image_url']); ?>" alt="Project Image">
-                        </a>
+
+                // Determine project status
+                $status_class = 'status-on-track';
+                $status_text = 'On Track';
+                if ($project['module_delivery_completion'] >= 100) {
+                    $status_class = 'status-completed';
+                    $status_text = 'Completed';
+                } elseif ($project['module_delivery_completion'] < 50) {
+                    $status_class = 'status-behind';
+                    $status_text = 'In Progress';
+                }
+            ?>
+                <div class="project-item" onclick="window.location.href='<?php echo $target_page; ?>?id=<?php echo $project['id']; ?>'">
+                    <div class="project-title">
+                        <h3>
+                            <a href="<?php echo $target_page; ?>?id=<?php echo $project['id']; ?>">
+                                <?php echo htmlspecialchars($project['project_name']); ?>
+                            </a>
+                        </h3>
                     </div>
-                    <div class="project-details">
-                        <p><strong>Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
-                        <p><strong>Project Size:</strong> <?php echo htmlspecialchars(number_format($project['project_size'], 2)); ?> MW</p>
-                        <p><strong>Module Delivery Completion:</strong> <?php echo htmlspecialchars($project['module_delivery_completion']); ?>%</p>
-                        <p><strong>Estimated Completion Date:</strong> <?php echo htmlspecialchars($estimated_completion_date_display); ?></p>
-                        <p><strong>Percent of Modules in Storage:</strong> <?php echo htmlspecialchars($project['modules_in_storage']); ?>%</p>
+                    <div class="project-image">
+                        <img src="<?php echo htmlspecialchars($project['image_url']); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>">
+                        <div class="project-overlay">
+                            <div class="project-overlay-text">View Project Details</div>
+                        </div>
+                    </div>
+                    <div class="project-content">
+                        
+                        <div class="project-details">
+                            <p><strong>📍 Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
+                            <p><strong>⚡ Project Size:</strong> <?php echo number_format($project['project_size'], 2); ?> MW</p>
+                            <p><strong>📅 Est. Completion:</strong> <?php echo $estimated_completion_date_display; ?></p>
+                        </div>
+
+                        <!-- Delivery Progress Bar -->
+                        <div class="progress-container">
+                            <div class="progress-label">
+                                <span>Delivery Progress</span>
+                                <span><?php echo $project['module_delivery_completion']; ?>%</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill progress-delivery" style="width: <?php echo $project['module_delivery_completion']; ?>%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Storage Progress Bar -->
+                        <div class="progress-container">
+                            <div class="progress-label">
+                                <span>Modules in Storage</span>
+                                <span><?php echo $project['modules_in_storage']; ?>%</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill progress-storage" style="width: <?php echo $project['modules_in_storage']; ?>%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Project Status Badge -->
+                        <div class="project-status <?php echo $status_class; ?>">
+                            <?php echo $status_text; ?>
+                        </div>
                     </div>
                 </div>
             <?php endforeach; ?>
-        <?php else: ?>
-            <p>No active projects.</p>
-        <?php endif; ?>
-    </div>
+        </div>
+    <?php else: ?>
+        <div class="quick-actions">
+            <h2>🏗️ No Active Projects</h2>
+            <p style="text-align: center; color: #6c757d; margin-bottom: 20px;">
+                You don't have any active projects yet. Contact your administrator to get started.
+            </p>
+        </div>
+    <?php endif; ?>
 

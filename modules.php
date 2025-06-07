@@ -118,6 +118,52 @@ if ($resManufacturers && $resManufacturers->num_rows > 0) {
 $successMessage = "";
 $errorMessage   = "";
 
+// Function to sync project_wattage_orders table from actual module batches
+function syncProjectWattageOrders($conn, $project_id) {
+    if (!$project_id) return;
+    
+    try {
+        // Start transaction for consistency
+        $conn->begin_transaction();
+        
+        // First, delete existing entries for this project
+        $stmtDelete = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ?");
+        $stmtDelete->bind_param("i", $project_id);
+        $stmtDelete->execute();
+        $stmtDelete->close();
+        
+        // Get actual totals from assigned module batches
+        $stmtActual = $conn->prepare("
+            SELECT 
+                umi.wattage,
+                SUM(umi.quantity) as total_quantity
+            FROM modules m
+            JOIN unassigned_module_items umi ON m.id = umi.unassigned_module_id
+            WHERE m.project_id = ?
+            GROUP BY umi.wattage
+        ");
+        $stmtActual->bind_param("i", $project_id);
+        $stmtActual->execute();
+        $resultActual = $stmtActual->get_result();
+        
+        // Insert new entries based on actual module batches
+        $stmtInsert = $conn->prepare("INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)");
+        while ($row = $resultActual->fetch_assoc()) {
+            $wattage = $row['wattage'];
+            $total_quantity = $row['total_quantity'];
+            $stmtInsert->bind_param("iii", $project_id, $wattage, $total_quantity);
+            $stmtInsert->execute();
+        }
+        $stmtInsert->close();
+        $stmtActual->close();
+        
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        error_log("Error syncing project_wattage_orders: " . $e->getMessage());
+    }
+}
+
 // --- Handle POST for adding new modules --- 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Re-establish connection if it was closed (it shouldn't be closed yet based on new logic)
@@ -226,6 +272,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
             $conn->commit();
             $successMessage = "Module batch (ID: {$unassigned_module_id}) and {$wattage_items_added} item(s) added successfully!";
+    
+            // Sync project_wattage_orders table
+            syncProjectWattageOrders($conn, $project_id);
     
         } catch (Exception $ex) {
             $conn->rollback();
@@ -859,7 +908,7 @@ if ($conn && $conn instanceof mysqli) {
 <main>
     <!-- Breadcrumb navigation -->
     <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <a href="<?php echo ($role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>" style="color: #488C9A; text-decoration: none;">Dashboard</a>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
         <span>Manage Modules</span>
     </div>

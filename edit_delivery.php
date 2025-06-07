@@ -218,7 +218,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         }
 
         $stmt_update->bind_param(
-            "sssisssssdddddi",
+            "sssisssssddddsdi",
             $supplier, $wattage, $status, $quantity, $bol_number,
             $anticipated_date, $warehouse_arrival, $actual_date, $left_wh_date,
             $freight_cost, $access_paid, $access_charged, $customer_cost, $pod, $miles,
@@ -229,8 +229,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         }
         $stmt_update->close();
 
+        /* Update Associated Pallet Statuses to Match Delivery Status */
+        $pallet_status_update_count = 0;
+        
+        // Map delivery statuses to corresponding pallet statuses
+        $status_mapping = [
+            'Delivered to Project' => 'Delivered to Project',
+            'Delivered to Warehouse' => 'In Warehouse',
+            'In Transit to Project' => 'In Transit to Project', 
+            'In Transit to Warehouse' => 'In Transit to Warehouse',
+            'Pending' => 'At Manufacturer' // Assume pallets go back to manufacturer if delivery is pending
+        ];
+        
+        if (isset($status_mapping[$status])) {
+            $new_pallet_status = $status_mapping[$status];
+            
+            // Get all pallets associated with this delivery
+            $stmt_get_pallets = $conn->prepare("
+                SELECT dp.inventory_pallet_id 
+                FROM delivery_pallets dp 
+                WHERE dp.delivery_id = ?
+            ");
+            
+            if ($stmt_get_pallets) {
+                $stmt_get_pallets->bind_param("i", $delivery_id);
+                $stmt_get_pallets->execute();
+                $result_pallets = $stmt_get_pallets->get_result();
+                $pallet_ids = [];
+                
+                while ($row = $result_pallets->fetch_assoc()) {
+                    $pallet_ids[] = $row['inventory_pallet_id'];
+                }
+                $stmt_get_pallets->close();
+                
+                // Update pallet statuses if we found any pallets
+                if (!empty($pallet_ids)) {
+                    $placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
+                    $types = 's' . str_repeat('i', count($pallet_ids)); // status + pallet IDs
+                    
+                    $stmt_update_pallets = $conn->prepare("
+                        UPDATE inventory_pallets 
+                        SET status = ? 
+                        WHERE id IN ($placeholders)
+                    ");
+                    
+                    if ($stmt_update_pallets) {
+                        $stmt_update_pallets->bind_param($types, $new_pallet_status, ...$pallet_ids);
+                        if ($stmt_update_pallets->execute()) {
+                            $pallet_status_update_count = $stmt_update_pallets->affected_rows;
+                        }
+                        $stmt_update_pallets->close();
+                    }
+                }
+            }
+        }
+
         $conn->commit();
-        $_SESSION['edit_delivery_success'] = "Delivery details updated successfully.";
+        
+        $success_msg = "Delivery details updated successfully.";
+        if ($pallet_status_update_count > 0) {
+            $success_msg .= " Also updated status for $pallet_status_update_count associated pallet(s) to '$new_pallet_status'.";
+        }
+        $_SESSION['edit_delivery_success'] = $success_msg;
 
         // Redirect back to THIS edit page to remain in context
         header(

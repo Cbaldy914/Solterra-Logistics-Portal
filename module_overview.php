@@ -28,26 +28,104 @@ $successMessage = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'generate_pallets') {
     $itemId           = intval($_POST['item_id']);
     $modulesPerPallet = max(1, intval($_POST['modules_per_pallet']));
+    
     // Get wattage and total modules for this item
     $stmtW = $conn->prepare("SELECT wattage, quantity FROM unassigned_module_items WHERE id = ? LIMIT 1");
     $stmtW->bind_param("i", $itemId);
     $stmtW->execute();
-    $stmtW->bind_result($wattage, $totalModules);
+    $stmtW->bind_result($wattage, $orderedQuantity);
     $stmtW->fetch();
     $stmtW->close();
-    // Calculate number of pallets and distribution of modules
-    $fullPallets  = intdiv($totalModules, $modulesPerPallet);
-    $remainder    = $totalModules % $modulesPerPallet;
-    $totalPallets = $fullPallets + ($remainder > 0 ? 1 : 0);
-    // Insert full pallets
-    for ($i = 0; $i < $fullPallets; $i++) {
-        insertPallet($itemId, $wattage, $modulesPerPallet);
+    
+    // Calculate already palletized quantity for this item
+    $stmtP = $conn->prepare("SELECT COALESCE(SUM(quantity), 0) FROM inventory_pallets WHERE unassigned_module_item_id = ?");
+    $stmtP->bind_param("i", $itemId);
+    $stmtP->execute();
+    $stmtP->bind_result($palletizedQuantity);
+    $stmtP->fetch();
+    $stmtP->close();
+    
+    // Calculate remaining modules to palletize
+    $remainingModules = $orderedQuantity - $palletizedQuantity;
+    
+    if ($remainingModules <= 0) {
+        $successMessage = "No modules remaining to palletize for this wattage.";
+    } else {
+        // Calculate number of pallets and distribution of modules based on REMAINING quantity
+        $fullPallets  = intdiv($remainingModules, $modulesPerPallet);
+        $remainder    = $remainingModules % $modulesPerPallet;
+        $totalPallets = $fullPallets + ($remainder > 0 ? 1 : 0);
+        
+        // Insert full pallets
+        for ($i = 0; $i < $fullPallets; $i++) {
+            insertPallet($itemId, $wattage, $modulesPerPallet);
+        }
+        // Insert last pallet if there's a remainder
+        if ($remainder > 0) {
+            insertPallet($itemId, $wattage, $remainder);
+        }
+        $successMessage = "Created $totalPallets pallets (up to $modulesPerPallet modules each) for $remainingModules remaining modules.";
     }
-    // Insert last pallet if there's a remainder
-    if ($remainder > 0) {
-        insertPallet($itemId, $wattage, $remainder);
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_pallets') {
+    $deleteMessage = '';
+    $conn_delete = getDBConnection(); // Use separate connection variable
+    if (!$conn_delete) {
+        $deleteMessage = "Error: Database connection failed.";
+    } else {
+        $conn_delete->begin_transaction();
+        try {
+            $palletIds = $_POST['selected_pallets'] ?? [];
+            if (empty($palletIds)) {
+                throw new Exception('No pallets selected for deletion.');
+            }
+
+            // Check if any pallets are linked to deliveries
+            $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
+            $types = str_repeat('i', count($palletIds));
+            
+            $stmtCheckDeliveries = $conn_delete->prepare("SELECT inventory_pallet_id FROM delivery_pallets WHERE inventory_pallet_id IN ($placeholders)");
+            if (!$stmtCheckDeliveries) throw new Exception("Failed to prepare delivery check: " . $conn_delete->error);
+            
+            $stmtCheckDeliveries->bind_param($types, ...$palletIds);
+            $stmtCheckDeliveries->execute();
+            $resultDeliveries = $stmtCheckDeliveries->get_result();
+            $linkedPallets = [];
+            while ($row = $resultDeliveries->fetch_assoc()) {
+                $linkedPallets[] = $row['inventory_pallet_id'];
+            }
+            $stmtCheckDeliveries->close();
+
+            if (!empty($linkedPallets)) {
+                throw new Exception('Cannot delete pallets that are linked to deliveries. Pallet IDs: ' . implode(', ', $linkedPallets));
+            }
+
+            // Delete pallets
+            $stmtDelete = $conn_delete->prepare("DELETE FROM inventory_pallets WHERE id IN ($placeholders)");
+            if (!$stmtDelete) throw new Exception("Failed to prepare pallet deletion: " . $conn_delete->error);
+            
+            $stmtDelete->bind_param($types, ...$palletIds);
+            if (!$stmtDelete->execute()) {
+                throw new Exception("Failed to delete pallets: " . $stmtDelete->error);
+            }
+            
+            $deletedCount = $stmtDelete->affected_rows;
+            $stmtDelete->close();
+            $conn_delete->commit();
+            
+            $deleteMessage = "Successfully deleted $deletedCount pallet(s).";
+            
+        } catch (Exception $e) {
+            $conn_delete->rollback();
+            $deleteMessage = "Error deleting pallets: " . $e->getMessage();
+        } finally {
+            $conn_delete->close();
+        }
     }
-    $successMessage = "Created $totalPallets pallets (up to $modulesPerPallet modules each) for item ID $itemId.";
+    
+    // Store message in session and redirect to prevent form resubmission
+    $_SESSION['module_overview_message'] = $deleteMessage;
+    header("Location: module_overview.php?batch_id=" . $batch_id);
+    exit();
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets') {
     $shipMessage = '';
     $createdDeliveryIds = [];
@@ -745,6 +823,11 @@ $conn->close();
             color: #666666 !important;
         }
         
+        /* Red delete button styling */
+        .action-button[style*="background-color: #dc3545"]:hover:not(:disabled) {
+            background-color: #c82333 !important;
+        }
+        
         /* Success and error message styling consistency */
         .success-message {
             color: #155724;
@@ -798,6 +881,13 @@ $conn->close();
             ?></strong></div>
         <?php endif; ?>
         
+        <?php if (!empty($deleteMessage)): ?>
+            <?php 
+            $messageClass = (strpos(strtolower($deleteMessage), 'error') !== false) ? 'error-message' : 'success-message';
+            ?>
+            <div class="<?php echo $messageClass; ?>" style="margin-bottom: 20px;"><strong><?php echo htmlspecialchars($deleteMessage); ?></strong></div>
+        <?php endif; ?>
+        
         <div class="overview-header">
             <h1>Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?></h1>
             <p><strong>Account:</strong> <?php echo htmlspecialchars($batch_data['account_name']); ?></p>
@@ -830,10 +920,18 @@ $conn->close();
                             <h4><?php echo htmlspecialchars($wattage); ?>W Modules</h4>
                             <p><strong>Ordered:</strong> <?php echo number_format($data['ordered_quantity']); ?></p>
                             <p><strong>On Pallets:</strong> <?php echo number_format($data['palletized_quantity']); ?></p>
-                            <p><strong>Remaining:</strong> <?php echo number_format($data['remaining_quantity']); ?></p>
                             
-                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                                <?php if ($data['remaining_quantity'] > 0): ?>
+                            <?php if ($data['remaining_quantity'] < 0): ?>
+                                <p><strong>Over-palletized:</strong> <span style="color: #d32f2f;"><?php echo number_format(abs($data['remaining_quantity'])); ?> excess modules</span></p>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                    <p style="color: #d32f2f; font-size: 0.9em; margin-top: 10px;">
+                                        ⚠️ You have <?php echo number_format(abs($data['remaining_quantity'])); ?> more modules on pallets than ordered. 
+                                        Consider removing excess pallets via the pallet list below.
+                                    </p>
+                                <?php endif; ?>
+                            <?php elseif ($data['remaining_quantity'] > 0): ?>
+                                <p><strong>Remaining:</strong> <span style="color: #2e7d32;"><?php echo number_format($data['remaining_quantity']); ?></span></p>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
                                     <form method="POST">
                                         <input type="hidden" name="action" value="generate_pallets">
                                         <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
@@ -843,12 +941,15 @@ $conn->close();
                                             <button type="submit">Generate</button>
                                         </div>
                                     </form>
-                                <?php else: ?>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <p><strong>Remaining:</strong> <span style="color: green;">0 (Perfect match)</span></p>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                    <p style="color: green; margin-top: 15px;">✅ All modules perfectly palletized.</p>
+                                <?php elseif ($_SESSION['role'] === 'user'): ?>
                                     <p style="color: green; margin-top: 15px;">All modules palletized.</p>
                                 <?php endif; ?>
-                            <?php elseif ($data['remaining_quantity'] <= 0): // For user role, still show if all palletized ?>
-                                <p style="color: green; margin-top: 15px;">All modules palletized.</p>
-                            <?php endif; // End role check for pallet generation form ?>
+                            <?php endif; ?>
                         </div>
                 <?php 
                     endforeach; // End foreach $wattage_summary
@@ -930,9 +1031,26 @@ $conn->close();
                         <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
                     </div>
                     <div>
+                        <?php
+                        // Check if any wattages are over-palletized to show delete button
+                        $hasOverPalletized = false;
+                        if (!empty($wattage_summary)) {
+                            foreach ($wattage_summary as $wattage => $data) {
+                                if ($data['remaining_quantity'] < 0) {
+                                    $hasOverPalletized = true;
+                                    break;
+                                }
+                            }
+                        }
+                        ?>
                         <button type="button" id="openShipModalBtn" class="action-button" disabled>
                         Create Delivery for Selected Pallets
-                    </button>
+                        </button>
+                        <?php if ($hasOverPalletized): ?>
+                        <button type="button" id="deletePalletsBtn" class="action-button" disabled style="background-color: #dc3545; margin-left: 10px;">
+                        Delete
+                        </button>
+                        <?php endif; ?>
                     </div>
                 </div>
                 <?php if (!empty($pallets)): ?>
@@ -1123,9 +1241,13 @@ function toggleAllPalletCheckboxes(isChecked) {
 
 function updateOpenShipModalButtonState() {
     const openBtn = document.getElementById('openShipModalBtn');
+    const deleteBtn = document.getElementById('deletePalletsBtn');
     const checked = document.querySelectorAll('.pallet-checkbox:checked').length;
     if (openBtn) {
         openBtn.disabled = (checked === 0);
+    }
+    if (deleteBtn) {
+        deleteBtn.disabled = (checked === 0);
     }
 }
 
@@ -1461,6 +1583,43 @@ if (openShipModalBtn) { // Button only exists for admins
             cb.addEventListener('change', updateMultiShipSummary);
         });
         updateMultiShipSummary();
+    }
+
+    // ----------------- DELETE PALLETS FUNCTIONALITY (ADMIN ONLY) -----------------
+    const deletePalletsBtn = document.getElementById('deletePalletsBtn');
+    if (deletePalletsBtn) {
+        deletePalletsBtn.addEventListener('click', function() {
+            const checkedPallets = document.querySelectorAll('.pallet-checkbox:checked');
+            if (checkedPallets.length === 0) {
+                alert('Please select pallets to delete.');
+                return;
+            }
+            
+            const confirmation = confirm(`Are you sure you want to delete ${checkedPallets.length} selected pallet(s)? This action cannot be undone.`);
+            if (!confirmation) return;
+            
+            // Create a form and submit it
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.style.display = 'none';
+            
+            const actionInput = document.createElement('input');
+            actionInput.type = 'hidden';
+            actionInput.name = 'action';
+            actionInput.value = 'delete_pallets';
+            form.appendChild(actionInput);
+            
+            checkedPallets.forEach(function(checkbox) {
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = 'selected_pallets[]';
+                hiddenInput.value = checkbox.value;
+                form.appendChild(hiddenInput);
+            });
+            
+            document.body.appendChild(form);
+            form.submit();
+        });
     }
 
     // ----------------- INITIALIZE DEFAULT DROPDOWNS (ADMIN ONLY) -----------------

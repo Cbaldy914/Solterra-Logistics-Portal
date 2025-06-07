@@ -22,31 +22,7 @@ $projects = [];
 $errorMessage = '';
 $successMessage = '';
 
-// Handle delete action
-if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
-    try {
-        $project_id = intval($_GET['id']);
-        
-        // Check if project is being used anywhere (optional - you can add checks later)
-        // For now, we'll allow deletion
-        
-        $stmt = $conn->prepare("DELETE FROM projects WHERE id = ?");
-        if (!$stmt) {
-            throw new Exception("Error preparing delete statement: " . $conn->error);
-        }
-        
-        $stmt->bind_param("i", $project_id);
-        if ($stmt->execute()) {
-            $successMessage = "Project deleted successfully.";
-        } else {
-            throw new Exception("Error deleting project: " . $stmt->error);
-        }
-        $stmt->close();
-        
-    } catch (Exception $e) {
-        $errorMessage = $e->getMessage();
-    }
-}
+// Note: Delete handling is now done via AJAX endpoints for better user experience
 
 // --- Fetch Projects --- 
 $sqlProjects        = "";
@@ -303,12 +279,245 @@ $conn->close(); // Close connection after fetching project data
             top: 4px;
             right: 4px;
         }
+        
+        /* Delete modal styling */
+        .delete-modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .delete-modal-content {
+            background-color: #fefefe;
+            margin: 10% auto;
+            padding: 30px;
+            border: 1px solid #888;
+            width: 80%;
+            max-width: 600px;
+            border-radius: 8px;
+            position: relative;
+        }
+        
+        .delete-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .delete-modal-close {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            line-height: 1;
+        }
+        
+        .delete-modal-close:hover {
+            color: #000;
+        }
+        
+        .delete-warning {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: #856404;
+        }
+        
+        .delete-warning h4 {
+            margin-top: 0;
+            color: #dc3545;
+        }
+        
+        .deletion-summary {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .deletion-summary h4 {
+            margin-top: 0;
+            color: #293E4C;
+        }
+        
+        .delete-item {
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+            font-size: 1.1em;
+        }
+        
+        .delete-item:last-child {
+            border-bottom: none;
+        }
+        
+        .delete-sub-item {
+            padding: 4px 0;
+            color: #666;
+            font-size: 0.95em;
+        }
+        
+        .delete-modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 15px;
+            margin-top: 25px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+        }
+        
+        .btn-cancel {
+            background-color: #6c757d;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+        }
+        
+        .btn-cancel:hover {
+            background-color: #5a6268;
+        }
+        
+        .btn-delete-confirm {
+            background-color: #dc3545;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+        }
+        
+        .btn-delete-confirm:hover {
+            background-color: #c82333;
+        }
+        
+        .btn-delete-confirm:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
     </style>
     <script>
+        // Enhanced delete confirmation with detailed information
         function confirmDelete(projectName, projectId) {
-            if (confirm(`Are you sure you want to delete the project "${projectName}"? This action cannot be undone.`)) {
-                window.location.href = `manage_projects.php?action=delete&id=${projectId}`;
+            // First get deletion info via AJAX
+            fetch(`get_project_delete_info.php?project_id=${projectId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert('Error: ' + data.error);
+                        return;
+                    }
+                    
+                    // Show detailed confirmation modal
+                    showDeleteModal(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error fetching project deletion information');
+                });
+        }
+        
+        function showDeleteModal(data) {
+            const modal = document.getElementById('deleteModal');
+            const project = data.project;
+            const counts = data.counts;
+            
+            // Update modal content
+            document.getElementById('modalProjectName').textContent = project.name;
+            document.getElementById('modalAccountName').textContent = project.account_name;
+            
+            // Build deletion summary
+            let summaryHtml = '';
+            
+            if (counts.deliveries > 0) {
+                summaryHtml += `<div class="delete-item">📦 <strong>${counts.deliveries}</strong> delivery record${counts.deliveries !== 1 ? 's' : ''}</div>`;
             }
+            
+            if (counts.module_batches > 0) {
+                summaryHtml += `<div class="delete-item">📋 <strong>${counts.module_batches}</strong> module batch${counts.module_batches !== 1 ? 'es' : ''}</div>`;
+                if (counts.total_modules > 0) {
+                    summaryHtml += `<div class="delete-sub-item">    → ${counts.total_modules.toLocaleString()} total modules</div>`;
+                }
+            }
+            
+            if (counts.pallets > 0) {
+                summaryHtml += `<div class="delete-item">📦 <strong>${counts.pallets}</strong> pallet record${counts.pallets !== 1 ? 's' : ''}</div>`;
+            }
+            
+            if (counts.delivery_pallets > 0) {
+                summaryHtml += `<div class="delete-item">🔗 <strong>${counts.delivery_pallets}</strong> delivery-pallet link${counts.delivery_pallets !== 1 ? 's' : ''}</div>`;
+            }
+            
+            if (summaryHtml === '') {
+                summaryHtml = '<div class="delete-item">✅ No associated data to delete</div>';
+            }
+            
+            document.getElementById('deletionSummary').innerHTML = summaryHtml;
+            
+            // Store project ID for actual deletion
+            document.getElementById('confirmDeleteBtn').setAttribute('data-project-id', project.id);
+            document.getElementById('confirmDeleteBtn').setAttribute('data-project-name', project.name);
+            
+            // Show modal
+            modal.style.display = 'block';
+        }
+        
+        function closeDeleteModal() {
+            document.getElementById('deleteModal').style.display = 'none';
+        }
+        
+        function executeDelete() {
+            const btn = document.getElementById('confirmDeleteBtn');
+            const projectId = btn.getAttribute('data-project-id');
+            const projectName = btn.getAttribute('data-project-name');
+            
+            // Disable button and show loading
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+            
+            // Execute deletion
+            const formData = new FormData();
+            formData.append('project_id', projectId);
+            
+            fetch('delete_project_cascade.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Show success message and reload page
+                    alert(`Success: ${data.message}`);
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.error);
+                    // Re-enable button
+                    btn.disabled = false;
+                    btn.textContent = 'Yes, Delete Everything';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error deleting project');
+                // Re-enable button
+                btn.disabled = false;
+                btn.textContent = 'Yes, Delete Everything';
+            });
         }
         
         // Dropdown functionality
@@ -333,6 +542,14 @@ $conn->close(); // Close connection after fetching project data
                 menu.classList.remove('show');
             });
         });
+        
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+            const modal = document.getElementById('deleteModal');
+            if (event.target === modal) {
+                closeDeleteModal();
+            }
+        }
     </script>
 </head>
 <body>
@@ -435,6 +652,33 @@ $conn->close(); // Close connection after fetching project data
                 <?php endif; ?>
             </tbody>
         </table>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteModal" class="delete-modal">
+        <div class="delete-modal-content">
+            <div class="delete-modal-header">
+                <h2>⚠️ Confirm Project Deletion</h2>
+                <span class="delete-modal-close" onclick="closeDeleteModal()">&times;</span>
+            </div>
+            
+            <div class="delete-warning">
+                <h4>Warning: This action cannot be undone!</h4>
+                <p>You are about to permanently delete the project <strong id="modalProjectName"></strong> (Account: <span id="modalAccountName"></span>)</p>
+            </div>
+            
+            <div class="deletion-summary">
+                <h4>The following data will also be permanently deleted:</h4>
+                <div id="deletionSummary">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+            
+            <div class="delete-modal-actions">
+                <button type="button" class="btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+                <button type="button" id="confirmDeleteBtn" class="btn-delete-confirm" onclick="executeDelete()">Yes, Delete Everything</button>
+            </div>
+        </div>
     </div>
 
 </main>
