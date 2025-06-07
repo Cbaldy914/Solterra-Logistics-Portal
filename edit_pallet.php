@@ -64,19 +64,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
         try {
             /* --- Collect Basic Inputs --- */
             $new_identifier = trim($_POST['pallet_identifier'] ?? '');
-            $new_wattage = trim($_POST['wattage'] ?? '');
+            // Wattage is no longer editable - use current value
+            $current_wattage = $pallet['wattage'];
             // $new_quantity = isset($_POST['quantity']) ? intval($_POST['quantity']) : 0; // No longer editable
             // $new_status = trim($_POST['status'] ?? ''); // No longer editable
             
             // Get current quantity and status from the loaded pallet data
             $current_quantity = $pallet['quantity'];
             $current_status = $pallet['status'];
-            $original_wattage = $pallet['wattage']; // Store original for comparison
 
             /* --- Basic Validation --- */
             if (empty($new_identifier)) throw new Exception("Pallet Identifier cannot be empty.");
-            if (empty($new_wattage)) throw new Exception("Wattage cannot be empty.");
-            // No need to validate quantity/status from POST anymore
+            // No need to validate wattage/quantity/status from POST anymore
 
             /* --- Handle Flash Test Data --- */
             $current_flash_test_path = $pallet['flash_test_data'];
@@ -140,20 +139,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
             }
 
             /* --- Prepare and Execute Update --- */
-            // Update only identifier, wattage, and flash_test_data
+            // Update only identifier and flash_test_data (wattage is now read-only)
             $sql_update = "UPDATE inventory_pallets SET 
                                 pallet_identifier = ?, 
-                                wattage = ?, 
                                 flash_test_data = ? 
                            WHERE id = ?";
             $stmt_update = $conn->prepare($sql_update);
             if (!$stmt_update) throw new Exception("Failed to prepare update statement: " . $conn->error);
             
-            $stmt_update->bind_param("sssi", 
+            $stmt_update->bind_param("ssi", 
                 $new_identifier, 
-                $new_wattage, 
-                // $current_quantity, // Use current value - NOT UPDATED
-                // $current_status,   // Use current value - NOT UPDATED
                 $new_flash_test_path, 
                 $pallet_id
             );
@@ -163,29 +158,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
                 $successMessage = "Pallet '{$new_identifier}' (ID: {$pallet_id}) updated successfully.";
                 $_SESSION['manage_pallets_message'] = $successMessage;
                 
-                // Check if wattage changed and set a separate warning message with batch ID
-                // --- DEBUGGING START ---
-                error_log("--- Pallet Wattage Warning Check ---");
-                error_log("Pallet ID: " . $pallet_id);
-                error_log("Original Wattage: " . var_export($original_wattage, true) . " (Type: " . gettype($original_wattage) . ")");
-                error_log("New Wattage: " . var_export($new_wattage, true) . " (Type: " . gettype($new_wattage) . ")");
-                error_log("Pallet Data Dump: " . print_r($pallet, true));
-                error_log("Value of pallet[unassigned_module_id]: " . var_export($pallet['unassigned_module_id'], true));
-                $wattage_differs_check = ($new_wattage != $original_wattage);
-                $batch_id_present_check = !empty($pallet['unassigned_module_id']);
-                error_log("Check Result: Wattage Differs? " . ($wattage_differs_check ? 'YES' : 'NO'));
-                error_log("Check Result: Batch ID Present? " . ($batch_id_present_check ? 'YES' : 'NO'));
-                error_log("Overall Condition Check: " . (($wattage_differs_check && $batch_id_present_check) ? 'TRUE' : 'FALSE'));
-                // --- DEBUGGING END ---
-                if ($new_wattage != $original_wattage && !empty($pallet['unassigned_module_id'])) {
-                    error_log("DEBUG: Condition MET. Setting warning session."); // Log inside the IF
-                     $_SESSION['manage_pallets_warning'] = [
-                         'message' => "Warning: Wattage changed for Pallet ID {$pallet_id}. Please review the original module batch details.",
-                         'batch_id' => $pallet['unassigned_module_id']
-                     ];
-                } else {
-                    error_log("DEBUG: Condition NOT MET. Not setting warning session."); // Log the ELSE case
-                }
+                // No longer need to check for wattage changes since wattage is read-only
                 header("Location: manage_pallets.php");
                 exit();
             } else {
@@ -294,7 +267,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
             <input type="text" id="pallet_identifier" name="pallet_identifier" value="<?php echo htmlspecialchars($pallet['pallet_identifier'] ?? ''); ?>" required>
 
             <label for="wattage">Wattage:</label>
-            <input type="text" id="wattage" name="wattage" value="<?php echo htmlspecialchars($pallet['wattage'] ?? ''); ?>" required>
+            <input type="text" id="wattage" name="wattage" value="<?php echo htmlspecialchars($pallet['wattage'] ?? ''); ?>" readonly style="background-color: #e9ecef;">
+            <small>Wattage is inherited from the module batch and cannot be changed here. To change wattage, edit the original module batch in "Modules" section.</small>
 
             <label for="quantity">Quantity:</label>
             <input type="number" id="quantity" name="quantity" value="<?php echo htmlspecialchars($pallet['quantity'] ?? ''); ?>" readonly style="background-color: #e9ecef;">

@@ -106,58 +106,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $stmtUp->close();
 
-    // Handle wattage updates
-
-    // 1) Remove wattages
-    if (isset($_POST['remove_wattages'])) {
-        foreach ($_POST['remove_wattages'] as $wid) {
-            $wid = intval($wid);
-            $stmtRm = $conn->prepare("DELETE FROM project_wattage_orders WHERE id=? AND project_id=?");
-            $stmtRm->bind_param("ii", $wid, $project_id);
-            if (!$stmtRm->execute()) {
-                die("Error deleting wattage: " . $stmtRm->error);
-            }
-            $stmtRm->close();
-        }
-    }
-
-    // 2) Update existing wattages
-    if (isset($_POST['wattages'], $_POST['total_orders'])) {
-        foreach ($_POST['wattages'] as $id => $w) {
-            $id   = intval($id);
-            $wat  = floatval($w);
-            $ord  = isset($_POST['total_orders'][$id]) ? intval($_POST['total_orders'][$id]) : 0;
-            $stmtWt = $conn->prepare("
-                UPDATE project_wattage_orders
-                   SET wattage = ?, total_order = ?
-                 WHERE id = ? AND project_id=?
-            ");
-            $stmtWt->bind_param("diii", $wat, $ord, $id, $project_id);
-            if (!$stmtWt->execute()) {
-                die("Error updating wattage: " . $stmtWt->error);
-            }
-            $stmtWt->close();
-        }
-    }
-
-    // 3) Add new wattages
-    if (isset($_POST['new_wattages'], $_POST['new_total_orders'])) {
-        $new_wattages     = $_POST['new_wattages'];
-        $new_total_orders = $_POST['new_total_orders'];
-        for ($i = 0; $i < count($new_wattages); $i++) {
-            $nw = floatval($new_wattages[$i]);
-            $nt = intval($new_total_orders[$i]);
-            $stmtAdd = $conn->prepare("
-                INSERT INTO project_wattage_orders (project_id, wattage, total_order)
-                VALUES (?,?,?)
-            ");
-            $stmtAdd->bind_param("idi", $project_id, $nw, $nt);
-            if (!$stmtAdd->execute()) {
-                die("Error adding new wattage: " . $stmtAdd->error);
-            }
-            $stmtAdd->close();
-        }
-    }
+    // Note: Module quantities are now managed through module batches assigned to this project
+    // The wattage/quantity display below is automatically calculated from assigned batches
 
     $conn->close();
     // Redirect or show success
@@ -179,16 +129,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $project = $res->fetch_assoc();
 
-    // 2) Fetch wattage orders
-    $stmtWo = $conn->prepare("SELECT * FROM project_wattage_orders WHERE project_id=?");
-    $stmtWo->bind_param("i", $project_id);
-    $stmtWo->execute();
-    $wRes = $stmtWo->get_result();
-    $stmtWo->close();
+    // 2) Fetch actual module batches assigned to this project (replaces manual wattage orders)
+    $stmtModules = $conn->prepare("
+        SELECT 
+            umi.wattage,
+            SUM(umi.quantity) as total_quantity
+        FROM modules m
+        JOIN unassigned_module_items umi ON m.id = umi.unassigned_module_id
+        WHERE m.project_id = ?
+        GROUP BY umi.wattage
+        ORDER BY umi.wattage ASC
+    ");
+    $stmtModules->bind_param("i", $project_id);
+    $stmtModules->execute();
+    $moduleRes = $stmtModules->get_result();
+    $stmtModules->close();
 
-    $wattage_orders=[];
-    while ($row=$wRes->fetch_assoc()) {
-        $wattage_orders[]=$row;
+    $actual_modules = [];
+    while ($row = $moduleRes->fetch_assoc()) {
+        $actual_modules[] = $row;
+    }
+
+    // Also get batch information for reference
+    $stmtBatches = $conn->prepare("
+        SELECT 
+            m.id as batch_id,
+            m.vendor_name,
+            umi.wattage,
+            umi.quantity
+        FROM modules m
+        JOIN unassigned_module_items umi ON m.id = umi.unassigned_module_id
+        WHERE m.project_id = ?
+        ORDER BY m.id ASC, umi.wattage ASC
+    ");
+    $stmtBatches->bind_param("i", $project_id);
+    $stmtBatches->execute();
+    $batchRes = $stmtBatches->get_result();
+    $stmtBatches->close();
+
+    $assigned_batches = [];
+    while ($row = $batchRes->fetch_assoc()) {
+        $assigned_batches[] = $row;
     }
     $conn->close();
     ?>
@@ -271,51 +252,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         </style>
         <script>
-            function addWattageField() {
-                var container = document.getElementById('wattage-container');
-                var index = container.children.length;
-
-                var div = document.createElement('div');
-                div.className = 'wattage-entry';
-
-                var wattageLabel = document.createElement('label');
-                wattageLabel.textContent = 'Wattage:';
-                var wattageInput = document.createElement('input');
-                wattageInput.type = 'number';
-                wattageInput.step = '0.01';
-                wattageInput.name = 'new_wattages[' + index + ']';
-                wattageInput.required = true;
-
-                var totalOrderLabel = document.createElement('label');
-                totalOrderLabel.textContent = 'Total Order Quantity:';
-                var totalOrderInput = document.createElement('input');
-                totalOrderInput.type = 'number';
-                totalOrderInput.name = 'new_total_orders[' + index + ']';
-                totalOrderInput.required = true;
-
-                var removeButton = document.createElement('button');
-                removeButton.type = 'button';
-                removeButton.textContent = 'Remove';
-                removeButton.onclick = function() {
-                    container.removeChild(div);
-                };
-
-                div.appendChild(wattageLabel);
-                div.appendChild(wattageInput);
-                div.appendChild(totalOrderLabel);
-                div.appendChild(totalOrderInput);
-                div.appendChild(removeButton);
-
-                container.appendChild(div);
-            }
-            function removeExistingWattage(id) {
-                var input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'remove_wattages[]';
-                input.value = id;
-                document.getElementById('edit-project-form').appendChild(input);
-                document.getElementById('wattage-entry-' + id).remove();
-            }
+            // Module quantities are now managed through assigned module batches
+            // No JavaScript needed for wattage management
         </script>
     </head>
     <body>
@@ -365,30 +303,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    required
             >
 
-            <h2>Wattage and Total Order Quantities</h2>
-            <div id="wattage-container">
-                <?php foreach ($wattage_orders as $order): ?>
-                    <div class="wattage-entry" id="wattage-entry-<?php echo $order['id']; ?>">
-                        <label>Wattage:</label>
-                        <input
-                            type="number"
-                            step="0.01"
-                            name="wattages[<?php echo $order['id']; ?>]"
-                            value="<?php echo htmlspecialchars($order['wattage']); ?>"
-                            required
-                        >
-                        <label>Total Order Quantity:</label>
-                        <input
-                            type="number"
-                            name="total_orders[<?php echo $order['id']; ?>]"
-                            value="<?php echo htmlspecialchars($order['total_order']); ?>"
-                            required
-                        >
-                        <button type="button" onclick="removeExistingWattage(<?php echo $order['id']; ?>)">Remove</button>
+            <h2>Project Module Summary</h2>
+            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6;">
+                <?php if (!empty($actual_modules)): ?>
+                    <div style="margin-bottom: 20px;">
+                        <h3 style="margin-top: 0; color: #293E4C;">Total Modules by Wattage</h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                            <?php foreach ($actual_modules as $module): ?>
+                                <div style="background: white; padding: 15px; border-radius: 6px; border-left: 4px solid #488C9A;">
+                                    <div style="font-size: 1.2em; font-weight: bold; color: #293E4C;">
+                                        <?php echo number_format($module['wattage']); ?>W
+                                    </div>
+                                    <div style="font-size: 1.1em; color: #488C9A; font-weight: 600;">
+                                        <?php echo number_format($module['total_quantity']); ?> modules
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <div style="margin-top: 15px; padding: 10px; background-color: #e8f4f8; border-radius: 4px;">
+                            <strong>Total Project Modules: 
+                                <?php 
+                                $total_all = array_sum(array_column($actual_modules, 'total_quantity'));
+                                echo number_format($total_all); 
+                                ?>
+                            </strong>
+                        </div>
                     </div>
-                <?php endforeach; ?>
+
+                    <?php if (!empty($assigned_batches)): ?>
+                        <div>
+                            <h4 style="color: #293E4C; margin-bottom: 10px;">Assigned Module Batches</h4>
+                            <div style="max-height: 300px; overflow-y: auto;">
+                                <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                                    <thead>
+                                        <tr style="background-color: #293E4C; color: white;">
+                                            <th style="padding: 8px; border: 1px solid #ddd;">Batch</th>
+                                                                                         <th style="padding: 8px; border: 1px solid #ddd;">Manufacturer</th>
+                                            <th style="padding: 8px; border: 1px solid #ddd;">Wattage</th>
+                                            <th style="padding: 8px; border: 1px solid #ddd;">Quantity</th>
+                                            <th style="padding: 8px; border: 1px solid #ddd;">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($assigned_batches as $batch): ?>
+                                            <tr style="border-bottom: 1px solid #eee;">
+                                                <td style="padding: 8px; border: 1px solid #ddd;">#<?php echo $batch['batch_id']; ?></td>
+                                                <td style="padding: 8px; border: 1px solid #ddd;">
+                                                    <?php 
+                                                    // Extract just the manufacturer name (before the " - " if it exists)
+                                                    $manufacturer_name = explode(' - ', $batch['vendor_name'])[0];
+                                                    echo htmlspecialchars($manufacturer_name); 
+                                                    ?>
+                                                </td>
+                                                <td style="padding: 8px; border: 1px solid #ddd;"><?php echo number_format($batch['wattage']); ?>W</td>
+                                                <td style="padding: 8px; border: 1px solid #ddd;"><?php echo number_format($batch['quantity']); ?></td>
+                                                <td style="padding: 8px; text-align: center; border: 1px solid #ddd;">
+                                                    <a href="module_overview.php?batch_id=<?php echo $batch['batch_id']; ?>" 
+                                                       style="color: #488C9A; text-decoration: none; font-size: 0.85em;">View Batch</a>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                <?php else: ?>
+                    <div style="text-align: center; padding: 40px; color: #666;">
+                        <h3 style="margin-top: 0;">No Module Batches Assigned</h3>
+                        <p>This project doesn't have any module batches assigned to it yet.</p>
+                        <p>
+                            <a href="modules.php" style="color: #488C9A; text-decoration: none; font-weight: 600;">
+                                → Go to Manage Modules to assign batches to this project
+                            </a>
+                        </p>
+                    </div>
+                <?php endif; ?>
+                
+                <div style="margin-top: 15px; padding: 10px; background-color: #fff3cd; border-radius: 4px; font-size: 0.9em;">
+                    <strong>Note:</strong> Module quantities are automatically calculated from batches assigned to this project. 
+                    To modify module quantities, edit the individual module batches in 
+                    <a href="modules.php" style="color: #856404;">Manage Modules</a>.
+                </div>
             </div>
-            <button type="button" class="btn-add-wattage" onclick="addWattageField()">Add Wattage</button>
 
             <button type="submit" class="btn-submit">Update Project</button>
         </form>

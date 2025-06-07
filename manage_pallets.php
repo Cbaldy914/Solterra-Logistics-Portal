@@ -19,8 +19,15 @@ $warningDetails = $_SESSION['manage_pallets_warning'] ?? null; // Check for warn
 if (isset($_SESSION['manage_pallets_message'])) unset($_SESSION['manage_pallets_message']);
 if (isset($_SESSION['manage_pallets_warning'])) unset($_SESSION['manage_pallets_warning']);
 
-// --- Handle CSV Upload ---
+// --- Handle CSV Upload (Global Admins Only) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_csv'])) {
+    // Check if user is global admin
+    if ($_SESSION['role'] !== 'global_admin') {
+        $errorMessage = "Error: Only global administrators can upload CSV files.";
+        $_SESSION['manage_pallets_message'] = $errorMessage;
+        header("Location: manage_pallets.php");
+        exit();
+    }
     if (isset($_FILES['csv_file']) && $_FILES['csv_file']['error'] == UPLOAD_ERR_OK) {
         $fileTmpPath = $_FILES['csv_file']['tmp_name'];
         $fileName = $_FILES['csv_file']['name'];
@@ -317,6 +324,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
 }
 // --- END Pallet Shipment ---
 
+// --- Handle Pallet Deletion ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_pallets') {
+    $deleteProcessMessage = '';
+    $conn_delete = getDBConnection();
+    if (!$conn_delete) {
+        $deleteProcessMessage = "Error: Database connection failed for deletion.";
+    } else {
+        $conn_delete->begin_transaction();
+        try {
+            $palletIdsToDelete = $_POST['selected_pallets'] ?? [];
+            if (empty($palletIdsToDelete)) {
+                throw new Exception('No pallets selected for deletion.');
+            }
+
+            // Check if any pallets are linked to deliveries
+            $placeholders = implode(',', array_fill(0, count($palletIdsToDelete), '?'));
+            $types = str_repeat('i', count($palletIdsToDelete));
+            
+            $stmtCheckDeliveries = $conn_delete->prepare("SELECT inventory_pallet_id FROM delivery_pallets WHERE inventory_pallet_id IN ($placeholders)");
+            if (!$stmtCheckDeliveries) throw new Exception("Failed to prepare delivery check: " . $conn_delete->error);
+            
+            $stmtCheckDeliveries->bind_param($types, ...$palletIdsToDelete);
+            $stmtCheckDeliveries->execute();
+            $resultDeliveries = $stmtCheckDeliveries->get_result();
+            $linkedPallets = [];
+            while ($row = $resultDeliveries->fetch_assoc()) {
+                $linkedPallets[] = $row['inventory_pallet_id'];
+            }
+            $stmtCheckDeliveries->close();
+
+            if (!empty($linkedPallets)) {
+                throw new Exception('Cannot delete pallets that are linked to deliveries. Pallet IDs: ' . implode(', ', $linkedPallets));
+            }
+
+            // Delete pallets
+            $stmtDelete = $conn_delete->prepare("DELETE FROM inventory_pallets WHERE id IN ($placeholders)");
+            if (!$stmtDelete) throw new Exception("Failed to prepare pallet deletion: " . $conn_delete->error);
+            
+            $stmtDelete->bind_param($types, ...$palletIdsToDelete);
+            if (!$stmtDelete->execute()) {
+                throw new Exception("Failed to delete pallets: " . $stmtDelete->error);
+            }
+            
+            $deletedCount = $stmtDelete->affected_rows;
+            $stmtDelete->close();
+            $conn_delete->commit();
+            
+            $deleteProcessMessage = "Successfully deleted $deletedCount pallet(s).";
+            
+        } catch (Exception $e) {
+            $conn_delete->rollback();
+            $deleteProcessMessage = "Error deleting pallets: " . $e->getMessage();
+        } finally {
+            $conn_delete->close();
+        }
+    }
+    $_SESSION['manage_pallets_message'] = $deleteProcessMessage;
+    header("Location: manage_pallets.php");
+    exit();
+}
+// --- END Pallet Deletion ---
+
 
 try {
     $conn = getDBConnection(); // Main connection for displaying data
@@ -487,6 +556,11 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
             cursor: not-allowed;
         }
         
+        /* Red delete button styling */
+        .action-button[style*="background-color: #dc3545"]:hover:not(:disabled) {
+            background-color: #c82333 !important;
+        }
+        
         /* CSV Instructions Modal Styles */
         #csvInstructionsModal.modal {
             display: none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%;
@@ -590,7 +664,8 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         </div>
     <?php endif; ?>
 
-    <!-- CSV Upload Section -->
+    <!-- CSV Upload Section (Global Admins Only) -->
+    <?php if ($_SESSION['role'] === 'global_admin'): ?>
     <div class="csv-upload-section" style="margin-bottom: 20px; padding: 15px; background-color: #f0f0f0; border: 1px solid #ddd; border-radius: 5px;">
         <h3>
             Bulk Update Pallets via CSV
@@ -601,6 +676,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
             <button type="submit" name="upload_csv" class="action-button" style="background-color: #28a745;">Upload and Process CSV</button>
         </form>
     </div>
+    <?php endif; ?>
 
     <!-- Main Form for Shipping Pallets -->
     <form id="shipPalletsForm" method="POST" action="manage_pallets.php">
@@ -618,6 +694,18 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                         <option value="<?php echo htmlspecialchars($proj['project_name']); ?>"><?php echo htmlspecialchars($proj['project_name']); ?></option>
                     <?php endforeach; ?>
                 </select>
+                <label for="wattageFilter">Wattage:</label>
+                <select id="wattageFilter" onchange="filterTable()">
+                    <option value="">All</option>
+                    <?php
+                    // Get unique wattages from pallets for filter dropdown
+                    $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
+                    sort($wattages);
+                    foreach ($wattages as $w) {
+                        echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
+                    }
+                    ?>
+                </select>
             </div>
             <div class="filter-group-center">
                 <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
@@ -625,6 +713,9 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
             <div class="filter-group-right">
                 <button type="button" id="openShipModalBtn" class="action-button" style="padding: 8px 15px; font-size: 0.9em;" disabled>
                     Create Delivery for Selected
+                </button>
+                <button type="button" id="deletePalletsBtn" class="action-button" style="padding: 8px 15px; font-size: 0.9em; background-color: #dc3545;" disabled>
+                    Delete
                 </button>
                 <button type="button" id="exportCsvBtn" class="action-button" style="padding: 8px 15px; font-size: 0.9em;">Export to CSV</button>
             </div>
@@ -637,13 +728,12 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                         <th><input type="checkbox" id="selectAllPallets" title="Select/Deselect all visible pallets"></th>
                         <th>Project</th>
                         <th>Identifier</th>
-                        <th>Origin Vendor</th>
+                        <th>Manufacturer</th>
                         <th>Wattage</th>
                         <th>Quantity</th>
                         <th>Status</th>
                         <th>Current Location</th>
                         <th>Associated Deliveries</th>
-                        <th>Arrival Date</th>
                         <th>Flash Test Data</th>
                         <th>Actions</th>
                     </tr>
@@ -651,31 +741,27 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                 <tbody>
                     <?php if (!empty($pallets)): ?>
                         <?php foreach ($pallets as $pallet): ?>
+                            <?php
+                            // Extract manufacturer name (remove anything after " - ")
+                            $manufacturer = $pallet['origin_vendor'] ?? 'N/A';
+                            if ($manufacturer !== 'N/A' && strpos($manufacturer, ' - ') !== false) {
+                                $manufacturer = trim(explode(' - ', $manufacturer)[0]);
+                            }
+                            // Handle specific cases where vendor might be a warehouse name instead of manufacturer
+                            if (in_array(strtolower($manufacturer), ['phoenix wh', 'phoenix warehouse'])) {
+                                $manufacturer = 'Meyer Burger'; // Default to Meyer Burger for warehouse entries
+                            }
+                            ?>
                             <tr data-id="<?php echo htmlspecialchars($pallet['pallet_id']); ?>">
                                 <td><input type="checkbox" name="selected_pallets[]" value="<?php echo htmlspecialchars($pallet['pallet_id']); ?>" class="pallet-checkbox"></td>
                                 <td><?php echo htmlspecialchars($pallet['current_project_name'] ?? 'Unassigned'); ?></td>
                                 <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
-                                <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
+                                <td><?php echo htmlspecialchars($manufacturer); ?></td>
                                 <td><?php echo htmlspecialchars($pallet['wattage']); ?></td>
                                 <td><?php echo number_format($pallet['quantity']); ?></td>
                                 <td><?php echo htmlspecialchars($pallet['status']); ?></td>
                                 <td><?php echo htmlspecialchars($pallet['current_location_display']); ?></td>
                                 <td><?php echo $pallet['delivery_association_count']; ?></td>
-                                <td>
-                                    <?php 
-                                    if (!empty($pallet['arrival_date']) && $pallet['arrival_date'] !== 'N/A') {
-                                        try {
-                                            // Assuming arrival_date might have time, just format the date part
-                                            $date = new DateTime($pallet['arrival_date']);
-                                            echo $date->format('m-d-Y');
-                                        } catch (Exception $e) {
-                                            echo htmlspecialchars($pallet['arrival_date']); // Fallback
-                                        }
-                                    } else {
-                                        echo 'N/A';
-                                    }
-                                    ?>
-                                </td>
                                 <td>
                                     <?php if (!empty($pallet['flash_test_data'])): ?>
                                         <a href="view_flash_test.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" target="_blank" class="action-button" style="background-color: #5bc0de;">View</a>
@@ -685,13 +771,13 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                 </td>
                                 <td>
                                     <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button">Pallet Details</a>
-                                    <button class="action-button" onclick="window.location.href='edit_pallet.php?pallet_id=<?php echo $pallet['pallet_id']; ?>'" style="background-color:#f0ad4e;">Edit Pallet</button>
+                                    <button type="button" class="action-button" onclick="window.location.href='edit_pallet.php?pallet_id=<?php echo $pallet['pallet_id']; ?>'" style="background-color:#f0ad4e;">Edit Pallet</button>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="12">No pallets found in the system.</td> <!-- Updated colspan -->
+                            <td colspan="11">No pallets found in the system.</td> <!-- Updated colspan -->
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -819,10 +905,11 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 </script>
 
 <script>
-// Combined filter for project and general search
+// Combined filter for project, wattage, and general search
 function filterTable() {
     var input = document.getElementById("filterInput").value.toUpperCase();
     var projectFilterValue = document.getElementById("projectFilter").value;
+    var wattageFilterValue = document.getElementById("wattageFilter").value;
     var table = document.getElementById("palletsTable");
     var tr = table.getElementsByTagName("tr");
 
@@ -831,6 +918,7 @@ function filterTable() {
         var td = tr[i].getElementsByTagName("td");
         if (td.length > 0) { // Ensure row has cells
             var projectCell = td[1]; // Project is the second column (index 1) after checkbox
+            var wattageCell = td[4]; // Wattage is the fifth column (index 4)
             
             var matchesProject = false;
             if (projectFilterValue === "") { 
@@ -839,6 +927,13 @@ function filterTable() {
                 matchesProject = projectCell && (projectCell.textContent || projectCell.innerText) === "Unassigned";
             } else {
                 matchesProject = projectCell && (projectCell.textContent || projectCell.innerText) === projectFilterValue;
+            }
+
+            var matchesWattage = false;
+            if (wattageFilterValue === "") {
+                matchesWattage = true;
+            } else {
+                matchesWattage = wattageCell && (wattageCell.textContent || wattageCell.innerText).trim() === wattageFilterValue;
             }
 
             var matchesSearch = false;
@@ -855,7 +950,7 @@ function filterTable() {
                     }
                 }
             }
-            if (matchesProject && matchesSearch) {
+            if (matchesProject && matchesWattage && matchesSearch) {
                 tr[i].style.display = "";
             }
         }
@@ -900,11 +995,11 @@ document.getElementById('exportCsvBtn').addEventListener('click', function() {
     var rows = table.querySelectorAll('tbody tr');
     var csvData = [];
 
-    var headers = [
-        "id", "pallet_identifier", "wattage", "quantity", "status", 
-        "flash_test_data", "Project", "Origin Vendor", "Current Location", 
-        "Associated Deliveries", "Arrival Date"
-    ];
+                var headers = [
+                "id", "pallet_identifier", "wattage", "quantity", "status", 
+                "flash_test_data", "Project", "Manufacturer", "Current Location", 
+                "Associated Deliveries"
+            ];
     csvData.push(headers.map(header => '"' + header.replace(/"/g, '""') + '"').join(','));
 
     rows.forEach(function(row) {
@@ -916,14 +1011,13 @@ document.getElementById('exportCsvBtn').addEventListener('click', function() {
                 id: row.getAttribute('data-id'), 
                 Project: 1,
                 pallet_identifier: 2,
-                Origin_Vendor: 3,
+                Manufacturer: 3,
                 wattage: 4,
                 quantity: 5,
                 status: 6,
                 Current_Location: 7,
                 Associated_Deliveries: 8,
-                Arrival_Date: 9,
-                flash_test_data: 10 
+                flash_test_data: 9 
             };
 
             headers.forEach(function(headerKey) {
@@ -996,9 +1090,11 @@ function toggleAllPalletCheckboxes(isChecked) {
 
 function updateOpenShipModalButtonState() {
     const openBtn = document.getElementById('openShipModalBtn');
-    if (!openBtn) return;
+    const deleteBtn = document.getElementById('deletePalletsBtn');
     const checkedCount = document.querySelectorAll('#palletsTable .pallet-checkbox:checked').length;
-    openBtn.disabled = (checkedCount === 0);
+    
+    if (openBtn) openBtn.disabled = (checkedCount === 0);
+    if (deleteBtn) deleteBtn.disabled = (checkedCount === 0);
 }
 
 function updateSelectedCount() {
@@ -1049,6 +1145,36 @@ document.addEventListener('DOMContentLoaded', function() {
     if (typeof toggleDestinationSelectSingle === 'function') toggleDestinationSelectSingle();
     if (typeof toggleDestinationSelectMulti === 'function') toggleDestinationSelectMulti();
     if (typeof updateMultiShipSummary === 'function') updateMultiShipSummary();
+
+    // Delete pallets functionality
+    const deletePalletsBtn = document.getElementById('deletePalletsBtn');
+    if (deletePalletsBtn) {
+        deletePalletsBtn.addEventListener('click', function() {
+            const checkedPallets = document.querySelectorAll('#palletsTable .pallet-checkbox:checked');
+            if (checkedPallets.length === 0) {
+                alert('Please select pallets to delete.');
+                return;
+            }
+            
+            const confirmation = confirm(`Are you sure you want to delete ${checkedPallets.length} selected pallet(s)? This action cannot be undone.`);
+            if (!confirmation) return;
+            
+            // Create a form and submit it
+            const form = document.getElementById('shipPalletsForm');
+            const actionInput = form.querySelector('input[name="action"]');
+            if (actionInput) {
+                actionInput.value = 'delete_pallets';
+            } else {
+                const newActionInput = document.createElement('input');
+                newActionInput.type = 'hidden';
+                newActionInput.name = 'action';
+                newActionInput.value = 'delete_pallets';
+                form.appendChild(newActionInput);
+            }
+            
+            form.submit();
+        });
+    }
 });
 
 // Shipment Modal Logic

@@ -804,11 +804,9 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     color: #ffffff;
     padding: 16px 12px;
     font-weight: 600;
-    text-align: left;
     font-size: 0.9em;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    border: none;
 }
 
 .table-responsive th:first-child {
@@ -828,6 +826,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 
 .table-responsive tbody tr {
     transition: all 0.2s ease;
+    cursor: pointer;
 }
 
 .table-responsive tbody tr:hover {

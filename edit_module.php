@@ -14,6 +14,52 @@ if (!$conn) {
     die("Database connection failed.");
 }
 
+// Function to sync project_wattage_orders table from actual module batches
+function syncProjectWattageOrders($conn, $project_id) {
+    if (!$project_id) return;
+    
+    try {
+        // Start transaction for consistency
+        $conn->begin_transaction();
+        
+        // First, delete existing entries for this project
+        $stmtDelete = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ?");
+        $stmtDelete->bind_param("i", $project_id);
+        $stmtDelete->execute();
+        $stmtDelete->close();
+        
+        // Get actual totals from assigned module batches
+        $stmtActual = $conn->prepare("
+            SELECT 
+                umi.wattage,
+                SUM(umi.quantity) as total_quantity
+            FROM modules m
+            JOIN unassigned_module_items umi ON m.id = umi.unassigned_module_id
+            WHERE m.project_id = ?
+            GROUP BY umi.wattage
+        ");
+        $stmtActual->bind_param("i", $project_id);
+        $stmtActual->execute();
+        $resultActual = $stmtActual->get_result();
+        
+        // Insert new entries based on actual module batches
+        $stmtInsert = $conn->prepare("INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)");
+        while ($row = $resultActual->fetch_assoc()) {
+            $wattage = $row['wattage'];
+            $total_quantity = $row['total_quantity'];
+            $stmtInsert->bind_param("iii", $project_id, $wattage, $total_quantity);
+            $stmtInsert->execute();
+        }
+        $stmtInsert->close();
+        $stmtActual->close();
+        
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        error_log("Error syncing project_wattage_orders: " . $e->getMessage());
+    }
+}
+
 $role    = $_SESSION['role'];
 $user_id = $_SESSION['user_id'];
 $batch_id = isset($_GET['batch_id']) ? intval($_GET['batch_id']) : 0;
@@ -101,6 +147,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Invalid Account selected.");
             }
 
+            // Get the old project ID before updating
+            $old_project_id = null;
+            $stmtOldProject = $conn->prepare("SELECT project_id FROM modules WHERE id = ?");
+            if ($stmtOldProject) {
+                $stmtOldProject->bind_param("i", $batch_id_post);
+                $stmtOldProject->execute();
+                $stmtOldProject->bind_result($old_project_id);
+                $stmtOldProject->fetch();
+                $stmtOldProject->close();
+            }
+
             // Get other main fields
             $vendor_name      = trim($_POST['vendor_name'] ?? '');
             $initial_location = trim($_POST['initial_location'] ?? '');
@@ -159,7 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Failed to prepare item update/insert statements: " . $conn->error);
             }
 
-            // 3. Process submitted items
+            // 3. Process submitted items with validation for palletized quantities
             $submitted_item_ids = [];
             $items_processed_count = 0;
             if (isset($_POST['items']) && is_array($_POST['items'])) {
@@ -174,7 +231,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
 
                     if ($item_id > 0 && in_array($item_id, $existing_item_ids)) {
-                        // Existing item: Update it
+                        // Existing item: Update it (allow reduction below palletized amounts for bulk workflow)
                         $stmt_update_item->bind_param("iii", $wattage, $quantity, $item_id);
                         if (!$stmt_update_item->execute()) throw new Exception("Failed to update item ID {$item_id}: " . $stmt_update_item->error);
                         $submitted_item_ids[] = $item_id; // Keep track of IDs that were submitted
@@ -243,6 +300,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $successMessage = "Batch updated successfully!";
             if (!empty($skipped_deletions)) {
                 $successMessage .= " Note: Items with IDs (" . implode(', ', $skipped_deletions) . ") were not deleted because they still have pallets linked to them.";
+            }
+            
+            // Sync project_wattage_orders for both old and new projects
+            if ($old_project_id && $old_project_id != $project_id) {
+                // Sync the old project (batch was removed from it)
+                syncProjectWattageOrders($conn, $old_project_id);
+            }
+            if ($project_id) {
+                // Sync the new/current project (batch was added/updated)
+                syncProjectWattageOrders($conn, $project_id);
             }
             $_SESSION['edit_module_message'] = $successMessage; // Use a specific session key
             header("Location: module_overview.php?batch_id=" . $batch_id_post . "&update_status=success");
@@ -475,12 +542,12 @@ $conn->close();
             div.className = 'wattage-entry';
             div.innerHTML = `
                 <div>
-                    <label for="wattages_${index}">Wattage:</label>
-                    <input type="number" step="1" name="wattages[]" id="wattages_${index}" required>
+                    <label for="items_${index}_wattage">Wattage:</label>
+                    <input type="number" step="1" name="items[${index}][wattage]" id="items_${index}_wattage" required>
                 </div>
                 <div>
-                    <label for="quantities_${index}">Quantity:</label>
-                    <input type="number" step="1" name="quantities[]" id="quantities_${index}" required>
+                    <label for="items_${index}_quantity">Quantity:</label>
+                    <input type="number" step="1" name="items[${index}][quantity]" id="items_${index}_quantity" required>
                 </div>
                 <div class="remove-btn-container">
                     <button type="button" class="remove-wattage-btn" onclick="this.closest('.wattage-entry').remove()">Remove</button>
@@ -635,12 +702,13 @@ $conn->close();
             }
             if ($discrepancy_found): ?>
                 <div style="background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 12px; margin-bottom: 18px; border-radius: 4px;">
-                    <strong>Warning:</strong> The quantities below reflect the actual number of modules on pallets for each wattage. Please update the batch quantities to match if you have made changes to pallet wattages.<br>
+                    <strong>📋 Pallet vs Batch Quantities:</strong> Current status of palletized modules vs batch quantities:<br>
                     <ul style="margin-top: 8px;">
                         <?php foreach ($discrepancy_lines as $line): ?>
                             <li><?php echo htmlspecialchars($line); ?></li>
                         <?php endforeach; ?>
                     </ul>
+                    <strong>Note:</strong> After saving changes, check the Module Overview page to see if you have excess pallets that need to be removed or if you need to palletize additional modules.
                 </div>
             <?php endif; ?>
 
