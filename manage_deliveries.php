@@ -791,6 +791,186 @@ $count_stmt->close();
 $delivery_counts['project'] = $project_count ?: 0;
 $delivery_counts['warehouse'] = $warehouse_count ?: 0;
 $delivery_counts['all'] = $total_count ?: 0;
+
+/*
+  -----------------------------------------------------------------------------
+  7) Handle CSV Export
+  -----------------------------------------------------------------------------
+*/
+if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
+    // Build the same query as the main display but for export
+    $export_params = [$default_freight_cost];
+    $export_param_types = "d";
+    
+    // Apply same filtering logic as main query
+    $export_project_condition = "";
+    if (is_numeric($filter_project_id)) {
+        $export_project_condition = " AND d.project_id = ?";
+        $export_param_types .= "i";
+        $export_params[] = $filter_project_id;
+        if (!$is_global_admin && $account_id_for_admin) {
+            $export_project_condition .= " AND p.account_id = ?";
+            $export_param_types .= "i";
+            $export_params[] = $account_id_for_admin;
+        }
+    } elseif ($filter_project_id === 'unassigned') {
+        $export_project_condition = " AND d.project_id IS NULL";
+    } elseif ($filter_project_id === 'all' && $is_global_admin) {
+        $export_project_condition = "";
+    } else {
+        if (!$is_global_admin && $account_id_for_admin) {
+            $export_project_condition = " AND p.account_id = ?";
+            $export_param_types .= "i";
+            $export_params[] = $account_id_for_admin;
+        } else {
+            $export_project_condition = " AND 1=0";
+        }
+    }
+    
+    // Add date conditions
+    $export_date_condition = "";
+    if ($time_filter === 'day') {
+        $export_date_condition .= " AND DATE($filterColumn) = ?";
+        $export_param_types .= "s";
+        $export_params[] = $ref_date;
+    } elseif ($time_filter === 'week') {
+        $timestamp   = strtotime($ref_date);
+        $dayOfWeek   = date('w', $timestamp);
+        $startOfWeek = date('Y-m-d', strtotime("-{$dayOfWeek} days", $timestamp));
+        $endOfWeek   = date('Y-m-d', strtotime("+" . (6 - $dayOfWeek) . " days", $timestamp));
+        $export_date_condition .= " AND DATE($filterColumn) BETWEEN ? AND ?";
+        $export_param_types .= "ss";
+        $export_params[] = $startOfWeek;
+        $export_params[] = $endOfWeek;
+    } elseif ($time_filter === 'month') {
+        $startOfMonth = date('Y-m-01', strtotime($ref_date));
+        $endOfMonth   = date('Y-m-t', strtotime($ref_date));
+        $export_date_condition .= " AND DATE($filterColumn) BETWEEN ? AND ?";
+        $export_param_types .= "ss";
+        $export_params[] = $startOfMonth;
+        $export_params[] = $endOfMonth;
+    }
+    
+    // Add status condition
+    $export_status_condition = "";
+    if (!empty($status_filter)) {
+        $export_status_condition = " AND status_of_delivery = ?";
+        $export_param_types .= "s";
+        $export_params[] = $status_filter;
+    }
+    
+    // Add delivery type condition
+    $export_delivery_type_condition = "";
+    if ($delivery_type === 'project') {
+        $export_delivery_type_condition = " AND (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project')";
+    } elseif ($delivery_type === 'warehouse') {
+        $export_delivery_type_condition = " AND d.warehouse_id IS NOT NULL";
+    }
+    
+    // Export query
+    $export_sql = "
+        SELECT d.id, 
+               COALESCE(p.project_name, 'Unassigned') as project_name,
+               CASE 
+                   WHEN COALESCE(
+                       GROUP_CONCAT(DISTINCT m.vendor_name ORDER BY m.vendor_name SEPARATOR ', '),
+                       d.supplier
+                   ) LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(COALESCE(
+                       GROUP_CONCAT(DISTINCT m.vendor_name ORDER BY m.vendor_name SEPARATOR ', '),
+                       d.supplier
+                   ), '-', 1))
+                   ELSE COALESCE(
+                       GROUP_CONCAT(DISTINCT m.vendor_name ORDER BY m.vendor_name SEPARATOR ', '),
+                       d.supplier
+                   )
+               END AS manufacturer_name,
+               d.wattage,
+               d.status_of_delivery,
+               d.quantity,
+               d.bol_number,
+               d.anticipated_delivery_date,
+               d.warehouse_arrival_date,
+               d.actual_delivery_date,
+               d.miles,
+               IFNULL(d.freight_cost, ?) AS freight_cost_with_default,
+               d.accessorial_costs,
+               d.created_at
+        FROM deliveries d
+        LEFT JOIN projects p ON d.project_id = p.id
+        LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+        LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+        LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+        LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE 1=1
+        $export_project_condition
+        $export_date_condition
+        $export_status_condition
+        $export_delivery_type_condition
+        GROUP BY d.id, p.project_name
+        ORDER BY $filterColumn DESC
+    ";
+    
+    $export_stmt = $conn->prepare($export_sql);
+    $export_stmt->bind_param($export_param_types, ...$export_params);
+    $export_stmt->execute();
+    $export_result = $export_stmt->get_result();
+    
+    // Generate filename
+    $filename = 'deliveries_export_' . date('Y-m-d_H-i-s') . '.csv';
+    
+    // Set headers for CSV download
+    header('Content-Type: text/csv');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: must-revalidate');
+    
+    // Create file pointer
+    $output = fopen('php://output', 'w');
+    
+    // Add CSV headers
+    $csv_headers = [
+        'Delivery ID',
+        'Project Name',
+        'Manufacturer',
+        'Wattage',
+        'Status',
+        'Quantity',
+        'BOL Number',
+        'Anticipated Delivery Date',
+        'Warehouse Arrival Date',
+        'Actual Delivery Date',
+        'Miles',
+        'Freight Cost',
+        'Accessorial Costs',
+        'Created At'
+    ];
+    fputcsv($output, $csv_headers);
+    
+    // Add data rows
+    while ($row = $export_result->fetch_assoc()) {
+        $csv_row = [
+            $row['id'],
+            $row['project_name'],
+            $row['manufacturer_name'],
+            $row['wattage'],
+            $row['status_of_delivery'],
+            $row['quantity'],
+            $row['bol_number'],
+            $row['anticipated_delivery_date'],
+            $row['warehouse_arrival_date'],
+            $row['actual_delivery_date'],
+            $row['miles'],
+            number_format($row['freight_cost_with_default'], 2),
+            number_format($row['accessorial_costs'], 2),
+            $row['created_at']
+        ];
+        fputcsv($output, $csv_row);
+    }
+    
+    fclose($output);
+    $export_stmt->close();
+    $conn->close();
+    exit();
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1169,6 +1349,13 @@ $delivery_counts['all'] = $total_count ?: 0;
                 <button type="submit" form="deliveriesForm" name="delete_selected" id="bulkDeleteBtn" disabled
                     onclick="return confirm('Are you sure you want to delete the selected deliveries?');">
                     Bulk Delete
+                </button>
+                <!-- Export CSV Button -->
+                <button type="button" id="exportCsvBtn" onclick="exportToCSV()" 
+                    style="background-color: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9em; margin-left: 5px; transition: background-color 0.3s ease;"
+                    onmouseover="this.style.backgroundColor='#218838'" 
+                    onmouseout="this.style.backgroundColor='#28a745'">
+                    📥 Export CSV
                 </button>
             </div>
         </div>
@@ -1693,6 +1880,22 @@ $delivery_counts['all'] = $total_count ?: 0;
             closeAssociatedPalletModal();
         }
     });
+
+    // Export to CSV function
+    function exportToCSV() {
+        // Get current URL parameters to maintain filters
+        var currentUrl = new URL(window.location.href);
+        var params = new URLSearchParams(currentUrl.search);
+        
+        // Add export parameter
+        params.set('export_csv', '1');
+        
+        // Create export URL
+        var exportUrl = window.location.pathname + '?' + params.toString();
+        
+        // Trigger download
+        window.location.href = exportUrl;
+    }
 
 </script>
 </body>

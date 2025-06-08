@@ -845,6 +845,87 @@ $conn->close();
             border-radius: 4px;
             text-align: center;
         }
+        
+        /* Loading spinner modal styles */
+        .loading-modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+        }
+        .loading-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #488C9A;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 2s linear infinite;
+            margin: 0 auto 15px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Pagination styles */
+        .pagination-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 15px 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .pagination-info {
+            font-size: 0.9em;
+            color: #666;
+        }
+        .pagination-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .pagination-controls label {
+            font-size: 0.9em;
+            margin-right: 5px;
+        }
+        .pagination-controls input,
+        .pagination-controls select {
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        .pagination-controls button {
+            padding: 5px 10px;
+            background-color: #488C9A;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .pagination-controls button:hover {
+            background-color: #3A6E7F;
+        }
+        .pagination-controls button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -1046,13 +1127,26 @@ $conn->close();
                         <button type="button" id="openShipModalBtn" class="action-button" disabled>
                         Create Delivery for Selected Pallets
                         </button>
-                        <?php if ($hasOverPalletized): ?>
                         <button type="button" id="deletePalletsBtn" class="action-button" disabled style="background-color: #dc3545; margin-left: 10px;">
                         Delete
                         </button>
-                        <?php endif; ?>
                     </div>
                 </div>
+                
+                <div class="pagination-container">
+                    <div class="pagination-info">
+                        <span id="paginationInfo">Showing 0 of 0 pallets</span>
+                    </div>
+                    <div class="pagination-controls">
+                        <label for="itemsPerPage">Show:</label>
+                        <input type="number" id="itemsPerPage" value="100" min="1" max="500" style="width: 80px;">
+                        <label>pallets per page</label>
+                        <button type="button" id="prevPage" disabled>Previous</button>
+                        <span id="pageInfo">Page 1 of 1</span>
+                        <button type="button" id="nextPage" disabled>Next</button>
+                    </div>
+                </div>
+                
                 <?php if (!empty($pallets)): ?>
                     <table>
                         <thead>
@@ -1137,6 +1231,15 @@ $conn->close();
     <?php endif; ?>
 </main>
 
+<!-- Loading Modal for Palletization -->
+<div id="loadingModal" class="loading-modal">
+    <div class="loading-content">
+        <div class="spinner"></div>
+        <h3>Creating Pallets...</h3>
+        <p>Please wait while we generate your pallets. This may take a few moments.</p>
+    </div>
+</div>
+
 <!-- Modal for Shipment Details -->
 <div id="shipModal" class="modal">
     <div class="modal-content">
@@ -1161,6 +1264,23 @@ $conn->close();
                             <label for="est_arrival_date">Est. Arrival Date:</label>
                             <input type="date" id="est_arrival_date" name="est_arrival_date" required>
                         </div>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="freight_cost">Freight Cost ($):</label>
+                            <input type="number" id="freight_cost" name="freight_cost" step="0.01" min="0">
+                        </div>
+                        <div>
+                            <label for="accessorial_cost">Accessorial Cost ($):</label>
+                            <input type="number" id="accessorial_cost" name="accessorial_cost" step="0.01" min="0">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="customer_cost">Customer Cost ($):</label>
+                            <input type="number" id="customer_cost" name="customer_cost" step="0.01" min="0">
+                        </div>
+                        <div></div>
                     </div>
                     <label style="margin-bottom: 10px; display:block;">Destination:</label>
                     <label class="radio-label">
@@ -1197,6 +1317,23 @@ $conn->close();
                             <label for="est_arrival_date_multi">Est. Arrival Date:</label>
                             <input type="date" id="est_arrival_date_multi" name="est_arrival_date_multi" required>
                         </div>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="freight_cost_multi">Freight Cost ($):</label>
+                            <input type="number" id="freight_cost_multi" name="freight_cost_multi" step="0.01" min="0">
+                        </div>
+                        <div>
+                            <label for="accessorial_cost_multi">Accessorial Cost ($):</label>
+                            <input type="number" id="accessorial_cost_multi" name="accessorial_cost_multi" step="0.01" min="0">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="customer_cost_multi">Customer Cost ($):</label>
+                            <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
+                        </div>
+                        <div></div>
                     </div>
                     <label style="margin-bottom: 10px; display:block;">Destination:</label>
                     <label class="radio-label">
@@ -1276,71 +1413,163 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initial state
     updateOpenShipModalButtonState();
     updateSelectedCount();
+    
+    // Initialize pagination
+    initializePagination();
 });
+
+// ----------------- PAGINATION -----------------
+let currentPage = 1;
+let itemsPerPage = 100;
+let allPalletRows = [];
+
+function initializePagination() {
+    const table = document.querySelector('.pallets-section table tbody');
+    if (!table) return;
+    
+    allPalletRows = Array.from(table.querySelectorAll('tr'));
+    
+    const itemsPerPageInput = document.getElementById('itemsPerPage');
+    const prevButton = document.getElementById('prevPage');
+    const nextButton = document.getElementById('nextPage');
+    
+    if (itemsPerPageInput) {
+        itemsPerPageInput.addEventListener('change', function() {
+            itemsPerPage = Math.min(Math.max(1, parseInt(this.value) || 100), 500);
+            this.value = itemsPerPage;
+            currentPage = 1;
+            updatePagination();
+        });
+    }
+    
+    if (prevButton) {
+        prevButton.addEventListener('click', function() {
+            if (currentPage > 1) {
+                currentPage--;
+                updatePagination();
+            }
+        });
+    }
+    
+    if (nextButton) {
+        nextButton.addEventListener('click', function() {
+            const maxPages = Math.ceil(getFilteredRows().length / itemsPerPage);
+            if (currentPage < maxPages) {
+                currentPage++;
+                updatePagination();
+            }
+        });
+    }
+    
+    updatePagination();
+}
+
+function getFilteredRows() {
+    return allPalletRows.filter(row => {
+        // Check if row matches current filters (not just display style)
+        if (!row || !row.cells) return false;
+        
+        const filter = document.getElementById('palletSearch')?.value.toLowerCase() || '';
+        const wattageFilter = document.getElementById('wattageFilter')?.value || '';
+        
+        // Get cell contents
+        let textContent = '';
+        for (let i = 1; i < row.cells.length; i++) { // Skip checkbox column
+            textContent += (row.cells[i].textContent || row.cells[i].innerText || '').toLowerCase() + ' ';
+        }
+        
+        // Check search filter
+        if (filter && !textContent.includes(filter)) {
+            return false;
+        }
+        
+        // Check wattage filter (assuming wattage is in column 2, index 2)
+        if (wattageFilter && row.cells[2]) {
+            const cellWattage = (row.cells[2].textContent || row.cells[2].innerText || '').replace('W','').trim();
+            if (cellWattage !== wattageFilter) {
+                return false;
+            }
+        }
+        
+        return true;
+    });
+}
+
+function updatePagination() {
+    const filteredRows = getFilteredRows();
+    const totalItems = filteredRows.length;
+    const maxPages = Math.ceil(totalItems / itemsPerPage);
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    
+    // Hide all rows first
+    allPalletRows.forEach(row => {
+        row.style.display = 'none';
+    });
+    
+    // Show only current page rows from filtered set
+    filteredRows.slice(startIndex, endIndex).forEach(row => {
+        row.style.display = '';
+    });
+    
+    // Update pagination info
+    const paginationInfo = document.getElementById('paginationInfo');
+    const pageInfo = document.getElementById('pageInfo');
+    const prevButton = document.getElementById('prevPage');
+    const nextButton = document.getElementById('nextPage');
+    
+    if (paginationInfo) {
+        const showing = Math.min(endIndex, totalItems);
+        const displayStart = totalItems > 0 ? startIndex + 1 : 0;
+        paginationInfo.textContent = `Showing ${displayStart}-${showing} of ${totalItems} pallets`;
+    }
+    
+    if (pageInfo) {
+        pageInfo.textContent = `Page ${Math.max(1, currentPage)} of ${Math.max(1, maxPages)}`;
+    }
+    
+    if (prevButton) {
+        prevButton.disabled = currentPage <= 1;
+    }
+    
+    if (nextButton) {
+        nextButton.disabled = currentPage >= maxPages || totalItems === 0;
+    }
+    
+    // Update selection counts after pagination
+    updateSelectedCount();
+}
 
 // ----------------- PALLET FILTER (ADMIN VIEW) -----------------
-function filterPallets() { // Renamed from filterPallets to filterPalletsAdminView if we have two distinct ones
-    let filter = document.getElementById('palletSearch').value.toLowerCase();
-    let wattageFilter = document.getElementById('wattageFilter').value;
-    let rows = document.querySelectorAll('#shipPalletsForm table tbody tr'); // Target admin table
-
-    rows.forEach(function(row) {
-        let show = true;
-        let textContent = '';
-        for (let i = 1; i < row.cells.length; i++) { // Start from cell 1 to skip checkbox
-            textContent += row.cells[i].textContent.toLowerCase() + ' ';
-        }
-        if (filter && !textContent.includes(filter)) {
-            show = false;
-        }
-        if (wattageFilter && row.cells[2].textContent.replace('W','').trim() !== wattageFilter) {
-            show = false;
-        }
-        row.style.display = show ? '' : 'none';
-    });
-    updateSelectedCount(); // This might need adjustment if selectAll is not present for users
+function filterPallets() {
+    // Reset to page 1 when filter changes
+    currentPage = 1;
+    updatePagination();
 }
 
-// NEW: PALLET FILTER (USER VIEW)
-function filterPalletsUserView() {
-    let filter = document.getElementById('palletSearchUser').value.toLowerCase();
-    let wattageFilter = document.getElementById('wattageFilterUser').value;
-    let rows = document.querySelectorAll('#userPalletsTable tbody tr'); // Target user table
-
-    rows.forEach(function(row) {
-        let show = true;
-        let textContent = row.textContent.toLowerCase(); // Simpler, as no checkbox cell
-        
-        if (filter && !textContent.includes(filter)) {
-            show = false;
-        }
-        // Wattage filter for user view (cell index 1 for wattage)
-        if (wattageFilter && row.cells[1].textContent.replace('W','').trim() !== wattageFilter) {
-            show = false;
-        }
-        row.style.display = show ? '' : 'none';
-    });
+// ----------------- PALLETIZATION LOADING SPINNER -----------------
+function showLoadingModal() {
+    const modal = document.getElementById('loadingModal');
+    if (modal) modal.style.display = 'block';
 }
 
-// Conditional event listeners for admin/user filters
+function hideLoadingModal() {
+    const modal = document.getElementById('loadingModal');
+    if (modal) modal.style.display = 'none';
+}
+
+// Add loading spinner to pallet generation forms
 document.addEventListener('DOMContentLoaded', function() {
-    // Admin filters
-    const palletSearchAdmin = document.getElementById('palletSearch');
-    const wattageFilterAdmin = document.getElementById('wattageFilter');
-    if (palletSearchAdmin) palletSearchAdmin.addEventListener('keyup', filterPallets);
-    if (wattageFilterAdmin) wattageFilterAdmin.addEventListener('change', filterPallets);
-
-    // User filters
-    const palletSearchUser = document.getElementById('palletSearchUser');
-    const wattageFilterUser = document.getElementById('wattageFilterUser');
-    if (palletSearchUser) palletSearchUser.addEventListener('keyup', filterPalletsUserView);
-    if (wattageFilterUser) wattageFilterUser.addEventListener('change', filterPalletsUserView);
-
-    // Initial filter application if tables exist
-    if (document.getElementById('shipPalletsForm')) filterPallets();
-    if (document.getElementById('userPalletsTable')) filterPalletsUserView();
+    const palletForms = document.querySelectorAll('.wattage-summary-block form');
+    palletForms.forEach(function(form) {
+        form.addEventListener('submit', function() {
+            showLoadingModal();
+        });
+    });
+    
+    // Hide loading modal if page loads (in case of refresh/back button)
+    hideLoadingModal();
 });
-
 
 // ----------------- MODAL LOGIC (ONLY FOR ADMINS) -----------------
 const shipModal = document.getElementById('shipModal');
@@ -1487,6 +1716,9 @@ if (openShipModalBtn) { // Button only exists for admins
             const bol = document.getElementById('bol_number').value;
             const departure = document.getElementById('departure_date').value;
             const arrival = document.getElementById('est_arrival_date').value;
+            const freightCost = document.getElementById('freight_cost').value;
+            const accessorialCost = document.getElementById('accessorial_cost').value;
+            const customerCost = document.getElementById('customer_cost').value;
 
             if (!targetId) {
                 alert('Please select a destination (Project/Warehouse).');
@@ -1499,6 +1731,9 @@ if (openShipModalBtn) { // Button only exists for admins
             setOrCreateHidden(mainForm, 'bol_number', bol);
             setOrCreateHidden(mainForm, 'departure_date', departure);
             setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
+            setOrCreateHidden(mainForm, 'freight_cost', freightCost);
+            setOrCreateHidden(mainForm, 'accessorial_cost', accessorialCost);
+            setOrCreateHidden(mainForm, 'customer_cost', customerCost);
 
             mainForm.submit();
         });
@@ -1535,6 +1770,9 @@ if (openShipModalBtn) { // Button only exists for admins
             const bol = document.getElementById('bol_number_multi').value;
             const departure = document.getElementById('departure_date_multi').value;
             const arrival = document.getElementById('est_arrival_date_multi').value;
+            const freightCost = document.getElementById('freight_cost_multi').value;
+            const accessorialCost = document.getElementById('accessorial_cost_multi').value;
+            const customerCost = document.getElementById('customer_cost_multi').value;
 
             if (!targetId) {
                 alert('Please select a destination (Project/Warehouse).');
@@ -1547,6 +1785,9 @@ if (openShipModalBtn) { // Button only exists for admins
             setOrCreateHidden(mainForm, 'bol_number', bol);
             setOrCreateHidden(mainForm, 'departure_date', departure);
             setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
+            setOrCreateHidden(mainForm, 'freight_cost', freightCost);
+            setOrCreateHidden(mainForm, 'accessorial_cost', accessorialCost);
+            setOrCreateHidden(mainForm, 'customer_cost', customerCost);
 
             mainForm.submit();
         });

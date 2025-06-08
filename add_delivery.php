@@ -164,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 14 placeholders
             $stmt = $conn->prepare($sql);
             if (!$stmt) throw new Exception("Prepare project delivery failed: " . $conn->error);
-            $bind_types = "isssissddddsd";
+            $bind_types = "isssisssddddsd"; // 14 characters: i,s,s,s,i,s,s,s,d,d,d,d,s,d
         } else { // Warehouse
             $sql = "INSERT INTO deliveries
                     (warehouse_id, supplier, wattage, status_of_delivery, quantity, bol_number,
@@ -172,7 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 12 placeholders
             $stmt = $conn->prepare($sql);
              if (!$stmt) throw new Exception("Prepare warehouse delivery failed: " . $conn->error);
-             $bind_types = "isssiddddsd";
+             $bind_types = "isssisddddsd"; // 12 characters: i,s,s,s,i,s,d,d,d,d,s,d
         }
 
         // Loop through each wattage entry and insert
