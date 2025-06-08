@@ -631,6 +631,51 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
             margin-bottom: 15px; border: 1px solid; border-radius: 4px;
         }
         .warning-message a { margin-left: 10px; font-weight: bold; color: #856404; }
+        
+        /* Pagination styles */
+        .pagination-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 15px 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .pagination-info {
+            font-size: 0.9em;
+            color: #666;
+        }
+        .pagination-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .pagination-controls label {
+            font-size: 0.9em;
+            margin-right: 5px;
+        }
+        .pagination-controls input,
+        .pagination-controls select {
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        .pagination-controls button {
+            padding: 5px 10px;
+            background-color: #488C9A;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .pagination-controls button:hover {
+            background-color: #3A6E7F;
+        }
+        .pagination-controls button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -718,6 +763,20 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                     Delete
                 </button>
                 <button type="button" id="exportCsvBtn" class="action-button" style="padding: 8px 15px; font-size: 0.9em;">Export to CSV</button>
+            </div>
+        </div>
+
+        <div class="pagination-container">
+            <div class="pagination-info">
+                <span id="paginationInfo">Showing 0 of 0 pallets</span>
+            </div>
+            <div class="pagination-controls">
+                <label for="itemsPerPage">Show:</label>
+                <input type="number" id="itemsPerPage" value="100" min="1" max="500" style="width: 80px;">
+                <label>pallets per page</label>
+                <button type="button" id="prevPage" disabled>Previous</button>
+                <span id="pageInfo">Page 1 of 1</span>
+                <button type="button" id="nextPage" disabled>Next</button>
             </div>
         </div>
 
@@ -840,6 +899,23 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                             <input type="date" id="est_arrival_date_single_modal" name="est_arrival_date_single_modal" required>
                         </div>
                     </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="freight_cost_single">Freight Cost ($):</label>
+                            <input type="number" id="freight_cost_single" name="freight_cost_single" step="0.01" min="0">
+                        </div>
+                        <div>
+                            <label for="accessorial_cost_single">Accessorial Cost ($):</label>
+                            <input type="number" id="accessorial_cost_single" name="accessorial_cost_single" step="0.01" min="0">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="customer_cost_single">Customer Cost ($):</label>
+                            <input type="number" id="customer_cost_single" name="customer_cost_single" step="0.01" min="0">
+                        </div>
+                        <div></div>
+                    </div>
                     <label style="margin-bottom: 10px; display:block;">Destination:</label>
                     <label class="radio-label">
                         <input type="radio" name="destination_type_single_modal" value="project" checked onchange="toggleDestinationSelectSingle()"> Project
@@ -876,6 +952,23 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                             <input type="date" id="est_arrival_date_multi_modal" name="est_arrival_date_multi_modal" required>
                         </div>
                     </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="freight_cost_multi">Freight Cost ($):</label>
+                            <input type="number" id="freight_cost_multi" name="freight_cost_multi" step="0.01" min="0">
+                        </div>
+                        <div>
+                            <label for="accessorial_cost_multi">Accessorial Cost ($):</label>
+                            <input type="number" id="accessorial_cost_multi" name="accessorial_cost_multi" step="0.01" min="0">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div>
+                            <label for="customer_cost_multi">Customer Cost ($):</label>
+                            <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
+                        </div>
+                        <div></div>
+                    </div>
                     <label style="margin-bottom: 10px; display:block;">Destination:</label>
                     <label class="radio-label">
                         <input type="radio" name="destination_type_multi_modal" value="project" checked onchange="toggleDestinationSelectMulti()"> Project
@@ -907,55 +1000,151 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 <script>
 // Combined filter for project, wattage, and general search
 function filterTable() {
-    var input = document.getElementById("filterInput").value.toUpperCase();
-    var projectFilterValue = document.getElementById("projectFilter").value;
-    var wattageFilterValue = document.getElementById("wattageFilter").value;
-    var table = document.getElementById("palletsTable");
-    var tr = table.getElementsByTagName("tr");
+    // Reset to page 1 when filter changes
+    currentPage = 1;
+    updatePagination();
+}
 
-    for (var i = 1; i < tr.length; i++) { // Start from 1 to skip header row
-        tr[i].style.display = "none"; 
-        var td = tr[i].getElementsByTagName("td");
-        if (td.length > 0) { // Ensure row has cells
-            var projectCell = td[1]; // Project is the second column (index 1) after checkbox
-            var wattageCell = td[4]; // Wattage is the fifth column (index 4)
-            
-            var matchesProject = false;
-            if (projectFilterValue === "") { 
-                matchesProject = true;
-            } else if (projectFilterValue === "Unassigned") {
-                matchesProject = projectCell && (projectCell.textContent || projectCell.innerText) === "Unassigned";
-            } else {
-                matchesProject = projectCell && (projectCell.textContent || projectCell.innerText) === projectFilterValue;
+// ----------------- PAGINATION -----------------
+let currentPage = 1;
+let itemsPerPage = 100;
+let allPalletRows = [];
+
+function initializePagination() {
+    const table = document.getElementById('palletsTable');
+    if (!table) return;
+    
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    
+    allPalletRows = Array.from(tbody.querySelectorAll('tr'));
+    
+    const itemsPerPageInput = document.getElementById('itemsPerPage');
+    const prevButton = document.getElementById('prevPage');
+    const nextButton = document.getElementById('nextPage');
+    
+    if (itemsPerPageInput) {
+        itemsPerPageInput.addEventListener('change', function() {
+            itemsPerPage = Math.min(Math.max(1, parseInt(this.value) || 100), 500);
+            this.value = itemsPerPage;
+            currentPage = 1;
+            updatePagination();
+        });
+    }
+    
+    if (prevButton) {
+        prevButton.addEventListener('click', function() {
+            if (currentPage > 1) {
+                currentPage--;
+                updatePagination();
             }
-
-            var matchesWattage = false;
-            if (wattageFilterValue === "") {
-                matchesWattage = true;
-            } else {
-                matchesWattage = wattageCell && (wattageCell.textContent || wattageCell.innerText).trim() === wattageFilterValue;
+        });
+    }
+    
+    if (nextButton) {
+        nextButton.addEventListener('click', function() {
+            const maxPages = Math.ceil(getFilteredRows().length / itemsPerPage);
+            if (currentPage < maxPages) {
+                currentPage++;
+                updatePagination();
             }
+        });
+    }
+    
+    updatePagination();
+}
 
-            var matchesSearch = false;
-            if (input === "") {
-                matchesSearch = true; 
-            } else {
-                for (var j = 1; j < td.length - 1; j++) { 
-                    if (td[j]) {
-                        var txtValue = td[j].textContent || td[j].innerText;
-                        if (txtValue.toUpperCase().indexOf(input) > -1) {
-                            matchesSearch = true;
-                            break;
-                        }
+function getFilteredRows() {
+    return allPalletRows.filter(row => {
+        // Check if row matches current filters (not just display style)
+        if (!row || !row.cells) return false;
+        
+        const input = document.getElementById("filterInput")?.value.toUpperCase() || '';
+        const projectFilterValue = document.getElementById("projectFilter")?.value || '';
+        const wattageFilterValue = document.getElementById("wattageFilter")?.value || '';
+        
+        // Check project filter (column index 1)
+        const projectCell = row.cells[1];
+        let matchesProject = false;
+        if (projectFilterValue === "") { 
+            matchesProject = true;
+        } else if (projectFilterValue === "Unassigned") {
+            matchesProject = projectCell && (projectCell.textContent || projectCell.innerText) === "Unassigned";
+        } else {
+            matchesProject = projectCell && (projectCell.textContent || projectCell.innerText) === projectFilterValue;
+        }
+        
+        // Check wattage filter (column index 4)
+        const wattageCell = row.cells[4];
+        let matchesWattage = false;
+        if (wattageFilterValue === "") {
+            matchesWattage = true;
+        } else {
+            matchesWattage = wattageCell && (wattageCell.textContent || wattageCell.innerText).trim() === wattageFilterValue;
+        }
+        
+        // Check search filter
+        let matchesSearch = false;
+        if (input === "") {
+            matchesSearch = true; 
+        } else {
+            for (let j = 1; j < row.cells.length - 1; j++) { 
+                if (row.cells[j]) {
+                    const txtValue = row.cells[j].textContent || row.cells[j].innerText;
+                    if (txtValue.toUpperCase().indexOf(input) > -1) {
+                        matchesSearch = true;
+                        break;
                     }
                 }
             }
-            if (matchesProject && matchesWattage && matchesSearch) {
-                tr[i].style.display = "";
-            }
         }
+        
+        return matchesProject && matchesWattage && matchesSearch;
+    });
+}
+
+function updatePagination() {
+    const filteredRows = getFilteredRows();
+    const totalItems = filteredRows.length;
+    const maxPages = Math.ceil(totalItems / itemsPerPage);
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    
+    // Hide all rows first
+    allPalletRows.forEach(row => {
+        row.style.display = 'none';
+    });
+    
+    // Show only current page rows from filtered set
+    filteredRows.slice(startIndex, endIndex).forEach(row => {
+        row.style.display = '';
+    });
+    
+    // Update pagination info
+    const paginationInfo = document.getElementById('paginationInfo');
+    const pageInfo = document.getElementById('pageInfo');
+    const prevButton = document.getElementById('prevPage');
+    const nextButton = document.getElementById('nextPage');
+    
+    if (paginationInfo) {
+        const showing = Math.min(endIndex, totalItems);
+        const displayStart = totalItems > 0 ? startIndex + 1 : 0;
+        paginationInfo.textContent = `Showing ${displayStart}-${showing} of ${totalItems} pallets`;
     }
-    updateOpenShipModalButtonState(); 
+    
+    if (pageInfo) {
+        pageInfo.textContent = `Page ${Math.max(1, currentPage)} of ${Math.max(1, maxPages)}`;
+    }
+    
+    if (prevButton) {
+        prevButton.disabled = currentPage <= 1;
+    }
+    
+    if (nextButton) {
+        nextButton.disabled = currentPage >= maxPages || totalItems === 0;
+    }
+    
+    // Update selection counts after pagination
     updateSelectedCount();
     const selectAllCheckbox = document.getElementById('selectAllPallets');
     if (selectAllCheckbox) {
@@ -1142,6 +1331,9 @@ document.addEventListener('DOMContentLoaded', function() {
     updateOpenShipModalButtonState();
     updateSelectedCount();
     
+    // Initialize pagination
+    initializePagination();
+    
     if (typeof toggleDestinationSelectSingle === 'function') toggleDestinationSelectSingle();
     if (typeof toggleDestinationSelectMulti === 'function') toggleDestinationSelectMulti();
     if (typeof updateMultiShipSummary === 'function') updateMultiShipSummary();
@@ -1294,6 +1486,9 @@ if (confirmShipmentBtn && mainShipForm) {
         const bol = document.getElementById('bol_number_single_modal').value;
         const departure = document.getElementById('departure_date_single_modal').value;
         const arrival = document.getElementById('est_arrival_date_single_modal').value;
+        const freightCost = document.getElementById('freight_cost_single').value;
+        const accessorialCost = document.getElementById('accessorial_cost_single').value;
+        const customerCost = document.getElementById('customer_cost_single').value;
 
         if (!targetId) { alert('Please select a destination.'); return; }
         if (!departure) { alert('Departure date is required.'); return; }
@@ -1304,6 +1499,9 @@ if (confirmShipmentBtn && mainShipForm) {
         setOrCreateHidden(mainShipForm, 'bol_number', bol);
         setOrCreateHidden(mainShipForm, 'departure_date', departure);
         setOrCreateHidden(mainShipForm, 'est_arrival_date', arrival);
+        setOrCreateHidden(mainShipForm, 'freight_cost', freightCost);
+        setOrCreateHidden(mainShipForm, 'accessorial_cost', accessorialCost);
+        setOrCreateHidden(mainShipForm, 'customer_cost', customerCost);
         mainShipForm.submit();
     });
 }
@@ -1323,6 +1521,9 @@ if (confirmMultiShipmentBtn && mainShipForm) {
         const bol = document.getElementById('bol_number_multi_modal').value;
         const departure = document.getElementById('departure_date_multi_modal').value;
         const arrival = document.getElementById('est_arrival_date_multi_modal').value;
+        const freightCost = document.getElementById('freight_cost_multi').value;
+        const accessorialCost = document.getElementById('accessorial_cost_multi').value;
+        const customerCost = document.getElementById('customer_cost_multi').value;
 
         if (!targetId) { alert('Please select a destination.'); return; }
         if (!departure) { alert('Departure date is required.'); return; }
@@ -1333,6 +1534,9 @@ if (confirmMultiShipmentBtn && mainShipForm) {
         setOrCreateHidden(mainShipForm, 'bol_number', bol);
         setOrCreateHidden(mainShipForm, 'departure_date', departure);
         setOrCreateHidden(mainShipForm, 'est_arrival_date', arrival);
+        setOrCreateHidden(mainShipForm, 'freight_cost', freightCost);
+        setOrCreateHidden(mainShipForm, 'accessorial_cost', accessorialCost);
+        setOrCreateHidden(mainShipForm, 'customer_cost', customerCost);
         mainShipForm.submit();
     });
 }
