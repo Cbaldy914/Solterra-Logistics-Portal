@@ -477,11 +477,6 @@ $conn->close();
 
 <input type="submit" name="move_truckload" value="Move Truckload">
 </form>
-
-<div style="margin-top: 20px;">
-    <a href="manage_warehouse_inventory.php?warehouse_id=<?php echo $warehouse_id; ?>" class="action-buttons">&larr; Back to Warehouse Inventory</a>
-</div>
-
 </main>
 
 <script>

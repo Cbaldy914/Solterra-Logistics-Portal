@@ -71,6 +71,14 @@ try {
         if (!empty($palletIds)) {
             $ph = implode(',', array_fill(0, count($palletIds), '?'));
             $t  = str_repeat('i', count($palletIds));
+            
+            // FIRST: Delete delivery_pallets records that reference these pallets
+            $delDeliveryPallets = $conn->prepare("DELETE FROM delivery_pallets WHERE inventory_pallet_id IN ($ph)");
+            $delDeliveryPallets->bind_param($t, ...$palletIds);
+            $delDeliveryPallets->execute();
+            $delDeliveryPallets->close();
+            
+            // THEN: Delete the inventory_pallets themselves
             $delPal = $conn->prepare("DELETE FROM inventory_pallets WHERE id IN ($ph)");
             $delPal->bind_param($t, ...$palletIds);
             $delPal->execute();

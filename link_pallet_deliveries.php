@@ -2,6 +2,9 @@
 session_name("logistics_session");
 session_start();
 
+// Increase memory limit for handling large pallet datasets
+ini_set('memory_limit', '512M');
+
 require_once '../config.php'; // Placed early for CSV processing too
 
 // Initialize messages array if not already set
@@ -43,11 +46,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                         $error_count = 0;
                         $line_number = 1; // For error reporting, header is line 1
 
-                        $stmt_check_delivery = $conn_csv->prepare("SELECT id, wattage FROM deliveries WHERE id = ?");
+                        $stmt_check_delivery = $conn_csv->prepare("SELECT id, wattage, status_of_delivery, project_id, warehouse_id, anticipated_delivery_date FROM deliveries WHERE id = ?");
                         $stmt_check_pallet = $conn_csv->prepare("SELECT id, wattage, status FROM inventory_pallets WHERE pallet_identifier = ?");
                         $stmt_check_existing_link = $conn_csv->prepare("SELECT COUNT(*) FROM delivery_pallets WHERE delivery_id = ? AND inventory_pallet_id = ?");
                         $stmt_insert_link = $conn_csv->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
-                        $stmt_update_pallet_status = $conn_csv->prepare("UPDATE inventory_pallets SET status = ?, current_delivery_id = ? WHERE id = ?");
+                        $stmt_update_pallet_comprehensive = $conn_csv->prepare("UPDATE inventory_pallets SET status = ?, current_project_id = ?, current_warehouse_id = ?, arrival_date = ? WHERE id = ?");
 
                         while (($row = fgetcsv($csvFile)) !== FALSE) {
                             $line_number++;
@@ -66,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                                 continue;
                             }
 
-                            // Validate Delivery
+                            // Validate Delivery - now fetching full delivery details
                             $stmt_check_delivery->bind_param("i", $delivery_id_csv);
                             $stmt_check_delivery->execute();
                             $result_delivery = $stmt_check_delivery->get_result();
@@ -77,6 +80,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                             }
                             $delivery_data = $result_delivery->fetch_assoc();
                             $delivery_wattage = $delivery_data['wattage'];
+                            $delivery_status = $delivery_data['status_of_delivery'];
+                            $delivery_project_id = $delivery_data['project_id'];
+                            $delivery_warehouse_id = $delivery_data['warehouse_id'];
+                            $delivery_arrival_date = $delivery_data['anticipated_delivery_date'];
 
                             // Validate Pallet Identifier
                             $stmt_check_pallet->bind_param("s", $pallet_identifier_csv);
@@ -110,8 +117,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                             // Check for existing link
                             $stmt_check_existing_link->bind_param("ii", $delivery_id_csv, $inventory_pallet_id);
                             $stmt_check_existing_link->execute();
-                            $stmt_check_existing_link->bind_result($link_count);
-                            $stmt_check_existing_link->fetch();
+                            $result_existing_link = $stmt_check_existing_link->get_result();
+                            $existing_link_row = $result_existing_link->fetch_assoc();
+                            $link_count = $existing_link_row ? $existing_link_row['COUNT(*)'] : 0;
+                            $result_existing_link->free();
                             if ($link_count > 0) {
                                 $_SESSION['messages'][] = "<p class='info-message'>Line {$line_number}: Pallet '{$pallet_identifier_csv}' already linked to Delivery ID '{$delivery_id_csv}'. Skipping.</p>";
                                 // Not strictly an error, but good to inform.
@@ -121,11 +130,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                             // All checks passed, attempt to insert link
                             $stmt_insert_link->bind_param("ii", $delivery_id_csv, $inventory_pallet_id);
                             if ($stmt_insert_link->execute()) {
-                                // Update pallet status and current_delivery_id
-                                $new_pallet_status = 'Assigned to Delivery'; // Or 'Staged for Delivery'
-                                $stmt_update_pallet_status->bind_param("sii", $new_pallet_status, $delivery_id_csv, $inventory_pallet_id);
-                                if (!$stmt_update_pallet_status->execute()) {
-                                    $_SESSION['messages'][] = "<p class='warning-message'>Line {$line_number}: Pallet '{$pallet_identifier_csv}' linked to Delivery ID '{$delivery_id_csv}', but failed to update pallet status: " . htmlspecialchars($stmt_update_pallet_status->error) . "</p>";
+                                // Update pallet status, location, and arrival date to match delivery
+                                $new_pallet_status = $delivery_status; // Sync with delivery status
+                                $new_current_project_id = $delivery_project_id; // Sync project assignment
+                                $new_current_warehouse_id = $delivery_warehouse_id; // Sync warehouse assignment
+                                $new_arrival_date = $delivery_arrival_date; // Sync arrival date
+                                
+                                $stmt_update_pallet_comprehensive->bind_param("siiss", $new_pallet_status, $new_current_project_id, $new_current_warehouse_id, $new_arrival_date, $inventory_pallet_id);
+                                if (!$stmt_update_pallet_comprehensive->execute()) {
+                                    $_SESSION['messages'][] = "<p class='warning-message'>Line {$line_number}: Pallet '{$pallet_identifier_csv}' linked to Delivery ID '{$delivery_id_csv}', but failed to update pallet status and location: " . htmlspecialchars($stmt_update_pallet_comprehensive->error) . "</p>";
                                     // Decide if this is a critical error to rollback or just a warning
                                 }
                                 $linked_count++;
@@ -142,7 +155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                         } else {
                             $conn_csv->commit();
                             if ($linked_count > 0) {
-                                $_SESSION['messages'][] = "<p class='success-message'>Successfully linked {$linked_count} pallet(s) from the CSV.</p>";
+                                $_SESSION['messages'][] = "<p class='success-message'>Successfully linked {$linked_count} pallet(s) from the CSV with synchronized status and locations.</p>";
                             } else {
                                 $_SESSION['messages'][] = "<p class='info-message'>No new pallet links were made from the CSV (either all were already linked or no valid entries found).</p>";
                             }
@@ -152,7 +165,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                         $stmt_check_pallet->close();
                         $stmt_check_existing_link->close();
                         $stmt_insert_link->close();
-                        $stmt_update_pallet_status->close();
+                        $stmt_update_pallet_comprehensive->close();
                     }
                 }
             } else {
@@ -182,8 +195,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     try {
         $delivery_ids = json_decode($_POST['delivery_ids'], true);
         $pallet_ids = json_decode($_POST['pallet_ids'], true);
-        $strategy = $_POST['strategy'] ?? 'one_to_one';
+        $strategy = $_POST['strategy'] ?? 'module_based';
         $wattage = $_POST['wattage'] ?? '';
+        $pallets_per_truck = isset($_POST['pallets_per_truck']) ? max(1, intval($_POST['pallets_per_truck'])) : 17;
         
         if (empty($delivery_ids) || empty($pallet_ids)) {
             throw new Exception('No deliveries or pallets selected for bulk linking.');
@@ -194,58 +208,135 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $linked_pairs = [];
         $linked_count = 0;
         
-        // Fetch delivery and pallet details
+        // Fetch delivery and pallet details - now with comprehensive delivery info
         $delivery_placeholders = implode(',', array_fill(0, count($delivery_ids), '?'));
         $pallet_placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
         
-        $stmt_deliveries = $conn_bulk->prepare("SELECT id, wattage FROM deliveries WHERE id IN ($delivery_placeholders)");
+        $stmt_deliveries = $conn_bulk->prepare("SELECT id, wattage, quantity, status_of_delivery, project_id, warehouse_id, anticipated_delivery_date FROM deliveries WHERE id IN ($delivery_placeholders)");
         $stmt_deliveries->bind_param(str_repeat('i', count($delivery_ids)), ...$delivery_ids);
         $stmt_deliveries->execute();
         $deliveries_data = $stmt_deliveries->get_result()->fetch_all(MYSQLI_ASSOC);
         $stmt_deliveries->close();
         
-        $stmt_pallets = $conn_bulk->prepare("SELECT id, pallet_identifier, wattage FROM inventory_pallets WHERE id IN ($pallet_placeholders)");
+        $stmt_pallets = $conn_bulk->prepare("SELECT id, pallet_identifier, wattage, quantity FROM inventory_pallets WHERE id IN ($pallet_placeholders)");
         $stmt_pallets->bind_param(str_repeat('i', count($pallet_ids)), ...$pallet_ids);
         $stmt_pallets->execute();
         $pallets_data = $stmt_pallets->get_result()->fetch_all(MYSQLI_ASSOC);
         $stmt_pallets->close();
         
-        // Prepare linking statements
+        // Prepare linking statements - now with comprehensive pallet update
         $stmt_check_existing = $conn_bulk->prepare("SELECT COUNT(*) FROM delivery_pallets WHERE delivery_id = ? AND inventory_pallet_id = ?");
         $stmt_insert_link = $conn_bulk->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
-        $stmt_update_pallet = $conn_bulk->prepare("UPDATE inventory_pallets SET status = 'Assigned to Delivery', current_delivery_id = ? WHERE id = ?");
+        $stmt_update_pallet_comprehensive = $conn_bulk->prepare("UPDATE inventory_pallets SET status = ?, current_project_id = ?, current_warehouse_id = ?, arrival_date = ? WHERE id = ?");
         
-        if ($strategy === 'one_to_one') {
-            // Link one pallet to one delivery (up to minimum count)
-            $max_links = min(count($deliveries_data), count($pallets_data));
+        // Create a helper function to update pallet with delivery sync
+        $updatePalletWithDeliverySync = function($delivery, $pallet_id) use ($stmt_update_pallet_comprehensive) {
+            $new_pallet_status = $delivery['status_of_delivery']; // Sync with delivery status
+            $new_current_project_id = $delivery['project_id']; // Sync project assignment  
+            $new_current_warehouse_id = $delivery['warehouse_id']; // Sync warehouse assignment
+            $new_arrival_date = $delivery['anticipated_delivery_date']; // Sync arrival date
             
-            for ($i = 0; $i < $max_links; $i++) {
-                $delivery = $deliveries_data[$i];
-                $pallet = $pallets_data[$i];
+            $stmt_update_pallet_comprehensive->bind_param("siiss", $new_pallet_status, $new_current_project_id, $new_current_warehouse_id, $new_arrival_date, $pallet_id);
+            return $stmt_update_pallet_comprehensive->execute();
+        };
+        
+        if ($strategy === 'module_based') {
+            // Smart module-based matching - assigns pallets to exactly match delivery requirements
+            $available_pallets = $pallets_data; // Copy to avoid modifying original
+            
+            foreach ($deliveries_data as $delivery) {
+                $modules_needed = $delivery['quantity'];
+                $modules_assigned = 0;
                 
-                // Check if already linked
-                $stmt_check_existing->bind_param("ii", $delivery['id'], $pallet['id']);
-                $stmt_check_existing->execute();
-                $stmt_check_existing->bind_result($existing_count);
-                $stmt_check_existing->fetch();
+                // Sort available pallets by quantity (smallest first for better matching)
+                usort($available_pallets, function($a, $b) {
+                    return $a['quantity'] - $b['quantity'];
+                });
                 
-                if ($existing_count > 0) {
-                    continue; // Skip if already linked
+                for ($i = 0; $i < count($available_pallets) && $modules_assigned < $modules_needed; $i++) {
+                    if ($available_pallets[$i] === null) continue; // Skip already used pallets
+                    
+                    $pallet = $available_pallets[$i];
+                    
+                    // Check if this pallet would exceed requirements
+                    if ($modules_assigned + $pallet['quantity'] <= $modules_needed) {
+                        // Check if already linked
+                        $stmt_check_existing->bind_param("ii", $delivery['id'], $pallet['id']);
+                        $stmt_check_existing->execute();
+                        $result_existing = $stmt_check_existing->get_result();
+                        $existing_row = $result_existing->fetch_assoc();
+                        $existing_count = $existing_row ? $existing_row['COUNT(*)'] : 0;
+                        $result_existing->free();
+                        
+                        if ($existing_count == 0) {
+                            // Create link
+                            $stmt_insert_link->bind_param("ii", $delivery['id'], $pallet['id']);
+                            if ($stmt_insert_link->execute()) {
+                                // Update pallet status, location, and arrival date to match delivery
+                                $updatePalletWithDeliverySync($delivery, $pallet['id']);
+                                
+                                $linked_pairs[] = [
+                                    'delivery_id' => $delivery['id'],
+                                    'pallet_id' => $pallet['id'],
+                                    'pallet_identifier' => $pallet['pallet_identifier']
+                                ];
+                                $linked_count++;
+                                $modules_assigned += $pallet['quantity'];
+                                
+                                // Mark pallet as used
+                                $available_pallets[$i] = null;
+                            }
+                        }
+                    }
                 }
                 
-                // Create link
-                $stmt_insert_link->bind_param("ii", $delivery['id'], $pallet['id']);
-                if ($stmt_insert_link->execute()) {
-                    // Update pallet status
-                    $stmt_update_pallet->bind_param("ii", $delivery['id'], $pallet['id']);
-                    $stmt_update_pallet->execute();
+                // Remove null entries to keep array clean for next delivery
+                $available_pallets = array_filter($available_pallets);
+                $available_pallets = array_values($available_pallets); // Re-index
+            }
+            
+        } else if ($strategy === 'pallets_per_truck') {
+            // Link specified number of pallets to each delivery (truck)
+            $pallet_index = 0;
+            
+            foreach ($deliveries_data as $delivery) {
+                $pallets_assigned_to_this_delivery = 0;
+                
+                // Assign up to $pallets_per_truck pallets to this delivery
+                while ($pallets_assigned_to_this_delivery < $pallets_per_truck && $pallet_index < count($pallets_data)) {
+                    $pallet = $pallets_data[$pallet_index];
                     
-                    $linked_pairs[] = [
-                        'delivery_id' => $delivery['id'],
-                        'pallet_id' => $pallet['id'],
-                        'pallet_identifier' => $pallet['pallet_identifier']
-                    ];
-                    $linked_count++;
+                    // Check if already linked
+                    $stmt_check_existing->bind_param("ii", $delivery['id'], $pallet['id']);
+                    $stmt_check_existing->execute();
+                    $result_existing = $stmt_check_existing->get_result();
+                    $existing_row = $result_existing->fetch_assoc();
+                    $existing_count = $existing_row ? $existing_row['COUNT(*)'] : 0;
+                    $result_existing->free();
+                    
+                    if ($existing_count == 0) {
+                        // Create link
+                        $stmt_insert_link->bind_param("ii", $delivery['id'], $pallet['id']);
+                        if ($stmt_insert_link->execute()) {
+                            // Update pallet status, location, and arrival date to match delivery
+                            $updatePalletWithDeliverySync($delivery, $pallet['id']);
+                            
+                            $linked_pairs[] = [
+                                'delivery_id' => $delivery['id'],
+                                'pallet_id' => $pallet['id'],
+                                'pallet_identifier' => $pallet['pallet_identifier']
+                            ];
+                            $linked_count++;
+                            $pallets_assigned_to_this_delivery++;
+                        }
+                    }
+                    
+                    $pallet_index++;
+                }
+                
+                // If we've run out of pallets, break
+                if ($pallet_index >= count($pallets_data)) {
+                    break;
                 }
             }
             
@@ -263,16 +354,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 // Check if already linked
                 $stmt_check_existing->bind_param("ii", $delivery['id'], $pallet['id']);
                 $stmt_check_existing->execute();
-                $stmt_check_existing->bind_result($existing_count);
-                $stmt_check_existing->fetch();
+                $result_existing = $stmt_check_existing->get_result();
+                $existing_row = $result_existing->fetch_assoc();
+                $existing_count = $existing_row ? $existing_row['COUNT(*)'] : 0;
+                $result_existing->free();
                 
                 if ($existing_count == 0) {
                     // Create link
                     $stmt_insert_link->bind_param("ii", $delivery['id'], $pallet['id']);
                     if ($stmt_insert_link->execute()) {
-                        // Update pallet status
-                        $stmt_update_pallet->bind_param("ii", $delivery['id'], $pallet['id']);
-                        $stmt_update_pallet->execute();
+                        // Update pallet status, location, and arrival date to match delivery
+                        $updatePalletWithDeliverySync($delivery, $pallet['id']);
                         
                         $linked_pairs[] = [
                             'delivery_id' => $delivery['id'],
@@ -289,14 +381,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         
         $stmt_check_existing->close();
         $stmt_insert_link->close();
-        $stmt_update_pallet->close();
+        $stmt_update_pallet_comprehensive->close();
         
         $conn_bulk->commit();
         
+        // Build strategy description
+        $strategy_description = '';
+        if ($strategy === 'module_based') {
+            $strategy_description = "Module-Based Matching";
+        } else if ($strategy === 'pallets_per_truck') {
+            $strategy_description = "Fixed Pallets per Truck ($pallets_per_truck per delivery)";
+        } else {
+            $strategy_description = ucfirst(str_replace('_', ' ', $strategy));
+        }
+        
         $response = [
             'success' => true,
-            'message' => "Successfully linked $linked_count pallet(s) to deliveries using the $strategy strategy.",
-            'details' => "Wattage: {$wattage}W | Strategy: " . ucfirst(str_replace('_', ' ', $strategy)),
+            'message' => "Successfully linked $linked_count pallet(s) to deliveries using the $strategy_description strategy with synchronized status and locations.",
+            'details' => "Wattage: {$wattage}W | Strategy: $strategy_description | Pallets synchronized with delivery status",
             'linked_pairs' => $linked_pairs,
             'linked_count' => $linked_count
         ];
@@ -462,8 +564,13 @@ if ($stmt) {
     $deliveries_result = null; // Ensure it's set
 }
 
-// --- NEW: Fetch Available Pallets for Linking ---
+// --- NEW: Fetch Available Pallets for Linking (with Pagination) ---
 $available_pallets = [];
+$pallets_per_page = 100; // Limit to 100 pallets per page
+$current_page = isset($_GET['pallet_page']) ? max(1, intval($_GET['pallet_page'])) : 1;
+$offset = ($current_page - 1) * $pallets_per_page;
+
+// Simplified query without expensive GROUP_CONCAT
 $sql_pallets_available_base = "
     SELECT 
         ip.id AS pallet_id, 
@@ -471,32 +578,14 @@ $sql_pallets_available_base = "
         ip.wattage, 
         ip.quantity, 
         ip.status AS pallet_status,
-        ip.arrival_date AS pallet_status_timestamp, /* Use arrival_date as the status timestamp */
+        ip.arrival_date AS pallet_status_timestamp,
         w.name AS current_warehouse_name,
         p_assigned.project_name AS assigned_project_name,
-        ip.assigned_project_id,
-        GROUP_CONCAT(
-            CASE 
-                WHEN d_compatible.id IS NOT NULL 
-                THEN CONCAT(d_compatible.id, ' (', COALESCE(p_compatible.project_name, 'Unassigned'), ')')
-                ELSE NULL 
-            END 
-            ORDER BY d_compatible.id SEPARATOR ', '
-        ) AS compatible_deliveries
+        ip.assigned_project_id
     FROM inventory_pallets ip
     LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
     LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
     LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
-    LEFT JOIN deliveries d_compatible ON (
-        d_compatible.wattage = ip.wattage 
-        AND (
-            d_compatible.project_id = ip.assigned_project_id 
-            OR ip.assigned_project_id IS NULL 
-            OR d_compatible.project_id IS NULL
-        )
-        AND NOT EXISTS (SELECT 1 FROM delivery_pallets dp_check WHERE dp_check.delivery_id = d_compatible.id)
-    )
-    LEFT JOIN projects p_compatible ON d_compatible.project_id = p_compatible.id
     WHERE dp.inventory_pallet_id IS NULL  /* Pallet is not in delivery_pallets */
     AND ip.status IN ('In Warehouse', 'Produced', 'At Manufacturer')
 ";
@@ -532,16 +621,47 @@ if (is_numeric($filter_project_id)) {
     }
 }
 
+// Get total count first (for pagination)
+$sql_count = "SELECT COUNT(*) as total_count FROM inventory_pallets ip
+              LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+              LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+              WHERE dp.inventory_pallet_id IS NULL
+              AND ip.status IN ('In Warehouse', 'Produced', 'At Manufacturer')";
+
+if (!empty($pallets_available_conditions)) {
+    $sql_count .= " AND (" . implode(" AND ", $pallets_available_conditions) . ")";
+}
+
+$stmt_count = $conn->prepare($sql_count);
+$total_pallets = 0;
+if ($stmt_count) {
+    if (!empty($pallets_available_types)) {
+        $stmt_count->bind_param($pallets_available_types, ...$pallets_available_params);
+    }
+    $stmt_count->execute();
+    $result_count = $stmt_count->get_result();
+    if ($row_count = $result_count->fetch_assoc()) {
+        $total_pallets = $row_count['total_count'];
+    }
+    $stmt_count->close();
+}
+
+$total_pages = ceil($total_pallets / $pallets_per_page);
+
+// Get paginated results
 $sql_pallets_available = $sql_pallets_available_base;
 if (!empty($pallets_available_conditions)) {
     $sql_pallets_available .= " AND (" . implode(" AND ", $pallets_available_conditions) . ")";
 }
-$sql_pallets_available .= " GROUP BY ip.id ORDER BY ip.id DESC";
+$sql_pallets_available .= " ORDER BY ip.id DESC LIMIT ? OFFSET ?";
 
 $stmt_pallets_available = $conn->prepare($sql_pallets_available);
 if ($stmt_pallets_available) {
-    if (!empty($pallets_available_types)) {
-        $stmt_pallets_available->bind_param($pallets_available_types, ...$pallets_available_params);
+    $extended_types = $pallets_available_types . "ii";
+    $extended_params = array_merge($pallets_available_params, [$pallets_per_page, $offset]);
+    
+    if (!empty($extended_types)) {
+        $stmt_pallets_available->bind_param($extended_types, ...$extended_params);
     }
     $stmt_pallets_available->execute();
     $result_pallets_available = $stmt_pallets_available->get_result();
@@ -565,6 +685,7 @@ $sql_delivery_groups = "
         d.project_id,
         p.project_name,
         COUNT(*) as delivery_count,
+        SUM(d.quantity) as total_modules,
         GROUP_CONCAT(d.id ORDER BY d.id SEPARATOR ',') as delivery_ids
     FROM deliveries d
     LEFT JOIN projects p ON d.project_id = p.id
@@ -963,7 +1084,7 @@ if (is_numeric($filter_project_id)) {
     <div class="tabs-container">
         <div class="tabs">
             <button class="tab-link active" data-tab="deliveriesTab">Deliveries (<?php echo $deliveries_result ? $deliveries_result->num_rows : 0; ?>)</button>
-            <button class="tab-link" data-tab="palletsTab">Available Pallets (<?php echo count($available_pallets); ?>)</button>
+            <button class="tab-link" data-tab="palletsTab">Available Pallets (<?php echo number_format($total_pallets); ?>)</button>
             <button class="tab-link" data-tab="bulkLinkingTab">Bulk Linking</button>
         </div>
     </div>
@@ -1097,11 +1218,30 @@ if (is_numeric($filter_project_id)) {
     <!-- Pallets Tab Content -->
     <div id="palletsTab" class="tab-content">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h2 style="margin: 0;">Available Pallets for Linking</h2>
-            <form method="POST" action="export_available_pallets_csv.php" style="margin: 0;">
-                <input type="hidden" name="filter_project_id_export" value="<?php echo htmlspecialchars($filter_project_id); ?>">
-                <button type="submit" name="export_pallets_csv" class="action-button">Export Available Pallets CSV</button>
-            </form>
+            <h2 style="margin: 0;">Available Pallets for Linking (<?php echo number_format($total_pallets); ?> total)</h2>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <!-- Pagination Controls -->
+                <?php if ($total_pages > 1): ?>
+                    <div style="display: flex; gap: 5px; align-items: center; margin-right: 15px;">
+                        <?php if ($current_page > 1): ?>
+                            <a href="?<?php echo http_build_query(array_merge($_GET, ['pallet_page' => $current_page - 1, 'active_tab' => 'palletsTab'])); ?>" class="action-button" style="padding: 5px 10px;">« Prev</a>
+                        <?php endif; ?>
+                        
+                        <span style="margin: 0 10px; font-weight: 500;">
+                            Page <?php echo $current_page; ?> of <?php echo $total_pages; ?>
+                        </span>
+                        
+                        <?php if ($current_page < $total_pages): ?>
+                            <a href="?<?php echo http_build_query(array_merge($_GET, ['pallet_page' => $current_page + 1, 'active_tab' => 'palletsTab'])); ?>" class="action-button" style="padding: 5px 10px;">Next »</a>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
+                
+                <form method="POST" action="export_available_pallets_csv.php" style="margin: 0;">
+                    <input type="hidden" name="filter_project_id_export" value="<?php echo htmlspecialchars($filter_project_id); ?>">
+                    <button type="submit" name="export_pallets_csv" class="action-button">Export Available Pallets CSV</button>
+                </form>
+            </div>
         </div>
 
         <div class="filter-controls">
@@ -1130,6 +1270,16 @@ if (is_numeric($filter_project_id)) {
             </select>
         </div>
 
+        <!-- Show current range -->
+        <?php if ($total_pallets > 0): ?>
+            <div style="margin-bottom: 15px; padding: 10px; background-color: #e3f2fd; border-radius: 5px; text-align: center;">
+                <strong>Showing pallets <?php echo number_format($offset + 1); ?> - <?php echo number_format(min($offset + $pallets_per_page, $total_pallets)); ?> of <?php echo number_format($total_pallets); ?></strong>
+                <?php if ($total_pages > 1): ?>
+                    <br><small style="color: #666;">Use pagination above to view more pallets</small>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+
         <div class="table-responsive">
             <table class="deliveries-table" id="availablePalletsTable">
                 <thead>
@@ -1141,7 +1291,6 @@ if (is_numeric($filter_project_id)) {
                         <th>Arrival Date</th>
                         <th>Current Warehouse</th>
                         <th>Assigned Project</th>
-                        <th>Compatible Deliveries</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -1156,15 +1305,15 @@ if (is_numeric($filter_project_id)) {
                                 <td><?php echo htmlspecialchars($pallet_item['pallet_status_timestamp'] ?? 'N/A'); ?></td>
                                 <td><?php echo htmlspecialchars($pallet_item['current_warehouse_name'] ?? 'N/A'); ?></td>
                                 <td><?php echo htmlspecialchars($pallet_item['assigned_project_name'] ?? 'Unassigned'); ?></td>
-                                <td><?php echo htmlspecialchars($pallet_item['compatible_deliveries'] ?? 'None'); ?></td>
                                 <td>
                                     <a href="pallet_details.php?pallet_id=<?php echo $pallet_item['pallet_id']; ?>" class="action-button" target="_blank">View Details</a>
+                                    <a href="manage_delivery_pallets.php?pallet_id=<?php echo $pallet_item['pallet_id']; ?>&wattage=<?php echo urlencode($pallet_item['wattage']); ?>" class="action-button" style="background-color: #28a745;">Link to Delivery</a>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="9">No available pallets found matching the criteria.</td>
+                            <td colspan="8">No available pallets found matching the criteria.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -1200,9 +1349,11 @@ if (is_numeric($filter_project_id)) {
                     <div class="delivery-groups" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px;">
                         <?php if (!empty($delivery_groups)): ?>
                             <?php foreach ($delivery_groups as $group): ?>
-                                <div class="group-item" data-wattage="<?php echo $group['wattage']; ?>" 
+                                <div class="group-item delivery-group" data-wattage="<?php echo $group['wattage']; ?>" 
                                      data-project-id="<?php echo $group['project_id']; ?>"
                                      data-delivery-ids="<?php echo $group['delivery_ids']; ?>"
+                                     data-delivery-count="<?php echo $group['delivery_count']; ?>"
+                                     data-total-modules="<?php echo $group['total_modules']; ?>"
                                      style="padding: 15px; border-bottom: 1px solid #eee; cursor: pointer; transition: background-color 0.2s;"
                                      onclick="selectDeliveryGroup(this)">
                                     <div style="font-weight: 600; color: #488C9A; margin-bottom: 5px;">
@@ -1210,6 +1361,7 @@ if (is_numeric($filter_project_id)) {
                                     </div>
                                     <div style="font-size: 0.9em; color: #666;">
                                         <strong><?php echo $group['delivery_count']; ?> deliveries</strong> need pallets
+                                        (<?php echo number_format($group['total_modules']); ?> modules)
                                     </div>
                                     <div style="font-size: 0.85em; color: #666; margin-top: 3px;">
                                         Project: <?php echo htmlspecialchars($group['project_name'] ?? 'Unassigned'); ?>
@@ -1230,9 +1382,11 @@ if (is_numeric($filter_project_id)) {
                     <div class="pallet-groups" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px;">
                         <?php if (!empty($pallet_groups)): ?>
                             <?php foreach ($pallet_groups as $group): ?>
-                                <div class="group-item" data-wattage="<?php echo $group['wattage']; ?>" 
+                                <div class="group-item pallet-group" data-wattage="<?php echo $group['wattage']; ?>" 
                                      data-project-id="<?php echo $group['assigned_project_id']; ?>"
                                      data-pallet-ids="<?php echo $group['pallet_ids']; ?>"
+                                     data-pallet-count="<?php echo $group['pallet_count']; ?>"
+                                     data-total-modules="<?php echo $group['total_modules']; ?>"
                                      style="padding: 15px; border-bottom: 1px solid #eee; cursor: pointer; transition: background-color 0.2s;"
                                      onclick="selectPalletGroup(this)">
                                     <div style="font-weight: 600; color: #f39c12; margin-bottom: 5px;">
@@ -1280,17 +1434,35 @@ if (is_numeric($filter_project_id)) {
                 </div>
                 <div id="linkingStrategy" class="strategy-selection" style="display: none;">
                     <label style="font-weight: 500; margin-bottom: 10px; display: block;">Linking Strategy:</label>
-                    <label style="font-weight: normal; margin-right: 20px;">
-                        <input type="radio" name="link_strategy" value="one_to_one" checked> 
-                        1:1 (One pallet per delivery)
-                    </label>
-                    <label style="font-weight: normal;">
-                        <input type="radio" name="link_strategy" value="distribute"> 
-                        Distribute evenly
-                    </label>
-                    <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
-                        <strong>1:1:</strong> Links one pallet to one delivery (best for exact matching)<br>
-                        <strong>Distribute:</strong> Assigns pallets evenly across all deliveries
+                    <div style="margin-bottom: 15px;">
+                        <label style="font-weight: normal; display: flex; align-items: center; margin-bottom: 15px;">
+                            <input type="radio" name="link_strategy" value="module_based" checked style="margin-right: 8px;"> 
+                            <strong>Module-Based Matching</strong> (Recommended)
+                        </label>
+                        <div style="margin-left: 25px; margin-bottom: 15px; font-size: 0.9em; color: #666;">
+                            Automatically assigns pallets to match each delivery's exact module requirements
+                        </div>
+                        
+                        <label style="font-weight: normal; display: flex; align-items: center; margin-bottom: 10px;">
+                            <input type="radio" name="link_strategy" value="pallets_per_truck" style="margin-right: 8px;"> 
+                            Fixed Pallets per Truck: 
+                            <input type="number" id="palletsPerTruck" min="1" max="50" value="17" style="margin-left: 10px; width: 60px; padding: 4px; border: 1px solid #ccc; border-radius: 3px;">
+                            pallets per delivery
+                        </label>
+                        <div style="margin-left: 25px; margin-bottom: 15px; font-size: 0.9em; color: #666;">
+                            Use when all trucks carry the same number of pallets (may over/under allocate)
+                        </div>
+                        
+                        <label style="font-weight: normal; display: flex; align-items: center;">
+                            <input type="radio" name="link_strategy" value="distribute" style="margin-right: 8px;"> 
+                            Distribute Evenly
+                        </label>
+                        <div style="margin-left: 25px; font-size: 0.9em; color: #666;">
+                            Spreads all available pallets evenly across all deliveries
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px; font-size: 0.9em; color: #666; background-color: #e8f4f8; padding: 12px; border-radius: 5px; border-left: 4px solid #488C9A;">
+                        <strong>💡 Tip:</strong> Use "Module-Based Matching" for accurate allocation based on actual delivery requirements. This prevents over/under allocation issues.
                     </div>
                 </div>
             </div>
@@ -1456,12 +1628,20 @@ if (is_numeric($filter_project_id)) {
             });
         });
 
-        // Activate the default tab (Deliveries)
-        const initialActiveTab = document.querySelector('.tab-link.active');
-        if (initialActiveTab) {
-            openTab(initialActiveTab.getAttribute('data-tab'));
-        } else if (document.getElementById('deliveriesTab')) {
-            openTab('deliveriesTab');
+        // Check URL parameter for active tab, otherwise use default
+        const urlParams = new URLSearchParams(window.location.search);
+        const activeTabParam = urlParams.get('active_tab');
+        
+        if (activeTabParam && document.getElementById(activeTabParam)) {
+            openTab(activeTabParam);
+        } else {
+            // Activate the default tab (Deliveries)
+            const initialActiveTab = document.querySelector('.tab-link.active');
+            if (initialActiveTab) {
+                openTab(initialActiveTab.getAttribute('data-tab'));
+            } else if (document.getElementById('deliveriesTab')) {
+                openTab('deliveriesTab');
+            }
         }
         
         // Initialize table filters if they are now visible
@@ -1573,66 +1753,89 @@ if (is_numeric($filter_project_id)) {
     if (palletWattageFilterEl) palletWattageFilterEl.addEventListener('change', filterPalletsTable);
 
     // Export Deliveries CSV
-    document.getElementById('exportDeliveriesCsvBtn').addEventListener('click', function() {
-        var currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.set('export_deliveries_csv', '1');
-        window.location.href = currentUrl.toString();
-    });
+    const exportDeliveriesCsvBtn = document.getElementById('exportDeliveriesCsvBtn');
+    if (exportDeliveriesCsvBtn) {
+        exportDeliveriesCsvBtn.addEventListener('click', function() {
+            var currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.set('export_deliveries_csv', '1');
+            window.location.href = currentUrl.toString();
+        });
+    }
 
-    // Export Available Pallets CSV
-    document.getElementById('exportAvailablePalletsCsvBtn').addEventListener('click', function() {
-        var currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.set('export_available_pallets_csv', '1');
-        window.location.href = currentUrl.toString();
-    });
+    // Export Available Pallets CSV - Note: This button doesn't exist in current HTML
+    const exportAvailablePalletsCsvBtn = document.getElementById('exportAvailablePalletsCsvBtn');
+    if (exportAvailablePalletsCsvBtn) {
+        exportAvailablePalletsCsvBtn.addEventListener('click', function() {
+            var currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.set('export_available_pallets_csv', '1');
+            window.location.href = currentUrl.toString();
+        });
+    }
 
     // --- BULK LINKING FUNCTIONALITY ---
     let selectedDeliveryGroup = null;
     let selectedPalletGroup = null;
 
-    window.selectDeliveryGroup = function(element) {
+    // Define functions in global scope
+    function selectDeliveryGroup(element) {
         // Remove previous selection
-        document.querySelectorAll('.delivery-groups .group-item').forEach(item => {
+        document.querySelectorAll('.delivery-groups .delivery-group').forEach(item => {
             item.style.backgroundColor = '';
             item.style.borderLeft = '';
+            item.classList.remove('selected-delivery');
         });
         
         // Highlight selected
         element.style.backgroundColor = '#e3f2fd';
         element.style.borderLeft = '4px solid #488C9A';
+        element.classList.add('selected-delivery');
         
         // Store selection
         selectedDeliveryGroup = {
             wattage: element.dataset.wattage,
             projectId: element.dataset.projectId,
             deliveryIds: element.dataset.deliveryIds.split(','),
+            deliveryCount: element.dataset.deliveryCount,
+            totalModules: element.dataset.totalModules,
             element: element
         };
         
+        console.log('Selected delivery group:', selectedDeliveryGroup);
         updateBulkLinkUI();
-    };
+    }
 
-    window.selectPalletGroup = function(element) {
+    // Make function available globally
+    window.selectDeliveryGroup = selectDeliveryGroup;
+
+    function selectPalletGroup(element) {
         // Remove previous selection
-        document.querySelectorAll('.pallet-groups .group-item').forEach(item => {
+        document.querySelectorAll('.pallet-groups .pallet-group').forEach(item => {
             item.style.backgroundColor = '';
             item.style.borderLeft = '';
+            item.classList.remove('selected-pallet');
         });
         
         // Highlight selected
         element.style.backgroundColor = '#fff3e0';
         element.style.borderLeft = '4px solid #f39c12';
+        element.classList.add('selected-pallet');
         
         // Store selection
         selectedPalletGroup = {
             wattage: element.dataset.wattage,
             projectId: element.dataset.projectId,
             palletIds: element.dataset.palletIds.split(','),
+            palletCount: element.dataset.palletCount,
+            totalModules: element.dataset.totalModules,
             element: element
         };
         
+        console.log('Selected pallet group:', selectedPalletGroup);
         updateBulkLinkUI();
-    };
+    }
+
+    // Make function available globally
+    window.selectPalletGroup = selectPalletGroup;
 
     function updateBulkLinkUI() {
         const deliverySpan = document.getElementById('selectedDeliveryGroup');
@@ -1640,10 +1843,16 @@ if (is_numeric($filter_project_id)) {
         const linkButton = document.getElementById('bulkLinkButton');
         const strategyDiv = document.getElementById('linkingStrategy');
         
+        // Add null checks
+        if (!deliverySpan || !palletSpan || !linkButton || !strategyDiv) {
+            console.log('Some bulk linking UI elements not found');
+            return;
+        }
+        
         // Update delivery selection display
         if (selectedDeliveryGroup) {
             const projectName = selectedDeliveryGroup.element.querySelector('div:last-child').textContent.replace('Project: ', '');
-            deliverySpan.textContent = `${selectedDeliveryGroup.wattage}W - ${selectedDeliveryGroup.deliveryIds.length} deliveries (${projectName})`;
+            deliverySpan.textContent = `${selectedDeliveryGroup.wattage}W - ${selectedDeliveryGroup.deliveryCount} deliveries (${parseInt(selectedDeliveryGroup.totalModules).toLocaleString()} modules) - ${projectName}`;
         } else {
             deliverySpan.textContent = 'No delivery group selected';
         }
@@ -1651,7 +1860,7 @@ if (is_numeric($filter_project_id)) {
         // Update pallet selection display
         if (selectedPalletGroup) {
             const projectName = selectedPalletGroup.element.querySelector('div:last-child').textContent.replace('Project: ', '');
-            palletSpan.textContent = `${selectedPalletGroup.wattage}W - ${selectedPalletGroup.palletIds.length} pallets (${projectName})`;
+            palletSpan.textContent = `${selectedPalletGroup.wattage}W - ${selectedPalletGroup.palletCount} pallets (${parseInt(selectedPalletGroup.totalModules).toLocaleString()} modules) - ${projectName}`;
         } else {
             palletSpan.textContent = 'No pallet group selected';
         }
@@ -1672,7 +1881,7 @@ if (is_numeric($filter_project_id)) {
         }
     }
 
-    window.performBulkLink = function() {
+         function performBulkLink() {
         if (!selectedDeliveryGroup || !selectedPalletGroup) {
             alert('Please select both a delivery group and a pallet group.');
             return;
@@ -1687,9 +1896,21 @@ if (is_numeric($filter_project_id)) {
         const deliveryIds = selectedDeliveryGroup.deliveryIds;
         const palletIds = selectedPalletGroup.palletIds;
         
+        // Get pallets per truck value if that strategy is selected
+        let palletsPerTruck = 1;
+        if (strategy === 'pallets_per_truck') {
+            const palletsPerTruckInput = document.getElementById('palletsPerTruck');
+            if (palletsPerTruckInput) {
+                palletsPerTruck = parseInt(palletsPerTruckInput.value) || 1;
+            }
+        }
+        
         // Show loading state
-        document.getElementById('bulkLinkButton').textContent = 'Linking...';
-        document.getElementById('bulkLinkButton').disabled = true;
+        const bulkLinkBtn = document.getElementById('bulkLinkButton');
+        if (bulkLinkBtn) {
+            bulkLinkBtn.textContent = 'Linking...';
+            bulkLinkBtn.disabled = true;
+        }
         
         // Prepare data for submission
         const formData = new FormData();
@@ -1698,6 +1919,7 @@ if (is_numeric($filter_project_id)) {
         formData.append('pallet_ids', JSON.stringify(palletIds));
         formData.append('strategy', strategy);
         formData.append('wattage', selectedDeliveryGroup.wattage);
+        formData.append('pallets_per_truck', palletsPerTruck);
         
         // Submit via fetch
         fetch('link_pallet_deliveries.php', {
@@ -1730,10 +1952,16 @@ if (is_numeric($filter_project_id)) {
             });
         })
         .finally(() => {
-            document.getElementById('bulkLinkButton').textContent = 'Link Selected Groups';
-            document.getElementById('bulkLinkButton').disabled = false;
+            const bulkLinkBtn = document.getElementById('bulkLinkButton');
+            if (bulkLinkBtn) {
+                bulkLinkBtn.textContent = 'Link Selected Groups';
+                bulkLinkBtn.disabled = false;
+            }
         });
-    };
+    }
+
+    // Make function available globally
+    window.performBulkLink = performBulkLink;
 
     function showBulkLinkResults(data) {
         const resultsDiv = document.getElementById('bulkLinkResults');
@@ -1766,13 +1994,14 @@ if (is_numeric($filter_project_id)) {
 
      // Quick match functions
 
-     window.clearSelections = function() {
+     function clearSelections() {
          selectedDeliveryGroup = null;
          selectedPalletGroup = null;
          
-         document.querySelectorAll('.group-item').forEach(item => {
+         document.querySelectorAll('.delivery-group, .pallet-group').forEach(item => {
              item.style.backgroundColor = '';
              item.style.borderLeft = '';
+             item.classList.remove('selected-delivery', 'selected-pallet');
          });
          
          updateBulkLinkUI();
@@ -1782,7 +2011,32 @@ if (is_numeric($filter_project_id)) {
          if (resultsDiv) {
              resultsDiv.style.display = 'none';
          }
-     };
+     }
+
+     // Make function available globally
+     window.clearSelections = clearSelections;
+
+     // Add event listeners for strategy selection
+     document.addEventListener('DOMContentLoaded', function() {
+         const strategyRadios = document.querySelectorAll('input[name="link_strategy"]');
+         const palletsPerTruckInput = document.getElementById('palletsPerTruck');
+         
+         function updatePalletsPerTruckInput() {
+             const selectedStrategy = document.querySelector('input[name="link_strategy"]:checked');
+             if (palletsPerTruckInput && selectedStrategy) {
+                 const isFixedPallets = selectedStrategy.value === 'pallets_per_truck';
+                 palletsPerTruckInput.disabled = !isFixedPallets;
+                 palletsPerTruckInput.style.opacity = isFixedPallets ? '1' : '0.5';
+             }
+         }
+         
+         strategyRadios.forEach(radio => {
+             radio.addEventListener('change', updatePalletsPerTruckInput);
+         });
+         
+         // Initialize on page load
+         updatePalletsPerTruckInput();
+     });
 
 </script>
 </body>

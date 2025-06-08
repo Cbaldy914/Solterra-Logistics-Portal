@@ -30,23 +30,32 @@ $success_message = $_SESSION['manage_pallets_success'] ?? null;
 $error_message = $_SESSION['manage_pallets_error'] ?? null;
 unset($_SESSION['manage_pallets_success'], $_SESSION['manage_pallets_error']);
 
-// Fetch the required quantity for the delivery
+// Fetch the required quantity for the delivery and delivery details for pallet synchronization
 $required_delivery_quantity = 0;
+$delivery_status = '';
+$delivery_project_id = null;
+$delivery_warehouse_id = null;
+$delivery_arrival_date = null;
+
 try {
-    $stmt_req_qty = $conn->prepare("SELECT quantity FROM deliveries WHERE id = ?");
+    $stmt_req_qty = $conn->prepare("SELECT quantity, status_of_delivery, project_id, warehouse_id, anticipated_delivery_date FROM deliveries WHERE id = ?");
     if ($stmt_req_qty) {
         $stmt_req_qty->bind_param("i", $delivery_id);
         $stmt_req_qty->execute();
-        $stmt_req_qty->bind_result($req_qty);
+        $stmt_req_qty->bind_result($req_qty, $del_status, $del_proj_id, $del_warehouse_id, $del_arrival_date);
         if ($stmt_req_qty->fetch()) {
             $required_delivery_quantity = (int)$req_qty;
+            $delivery_status = $del_status;
+            $delivery_project_id = $del_proj_id;
+            $delivery_warehouse_id = $del_warehouse_id;
+            $delivery_arrival_date = $del_arrival_date;
         }
         $stmt_req_qty->close();
     } else {
         throw new Exception("Failed to prepare required quantity statement: " . $conn->error);
     }
 } catch (Exception $e) {
-    $error_message .= " Error fetching required quantity: " . $e->getMessage();
+    $error_message .= " Error fetching delivery details: " . $e->getMessage();
 }
 
 /* ───────────────────── FETCH INITIAL & AVAILABLE PALLETS ───────────────────── */
@@ -145,9 +154,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_pallet_associati
         $added_count = 0;
         $removed_count = 0;
 
-        // Prepare statements
+        // Prepare statements - now with comprehensive pallet update for delivery sync
         $stmt_link = $conn->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
-        $stmt_update_status_add = $conn->prepare("UPDATE inventory_pallets SET status = 'Allocated to Delivery' WHERE id = ?");
+        $stmt_update_status_add = $conn->prepare("UPDATE inventory_pallets SET status = ?, current_project_id = ?, current_warehouse_id = ?, arrival_date = ? WHERE id = ?");
         $stmt_unlink = $conn->prepare("DELETE FROM delivery_pallets WHERE delivery_id = ? AND inventory_pallet_id = ?");
         $stmt_get_status_remove = $conn->prepare("SELECT current_warehouse_id FROM inventory_pallets WHERE id = ?");
         // We'll re-prepare $stmt_update_status_remove inside the loop
@@ -157,16 +166,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_pallet_associati
             throw new Exception("Error preparing statements: " . $conn->error);
         }
 
-        // Add new associations
+        // Add new associations - now with full delivery synchronization
         foreach ($pallets_to_add as $pallet_id) {
             $stmt_link->bind_param("ii", $delivery_id, $pallet_id);
             if (!$stmt_link->execute()) {
                 throw new Exception("Failed to link pallet ID {$pallet_id}: " . $stmt_link->error);
             }
             
-            $stmt_update_status_add->bind_param("i", $pallet_id);
+            // Update pallet with delivery status, location, and arrival date
+            $stmt_update_status_add->bind_param("siiss", $delivery_status, $delivery_project_id, $delivery_warehouse_id, $delivery_arrival_date, $pallet_id);
             if (!$stmt_update_status_add->execute()) {
-                throw new Exception("Failed to update status for added pallet ID {$pallet_id}: " . $stmt_update_status_add->error);
+                throw new Exception("Failed to update status and location for added pallet ID {$pallet_id}: " . $stmt_update_status_add->error);
             }
             $added_count++;
         }
@@ -212,7 +222,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_pallet_associati
 
         $conn->commit();
         $_SESSION['edit_delivery_success'] = 
-            "Pallet associations updated. Added: {$added_count}, Removed: {$removed_count}.";
+            "Pallet associations updated with synchronized status and locations. Added: {$added_count}, Removed: {$removed_count}.";
 
     } catch (Exception $e) {
         $conn->rollback();

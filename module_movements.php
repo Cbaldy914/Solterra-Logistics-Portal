@@ -37,6 +37,7 @@ if ($role === 'admin') {
 $available_projects = [];
 $project_data = null;
 $movement_data = [];
+$detailed_breakdown = [];
 $errorMessage = '';
 
 // If batch_id is provided but project_id is not, try to get project_id from the batch
@@ -111,14 +112,14 @@ try {
                 ip.current_warehouse_id,
                 
                 -- Module batch info 
-                m.vendor_name as manufacturer_name,
+                COALESCE(m.vendor_name, 'Unknown Manufacturer') as manufacturer_name,
                 
                 -- Try to get manufacturer address by matching name from vendor_name
                 mfg.name as manufacturer_company,
-                mfg.street_address as mfg_street,
-                mfg.city as mfg_city,
-                mfg.state as mfg_state,
-                mfg.zip_code as mfg_zip,
+                COALESCE(mfg.street_address, '') as mfg_street,
+                COALESCE(mfg.city, '') as mfg_city,
+                COALESCE(mfg.state, '') as mfg_state,
+                COALESCE(mfg.zip_code, '') as mfg_zip,
                 
                 -- Delivery info (may be NULL for pallets at manufacturer)
                 d.id as delivery_id,
@@ -131,26 +132,26 @@ try {
                 
                 -- Warehouse info (delivery destination)
                 w.id as delivery_warehouse_id,
-                w.name as delivery_warehouse_name,
-                w.street_address as delivery_wh_street,
-                w.city as delivery_wh_city,
-                w.state as delivery_wh_state,
-                w.zip_code as delivery_wh_zip,
+                COALESCE(w.name, '') as delivery_warehouse_name,
+                COALESCE(w.street_address, '') as delivery_wh_street,
+                COALESCE(w.city, '') as delivery_wh_city,
+                COALESCE(w.state, '') as delivery_wh_state,
+                COALESCE(w.zip_code, '') as delivery_wh_zip,
                 
                 -- Current warehouse info (where pallet is now)
                 w2.id as current_warehouse_id_info,
-                w2.name as current_warehouse_name,
-                w2.street_address as current_wh_street,
-                w2.city as current_wh_city,
-                w2.state as current_wh_state,
-                w2.zip_code as current_wh_zip,
+                COALESCE(w2.name, '') as current_warehouse_name,
+                COALESCE(w2.street_address, '') as current_wh_street,
+                COALESCE(w2.city, '') as current_wh_city,
+                COALESCE(w2.state, '') as current_wh_state,
+                COALESCE(w2.zip_code, '') as current_wh_zip,
                 
                 -- Project info
                 p.project_name,
-                p.street_address as proj_street,
-                p.city as proj_city,
-                p.state as proj_state,
-                p.zip_code as proj_zip
+                COALESCE(p.street_address, '') as proj_street,
+                COALESCE(p.city, '') as proj_city,
+                COALESCE(p.state, '') as proj_state,
+                COALESCE(p.zip_code, '') as proj_zip
                 
             FROM inventory_pallets ip
             
@@ -158,18 +159,28 @@ try {
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
             
-            -- Try to link to manufacturer by matching the first part of vendor_name
+            -- Simplified manufacturer matching - only if vendor_name contains a dash
             LEFT JOIN manufacturers mfg ON (
-                mfg.name = SUBSTRING_INDEX(m.vendor_name, ' - ', 1) 
-                OR mfg.short_name = SUBSTRING_INDEX(m.vendor_name, ' - ', 1)
+                m.vendor_name IS NOT NULL 
+                AND (
+                    (LOCATE(' - ', m.vendor_name) > 0 AND mfg.name = TRIM(SUBSTRING_INDEX(m.vendor_name, ' - ', 1)))
+                    OR (LOCATE(' - ', m.vendor_name) > 0 AND mfg.short_name = TRIM(SUBSTRING_INDEX(m.vendor_name, ' - ', 1)))
+                    OR (LOCATE(' - ', m.vendor_name) = 0 AND mfg.name = m.vendor_name)
+                    OR (LOCATE(' - ', m.vendor_name) = 0 AND mfg.short_name = m.vendor_name)
+                )
             )
             
-            -- Link to project (this ensures we only get pallets for this project)
-            JOIN projects p ON m.project_id = p.id
-            
-            -- LEFT JOIN to deliveries (so we get pallets without deliveries too)
+            -- LEFT JOIN to deliveries first (so we get pallets without deliveries too)
             LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
             LEFT JOIN deliveries d ON dp.delivery_id = d.id
+            
+            -- Link to project (this ensures we only get pallets for this project)
+            INNER JOIN projects p ON (
+                m.project_id = p.id 
+                OR ip.assigned_project_id = p.id 
+                OR ip.current_project_id = p.id
+                OR d.project_id = p.id
+            )
             
             -- Link to delivery destination warehouses
             LEFT JOIN warehouses w ON d.warehouse_id = w.id
@@ -183,18 +194,26 @@ try {
         
         if ($stmtMovements) {
             $stmtMovements->bind_param("i", $selected_project_id);
-            $stmtMovements->execute();
+            if (!$stmtMovements->execute()) {
+                throw new Exception("Failed to execute movement query: " . $stmtMovements->error);
+            }
             $resultMovements = $stmtMovements->get_result();
+            
+            if (!$resultMovements) {
+                throw new Exception("Failed to get movement results: " . $stmtMovements->error);
+            }
             
             while ($movement = $resultMovements->fetch_assoc()) {
                 $movement_data[] = $movement;
             }
             $stmtMovements->close();
+        } else {
+            throw new Exception("Failed to prepare movement query: " . $conn->error);
         }
         
         // Calculate detailed breakdown similar to module_overview.php
-        $detailed_breakdown = [];
-        foreach ($movement_data as $movement) {
+        if (!empty($movement_data)) {
+            foreach ($movement_data as $movement) {
             $status = $movement['status'];
             $wattage = $movement['wattage'];
             $quantity = $movement['quantity'];
@@ -235,11 +254,14 @@ try {
             }
             $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['pallets']++;
             $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $quantity;
+            }
         }
     }
 
 } catch (Exception $e) {
     $errorMessage = $e->getMessage();
+    // Log the error for debugging
+    error_log("Module Movements Error: " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
 }
 
 $conn->close();
@@ -635,9 +657,9 @@ $conn->close();
 
 <script>
 // Movement data from PHP
-const movementData = <?php echo json_encode($movement_data); ?>;
-const projectData = <?php echo json_encode($project_data); ?>;
-const detailedBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
+const movementData = <?php echo json_encode($movement_data ?? []); ?>;
+const projectData = <?php echo json_encode($project_data ?? null); ?>;
+const detailedBreakdown = <?php echo json_encode($detailed_breakdown ?? []); ?>;
 
 let map;
 let directionsService;
@@ -673,6 +695,12 @@ function initMap() {
 function processMovementData() {
     const locations = new Map();
     const routes = [];
+    
+    // Safety check
+    if (!movementData || !Array.isArray(movementData) || movementData.length === 0) {
+        console.log('No movement data available');
+        return;
+    }
     
     // Process each pallet's movement
     movementData.forEach(movement => {
@@ -785,8 +813,8 @@ function processMovementData() {
 }
 
 function buildAddress(street, city, state, zip) {
-    const parts = [street, city, state, zip].filter(part => part && part.trim() !== '');
-    return parts.join(', ');
+    const parts = [street, city, state, zip].filter(part => part && part.trim() !== '' && part !== null && part !== undefined);
+    return parts.length > 0 ? parts.join(', ') : '';
 }
 
 function geocodeAddress(geocoder, address) {
