@@ -185,40 +185,204 @@ $conn->close();
         }
         h2 {
             margin-top: 50px;
-            margin-bottom: 0px;
+            margin-bottom: 20px;
+            color: #293E4C;
+            font-size: 1.8em;
+            font-weight: 600;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #488C9A;
+            position: relative;
+        }
+        h2::after {
+            content: '';
+            position: absolute;
+            bottom: -3px;
+            left: 0;
+            width: 60px;
+            height: 3px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 2px;
+        }
+        .filter-form {
+            margin: 15px 0 25px 0;
+            padding: 15px;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid #dee2e6;
+            width: auto !important;
+            max-width: fit-content;
+            display: inline-block;
+        }
+        .filter-form label {
+            margin-right: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            transition: background-color 0.2s ease;
+            font-size: 0.9em;
+        }
+        .filter-form label:hover {
+            background-color: #f8f9fa;
+        }
+        .filter-form input[type="radio"] {
+            margin: 0;
         }
         .cost-overview {
             display: flex;
-            flex-wrap: wrap;
-            margin-top: 20px;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            margin-bottom: 50px;
         }
-        .cost-overview .cost-metric {
-            margin-right: 20px;
+        .cost-row {
+            display: flex;
+            width: 100%;
+            justify-content: center;
+            flex-wrap: wrap;
             margin-bottom: 20px;
         }
+        .cost-metric {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 20px;
+            margin: 8px;
+            border-radius: 12px;
+            text-align: center;
+            min-width: 200px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            border: 1px solid #dee2e6;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .cost-metric:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+        }
         .cost-metric h3 {
-            margin-bottom: 8px;
+            margin: 0 0 10px 0;
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 1rem;
+        }
+        .cost-metric p {
+            margin: 0;
+            font-size: 1.4rem;
+            font-weight: bold;
+            color: #488C9A;
         }
         .projects-container {
-            display: flex;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
             gap: 20px;
+            padding: 0;
         }
         .project-item {
-            background: #f9f9f9;
-            border-radius: 8px;
-            padding: 15px;
-
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e9ecef;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            cursor: pointer;
         }
-        .project-item h3 {
-            margin-top: 0;
+        .project-item:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
+        }
+        .project-image {
+            width: 100%;
+            height: 200px;
+            overflow: hidden;
+            position: relative;
         }
         .project-image img {
-            max-width: 100%;
-            border-radius: 4px;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+        .project-item:hover .project-image img {
+            transform: scale(1.05);
+        }
+        .project-title {
+            padding: 20px 20px 15px 20px;
+            background: #ffffff;
+            border-bottom: 1px solid #f1f3f4;
+        }
+        .project-title h3 {
+            margin: 0;
+            font-size: 1.4em;
+            color: #293E4C;
+            font-weight: 600;
+            text-align: center;
+        }
+        .project-title h3 a {
+            text-decoration: none;
+            color: inherit;
+        }
+        .project-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, rgba(72, 140, 154, 0.9), rgba(58, 110, 127, 0.9));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 3;
+        }
+        .project-item:hover .project-overlay {
+            opacity: 1;
+        }
+        .project-overlay-text {
+            color: white;
+            font-size: 1.2em;
+            font-weight: 600;
+            text-align: center;
+        }
+        .project-content {
+            padding: 25px;
+            background: #fafbfc;
+            width: 100% !important;
+            box-sizing: border-box;
+            text-align: left !important;
+            position: relative;
+        }
+        .project-details {
+            background: #ffffff;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border: 1px solid #f1f3f4;
+            width: 100% !important;
+            box-sizing: border-box;
+            text-align: left !important;
+            float: none !important;
+            position: relative;
         }
         .project-details p {
-            margin: 4px 0;
+            margin: 12px 0;
+            color: #495057;
+            font-size: 0.95em;
+            line-height: 1.6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            min-height: 24px;
+        }
+        .project-details strong {
+            color: #293E4C;
+            font-weight: 600;
+        }
+        .sustainability-value {
+            font-weight: 700;
+            font-size: 1.1em;
         }
         .breadcrumb {
             display: flex;
@@ -232,6 +396,20 @@ $conn->close();
         .breadcrumb .separator {
             margin: 0 8px;
             color: #6c757d;
+        }
+        @media (max-width: 768px) {
+            .projects-container {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+            .cost-row {
+                flex-direction: column;
+                align-items: center;
+            }
+            .cost-metric {
+                min-width: 250px;
+                margin: 5px 0;
+            }
         }
     </style>
 </head>
@@ -257,89 +435,99 @@ $conn->close();
     </h1>
 
     <!-- Filter form -->
-    <form method="GET" id="filter-form">
+    <form method="GET" id="filter-form" class="filter-form">
         <label>
             <input type="radio" name="filter" value="total" onchange="this.form.submit();"
                    <?php if ($filter==='total') echo 'checked'; ?>>
-            Total Amounts
+            📊 Total Amounts
         </label>
         <label>
             <input type="radio" name="filter" value="ytd" onchange="this.form.submit();"
                    <?php if ($filter==='ytd') echo 'checked'; ?>>
-            Year-to-Date Amounts
+            📅 Year-to-Date Amounts
         </label>
         <label>
             <input type="radio" name="filter" value="per_project" onchange="this.form.submit();"
                    <?php if ($filter==='per_project') echo 'checked'; ?>>
-            Average per Project
+            📈 Average per Project
         </label>
     </form>
 
     <!-- Key metrics -->
     <div class="cost-overview">
-        <div class="cost-metric">
-            <h3>
-                <?php echo ($filter==='per_project') ? 'Avg. Emissions / Project' : 'Total Emissions'; ?>
-            </h3>
-            <p><?php echo number_format($display_total_emissions, 2); ?> kg CO₂</p>
-        </div>
-        <div class="cost-metric">
-            <h3>
-                <?php echo ($filter==='per_project') ? 'Avg. Truckloads / Project' : 'Total Truckloads'; ?>
-            </h3>
-            <p><?php echo number_format($display_total_truckloads, 0); ?></p>
-        </div>
-        <div class="cost-metric">
-            <h3>
-                <?php echo ($filter==='per_project') ? 'Avg. Miles / Project' : 'Miles Driven'; ?>
-            </h3>
-            <p><?php echo number_format($display_miles_driven, 2); ?> miles</p>
-        </div>
-        <div class="cost-metric">
-            <h3>
-                <?php echo ($filter==='per_project') ? 'Avg. Fuel / Project' : 'Fuel Consumption'; ?>
-            </h3>
-            <p><?php echo number_format($display_fuel_consumption, 2); ?> gallons</p>
+        <div class="cost-row">
+            <div class="cost-metric">
+                <h3>
+                    🌱 <?php echo ($filter==='per_project') ? 'Avg. Emissions / Project' : 'Total Emissions'; ?>
+                </h3>
+                <p><?php echo number_format($display_total_emissions, 2); ?> kg CO₂</p>
+            </div>
+            <div class="cost-metric">
+                <h3>
+                    🚛 <?php echo ($filter==='per_project') ? 'Avg. Truckloads / Project' : 'Total Truckloads'; ?>
+                </h3>
+                <p><?php echo number_format($display_total_truckloads, 0); ?></p>
+            </div>
+            <div class="cost-metric">
+                <h3>
+                    🛣️ <?php echo ($filter==='per_project') ? 'Avg. Miles / Project' : 'Miles Driven'; ?>
+                </h3>
+                <p><?php echo number_format($display_miles_driven, 2); ?> miles</p>
+            </div>
+            <div class="cost-metric">
+                <h3>
+                    ⛽ <?php echo ($filter==='per_project') ? 'Avg. Fuel / Project' : 'Fuel Consumption'; ?>
+                </h3>
+                <p><?php echo number_format($display_fuel_consumption, 2); ?> gallons</p>
+            </div>
         </div>
     </div>
 
-    <h2>Sustainability by Project:</h2>
+    <h2>🌍 Sustainability by Project</h2>
     <div class="projects-container">
         <?php if (!empty($projects)): ?>
             <?php foreach ($projects as $proj): ?>
-                <div class="project-item">
-                    <h3>
-                        <a href="project_sustainability_details?project_id=<?php echo $proj['id']; ?>">
-                            <?php echo htmlspecialchars($proj['project_name']); ?>
-                        </a>
-                    </h3>
-                    <div class="project-image">
-                        <a href="project_sustainability_details?project_id=<?php echo $proj['id']; ?>">
-                            <img src="<?php echo htmlspecialchars($proj['image_url']); ?>" alt="Project Image">
-                        </a>
+                <div class="project-item" onclick="window.location.href='project_sustainability_details?project_id=<?php echo $proj['id']; ?>'">
+                    <div class="project-title">
+                        <h3>
+                            <a href="project_sustainability_details?project_id=<?php echo $proj['id']; ?>">
+                                <?php echo htmlspecialchars($proj['project_name']); ?>
+                            </a>
+                        </h3>
                     </div>
-                    <div class="project-details">
-                        <p>
-                            <strong><?php echo ($filter==='ytd')?'YTD ':''; ?>Emissions:</strong>
-                            <?php echo number_format($proj['total_emissions'], 2); ?> kg CO₂
-                        </p>
-                        <p>
-                            <strong><?php echo ($filter==='ytd')?'YTD ':''; ?>Truckloads:</strong>
-                            <?php echo number_format($proj['total_truckloads'], 0); ?>
-                        </p>
-                        <p>
-                            <strong><?php echo ($filter==='ytd')?'YTD ':''; ?>Miles Driven:</strong>
-                            <?php echo number_format($proj['miles_driven'], 2); ?>
-                        </p>
-                        <p>
-                            <strong><?php echo ($filter==='ytd')?'YTD ':''; ?>Fuel:</strong>
-                            <?php echo number_format($proj['fuel_consumption'], 2); ?> gal
-                        </p>
+                    <div class="project-image">
+                        <img src="<?php echo htmlspecialchars($proj['image_url']); ?>" alt="<?php echo htmlspecialchars($proj['project_name']); ?>">
+                        <div class="project-overlay">
+                            <div class="project-overlay-text">View Sustainability Details</div>
+                        </div>
+                    </div>
+                    <div class="project-content">
+                        <div class="project-details">
+                            <p>
+                                <strong>🌱 <?php echo ($filter==='ytd')?'YTD ':''; ?>Emissions</strong>
+                                <span class="sustainability-value"><?php echo number_format($proj['total_emissions'], 2); ?> kg CO₂</span>
+                            </p>
+                            <p>
+                                <strong>🚛 <?php echo ($filter==='ytd')?'YTD ':''; ?>Truckloads</strong>
+                                <span class="sustainability-value"><?php echo number_format($proj['total_truckloads'], 0); ?></span>
+                            </p>
+                            <p>
+                                <strong>🛣️ <?php echo ($filter==='ytd')?'YTD ':''; ?>Miles Driven</strong>
+                                <span class="sustainability-value"><?php echo number_format($proj['miles_driven'], 2); ?> mi</span>
+                            </p>
+                            <p>
+                                <strong>⛽ <?php echo ($filter==='ytd')?'YTD ':''; ?>Fuel</strong>
+                                <span class="sustainability-value"><?php echo number_format($proj['fuel_consumption'], 2); ?> gal</span>
+                            </p>
+                        </div>
                     </div>
                 </div>
             <?php endforeach; ?>
         <?php else: ?>
-            <p>No projects found.</p>
+            <div style="text-align: center; padding: 40px; color: #6c757d; grid-column: 1/-1;">
+                <h3>🌱 No Projects Found</h3>
+                <p>No projects with sustainability data are available for the selected filter.</p>
+            </div>
         <?php endif; ?>
     </div>
 </main>
