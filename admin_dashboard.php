@@ -204,12 +204,12 @@ $conn->close();
                 ?>
                 <div class="project-item">
                     <h3>
-                        <a href="<?php echo $target_page; ?>?id=<?php echo $project['id']; ?>">
+                        <a href="<?php echo $target_page; ?>?project_id=<?php echo $project['id']; ?>">
                             <?php echo htmlspecialchars($project['project_name']); ?>
                         </a>
                     </h3>
                     <div class="project-image">
-                        <a href="<?php echo $target_page; ?>?id=<?php echo $project['id']; ?>">
+                        <a href="<?php echo $target_page; ?>?project_id=<?php echo $project['id']; ?>">
                              <img src="<?php echo htmlspecialchars(!empty($project['image_url']) ? $project['image_url'] : 'pictures/default_project_image.png'); ?>" alt="Project Image" style="width:100%; height:auto; max-height: 150px; object-fit: cover;">
                         </a>
                     </div>

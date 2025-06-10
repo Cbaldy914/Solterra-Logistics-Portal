@@ -13,11 +13,11 @@ if (!isset($_SESSION['user_id'])) {
 // Grab the user's role from the session
 $role = $_SESSION['role'] ?? 'user';
 
-if (!isset($_GET['id']) || empty($_GET['id'])) {
+if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
     die("Project ID is missing.");
 }
 
-$project_id = intval($_GET['id']);
+$project_id = intval($_GET['project_id']);
 
 // Database connection
 require_once '../config.php';
@@ -1073,7 +1073,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     <!-- Delivery Info -->
     <div id="delivery-info">
         <form method="GET" id="filter-form">
-            <input type="hidden" name="id" value="<?php echo $project_id; ?>">
+            <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
             <label>
                 <input type="radio" name="view_mode" value="mw"
                        <?php if($view_mode=='mw') echo 'checked';?>

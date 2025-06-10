@@ -472,7 +472,7 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <div class="breadcrumb">
-        <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <a href="<?php echo ($role === 'admin' || $role === 'user') ? 'dashboard' : 'admin_dashboard'; ?>">Dashboard</a>
         <span class="separator">&raquo;</span>
         <span>Warehousing Overview</span>
     </div>
