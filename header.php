@@ -55,8 +55,9 @@ if (isset($_SESSION['role'])) {
                 <!-- Full privileges across all accounts-->
                 <!-- =================================== -->
                 <li class="dropdown">
-                    <a href="admin_dashboard" class="dropbtn">Projects</a>
+                    <a href="#" class="dropbtn">Projects</a>
                     <div class="dropdown-content">
+                        <a href="admin_dashboard">Dashboard</a>
                         <a href="add_project">Add Project</a>
                         <a href="manage_projects">Manage Projects</a>
                         <a href="module_cost_analysis">Module Cost Analysis</a>
@@ -70,9 +71,9 @@ if (isset($_SESSION['role'])) {
                     <div class="dropdown-content">
                         <a href="modules">Manage Modules</a>
                         <a href="module_movements">Module Movements</a>
-                        <a href="manage_pallets.php">Manage Pallets</a>
-                        <a href="manage_deliveries.php">Manage Deliveries</a>
-                        <a href="link_pallet_deliveries.php">Link Pallets to Deliveries</a>
+                        <a href="manage_pallets">Manage Pallets</a>
+                        <a href="manage_deliveries">Manage Deliveries</a>
+                        <a href="link_pallet_deliveries">Link Pallets to Deliveries</a>
 
                     </div>
                 </li>
@@ -81,7 +82,7 @@ if (isset($_SESSION['role'])) {
                     <a href="#" class="dropbtn">Warehouses</a>
                     <div class="dropdown-content">
                         <a href="add_warehouse">Add Warehouse</a>
-                        <a href="manage_warehouses.php">Manage Warehouses</a>
+                        <a href="manage_warehouses">Manage Warehouses</a>
                         <a href="admin_warehouse_estimate">Admin Warehouse Quote</a>
                     </div>
                 </li>
@@ -127,8 +128,9 @@ if (isset($_SESSION['role'])) {
                 <!-- Manage only own account(s)   -->
                 <!-- ============================= -->
                 <li class="dropdown">
-                    <a href="dashboard" class="dropbtn">Projects</a>
+                    <a href="#" class="dropbtn">Projects</a>
                     <div class="dropdown-content">
+                        <a href="dashboard">Dashboard</a>
                         <a href="add_project">Add Project</a>
                         <a href="manage_projects">Manage Projects</a>
                         <a href="future_projects">Future Projects</a>
@@ -142,9 +144,9 @@ if (isset($_SESSION['role'])) {
                     <div class="dropdown-content">
                         <a href="modules">Manage Modules</a>
                         <a href="module_movements">Module Movements</a>
-                        <a href="manage_pallets.php">Manage Pallets</a>
-                        <a href="manage_deliveries.php">Manage Deliveries</a>
-                        <a href="link_pallet_deliveries.php">Link Pallets to Deliveries</a>
+                        <a href="manage_pallets">Manage Pallets</a>
+                        <a href="manage_deliveries">Manage Deliveries</a>
+                        <a href="link_pallet_deliveries">Link Pallets to Deliveries</a>
 
                     </div>
                 </li>
@@ -153,12 +155,19 @@ if (isset($_SESSION['role'])) {
                     <a href="#" class="dropbtn">Warehousing</a>
                     <div class="dropdown-content">
                         <a href="add_warehouse">Add Warehouse</a>
-                        <a href="manage_warehouses.php">Manage Warehouses</a>
+                        <a href="manage_warehouses">Manage Warehouses</a>
                         <a href="warehousing_overview">Warehousing Overview</a>
                         <a href="cost_estimate_calculator">Cost Estimate Calculator</a>
                         <a href="warehouse_optimization">Warehouse Optimization (Beta)</a>
                         <a href="warehouse_estimate">Warehouse Quotes</a>
 
+                    </div>
+                </li>
+                <li class="dropdown">
+                    <a href="#" class="dropbtn">Manufacturers</a>
+                    <div class="dropdown-content">
+                        <a href="add_manufacturer">Add Manufacturer</a>
+                        <a href="manufacturers">Manage Manufacturers</a>
                     </div>
                 </li>
 
@@ -179,8 +188,9 @@ if (isset($_SESSION['role'])) {
             
             <?php elseif ($role === 'DDPm'): ?>
                 <li class="dropdown">
-                    <a href="dashboard" class="dropbtn">Projects</a>
+                    <a href="#" class="dropbtn">Projects</a>
                     <div class="dropdown-content">
+                        <a href="dashboard">Dashboard</a>
                         <a href="future_projects">Future Projects</a>
                         <a href="sustainability_overview">Sustainability</a>
                     </div>
@@ -205,8 +215,9 @@ if (isset($_SESSION['role'])) {
                 <!-- REGULAR USER Navigation -->
                 <!-- ======================= -->
                 <li class="dropdown">
-                    <a href="dashboard" class="dropbtn">Projects</a>
+                    <a href="#" class="dropbtn">Projects</a>
                     <div class="dropdown-content">
+                        <a href="dashboard">Dashboard</a>
                         <a href="future_projects">Future Projects</a>
                         <a href="module_cost_analysis">Cost Analysis</a>
                         <a href="sustainability_overview">Sustainability</a>
@@ -258,13 +269,36 @@ document.addEventListener('DOMContentLoaded', function() {
         menu.classList.toggle('show');
     });
 
-    // For mobile: toggle dropdowns on click
+    // Handle dropdown clicks for all screen sizes
     dropdownLinks.forEach(link => {
         link.addEventListener('click', function(e) {
-            if (window.innerWidth <= 768) {
-                e.preventDefault();
-                const parentLi = this.parentElement;
-                parentLi.classList.toggle('open');
+            e.preventDefault();
+            const parentLi = this.parentElement;
+            
+            // Check if the dropdown is already open
+            const isOpen = parentLi.classList.contains('open');
+            
+            // Close all open dropdowns first
+            document.querySelectorAll('.menu li.dropdown.open').forEach(openDropdown => {
+                openDropdown.classList.remove('open');
+            });
+            
+            // If the clicked dropdown was not already open, open it
+            if (!isOpen) {
+                parentLi.classList.add('open');
+            }
+        });
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(e) {
+        // Find the dropdown that was clicked, if any
+        const clickedDropdown = e.target.closest('.dropdown');
+        
+        // Close all dropdowns that were not the one just clicked
+        document.querySelectorAll('.menu li.dropdown.open').forEach(openDropdown => {
+            if (openDropdown !== clickedDropdown) {
+                openDropdown.classList.remove('open');
             }
         });
     });

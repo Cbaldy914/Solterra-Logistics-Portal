@@ -124,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
     
     // Store message in session and redirect to prevent form resubmission
     $_SESSION['module_overview_message'] = $deleteMessage;
-    header("Location: module_overview.php?batch_id=" . $batch_id);
+    header("Location: module_overview?batch_id=" . $batch_id);
     exit();
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets') {
     $shipMessage = '';
@@ -282,7 +282,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
                     }
                 }
             }
-            $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets. Pallets are now in transit to {$warehouseName}. To receive pallets at the warehouse, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline; font-weight: 600;'>click here</a>.";
+            $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets. Pallets are now in transit to {$warehouseName}. To receive pallets at the warehouse, <a href='manage_warehouse_inventory?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline; font-weight: 600;'>click here</a>.";
         } else {
         $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
         }
@@ -932,9 +932,9 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <div class="breadcrumb">
-        <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard' : 'dashboard'; ?>">Dashboard</a>
         <span class="separator">&raquo;</span>
-        <a href="modules.php">Modules</a>
+        <a href="modules">Modules</a>
         <span class="separator">&raquo;</span>
         <span>Batch: <?php echo $batch_data ? htmlspecialchars($batch_data['vendor_name']) : 'Module Batch'; ?></span>
     </div>
@@ -985,7 +985,7 @@ $conn->close();
             <p><strong>Batch ID:</strong> <?php echo $batch_data['id']; ?></p>
             <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch_data['created_at'])); ?></p>
             <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-            <button class="edit-button" onclick="window.location.href='edit_module.php?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
+            <button class="edit-button" onclick="window.location.href='edit_module?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
             <?php endif; ?>
         </div>
 
@@ -1067,7 +1067,7 @@ $conn->close();
                 <!-- Link to detailed movement view -->
                 <div style="margin-top: 20px; text-align: center;">
                     <?php 
-                    $movement_url = "module_movements.php?batch_id=" . urlencode($batch_id);
+                    $movement_url = "module_movements?batch_id=" . urlencode($batch_id);
                     if (!empty($batch_data['project_id'])) {
                         $movement_url .= "&project_id=" . urlencode($batch_data['project_id']);
                     }
@@ -1227,7 +1227,7 @@ $conn->close();
 
     <?php else: ?>
          <p>Batch data could not be loaded.</p>
-         <a href="modules.php">Back to Modules List</a>
+         <a href="modules">Back to Modules List</a>
     <?php endif; ?>
 </main>
 
