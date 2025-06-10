@@ -714,16 +714,16 @@ if ($conn) {
      }
      ?>
      <div class="breadcrumb" style="margin: 10px 20px;">
-         <?php if ($project_id && !$warehouse_id && !$module_batch_id): ?>
-             <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
-             <span class="separator">&raquo;</span>
-             <span>Warehouse Locations</span>
-         <?php elseif ($warehouse_id && $project_id): ?>
-             <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
-             <span class="separator">&raquo;</span>
-             <a href="warehouse_info.php?project_id=<?php echo $project_id; ?>">Warehouse Locations</a>
-             <span class="separator">&raquo;</span>
-             <span><?php echo htmlspecialchars($warehouse_data['name'] ?? 'Warehouse Details'); ?></span>
+              <?php if ($project_id && !$warehouse_id && !$module_batch_id): ?>
+         <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
+         <span class="separator">&raquo;</span>
+         <span>Warehouse Locations</span>
+     <?php elseif ($warehouse_id && $project_id): ?>
+         <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
+         <span class="separator">&raquo;</span>
+         <a href="warehouse_info.php?project_id=<?php echo $project_id; ?>">Warehouse Locations</a>
+         <span class="separator">&raquo;</span>
+         <span><?php echo htmlspecialchars($warehouse_data['name'] ?? 'Warehouse Details'); ?></span>
          <?php elseif ($module_batch_id && !$warehouse_id): // If module_batch_id is the main context (listing warehouses for it or showing no warehouses for it) ?>
             <a href="modules.php">Modules</a> 
             <span class="separator">&raquo;</span>
