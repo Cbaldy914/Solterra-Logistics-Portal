@@ -926,6 +926,92 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         margin-top: 20px;
         margin-left: 20px;
     }
+}
+
+/* Dropdown Styling */
+.dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.dropdown-btn {
+    background: #488C9A;
+    color: #fff;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 1em;
+    transition: background-color 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 140px;
+    margin: 5px;
+}
+
+.dropdown-btn:hover {
+    background: #293E4C;
+}
+
+.dropdown-arrow {
+    font-size: 0.8em;
+    transition: transform 0.3s ease;
+}
+
+.dropdown-btn.active .dropdown-arrow {
+    transform: rotate(180deg);
+}
+
+.dropdown-content {
+    display: none;
+    position: absolute;
+    background-color: #fff;
+    min-width: 200px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+    border-radius: 8px;
+    z-index: 1000;
+    border: 1px solid #e0e0e0;
+    top: 100%;
+    left: 0;
+    margin-top: 5px;
+}
+
+.dropdown-content.show {
+    display: block;
+    animation: fadeIn 0.2s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.dropdown-content a {
+    color: #333;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    transition: background-color 0.3s ease;
+    font-weight: 500;
+    border-radius: 6px;
+    margin: 4px;
+}
+
+.dropdown-content a:hover {
+    background-color: #f8f9fa;
+    color: #488C9A;
+}
+
+.dropdown-content a:first-child {
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}
+
+.dropdown-content a:last-child {
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
     
     .table-responsive th,
     .table-responsive td {
@@ -962,8 +1048,16 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
             <h1 class="project-name-desktop"><?php echo htmlspecialchars($project['project_name']); ?></h1>
             <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
             <p><strong>Project Size:</strong> <?php echo number_format($project_size_mw, 2); ?> MWs</p>
-            <!-- Deliveries button goes to manage_deliveries if admin, otherwise view_project -->
-            <button onclick="window.location.href='<?php echo $deliveriesLink; ?>'">Deliveries</button>
+            <!-- Deliveries dropdown with options for Delivery Schedule and Module Movements -->
+            <div class="dropdown">
+                <button class="dropdown-btn" onclick="toggleDropdown()">
+                    Deliveries <span class="dropdown-arrow">▼</span>
+                </button>
+                <div class="dropdown-content" id="deliveriesDropdown">
+                    <a href="<?php echo $deliveriesLink; ?>">📋 Delivery Schedule</a>
+                    <a href="module_movements.php?project_id=<?php echo $project_id; ?>">📍 Module Movements</a>
+                </div>
+            </div>
             <button onclick="window.location.href='warehouse_info?project_id=<?php echo $project_id; ?>'">Warehousing</button>
             <button onclick="window.location.href='project_cost_details?project_id=<?php echo $project_id; ?>'">Costs</button>
             <button onclick="window.location.href='project_documents?project_id=<?php echo $project_id; ?>'">Documents</button>
@@ -1388,6 +1482,34 @@ function initializeFinancialCharts(){
             }
         }
     });
+}
+
+// Dropdown functionality
+function toggleDropdown() {
+    var dropdown = document.getElementById("deliveriesDropdown");
+    var dropdownBtn = document.querySelector(".dropdown-btn");
+    
+    dropdown.classList.toggle("show");
+    dropdownBtn.classList.toggle("active");
+}
+
+// Close dropdown when clicking outside
+window.onclick = function(event) {
+    if (!event.target.matches('.dropdown-btn') && !event.target.matches('.dropdown-arrow')) {
+        var dropdowns = document.getElementsByClassName("dropdown-content");
+        var dropdownBtns = document.getElementsByClassName("dropdown-btn");
+        
+        for (var i = 0; i < dropdowns.length; i++) {
+            var openDropdown = dropdowns[i];
+            if (openDropdown.classList.contains('show')) {
+                openDropdown.classList.remove('show');
+            }
+        }
+        
+        for (var i = 0; i < dropdownBtns.length; i++) {
+            dropdownBtns[i].classList.remove('active');
+        }
+    }
 }
 </script>
 </body>
