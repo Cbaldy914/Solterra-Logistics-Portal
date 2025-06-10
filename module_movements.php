@@ -19,6 +19,19 @@ $user_id = $_SESSION['user_id'];
 $selected_project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
 $batch_id = isset($_GET['batch_id']) ? intval($_GET['batch_id']) : 0;
 
+// Breadcrumb logic
+$breadcrumb_link = '';
+$breadcrumb_text = '';
+$referer_page = isset($_SERVER['HTTP_REFERER']) ? basename(parse_url($_SERVER['HTTP_REFERER'], PHP_URL_PATH)) : '';
+
+if ($batch_id > 0) {
+    $breadcrumb_link = 'module_overview.php?batch_id=' . $batch_id;
+    $breadcrumb_text = 'Module Batch Overview';
+} elseif ($referer_page === 'project_overview.php' && $selected_project_id > 0) {
+    $breadcrumb_link = 'project_overview.php?project_id=' . $selected_project_id;
+    $breadcrumb_text = 'Project Overview';
+}
+
 // Increase memory limit for large datasets
 ini_set('memory_limit', '512M');
 ini_set('max_execution_time', '120'); // 2 minutes
@@ -486,8 +499,8 @@ $conn->close();
     <div class="breadcrumb">
         <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
         <span class="separator">&raquo;</span>
-        <?php if ($batch_id > 0): ?>
-            <a href="module_overview.php?batch_id=<?php echo $batch_id; ?>">Module Batch Overview</a>
+        <?php if (!empty($breadcrumb_text)): ?>
+            <a href="<?php echo $breadcrumb_link; ?>"><?php echo htmlspecialchars($breadcrumb_text); ?></a>
             <span class="separator">&raquo;</span>
         <?php endif; ?>
         <span>Module Movements</span>

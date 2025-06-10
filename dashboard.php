@@ -249,14 +249,6 @@ $conn->close();
             opacity: 0.3;
         }
 
-        /* Enhanced Project Cards */
-        .projects-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 25px;
-            margin-top: 20px;
-        }
-
         .project-item {
             background: #ffffff;
             border-radius: 16px;
@@ -265,6 +257,7 @@ $conn->close();
             overflow: hidden;
             transition: all 0.3s ease;
             cursor: pointer;
+            width: 400px;
         }
 
         .project-item:hover {
@@ -483,10 +476,6 @@ $conn->close();
                 align-items: flex-start;
             }
 
-            .projects-container {
-                grid-template-columns: 1fr;
-                gap: 20px;
-            }
 
             .dashboard-stats {
                 grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -518,6 +507,35 @@ $conn->close();
             height: 3px;
             background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
             border-radius: 2px;
+        }
+
+        /* Add Project Card Style */
+        .project-item--add {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            border: 2px dashed #d0d0d0;
+            background-color: #f9f9f9;
+            color: #6c757d;
+            min-height: 480px; /* Match height of other cards */
+            text-align: center;
+        }
+        .project-item--add:hover {
+            border-color: #488C9A;
+            background-color: #f0f8fa;
+            color: #488C9A;
+            transform: translateY(-8px);
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
+        }
+        .add-project-icon {
+            font-size: 4em;
+            line-height: 1;
+            margin-bottom: 15px;
+        }
+        .add-project-text {
+            font-size: 1.2em;
+            font-weight: 600;
         }
     </style>
 </head>
@@ -570,34 +588,8 @@ $conn->close();
         </div>
     </div>
 
-    <!-- Quick Actions -->
-    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
-    <div class="quick-actions">
-        <h2>🚀 Quick Actions</h2>
-        <div class="action-buttons">
-            <?php if ($role === 'global_admin'): ?>
-                <a href="admin_dashboard.php" class="action-btn">
-                    📊 Admin Dashboard
-                </a>
-                <a href="manage_warehouses.php" class="action-btn">
-                    🏢 Manage Warehouses
-                </a>
-            <?php endif; ?>
-            <a href="modules.php" class="action-btn">
-                📦 View Modules
-            </a>
-            <a href="freight.php" class="action-btn">
-                🚛 Freight Management
-            </a>
-            <a href="documents.php" class="action-btn">
-                📄 Documents
-            </a>
-        </div>
-    </div>
-    <?php endif; ?>
-
     <!-- Enhanced Projects Section -->
-    <?php if (!empty($projects)): ?>
+    <?php if (!empty($projects) || in_array($role, ['admin', 'global_admin'])): ?>
         <h2 class="section-header" id="projects-section">Your Active Projects</h2>
         <div class="projects-container">
             <?php 
@@ -623,10 +615,10 @@ $conn->close();
                     $status_text = 'In Progress';
                 }
             ?>
-                <div class="project-item" onclick="window.location.href='<?php echo $target_page; ?>?id=<?php echo $project['id']; ?>'">
+                <div class="project-item" onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">
                     <div class="project-title">
                         <h3>
-                            <a href="<?php echo $target_page; ?>?id=<?php echo $project['id']; ?>">
+                            <a href="<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>">
                                 <?php echo htmlspecialchars($project['project_name']); ?>
                             </a>
                         </h3>
@@ -674,6 +666,13 @@ $conn->close();
                     </div>
                 </div>
             <?php endforeach; ?>
+
+            <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+                <div class="project-item project-item--add" onclick="window.location.href='add_project.php'">
+                    <div class="add-project-icon">＋</div>
+                    <div class="add-project-text">Add New Project</div>
+                </div>
+            <?php endif; ?>
         </div>
     <?php else: ?>
         <div class="quick-actions">
@@ -683,4 +682,7 @@ $conn->close();
             </p>
         </div>
     <?php endif; ?>
+</main>
+</body>
+</html>
 

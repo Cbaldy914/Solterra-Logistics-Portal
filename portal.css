@@ -278,25 +278,52 @@ nav ul.menu li.dropdown .dropbtn {
 nav ul.menu li .dropdown-content {
     display: none;
     position: absolute;
-    background-color: white;
+    background-color: #fff;
     min-width: 200px;
-    box-shadow: 0px 8px 16px rgba(0,0,0,0.2);
-    z-index: 1;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+    border-radius: 8px;
+    z-index: 1000;
+    border: 1px solid #e0e0e0;
+    top: 100%;
+    left: 0;
+}
+
+/* Show on hover OR when .open class is present for "sticky" click */
+nav ul.menu li.dropdown:hover .dropdown-content,
+nav ul.menu li.dropdown.open .dropdown-content {
+    display: block;
+    animation: fadeIn 0.2s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 nav ul.menu li .dropdown-content a {
-    color: #293E4C;
+    color: #333;
     padding: 12px 16px;
     text-decoration: none;
     display: block;
+    transition: background-color 0.3s ease;
+    font-weight: 500;
+    border-radius: 6px;
+    margin: 4px;
 }
 
 nav ul.menu li .dropdown-content a:hover {
-    background-color: #f1f1f1;
+    background-color: #f8f9fa;
+    color: #488C9A;
 }
 
-nav ul.menu li.dropdown:hover .dropdown-content {
-    display: block;
+nav ul.menu li .dropdown-content a:first-child {
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}
+
+nav ul.menu li .dropdown-content a:last-child {
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
 }
 
 nav ul {
