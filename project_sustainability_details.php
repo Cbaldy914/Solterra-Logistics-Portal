@@ -301,24 +301,73 @@ $conn->close();
     <style>
         .cost-overview {
             display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            margin-bottom: 30px;
+        }
+        .cost-row {
+            display: flex;
+            width: 100%;
+            justify-content: center;
             flex-wrap: wrap;
-            margin-top: 20px;
+            margin-bottom: 20px;
         }
         .cost-metric {
-            flex: 1;
-            min-width: 220px;
-            margin: 10px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
             padding: 20px;
-            background-color: #f2f2f2;
+            margin: 8px;
+            border-radius: 12px;
             text-align: center;
-            border-radius: 8px;
+            min-width: 200px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            border: 1px solid #dee2e6;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .cost-metric:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.15);
         }
         .cost-metric h3 {
-            margin-bottom: 10px;
+            margin: 0 0 10px 0;
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 1rem;
+        }
+        .cost-metric p {
+            margin: 0;
+            font-size: 1.4rem;
+            font-weight: bold;
+            color: #488C9A;
         }
         .legacy-filter-form {
-            margin-left: 20px;
-            margin-top: 10px;
+            margin: 15px 20px 20px 20px;
+            padding: 15px;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid #dee2e6;
+            width: auto !important;
+            max-width: fit-content;
+            display: inline-block;
+        }
+        .legacy-filter-form label {
+            margin-right: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            transition: background-color 0.2s ease;
+            font-size: 0.9em;
+        }
+        .legacy-filter-form label:hover {
+            background-color: #f8f9fa;
+        }
+        .legacy-filter-form input[type="radio"] {
+            margin: 0;
         }
         .time-filter-header {
             display: flex;
@@ -458,58 +507,62 @@ $conn->close();
             <input type="radio" name="filter" value="total"
                    onchange="this.form.submit();"
                    <?php if ($filter === 'total') echo 'checked'; ?>>
-            Total
+            📊 Total
         </label>
         <label>
             <input type="radio" name="filter" value="ytd"
                    onchange="this.form.submit();"
                    <?php if ($filter === 'ytd') echo 'checked'; ?>>
-            YTD
+            📅 YTD
         </label>
         <label>
             <input type="radio" name="filter" value="emissions_per_mw"
                    onchange="this.form.submit();"
                    <?php if ($filter === 'emissions_per_mw') echo 'checked'; ?>>
-            Emissions per MW
+            🌱 Emissions per MW
         </label>
         <label>
             <input type="radio" name="filter" value="emissions_vs_average"
                    onchange="this.form.submit();"
                    <?php if ($filter === 'emissions_vs_average') echo 'checked'; ?>>
-            Project Emissions vs Average
+            📈 Project vs Average
         </label>
     </form>
 
     <!-- Key metrics row -->
     <div class="cost-overview">
         <?php if ($filter === 'emissions_per_mw'): ?>
-            <div class="cost-metric">
-                <h3>Emissions per MW</h3>
-                <p><?php echo number_format($emissions_per_mw ?? 0, 2); ?> kg CO₂ / MW</p>
+            <div class="cost-row">
+                <div class="cost-metric">
+                    <h3>🌱 Emissions per MW</h3>
+                    <p><?php echo number_format($emissions_per_mw ?? 0, 2); ?> kg CO₂ / MW</p>
+                </div>
             </div>
         <?php elseif ($filter === 'emissions_vs_average'): ?>
-            <div class="cost-metric">
-                <h3>Project Emissions vs Average</h3>
-                <p>
-                <?php echo number_format($difference ?? 0, 2); ?> kg CO₂ / MW
-                </p>
+            <div class="cost-row">
+                <div class="cost-metric">
+                    <h3>📈 Project Emissions vs Average</h3>
+                    <p><?php echo number_format($difference ?? 0, 2); ?> kg CO₂ / MW</p>
+                </div>
             </div>
         <?php else: ?>
-            <div class="cost-metric">
-                <h3>Total Emissions<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
-                <p><?php echo number_format($total_emissions, 2); ?> kg CO₂</p>
-            </div>
-            <div class="cost-metric">
-                <h3>Total Truckloads<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
-                <p><?php echo number_format($total_truckloads); ?></p>
-            </div>
-            <div class="cost-metric">
-                <h3>Miles Driven<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
-                <p><?php echo number_format($total_miles_driven, 2); ?></p>
-            </div>
-            <div class="cost-metric">
-                <h3>Fuel Consumption<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
-                <p><?php echo number_format($total_fuel_consumption, 2); ?> gal</p>
+            <div class="cost-row">
+                <div class="cost-metric">
+                    <h3>🌱 Total Emissions<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
+                    <p><?php echo number_format($total_emissions, 2); ?> kg CO₂</p>
+                </div>
+                <div class="cost-metric">
+                    <h3>🚛 Total Truckloads<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
+                    <p><?php echo number_format($total_truckloads); ?></p>
+                </div>
+                <div class="cost-metric">
+                    <h3>🛣️ Miles Driven<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
+                    <p><?php echo number_format($total_miles_driven, 2); ?> mi</p>
+                </div>
+                <div class="cost-metric">
+                    <h3>⛽ Fuel Consumption<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
+                    <p><?php echo number_format($total_fuel_consumption, 2); ?> gal</p>
+                </div>
             </div>
         <?php endif; ?>
     </div>

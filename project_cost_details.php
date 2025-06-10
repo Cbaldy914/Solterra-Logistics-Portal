@@ -194,8 +194,12 @@ $total_logistics_cost    = 0;
 
 $total_quantity         = 0;
 $total_wattage_quantity = 0;
+$total_pallets_count    = 0;
 
 $deliveries = [];
+
+// Prepare statement for fetching pallets for efficiency
+$stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
 
 while ($delivery = $deliveries_result->fetch_assoc()) {
     $freight_cost      = (float)$delivery['freight_cost'];
@@ -208,6 +212,20 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
 
     $total_quantity         += $quantity;
     $total_wattage_quantity += ($quantity * $wattage);
+
+    // Fetch associated pallets for this delivery
+    $associatedPallets = [];
+    $palletCount = 0;
+    if ($stmtPallets) {
+        $stmtPallets->bind_param("i", $delivery['id']);
+        $stmtPallets->execute();
+        $palletsResult = $stmtPallets->get_result();
+        while ($palletRow = $palletsResult->fetch_assoc()) {
+            $associatedPallets[] = $palletRow;
+        }
+        $palletCount = count($associatedPallets);
+        $total_pallets_count += $palletCount;
+    }
 
     // Warehousing cost
     $warehousing_cost = calculateDeliveryWarehousingCost($delivery, $warehouse);
@@ -224,10 +242,16 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $line_total = $freight_cost + $accessorial_costs + $warehousing_cost + $solterraFeeForThisDelivery;
     $total_logistics_cost += $line_total;
 
+    // Calculate cost per pallet for this delivery
+    $cost_per_pallet = ($palletCount > 0) ? ($line_total / $palletCount) : 0;
+
     // For display
     $delivery['warehousing_cost']     = $warehousing_cost;
     $delivery['solterra_fee']         = $solterraFeeForThisDelivery;
     $delivery['total_logistics_cost'] = $line_total;
+    $delivery['cost_per_pallet']      = $cost_per_pallet;
+    $delivery['pallet_count']         = $palletCount;
+    $delivery['associated_pallets']   = $associatedPallets;
 
     // Format date fields
     $delivery['warehouse_arrival_date_formatted'] = !empty($delivery['warehouse_arrival_date'])
@@ -239,6 +263,11 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
 
     $deliveries[] = $delivery;
 }
+
+if ($stmtPallets) $stmtPallets->close();
+
+// Calculate overall cost per pallet
+$overall_cost_per_pallet = ($total_pallets_count > 0) ? ($total_logistics_cost / $total_pallets_count) : 0;
 
 // Price per watt / module
 if ($filter === 'price_per_watt') {
@@ -264,29 +293,33 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     // CSV headers
     fputcsv($output, [
         'BOL#',
+        'Manufacturer',
         'Wattage',
         'Quantity',
+        'Pallet Count',
         'Status of Delivery',
-        'Warehouse Arrival Date',
         'Delivered to Site Date',
         'Warehousing Cost',
         'Freight Cost',
         'Accessorial Cost',
-        'Solterra Fee'
+        'Solterra Fee',
+        'Total Cost'
     ]);
 
     foreach ($deliveries as $d) {
         fputcsv($output, [
             $d['bol_number'] ?? '',
+            $d['supplier'] ?? '',
             $d['wattage'] ?? '',
             $d['quantity'] ?? '',
+            $d['pallet_count'] ?? 0,
             $d['status_of_delivery'] ?? '',
-            $d['warehouse_arrival_date_formatted'],
             $d['actual_delivery_date_formatted'],
             number_format($d['warehousing_cost'], 2),
             number_format($d['freight_cost'], 2),
             number_format($d['accessorial_costs'], 2),
-            number_format($d['solterra_fee'], 2)
+            number_format($d['solterra_fee'], 2),
+            number_format($d['total_logistics_cost'], 2)
         ]);
     }
     fclose($output);
@@ -319,23 +352,50 @@ $conn->close();
             margin-bottom: 20px;
         }
         .cost-metric {
-            background: #f9f9f9;
-            padding: 15px;
-            margin: 5px;
-            border-radius: 8px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 20px;
+            margin: 8px;
+            border-radius: 12px;
             text-align: center;
-            min-width: 180px;
+            min-width: 200px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            border: 1px solid #dee2e6;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .cost-metric:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.15);
         }
         .cost-metric h3 {
-            margin: 0;
-            font-weight: bold;
+            margin: 0 0 10px 0;
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 1rem;
         }
         .cost-metric p {
             margin: 0;
-            font-size: 1.2rem;
+            font-size: 1.4rem;
+            font-weight: bold;
+            color: #488C9A;
         }
         .cost-metric--total {
             max-width: 400px;
+            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
+            color: white;
+        }
+        .cost-metric--total h3,
+        .cost-metric--total p {
+            color: white;
+        }
+        .cost-metric--efficiency {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            border-color: #b8dabd;
+        }
+        .cost-metric--efficiency h3 {
+            color: #155724;
+        }
+        .cost-metric--efficiency p {
+            color: #28a745;
         }
         .time-filter-header {
             display: flex;
@@ -411,8 +471,33 @@ $conn->close();
             background: #f1f1f1;
         }
         .legacy-filter-form {
-            margin-left: 20px;
-            margin-bottom: 10px;
+            margin: 15px 20px 20px 20px;
+            padding: 15px;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid #dee2e6;
+            width: auto !important;
+            max-width: fit-content;
+            display: inline-block;
+        }
+        .legacy-filter-form label {
+            margin-right: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            transition: background-color 0.2s ease;
+            font-size: 0.9em;
+        }
+        .legacy-filter-form label:hover {
+            background-color: #f8f9fa;
+        }
+        .legacy-filter-form input[type="radio"] {
+            margin: 0;
         }
         .back-icon {
             display: inline-flex;
@@ -502,25 +587,25 @@ $conn->close();
             <input type="radio" name="filter" value="total"
                    onchange="this.form.submit();"
                    <?php if ($filter === 'total') echo 'checked'; ?>>
-            Total Amounts
+            📊 Total Amounts
         </label>
         <label>
             <input type="radio" name="filter" value="ytd"
                    onchange="this.form.submit();"
                    <?php if ($filter === 'ytd') echo 'checked'; ?>>
-            Year-to-Date Amounts
+            📅 Year-to-Date Amounts
         </label>
         <label>
             <input type="radio" name="filter" value="price_per_watt"
                    onchange="this.form.submit();"
                    <?php if ($filter === 'price_per_watt') echo 'checked'; ?>>
-            Price Per Watt
+            ⚡ Price Per Watt
         </label>
         <label>
             <input type="radio" name="filter" value="price_per_module"
                    onchange="this.form.submit();"
                    <?php if ($filter === 'price_per_module') echo 'checked'; ?>>
-            Price Per Module
+            📦 Price Per Module
         </label>
     </form>
 
@@ -529,42 +614,43 @@ $conn->close();
         <?php if ($filter === 'price_per_watt'): ?>
             <div class="cost-row">
                 <div class="cost-metric cost-metric--total">
-                    <h3>Price Per Watt</h3>
+                    <h3>💰 Price Per Watt</h3>
                     <p>$<?php echo number_format($price_per_watt ?? 0, 4); ?></p>
                 </div>
             </div>
         <?php elseif ($filter === 'price_per_module'): ?>
             <div class="cost-row">
                 <div class="cost-metric cost-metric--total">
-                    <h3>Price Per Module</h3>
+                    <h3>📦 Price Per Module</h3>
                     <p>$<?php echo number_format($price_per_module ?? 0, 2); ?></p>
                 </div>
             </div>
         <?php else: ?>
             <div class="cost-row">
                 <div class="cost-metric cost-metric--total">
-                    <h3>Total Logistics Cost<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
+                    <h3>💸 Total Logistics Cost<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
                     <p>$<?php echo number_format($total_logistics_cost, 2); ?></p>
                 </div>
             </div>
             <div class="cost-row">
                 <div class="cost-metric">
-                    <h3>Freight Cost<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
+                    <h3>🚛 Freight Cost<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
                     <p>$<?php echo number_format($total_freight_cost, 2); ?></p>
                 </div>
                 <div class="cost-metric">
-                    <h3>Accessorial Cost<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
+                    <h3>📋 Accessorial Cost<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
                     <p>$<?php echo number_format($total_accessorial_costs, 2); ?></p>
                 </div>
                 <div class="cost-metric">
-                    <h3>Warehousing Cost<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
+                    <h3>🏢 Warehousing Cost<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
                     <p>$<?php echo number_format($total_warehousing_cost, 2); ?></p>
                 </div>
                 <div class="cost-metric">
-                    <h3>Solterra Fee<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
+                    <h3>⚡ Solterra Fee<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
                     <p>$<?php echo number_format($total_solterra_fee, 2); ?></p>
                 </div>
             </div>
+
         <?php endif; ?>
     </div>
 
@@ -635,63 +721,177 @@ $conn->close();
     <!-- Deliveries Table -->
     <div class="table-container">
         <table id="deliveriesTable">
-            <thead>
+            <thead style="background-color: #293E4C; color: white;">
                 <tr>
                     <th>BOL#</th>
+                    <th>Manufacturer</th>
                     <th>Wattage</th>
                     <th>Quantity</th>
+                    <th>Associated Pallets</th>
                     <th>Status of Delivery</th>
-                    <th>Warehouse Arrival Date</th>
                     <th>Delivered to Site Date</th>
                     <th>Warehousing Cost</th>
                     <th>Freight Cost</th>
                     <th>Accessorial Cost</th>
+                    <th>Total Cost</th>
                 </tr>
             </thead>
             <tbody>
             <?php if (!empty($deliveries)): ?>
                 <?php foreach ($deliveries as $d): ?>
-                    <tr>
+                    <tr style="border-bottom: 1px solid #dee2e6;">
                         <td><?php echo htmlspecialchars($d['bol_number'] ?? ''); ?></td>
-                        <td><?php echo htmlspecialchars($d['wattage'] ?? ''); ?></td>
-                        <td><?php echo htmlspecialchars($d['quantity'] ?? ''); ?></td>
+                        <td><?php echo htmlspecialchars($d['supplier'] ?? ''); ?></td>
+                        <td><?php echo htmlspecialchars($d['wattage'] ?? ''); ?>W</td>
+                        <td><?php echo number_format($d['quantity'] ?? 0); ?></td>
+                        <td style="text-align: center;">
+                            <?php if ($d['pallet_count'] > 0): ?>
+                                <button type="button" class="action-buttons" 
+                                        onclick="showPalletModal(this)" 
+                                        data-pallets='<?php echo htmlspecialchars(json_encode($d['associated_pallets']), ENT_QUOTES, 'UTF-8'); ?>'
+                                        style="background-color: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                                    View Pallets (<?php echo $d['pallet_count']; ?>)
+                                </button>
+                            <?php else: ?>
+                                <span style="color: #6c757d;">N/A</span>
+                            <?php endif; ?>
+                        </td>
                         <td><?php echo htmlspecialchars($d['status_of_delivery'] ?? ''); ?></td>
-                        <td><?php echo $d['warehouse_arrival_date_formatted']; ?></td>
                         <td><?php echo $d['actual_delivery_date_formatted']; ?></td>
-                        <td>$<?php echo number_format($d['warehousing_cost'], 2); ?></td>
-                        <td>$<?php echo number_format($d['freight_cost'], 2); ?></td>
-                        <td>$<?php echo number_format($d['accessorial_costs'], 2); ?></td>
+                        <td style="text-align: right;">$<?php echo number_format($d['warehousing_cost'], 2); ?></td>
+                        <td style="text-align: right;">$<?php echo number_format($d['freight_cost'], 2); ?></td>
+                        <td style="text-align: right;">$<?php echo number_format($d['accessorial_costs'], 2); ?></td>
+                        <td style="text-align: right; font-weight: bold; background-color: #f8f9fa;">$<?php echo number_format($d['total_logistics_cost'], 2); ?></td>
                     </tr>
                 <?php endforeach; ?>
             <?php else: ?>
-                <tr><td colspan="9">No deliveries found.</td></tr>
+                <tr><td colspan="11" style="text-align: center; padding: 20px; color: #6c757d;">No deliveries found.</td></tr>
             <?php endif; ?>
             </tbody>
         </table>
     </div>
 </main>
 
-<script>
-function searchTable() {
-    var input = document.getElementById("searchInput");
-    if (!input) return;
-    var filter = input.value.toLowerCase();
-    var table = document.getElementById("deliveriesTable");
-    var trs = table.getElementsByTagName("tr");
+    <!-- Associated Pallets Modal -->
+    <div id="associatedPalletsModal" style="display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0, 0, 0, 0.5);">
+        <div style="background-color: #fff; margin: 5% auto; padding: 20px; width: 500px; max-width: 90%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); position: relative;">
+            <span onclick="closeAssociatedPalletModal()" style="position: absolute; top: 15px; right: 20px; font-size: 24px; font-weight: bold; color: #aaa; cursor: pointer; border: none; background: transparent;">&times;</span>
+            <h2>Associated Pallets</h2>
+            <div id="palletList" style="max-height: 300px; overflow-y: auto; border: 1px solid #eee;"> 
+                <!-- Pallet details will be loaded here by JS -->
+            </div>
+        </div>
+    </div>
 
-    for (var i=1; i<trs.length; i++) {
-        var tds = trs[i].getElementsByTagName("td");
-        var show = false;
-        for (var j=0; j<tds.length; j++) {
-            var txtValue = tds[j].textContent || tds[j].innerText;
-            if (txtValue.toLowerCase().indexOf(filter) > -1) {
-                show = true;
-                break;
+    <script>
+    function searchTable() {
+        var input = document.getElementById("searchInput");
+        if (!input) return;
+        var filter = input.value.toLowerCase();
+        var table = document.getElementById("deliveriesTable");
+        var trs = table.getElementsByTagName("tr");
+
+        for (var i=1; i<trs.length; i++) {
+            var tds = trs[i].getElementsByTagName("td");
+            var show = false;
+            for (var j=0; j<tds.length; j++) {
+                var txtValue = tds[j].textContent || tds[j].innerText;
+                if (txtValue.toLowerCase().indexOf(filter) > -1) {
+                    show = true;
+                    break;
+                }
             }
+            trs[i].style.display = show ? "" : "none";
         }
-        trs[i].style.display = show ? "" : "none";
     }
-}
-</script>
+
+    // --- Associated Pallets Modal --- 
+    var associatedPalletsModal = document.getElementById('associatedPalletsModal');
+    var palletListDiv = document.getElementById('palletList');
+
+    function showPalletModal(buttonElement) {
+        var palletsJson = buttonElement.getAttribute('data-pallets');
+        try {
+            var pallets = JSON.parse(palletsJson);
+            palletListDiv.innerHTML = ''; // Clear previous content
+
+            if (pallets.length > 0) {
+                var table = document.createElement('table');
+                table.style.width = '100%';
+                table.style.borderCollapse = 'collapse';
+
+                var thead = table.createTHead();
+                var headerRow = thead.insertRow();
+                var headers = ['Identifier', 'Wattage', 'Quantity', 'Actions'];
+                headers.forEach(function(headerText) {
+                    var th = document.createElement('th');
+                    th.textContent = headerText;
+                    th.style.border = '1px solid #ddd';
+                    th.style.padding = '8px';
+                    th.style.textAlign = 'center';
+                    th.style.backgroundColor = '#293E4C';
+                    th.style.color = 'white';
+                    headerRow.appendChild(th);
+                });
+
+                var tbody = table.createTBody();
+                pallets.forEach(function(pallet) {
+                    var row = tbody.insertRow();
+                    
+                    var cellIdentifier = row.insertCell();
+                    cellIdentifier.textContent = pallet.pallet_identifier ? pallet.pallet_identifier : `ID: ${pallet.id}`;
+                    cellIdentifier.style.border = '1px solid #ddd';
+                    cellIdentifier.style.padding = '8px';
+
+                    var cellWattage = row.insertCell();
+                    cellWattage.textContent = pallet.wattage ? `${pallet.wattage}W` : 'N/A';
+                    cellWattage.style.border = '1px solid #ddd';
+                    cellWattage.style.padding = '8px';
+
+                    var cellQuantity = row.insertCell();
+                    cellQuantity.textContent = pallet.quantity ? pallet.quantity : 'N/A';
+                    cellQuantity.style.border = '1px solid #ddd';
+                    cellQuantity.style.padding = '8px';
+
+                    var cellActions = row.insertCell();
+                    cellActions.style.border = '1px solid #ddd';
+                    cellActions.style.padding = '8px';
+                    cellActions.style.textAlign = 'center';
+
+                    var viewDetailsBtn = document.createElement('a');
+                    viewDetailsBtn.href = `pallet_details.php?pallet_id=${pallet.id}`;
+                    viewDetailsBtn.textContent = 'View Details';
+                    viewDetailsBtn.style.color = '#488C9A';
+                    viewDetailsBtn.style.textDecoration = 'none';
+                    cellActions.appendChild(viewDetailsBtn);
+                });
+
+                palletListDiv.appendChild(table);
+            } else {
+                 var p = document.createElement('p');
+                 p.textContent = 'No pallets found.';
+                 palletListDiv.appendChild(p);
+            }
+
+            associatedPalletsModal.style.display = 'block';
+        } catch (e) {
+            console.error("Error parsing pallet data or creating table:", e);
+            palletListDiv.innerHTML = '<p>Error loading pallet data.</p>';
+            associatedPalletsModal.style.display = 'block';
+        }
+    }
+
+    function closeAssociatedPalletModal() {
+         associatedPalletsModal.style.display = 'none';
+         palletListDiv.innerHTML = ''; // Clear list on close
+    }
+
+    // Add event listener for clicks outside the associated pallets modal
+    window.addEventListener('click', function(event) {
+        if (event.target == associatedPalletsModal) {
+            closeAssociatedPalletModal();
+        }
+    });
+    </script>
 </body>
 </html>
