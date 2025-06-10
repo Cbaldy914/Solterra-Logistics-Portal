@@ -19,8 +19,17 @@ $user_id = $_SESSION['user_id'];
 $selected_project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
 $batch_id = isset($_GET['batch_id']) ? intval($_GET['batch_id']) : 0;
 
-// Account filtering for admin users
+// Increase memory limit for large datasets
+ini_set('memory_limit', '512M');
+ini_set('max_execution_time', '120'); // 2 minutes
+
+// Performance tracking
+$start_time = microtime(true);
+
+// Account filtering for admin and user roles
 $account_id_for_admin = null;
+$user_account_ids = [];
+
 if ($role === 'admin') {
     $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
     $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
@@ -30,6 +39,19 @@ if ($role === 'admin') {
         $stmtAdminAcc->bind_result($account_id_for_admin);
         $stmtAdminAcc->fetch();
         $stmtAdminAcc->close();
+    }
+} elseif ($role === 'user') {
+    // Get all account IDs that this user has access to
+    $sqlUserAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ?";
+    $stmtUserAcc = $conn->prepare($sqlUserAcc);
+    if ($stmtUserAcc) {
+        $stmtUserAcc->bind_param("i", $user_id);
+        $stmtUserAcc->execute();
+        $resultUserAcc = $stmtUserAcc->get_result();
+        while ($row = $resultUserAcc->fetch_assoc()) {
+            $user_account_ids[] = $row['account_id'];
+        }
+        $stmtUserAcc->close();
     }
 }
 
@@ -72,8 +94,21 @@ try {
             ORDER BY p.project_name ASC
         ");
         $stmtProjects->bind_param("i", $account_id_for_admin);
+    } else if ($role === 'user' && !empty($user_account_ids)) {
+        // Create placeholders for IN clause
+        $placeholders = implode(',', array_fill(0, count($user_account_ids), '?'));
+        $types = str_repeat('i', count($user_account_ids));
+        
+        $stmtProjects = $conn->prepare("
+            SELECT p.id, p.project_name, p.street_address, p.city, p.state, p.zip_code, c.name as account_name
+            FROM projects p 
+            JOIN customer_accounts c ON p.account_id = c.id 
+            WHERE p.account_id IN ($placeholders)
+            ORDER BY p.project_name ASC
+        ");
+        $stmtProjects->bind_param($types, ...$user_account_ids);
     } else {
-        throw new Exception("Unable to determine user permissions.");
+        throw new Exception("Unable to determine user permissions or no accessible accounts found.");
     }
     
     if ($stmtProjects) {
@@ -98,47 +133,26 @@ try {
         }
         
         if (!$can_access) {
-            throw new Exception("Access denied to selected project.");
+            throw new Exception("Access denied: You don't have permission to view this project's data.");
         }
 
-        // Get pallet movement data for this project
-        $stmtMovements = $conn->prepare("
-            SELECT DISTINCT
-                ip.id as pallet_id,
-                ip.pallet_identifier,
-                ip.wattage,
-                ip.quantity,
+        // First, get aggregated summary data instead of individual pallets for better performance
+        $aggregated_movement_data = [];
+        
+        // Get aggregated data by location, status, manufacturer, and wattage
+        $stmtAggregated = $conn->prepare("
+            SELECT 
+                -- Grouping fields
                 ip.status,
-                ip.current_warehouse_id,
-                
-                -- Module batch info 
+                ip.wattage,
                 COALESCE(m.vendor_name, 'Unknown Manufacturer') as manufacturer_name,
-                
-                -- Try to get manufacturer address by matching name from vendor_name
                 mfg.name as manufacturer_company,
                 COALESCE(mfg.street_address, '') as mfg_street,
                 COALESCE(mfg.city, '') as mfg_city,
                 COALESCE(mfg.state, '') as mfg_state,
                 COALESCE(mfg.zip_code, '') as mfg_zip,
                 
-                -- Delivery info (may be NULL for pallets at manufacturer)
-                d.id as delivery_id,
-                d.bol_number,
-                d.supplier,
-                d.anticipated_delivery_date,
-                d.warehouse_arrival_date,
-                d.actual_delivery_date,
-                d.status_of_delivery,
-                
-                -- Warehouse info (delivery destination)
-                w.id as delivery_warehouse_id,
-                COALESCE(w.name, '') as delivery_warehouse_name,
-                COALESCE(w.street_address, '') as delivery_wh_street,
-                COALESCE(w.city, '') as delivery_wh_city,
-                COALESCE(w.state, '') as delivery_wh_state,
-                COALESCE(w.zip_code, '') as delivery_wh_zip,
-                
-                -- Current warehouse info (where pallet is now)
+                -- Warehouse info (current location)
                 w2.id as current_warehouse_id_info,
                 COALESCE(w2.name, '') as current_warehouse_name,
                 COALESCE(w2.street_address, '') as current_wh_street,
@@ -146,12 +160,24 @@ try {
                 COALESCE(w2.state, '') as current_wh_state,
                 COALESCE(w2.zip_code, '') as current_wh_zip,
                 
+                -- Delivery warehouse info (destination from delivery)
+                w.id as delivery_warehouse_id,
+                COALESCE(w.name, '') as delivery_warehouse_name,
+                COALESCE(w.street_address, '') as delivery_wh_street,
+                COALESCE(w.city, '') as delivery_wh_city,
+                COALESCE(w.state, '') as delivery_wh_state,
+                COALESCE(w.zip_code, '') as delivery_wh_zip,
+                
                 -- Project info
                 p.project_name,
                 COALESCE(p.street_address, '') as proj_street,
                 COALESCE(p.city, '') as proj_city,
                 COALESCE(p.state, '') as proj_state,
-                COALESCE(p.zip_code, '') as proj_zip
+                COALESCE(p.zip_code, '') as proj_zip,
+                
+                -- Aggregated counts
+                COUNT(ip.id) as pallet_count,
+                SUM(ip.quantity) as total_quantity
                 
             FROM inventory_pallets ip
             
@@ -159,7 +185,7 @@ try {
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
             
-            -- Simplified manufacturer matching - only if vendor_name contains a dash
+            -- Simplified manufacturer matching
             LEFT JOIN manufacturers mfg ON (
                 m.vendor_name IS NOT NULL 
                 AND (
@@ -170,11 +196,11 @@ try {
                 )
             )
             
-            -- LEFT JOIN to deliveries first (so we get pallets without deliveries too)
+            -- LEFT JOIN to deliveries
             LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
             LEFT JOIN deliveries d ON dp.delivery_id = d.id
             
-            -- Link to project (this ensures we only get pallets for this project)
+            -- Link to project
             INNER JOIN projects p ON (
                 m.project_id = p.id 
                 OR ip.assigned_project_id = p.id 
@@ -182,78 +208,90 @@ try {
                 OR d.project_id = p.id
             )
             
-            -- Link to delivery destination warehouses
+            -- Link to warehouses
             LEFT JOIN warehouses w ON d.warehouse_id = w.id
-            
-            -- Link to current warehouse location
             LEFT JOIN warehouses w2 ON ip.current_warehouse_id = w2.id
             
             WHERE p.id = ?
-            ORDER BY ip.status ASC, ip.id ASC
+            GROUP BY 
+                ip.status, ip.wattage, m.vendor_name, 
+                mfg.name, mfg.street_address, mfg.city, mfg.state, mfg.zip_code,
+                w2.id, w2.name, w2.street_address, w2.city, w2.state, w2.zip_code,
+                w.id, w.name, w.street_address, w.city, w.state, w.zip_code,
+                p.project_name, p.street_address, p.city, p.state, p.zip_code
+            ORDER BY ip.status ASC, m.vendor_name ASC
         ");
         
-        if ($stmtMovements) {
-            $stmtMovements->bind_param("i", $selected_project_id);
-            if (!$stmtMovements->execute()) {
-                throw new Exception("Failed to execute movement query: " . $stmtMovements->error);
+        if ($stmtAggregated) {
+            $stmtAggregated->bind_param("i", $selected_project_id);
+            if (!$stmtAggregated->execute()) {
+                throw new Exception("Failed to execute aggregated movement query: " . $stmtAggregated->error);
             }
-            $resultMovements = $stmtMovements->get_result();
+            $resultAggregated = $stmtAggregated->get_result();
             
-            if (!$resultMovements) {
-                throw new Exception("Failed to get movement results: " . $stmtMovements->error);
+            if (!$resultAggregated) {
+                throw new Exception("Failed to get aggregated movement results: " . $stmtAggregated->error);
             }
             
-            while ($movement = $resultMovements->fetch_assoc()) {
+            while ($movement = $resultAggregated->fetch_assoc()) {
                 $movement_data[] = $movement;
             }
-            $stmtMovements->close();
+            $stmtAggregated->close();
         } else {
-            throw new Exception("Failed to prepare movement query: " . $conn->error);
+            throw new Exception("Failed to prepare aggregated movement query: " . $conn->error);
         }
         
-        // Calculate detailed breakdown similar to module_overview.php
+        // Calculate total pallets for performance warning
+        $total_pallets = 0;
+        foreach ($movement_data as $movement) {
+            $total_pallets += $movement['pallet_count'];
+        }
+        
+        // Calculate detailed breakdown from aggregated data
         if (!empty($movement_data)) {
             foreach ($movement_data as $movement) {
-            $status = $movement['status'];
-            $wattage = $movement['wattage'];
-            $quantity = $movement['quantity'];
-            
-            // Create location-specific key for breakdown
-            $breakdown_key = '';
-            if ($status === 'In Warehouse' && $movement['current_warehouse_name']) {
-                $breakdown_key = 'In Warehouse - ' . $movement['current_warehouse_name'];
-            } elseif ($status === 'Delivered to Project' && $movement['project_name']) {
-                $breakdown_key = 'Delivered to Project - ' . $movement['project_name'];
-            } elseif ($status === 'In Transit to Project' && $movement['project_name']) {
-                $breakdown_key = 'In Transit to Project - ' . $movement['project_name'];
-            } elseif ($status === 'In Transit to Warehouse' && $movement['delivery_warehouse_name']) {
-                $breakdown_key = 'In Transit to Warehouse - ' . $movement['delivery_warehouse_name'];
-            } else {
-                $breakdown_key = $status;
-            }
-            
-            // Initialize if not exists
-            if (!isset($detailed_breakdown[$breakdown_key])) {
-                $detailed_breakdown[$breakdown_key] = [
-                    'pallet_count' => 0,
-                    'total_modules' => 0,
-                    'wattage_breakdown' => []
-                ];
-            }
-            
-            // Update counts
-            $detailed_breakdown[$breakdown_key]['pallet_count']++;
-            $detailed_breakdown[$breakdown_key]['total_modules'] += $quantity;
-            
-            // Track wattage breakdown
-            if (!isset($detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage])) {
-                $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage] = [
-                    'pallets' => 0,
-                    'modules' => 0
-                ];
-            }
-            $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['pallets']++;
-            $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $quantity;
+                $status = $movement['status'];
+                $wattage = $movement['wattage'];
+                $pallet_count = $movement['pallet_count']; // Now using aggregated count
+                $total_quantity = $movement['total_quantity']; // Now using aggregated quantity
+                
+                // Create location-specific key for breakdown
+                $breakdown_key = '';
+                if ($status === 'In Warehouse' && $movement['current_warehouse_name']) {
+                    $breakdown_key = 'In Warehouse - ' . $movement['current_warehouse_name'];
+                } elseif ($status === 'Delivered to Project' && $movement['project_name']) {
+                    $breakdown_key = 'Delivered to Project - ' . $movement['project_name'];
+                } elseif ($status === 'In Transit to Project' && $movement['project_name']) {
+                    $breakdown_key = 'In Transit to Project - ' . $movement['project_name'];
+                } elseif ($status === 'In Transit to Warehouse' && $movement['delivery_warehouse_name']) {
+                    $breakdown_key = 'In Transit to Warehouse - ' . $movement['delivery_warehouse_name'];
+                } else {
+                    $breakdown_key = $status;
+                }
+                
+                // Initialize if not exists
+                if (!isset($detailed_breakdown[$breakdown_key])) {
+                    $detailed_breakdown[$breakdown_key] = [
+                        'pallet_count' => 0,
+                        'total_modules' => 0,
+                        'wattage_breakdown' => []
+                    ];
+                }
+                
+                // Update counts with aggregated data
+                $detailed_breakdown[$breakdown_key]['pallet_count'] += $pallet_count;
+                $detailed_breakdown[$breakdown_key]['total_modules'] += $total_quantity;
+                
+                // Track wattage breakdown
+                if (!isset($detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage])) {
+                    $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage] = [
+                        'pallets' => 0,
+                        'modules' => 0
+                    ];
+                }
+                
+                $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['pallets'] += $pallet_count;
+                $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $total_quantity;
             }
         }
     }
@@ -505,6 +543,24 @@ $conn->close();
         </div>
 
         <?php if (!empty($movement_data)): ?>
+            
+            <!-- Performance Info -->
+            <?php 
+            $execution_time = number_format((microtime(true) - $start_time) * 1000, 0);
+            if ($total_pallets > 5000): ?>
+                <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                    <strong>⚡ Large Dataset Optimized:</strong> 
+                    Processing <?php echo number_format($total_pallets); ?> pallets across <?php echo count($movement_data); ?> location groups. 
+                    Map shows aggregated data for improved performance (loaded in <?php echo $execution_time; ?>ms).
+                </div>
+            <?php elseif ($total_pallets > 1000): ?>
+                <div style="background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                    <strong>📊 Dataset Info:</strong> 
+                    Displaying <?php echo number_format($total_pallets); ?> pallets across <?php echo count($movement_data); ?> location groups 
+                    (loaded in <?php echo $execution_time; ?>ms).
+                </div>
+            <?php endif; ?>
+            
             <!-- Map Legend and Status Breakdown Container -->
             <div style="display: flex; gap: 20px; margin-bottom: 20px;">
                 <!-- Map Legend -->
@@ -669,12 +725,22 @@ function initMap() {
     if (!projectData || movementData.length === 0) {
         return;
     }
+    
+    console.log(`Initializing map with ${movementData.length} aggregated location groups`);
 
-    // Initialize map centered on the US
+    // Initialize map centered on the US with performance optimizations
     map = new google.maps.Map(document.getElementById('map'), {
         zoom: 4,
         center: { lat: 39.8283, lng: -98.5795 }, // Center of US
-        mapTypeId: 'roadmap'
+        mapTypeId: 'roadmap',
+        // Performance optimizations for large datasets
+        disableDefaultUI: false,
+        zoomControl: true,
+        mapTypeControl: true,
+        scaleControl: true,
+        streetViewControl: false,
+        rotateControl: false,
+        fullscreenControl: true
     });
 
     directionsService = new google.maps.DirectionsService();
@@ -702,9 +768,11 @@ function processMovementData() {
         return;
     }
     
-    // Process each pallet's movement
+    console.log(`Processing ${movementData.length} aggregated location groups`);
+    
+    // Process each aggregated movement group
     movementData.forEach(movement => {
-        // Add manufacturer location for ALL pallets that have manufacturer info (regardless of current status)
+        // Add manufacturer location for ALL groups that have manufacturer info
         if (movement.manufacturer_name) {
             const mfgKey = 'mfg_' + movement.manufacturer_name;
             if (!locations.has(mfgKey)) {
@@ -717,12 +785,17 @@ function processMovementData() {
                     name: manufacturerName,
                     address: manufacturerAddress || 'Manufacturer Location', // Fallback if no address
                     pallets: [],
+                    total_pallets: 0,
+                    total_modules: 0,
                     marker: null
                 });
             }
-            // Only add pallets to manufacturer location if they're currently AT manufacturer
+            // Only add aggregated data to manufacturer location if they're currently AT manufacturer
             if (movement.status === 'At Manufacturer') {
-                locations.get(mfgKey).pallets.push(movement);
+                const location = locations.get(mfgKey);
+                location.pallets.push(movement);
+                location.total_pallets += movement.pallet_count;
+                location.total_modules += movement.total_quantity;
             }
         }
 
@@ -735,10 +808,15 @@ function processMovementData() {
                     name: movement.current_warehouse_name,
                     address: buildAddress(movement.current_wh_street, movement.current_wh_city, movement.current_wh_state, movement.current_wh_zip),
                     pallets: [],
+                    total_pallets: 0,
+                    total_modules: 0,
                     marker: null
                 });
             }
-            locations.get(whKey).pallets.push(movement);
+            const location = locations.get(whKey);
+            location.pallets.push(movement);
+            location.total_pallets += movement.pallet_count;
+            location.total_modules += movement.total_quantity;
         }
 
         // Add project location with pallets DELIVERED to project
@@ -750,10 +828,15 @@ function processMovementData() {
                     name: projectData.project_name,
                     address: buildAddress(projectData.street_address, projectData.city, projectData.state, projectData.zip_code),
                     pallets: [],
+                    total_pallets: 0,
+                    total_modules: 0,
                     marker: null
                 });
             }
-            locations.get(projectKey).pallets.push(movement);
+            const location = locations.get(projectKey);
+            location.pallets.push(movement);
+            location.total_pallets += movement.pallet_count;
+            location.total_modules += movement.total_quantity;
         }
     });
 
@@ -897,19 +980,20 @@ function createMarker(location) {
         zIndex: 20 // Ensure markers are on top
     });
 
-    // Create enhanced info window with current quantities and wattages
-    const totalPallets = location.pallets.length;
-    const totalModules = location.pallets.reduce((sum, pallet) => sum + parseInt(pallet.quantity), 0);
+    // Create enhanced info window with current quantities and wattages from aggregated data
+    const totalPallets = location.total_pallets || location.pallets.length;
+    const totalModules = location.total_modules || location.pallets.reduce((sum, group) => sum + parseInt(group.total_quantity || group.quantity || 0), 0);
     const wattages = [...new Set(location.pallets.map(p => p.wattage))].sort();
     const wattageBreakdown = {};
     
-    // Calculate quantities by wattage
-    location.pallets.forEach(pallet => {
-        const wattage = pallet.wattage;
+    // Calculate quantities by wattage from aggregated data
+    location.pallets.forEach(group => {
+        const wattage = group.wattage;
+        const modules = group.total_quantity || group.quantity || 0;
         if (!wattageBreakdown[wattage]) {
             wattageBreakdown[wattage] = 0;
         }
-        wattageBreakdown[wattage] += parseInt(pallet.quantity);
+        wattageBreakdown[wattage] += parseInt(modules);
     });
 
     const wattageDetails = Object.keys(wattageBreakdown)
@@ -1064,12 +1148,12 @@ function createRouteLines(locations) {
     
     const routes = new Map();
     
-    // Analyze movement patterns to create routes based on delivery history
+    // Analyze movement patterns to create routes based on aggregated delivery history
     movementData.forEach(movement => {
         const manufacturerKey = 'mfg_' + movement.manufacturer_name;
         const projectKey = 'proj_' + projectData.id;
         
-        // Determine warehouse key based on where pallet was delivered or is currently stored
+        // Determine warehouse key based on where pallets were delivered or are currently stored
         let warehouseKey = null;
         if (movement.current_warehouse_id_info && movement.current_warehouse_name) {
             warehouseKey = 'wh_' + movement.current_warehouse_id_info;
@@ -1077,7 +1161,7 @@ function createRouteLines(locations) {
             warehouseKey = 'wh_' + movement.delivery_warehouse_id;
         }
         
-        // Create manufacturer → warehouse route (for pallets that are currently in warehouse or were delivered to project via warehouse)
+        // Create manufacturer → warehouse route (for aggregated groups that are currently in warehouse or were delivered to project via warehouse)
         if (warehouseKey && (movement.status === 'In Warehouse' || movement.status === 'Delivered to Project')) {
             const route1Key = `${manufacturerKey}_to_${warehouseKey}`;
             if (!routes.has(route1Key)) {
@@ -1086,15 +1170,18 @@ function createRouteLines(locations) {
                     to: warehouseKey,
                     pallets: [],
                     modules: 0,
+                    pallet_count: 0,
                     color: '#488C9A', // Blue for manufacturer → warehouse
                     type: 'manufacturer_to_warehouse'
                 });
             }
-            routes.get(route1Key).pallets.push(movement);
-            routes.get(route1Key).modules += parseInt(movement.quantity);
+            const route = routes.get(route1Key);
+            route.pallets.push(movement);
+            route.modules += parseInt(movement.total_quantity);
+            route.pallet_count += parseInt(movement.pallet_count);
         }
         
-        // Create warehouse → project route (for pallets delivered to project)
+        // Create warehouse → project route (for aggregated groups delivered to project)
         if (warehouseKey && movement.status === 'Delivered to Project') {
             const route2Key = `${warehouseKey}_to_${projectKey}`;
             if (!routes.has(route2Key)) {
@@ -1103,15 +1190,18 @@ function createRouteLines(locations) {
                     to: projectKey,
                     pallets: [],
                     modules: 0,
+                    pallet_count: 0,
                     color: '#27ae60', // Green for warehouse → project
                     type: 'warehouse_to_project'
                 });
             }
-            routes.get(route2Key).pallets.push(movement);
-            routes.get(route2Key).modules += parseInt(movement.quantity);
+            const route = routes.get(route2Key);
+            route.pallets.push(movement);
+            route.modules += parseInt(movement.total_quantity);
+            route.pallet_count += parseInt(movement.pallet_count);
         }
         
-        // Create direct manufacturer → project route (for pallets that skipped warehouse)
+        // Create direct manufacturer → project route (for aggregated groups that skipped warehouse)
         if (!warehouseKey && movement.status === 'Delivered to Project') {
             const directRouteKey = `${manufacturerKey}_to_${projectKey}`;
             if (!routes.has(directRouteKey)) {
@@ -1120,12 +1210,15 @@ function createRouteLines(locations) {
                     to: projectKey,
                     pallets: [],
                     modules: 0,
+                    pallet_count: 0,
                     color: '#e74c3c', // Red for direct routes
                     type: 'manufacturer_to_project_direct'
                 });
             }
-            routes.get(directRouteKey).pallets.push(movement);
-            routes.get(directRouteKey).modules += parseInt(movement.quantity);
+            const route = routes.get(directRouteKey);
+            route.pallets.push(movement);
+            route.modules += parseInt(movement.total_quantity);
+            route.pallet_count += parseInt(movement.pallet_count);
         }
     });
     
@@ -1206,9 +1299,9 @@ function createRouteLines(locations) {
                         <strong style="color: ${route.color};">${routeTypeLabel}</strong><br>
                         <strong>From:</strong> ${fromLocation.name}<br>
                         <strong>To:</strong> ${toLocation.name}<br>
-                        <strong>Pallets Moved:</strong> ${route.pallets.length.toLocaleString()}<br>
+                        <strong>Pallets Moved:</strong> ${(route.pallet_count || route.pallets.length).toLocaleString()}<br>
                         <strong>Modules Moved:</strong> ${route.modules.toLocaleString()}<br>
-                        <em>Line width represents volume</em>
+                        <em>Line style represents volume</em>
                     </div>
                 `;
                 routeInfoWindow.setContent(routeInfo);
