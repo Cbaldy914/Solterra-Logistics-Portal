@@ -484,7 +484,7 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
+        <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
         <span class="separator">&raquo;</span>
         <span>Cost Details</span>
     </div>

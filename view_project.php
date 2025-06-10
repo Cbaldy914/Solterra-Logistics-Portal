@@ -67,7 +67,7 @@ if ($project_id) {
     $stmt->close();
     $page_title_info = htmlspecialchars($project['project_name']);
     $breadcrumbs[] = ['href' => ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php', 'text' => 'Dashboard'];
-    $breadcrumbs[] = ['href' => "project_overview.php?id={$project_id}", 'text' => 'Project Overview'];
+    $breadcrumbs[] = ['href' => "project_overview.php?project_id={$project_id}", 'text' => 'Project Overview'];
     $breadcrumbs[] = ['text' => 'Delivery Tracker'];
 
 } elseif ($origin_batch_id) {
@@ -212,9 +212,19 @@ if ($delivery_type === 'project') {
 }
 // For 'all', no additional condition needed
 
-$whereClause = "";
-if (!empty($baseQueryConditions) || !empty($dateCondition) || !empty($statusCondition) || !empty($deliveryTypeCondition)) {
-    $whereClause = "WHERE " . implode(" AND ", array_filter(array_merge($baseQueryConditions, [trim(ltrim($dateCondition, ' AND '))], [trim(ltrim($statusCondition, ' AND '))], [trim(ltrim($deliveryTypeCondition, ' AND '))])));
+// Build WHERE clause like in manage_deliveries.php
+$whereClause = "WHERE 1=1";
+if (!empty($baseQueryConditions)) {
+    $whereClause .= " AND " . implode(" AND ", $baseQueryConditions);
+}
+if (!empty($dateCondition)) {
+    $whereClause .= $dateCondition;
+}
+if (!empty($statusCondition)) {
+    $whereClause .= $statusCondition;
+}
+if (!empty($deliveryTypeCondition)) {
+    $whereClause .= $deliveryTypeCondition;
 }
 
 // Handle CSV Export
@@ -301,17 +311,56 @@ $count_base_query = "
 ";
 
 // Build count query WHERE clause (excluding delivery type condition)
-$count_where_conditions = array_filter(array_merge($baseQueryConditions, [trim(ltrim($dateCondition, ' AND '))], [trim(ltrim($statusCondition, ' AND '))]));
-$count_where_clause = "";
-if (!empty($count_where_conditions)) {
-    $count_where_clause = "WHERE " . implode(" AND ", $count_where_conditions);
+$count_where_clause = "WHERE 1=1";
+if (!empty($baseQueryConditions)) {
+    $count_where_clause .= " AND " . implode(" AND ", $baseQueryConditions);
+}
+if (!empty($dateCondition)) {
+    $count_where_clause .= $dateCondition;
+}
+if (!empty($statusCondition)) {
+    $count_where_clause .= $statusCondition;
+}
+
+// Build count query parameters (excluding delivery type parameters)
+$count_params = [];
+$count_param_types = "";
+
+// Add base query parameters
+if (!empty($baseQueryConditions)) {
+    if ($project_id) {
+        $count_params[] = $project_id;
+        $count_param_types .= "i";
+    } elseif ($origin_batch_id && $source_vendor_name_for_batch) {
+        $count_params[] = $source_vendor_name_for_batch;
+        $count_param_types .= "s";
+    }
+}
+
+// Add date condition parameters
+if ($time_filter === 'day') {
+    $count_params[] = $ref_date;
+    $count_param_types .= "s";
+} elseif ($time_filter === 'week') {
+    $count_params[] = $startOfWeek;
+    $count_params[] = $endOfWeek;
+    $count_param_types .= "ss";
+} elseif ($time_filter === 'month') {
+    $count_params[] = $startOfMonth;
+    $count_params[] = $endOfMonth;
+    $count_param_types .= "ss";
+}
+
+// Add status condition parameter
+if (!empty($status_filter)) {
+    $count_params[] = $status_filter;
+    $count_param_types .= "s";
 }
 
 $count_sql = $count_base_query . " " . $count_where_clause;
 $count_stmt = $conn->prepare($count_sql);
-if ($count_stmt && !empty($paramTypes)) {
-    // Remove delivery type parameters since we're not using delivery type filter for counts
-    $count_stmt->bind_param($paramTypes, ...$params);
+if ($count_stmt && !empty($count_param_types)) {
+    $count_stmt->bind_param($count_param_types, ...$count_params);
 }
 $count_stmt->execute();
 $count_stmt->bind_result($project_count, $warehouse_count, $total_count);
@@ -322,7 +371,7 @@ $delivery_counts['project'] = $project_count ?: 0;
 $delivery_counts['warehouse'] = $warehouse_count ?: 0;
 $delivery_counts['all'] = $total_count ?: 0;
 
-$conn->close();
+// Don't close connection yet - we need it for pallet fetching in the HTML section
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -564,7 +613,34 @@ $conn->close();
                 </thead>
                 <tbody>
                     <?php if (!empty($deliveries)): ?>
+                        <?php 
+                        // Prepare statement for fetching pallets outside the loop for efficiency
+                        $stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
+                        if (!$stmtPallets) {
+                            // Handle error appropriately - maybe log it or display a generic error
+                            echo "Error preparing pallet statement: " . $conn->error;
+                            // Optionally exit or skip the loop
+                        }
+                        ?>
                         <?php foreach ($deliveries as $delivery): ?>
+                            <?php
+                            // Fetch associated pallets for this delivery
+                            $associatedPallets = [];
+                            $palletDataJson = '[]'; // Default to empty JSON array
+                            $palletCount = 0;
+                            if ($stmtPallets) { // Check if statement was prepared successfully
+                                $stmtPallets->bind_param("i", $delivery['id']);
+                                $stmtPallets->execute();
+                                $palletsResult = $stmtPallets->get_result();
+                                while ($palletRow = $palletsResult->fetch_assoc()) {
+                                    $associatedPallets[] = $palletRow;
+                                }
+                                $palletCount = count($associatedPallets);
+                                if ($palletCount > 0) {
+                                    $palletDataJson = htmlspecialchars(json_encode($associatedPallets), ENT_QUOTES, 'UTF-8');
+                                }
+                            }
+                            ?>
                             <tr>
                                 <td><?php echo htmlspecialchars($delivery['supplier'] ?? ''); ?></td>
                                 <td><?php echo htmlspecialchars($delivery['wattage'] ?? ''); ?></td>
@@ -573,7 +649,20 @@ $conn->close();
                                 <td><?php echo htmlspecialchars($delivery['bol_number'] ?? ''); ?></td>
                                 <td><?php echo !empty($delivery['anticipated_delivery_date']) ? date('m-d-Y', strtotime($delivery['anticipated_delivery_date'])) : ''; ?></td>
                                 <td><?php echo !empty($delivery['actual_delivery_date']) ? date('m-d-Y', strtotime($delivery['actual_delivery_date'])) : ''; ?></td>
-                                <td><?php echo htmlspecialchars($delivery['associated_pallets'] ?? ''); ?></td>
+                                <td>
+                                    <?php if ($stmtPallets && $palletCount > 0): ?>
+                                        <button type="button" class="action-buttons" 
+                                                onclick="showPalletModal(this)" 
+                                                data-pallets='<?php echo $palletDataJson; ?>'
+                                                style="background-color: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer;">
+                                            View Pallets (<?php echo $palletCount; ?>)
+                                        </button>
+                                    <?php elseif ($stmtPallets): ?>
+                                        N/A
+                                    <?php else: ?>
+                                        Error
+                                    <?php endif; ?>
+                                </td>
                                 <td>
                                     <?php if (!empty($delivery['proof_of_delivery'])): ?>
                                         <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">
@@ -591,6 +680,12 @@ $conn->close();
                                 </td>
                             </tr>
                         <?php endforeach; ?>
+                        <?php 
+                        // Close the prepared statement after the loop
+                        if ($stmtPallets) $stmtPallets->close(); 
+                        // Now we can close the database connection
+                        $conn->close();
+                        ?>
                     <?php else: ?>
                         <tr>
                             <td colspan="9">No delivery entries found.</td>
@@ -598,6 +693,17 @@ $conn->close();
                     <?php endif; ?>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <!-- Associated Pallets Modal -->
+    <div id="associatedPalletsModal" style="display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0, 0, 0, 0.5);">
+        <div style="background-color: #fff; margin: 5% auto; padding: 20px; width: 500px; max-width: 90%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); position: relative;">
+            <span onclick="closeAssociatedPalletModal()" style="position: absolute; top: 15px; right: 20px; font-size: 24px; font-weight: bold; color: #aaa; cursor: pointer; border: none; background: transparent;">&times;</span>
+            <h2>Associated Pallets</h2>
+            <div id="palletList" style="max-height: 300px; overflow-y: auto; border: 1px solid #eee;"> 
+                <!-- Pallet details will be loaded here by JS -->
+            </div>
         </div>
     </div>
 </main>
@@ -623,6 +729,94 @@ function searchTable() {
         trs[i].style.display = show ? "" : "none";
     }
 }
+
+// --- Associated Pallets Modal --- 
+var associatedPalletsModal = document.getElementById('associatedPalletsModal');
+var palletListDiv = document.getElementById('palletList');
+
+function showPalletModal(buttonElement) {
+    var palletsJson = buttonElement.getAttribute('data-pallets');
+    try {
+        var pallets = JSON.parse(palletsJson);
+        palletListDiv.innerHTML = ''; // Clear previous content
+
+        if (pallets.length > 0) {
+            var table = document.createElement('table');
+            table.style.width = '100%';
+            table.style.borderCollapse = 'collapse';
+
+            var thead = table.createTHead();
+            var headerRow = thead.insertRow();
+            var headers = ['Identifier', 'Wattage', 'Quantity', 'Actions'];
+            headers.forEach(function(headerText) {
+                var th = document.createElement('th');
+                th.textContent = headerText;
+                th.style.border = '1px solid #ddd';
+                th.style.padding = '8px';
+                th.style.textAlign = 'center';
+                th.style.backgroundColor = '#293E4C';
+                th.style.color = 'white';
+                headerRow.appendChild(th);
+            });
+
+            var tbody = table.createTBody();
+            pallets.forEach(function(pallet) {
+                var row = tbody.insertRow();
+                
+                var cellIdentifier = row.insertCell();
+                cellIdentifier.textContent = pallet.pallet_identifier ? pallet.pallet_identifier : `ID: ${pallet.id}`;
+                cellIdentifier.style.border = '1px solid #ddd';
+                cellIdentifier.style.padding = '8px';
+
+                var cellWattage = row.insertCell();
+                cellWattage.textContent = pallet.wattage ? `${pallet.wattage}W` : 'N/A';
+                cellWattage.style.border = '1px solid #ddd';
+                cellWattage.style.padding = '8px';
+
+                var cellQuantity = row.insertCell();
+                cellQuantity.textContent = pallet.quantity ? pallet.quantity : 'N/A';
+                cellQuantity.style.border = '1px solid #ddd';
+                cellQuantity.style.padding = '8px';
+
+                var cellActions = row.insertCell();
+                cellActions.style.border = '1px solid #ddd';
+                cellActions.style.padding = '8px';
+                cellActions.style.textAlign = 'center';
+
+                var viewDetailsBtn = document.createElement('a');
+                viewDetailsBtn.href = `pallet_details.php?pallet_id=${pallet.id}`;
+                viewDetailsBtn.textContent = 'View Details';
+                viewDetailsBtn.style.color = '#488C9A';
+                viewDetailsBtn.style.textDecoration = 'none';
+                cellActions.appendChild(viewDetailsBtn);
+            });
+
+            palletListDiv.appendChild(table);
+        } else {
+             var p = document.createElement('p');
+             p.textContent = 'No pallets found.';
+             palletListDiv.appendChild(p);
+        }
+
+        associatedPalletsModal.style.display = 'block';
+    } catch (e) {
+        console.error("Error parsing pallet data or creating table:", e);
+        palletListDiv.innerHTML = '<p>Error loading pallet data.</p>';
+        associatedPalletsModal.style.display = 'block';
+    }
+}
+
+function closeAssociatedPalletModal() {
+     associatedPalletsModal.style.display = 'none';
+     palletListDiv.innerHTML = ''; // Clear list on close
+}
+
+// Add event listener for clicks outside the associated pallets modal
+window.addEventListener('click', function(event) {
+    if (event.target == associatedPalletsModal) {
+        closeAssociatedPalletModal();
+    }
+});
 </script>
 </body>
 </html>
