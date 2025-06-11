@@ -243,10 +243,13 @@ h1, h2, h3, p {
 header {
     display: flex;
     align-items: center;
-    background-color: white;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
     padding: 10px 20px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    position: relative; /* Add this line */
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    position: relative;
+    border-bottom: 1px solid rgba(72, 140, 154, 0.1);
+    backdrop-filter: blur(10px);
+    z-index: 1000;
 }
 
 .header_logo img {
@@ -273,47 +276,119 @@ nav ul.menu li.dropdown {
 
 nav ul.menu li.dropdown .dropbtn {
     cursor: pointer;
+    position: relative;
+    padding-right: 24px !important;
+}
+
+/* Only add arrows to regular dropdowns, not profile dropdown */
+nav ul.menu li.dropdown:not(.profile-dropdown) .dropbtn::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #488C9A;
+    transition: all 0.3s ease;
+}
+
+nav ul.menu li.dropdown:not(.profile-dropdown):hover .dropbtn::after {
+    transform: translateY(-50%) rotate(180deg);
+    border-top-color: #293E4C;
+}
+
+/* Remove extra padding from profile dropdown since it doesn't have an arrow */
+nav ul.menu li.profile-dropdown .dropbtn {
+    padding-right: 16px !important;
 }
 
 nav ul.menu li .dropdown-content {
     display: none;
     position: absolute;
-    background-color: #fff;
-    min-width: 200px;
-    box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-    border-radius: 8px;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    min-width: 220px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+    border-radius: 12px;
     z-index: 1000;
-    border: 1px solid #e0e0e0;
+    border: 1px solid rgba(72, 140, 154, 0.1);
+    top: calc(100% + 4px);
+    left: 0;
+    backdrop-filter: blur(10px);
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-8px);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Create a bridge area to prevent dropdown from disappearing */
+nav ul.menu li.dropdown::before {
+    content: '';
+    position: absolute;
     top: 100%;
     left: 0;
+    right: 0;
+    height: 8px;
+    background: transparent;
+    z-index: 999;
 }
 
-/* Show on hover OR when .open class is present for "sticky" click */
-nav ul.menu li.dropdown:hover .dropdown-content,
+/* Show on hover with smooth transitions */
+nav ul.menu li.dropdown:hover .dropdown-content {
+    display: block;
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+/* Keep dropdown visible when hovering over the dropdown itself */
+nav ul.menu li.dropdown .dropdown-content:hover {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+/* Fallback for click-based opening (mobile/accessibility) */
 nav ul.menu li.dropdown.open .dropdown-content {
     display: block;
-    animation: fadeIn 0.2s ease-in;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
 }
 
 nav ul.menu li .dropdown-content a {
-    color: #333;
-    padding: 12px 16px;
+    color: #293E4C;
+    padding: 14px 18px;
     text-decoration: none;
     display: block;
-    transition: background-color 0.3s ease;
+    transition: all 0.3s ease;
     font-weight: 500;
-    border-radius: 6px;
-    margin: 4px;
+    border-radius: 8px;
+    margin: 2px 8px;
+    position: relative;
+    font-size: 0.95em;
 }
 
 nav ul.menu li .dropdown-content a:hover {
-    background-color: #f8f9fa;
-    color: #488C9A;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: white;
+    transform: translateX(4px);
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+}
+
+nav ul.menu li .dropdown-content a:hover::before {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 4px;
+    height: 4px;
+    background: white;
+    border-radius: 50%;
 }
 
 nav ul.menu li .dropdown-content a:first-child {
@@ -330,22 +405,36 @@ nav ul {
     list-style: none;
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     margin: 0;
     padding: 0;
+    height: 100%;
 }
 
 nav li {
     margin: 0 15px;
+    display: flex;
+    align-items: center;
 }
 
 nav a {
-    color: #293E4C; /* Primary blue color */
+    color: #293E4C;
     text-decoration: none;
     font-size: 1em;
+    font-weight: 500;
+    padding: 8px 16px;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: auto;
 }
 
 nav a:hover {
     color: #488C9A;
+    background-color: rgba(72, 140, 154, 0.08);
+    transform: translateY(-1px);
 }
 
 .logout {
@@ -363,15 +452,25 @@ nav a:hover {
 
 .menu-toggle {
     display: none;
-    background-color: transparent;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
     border: none;
-    font-size: 2em;
-    color: #293E4C;
+    font-size: 1.5em;
+    color: white;
     cursor: pointer;
     position: absolute;
     right: 20px;
     z-index: 2;
-    bottom: 35px;
+    bottom: 30px;
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+}
+
+.menu-toggle:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
 }
 
 .profile-dropdown {
@@ -382,17 +481,36 @@ nav a:hover {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background-color: #488C9A;
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px;
+    min-height: 42px;
+    max-width: 42px;
+    max-height: 42px;
+    border-radius: 50% !important;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
     color: white;
     text-decoration: none;
-    font-weight: bold;
+    font-weight: 600;
     cursor: pointer;
-    font-size: 16px;
-    padding: 0;
-    margin-top: -5px;
+    padding: 0 !important;
+    margin: 0 !important;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(72, 140, 154, 0.25);
+    border: 2px solid rgba(255, 255, 255, 0.9);
+    position: relative;
+    text-transform: uppercase;
+    text-align: center !important;
+    line-height: 1 !important;
+    box-sizing: border-box !important;
+}
+
+/* Remove the icon since we're using initials */
+
+.profile-dropdown .profile-avatar:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 16px rgba(72, 140, 154, 0.35);
+    border: 2px solid rgba(255, 255, 255, 1);
 }
 
 .profile-dropdown .dropdown-content {
@@ -498,6 +616,18 @@ nav a:hover {
 
 .profile-dropdown .profile-avatar .profile-initials {
     display: block;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-align: center !important;
+    line-height: 1 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100%;
 }
 
 @media screen and (max-width: 1085px) {
@@ -687,6 +817,25 @@ main {
         text-align: center;
     }
 
+    /* Mobile dropdown arrows (exclude profile dropdown) */
+    nav ul.menu.show li.dropdown:not(.profile-dropdown) .dropbtn::after {
+        content: '';
+        position: absolute;
+        right: 15px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid #488C9A;
+        transition: transform 0.3s ease;
+    }
+
+    nav ul.menu.show li.dropdown:not(.profile-dropdown).open .dropbtn::after {
+        transform: translateY(-50%) rotate(180deg);
+    }
+
     /* Dropdown handling on mobile: show/hide submenus on click */
     nav ul.menu.show li.dropdown .dropdown-content {
         display: none; 
@@ -695,6 +844,10 @@ main {
         box-shadow: none;
         padding-left: 20px; 
         border-bottom: none;
+        opacity: 1;
+        visibility: visible;
+        transform: none;
+        transition: none;
     }
 
     nav ul.menu.show li.dropdown.open .dropdown-content {
