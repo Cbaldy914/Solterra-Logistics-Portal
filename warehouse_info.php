@@ -232,7 +232,8 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         // Fetch Pallets currently IN this warehouse (for Inventory View)
         $sql_pallets = "
             SELECT ip.id AS pallet_id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.arrival_date, m.vendor_name AS origin_vendor,
-                   p.project_name, ip.assigned_project_id
+                   p.project_name, ip.assigned_project_id,
+                   DATEDIFF(CURDATE(), ip.arrival_date) AS days_stored
             FROM inventory_pallets ip
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
@@ -554,18 +555,385 @@ if ($conn) {
              border-color: #f5c6cb;
         }
 
-         .cost-summary {
-            margin-bottom: 20px;
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .cost-summary th,
-        .cost-summary td {
-            border: 1px solid #ccc;
-            padding: 8px;
+        /* Modern Cost Overview Cards */
+                 .cost-overview-container {
+             display: grid;
+             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+             gap: 20px;
+             margin-bottom: 30px;
+             padding: 0;
+             overflow: visible;
+             position: relative;
+         }
+        
+        .cost-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border: 1px solid rgba(72, 140, 154, 0.1);
+            border-radius: 12px;
+            padding: 24px 20px;
             text-align: center;
-            white-space: nowrap;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
+        
+        .cost-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A, #293E4C);
+        }
+        
+        .cost-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(72, 140, 154, 0.15);
+        }
+        
+        .cost-card.total-cost {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+        }
+        
+        .cost-card.total-cost::before {
+            background: linear-gradient(90deg, #fff, rgba(255,255,255,0.8));
+        }
+        
+        .cost-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+            opacity: 0.8;
+        }
+        
+        .cost-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #293E4C;
+            margin-bottom: 8px;
+            line-height: 1;
+        }
+        
+        .cost-card.total-cost .cost-value {
+            color: white;
+        }
+        
+        .cost-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            line-height: 1.2;
+        }
+        
+                 .cost-card.total-cost .cost-label {
+             color: rgba(255, 255, 255, 0.9);
+         }
+         
+         /* Clickable cost card styling */
+         .clickable-cost-card {
+             cursor: pointer;
+             position: relative;
+             overflow: visible;
+         }
+         
+         .clickable-cost-card:hover {
+             transform: translateY(-2px);
+             box-shadow: 0 8px 25px rgba(72, 140, 154, 0.15);
+         }
+         
+         .cost-dropdown-arrow {
+             position: absolute;
+             top: 16px;
+             right: 16px;
+             color: rgba(255, 255, 255, 0.8);
+             font-size: 12px;
+             transition: transform 0.3s ease;
+         }
+         
+         .clickable-cost-card.open .cost-dropdown-arrow {
+             transform: rotate(180deg);
+         }
+         
+         .cost-card-dropdown {
+             display: none;
+             position: absolute;
+             top: 100%;
+             left: 0;
+             right: 0;
+             background: white;
+             border: 1px solid #ddd;
+             border-radius: 0 0 12px 12px;
+             box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+             z-index: 2000;
+             padding: 16px;
+             margin-top: -1px;
+             border-top: none;
+         }
+         
+         .clickable-cost-card.open .cost-card-dropdown {
+             display: block !important;
+             animation: dropdownSlide 0.3s ease;
+         }
+         
+         @keyframes dropdownSlide {
+             from {
+                 opacity: 0;
+                 transform: translateY(-10px);
+             }
+             to {
+                 opacity: 1;
+                 transform: translateY(0);
+             }
+         }
+         
+         .cost-dropdown-item {
+             display: flex;
+             justify-content: space-between;
+             padding: 8px 0;
+             border-bottom: 1px solid #f0f0f0;
+         }
+         
+         .cost-dropdown-item:last-child {
+             border-bottom: none;
+         }
+         
+         .cost-dropdown-divider {
+             border-top: 2px solid #488C9A;
+             margin: 12px 0 8px 0;
+         }
+         
+         .cost-dropdown-label {
+             font-weight: 500;
+             color: #555;
+             font-size: 0.9em;
+         }
+         
+         .cost-dropdown-amount {
+             font-weight: 600;
+             color: #488C9A;
+             font-size: 0.9em;
+         }
+         
+         .total-item .cost-dropdown-label,
+         .total-item .cost-dropdown-amount {
+             font-weight: 700;
+             color: #293E4C;
+             font-size: 1em;
+         }
+         
+         /* Inventory table cost styling */
+         .days-badge {
+             background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+             color: #1565c0;
+             padding: 4px 8px;
+             border-radius: 12px;
+             font-size: 0.85em;
+             font-weight: 600;
+             display: inline-block;
+         }
+         
+         .cost-value {
+             color: #488C9A;
+             font-weight: 600;
+         }
+         
+         .total-cost-value {
+             color: #293E4C;
+             font-weight: 700;
+         }
+         
+         /* Header dropdown styling */
+         .cost-breakdown-header {
+             position: relative;
+             cursor: pointer;
+         }
+         
+         .cost-breakdown-dropdown {
+             display: none;
+             position: absolute;
+             top: 100%;
+             left: 50%;
+             transform: translateX(-50%);
+             background: white;
+             border: 1px solid #ddd;
+             border-radius: 8px;
+             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+             padding: 12px;
+             z-index: 1000;
+             min-width: 250px;
+             margin-top: 5px;
+         }
+         
+         .cost-breakdown-header:hover .cost-breakdown-dropdown {
+             display: block;
+         }
+         
+         .cost-breakdown-item {
+             display: flex;
+             justify-content: space-between;
+             padding: 6px 0;
+             border-bottom: 1px solid #f0f0f0;
+         }
+         
+         .cost-breakdown-item:last-child {
+             border-bottom: none;
+         }
+         
+         .cost-label {
+             font-weight: 500;
+             color: #555;
+         }
+         
+         .cost-amount {
+             font-weight: 600;
+             color: #488C9A;
+         }
+         
+         /* Clickable total cost styling */
+         .total-cost-clickable {
+             color: #488C9A;
+             font-weight: 700;
+             cursor: pointer;
+             text-decoration: underline;
+             transition: all 0.3s ease;
+         }
+         
+         .total-cost-clickable:hover {
+             color: #293E4C;
+             transform: scale(1.05);
+         }
+         
+         /* Enhanced View Details button */
+         .view-details-btn {
+             display: inline-flex;
+             align-items: center;
+             gap: 6px;
+             background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+             color: white;
+             padding: 8px 12px;
+             border-radius: 6px;
+             text-decoration: none;
+             font-size: 0.85em;
+             font-weight: 500;
+             transition: all 0.3s ease;
+             box-shadow: 0 2px 4px rgba(72, 140, 154, 0.3);
+         }
+         
+         .view-details-btn:hover {
+             background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
+             transform: translateY(-1px);
+             box-shadow: 0 4px 8px rgba(72, 140, 154, 0.4);
+             color: white;
+             text-decoration: none;
+         }
+         
+         .view-details-btn svg {
+             flex-shrink: 0;
+         }
+         
+         /* Cost Modal Styling */
+         .cost-modal {
+             display: none;
+             position: fixed;
+             z-index: 2000;
+             left: 0;
+             top: 0;
+             width: 100%;
+             height: 100%;
+             background-color: rgba(0, 0, 0, 0.5);
+             backdrop-filter: blur(4px);
+         }
+         
+         .cost-modal-content {
+             background-color: white;
+             margin: 10% auto;
+             border-radius: 12px;
+             width: 90%;
+             max-width: 400px;
+             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+             overflow: hidden;
+             animation: modalSlideIn 0.3s ease;
+         }
+         
+         @keyframes modalSlideIn {
+             from {
+                 opacity: 0;
+                 transform: translateY(-50px) scale(0.9);
+             }
+             to {
+                 opacity: 1;
+                 transform: translateY(0) scale(1);
+             }
+         }
+         
+         .cost-modal-header {
+             background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+             color: white;
+             padding: 16px 20px;
+             display: flex;
+             justify-content: space-between;
+             align-items: center;
+         }
+         
+         .cost-modal-header h3 {
+             margin: 0;
+             font-size: 1.2em;
+             color: white;
+         }
+         
+         .cost-modal-close {
+             font-size: 24px;
+             font-weight: bold;
+             cursor: pointer;
+             line-height: 1;
+             transition: opacity 0.3s ease;
+         }
+         
+         .cost-modal-close:hover {
+             opacity: 0.7;
+         }
+         
+         .cost-modal-body {
+             padding: 20px;
+         }
+         
+         .cost-breakdown-row {
+             display: flex;
+             justify-content: space-between;
+             align-items: center;
+             padding: 10px 0;
+             border-bottom: 1px solid #f0f0f0;
+         }
+         
+         .cost-breakdown-row:last-child {
+             border-bottom: none;
+         }
+         
+         .cost-breakdown-divider {
+             border-top: 2px solid #488C9A;
+             margin: 15px 0 10px 0;
+         }
+         
+         .breakdown-label {
+             font-weight: 500;
+             color: #555;
+         }
+         
+         .breakdown-value {
+             font-weight: 600;
+             color: #293E4C;
+         }
+         
+         .total-row .breakdown-label,
+         .total-row .breakdown-value {
+             font-weight: 700;
+             font-size: 1.1em;
+             color: #488C9A;
+         }
         .sub-tabs-container {
             /* Add any container styling if needed */
             /* Example: margin-bottom: 10px; */
@@ -673,10 +1041,19 @@ if ($conn) {
              .filter-controls select {
                   width: 100%;
              }
-             .cost-summary th, .cost-summary td {
-                font-size: 14px;
-                white-space: normal;
-            }
+             .cost-overview-container {
+                 grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                 gap: 15px;
+             }
+             .cost-card {
+                 padding: 16px 12px;
+             }
+             .cost-value {
+                 font-size: 22px;
+             }
+             .cost-icon {
+                 font-size: 24px;
+             }
         }
          @media (max-width: 600px) {
              .warehouse-info-container {
@@ -832,30 +1209,43 @@ if ($conn) {
         </div>
         
         <!-- Cost Summary -->
-        <div class="table-responsive">
-             <table class="cost-summary">
-                 <thead>
-                     <tr>
-                         <th>Total Pallets Stored</th>
-                         <th>Total Modules Stored</th>
-                         <th>Est. Monthly Storage Cost</th>
-                         <th>In Fee Cost (Total)</th>
-                         <th>Out Fee Cost (Total)</th>
-                         <th>Total Cost To Date</th>
-                     </tr>
-                 </thead>
-                 <tbody>
-                     <tr>
-                         <td><?php echo number_format($total_pallets_count ?? 0); ?></td>
-                         <td><?php echo number_format($total_modules ?? 0); ?></td>
-                         <td>$<?php echo number_format($monthly_storage_cost, 2); ?></td>
-                         <td>$<?php echo number_format($in_fee_cost, 2); ?></td>
-                         <td>$<?php echo number_format($out_fee_cost, 2); ?></td>
-                         <td>$<?php echo number_format($total_cost_to_date, 2); ?></td>
-                     </tr>
-                 </tbody>
-             </table>
-         </div>
+        <div class="cost-overview-container">
+            <div class="cost-card">
+                <div class="cost-icon">📦</div>
+                <div class="cost-value"><?php echo number_format($total_pallets_count ?? 0); ?></div>
+                <div class="cost-label">Total Pallets Stored</div>
+            </div>
+            <div class="cost-card">
+                <div class="cost-icon">⚡</div>
+                <div class="cost-value"><?php echo number_format($total_modules ?? 0); ?></div>
+                <div class="cost-label">Total Modules Stored</div>
+            </div>
+            <div class="cost-card total-cost clickable-cost-card" onclick="toggleCostDropdown()">
+                <div class="cost-icon">💰</div>
+                <div class="cost-value">$<?php echo number_format($total_cost_to_date, 2); ?></div>
+                <div class="cost-label">Est. Total Cost To Date</div>
+                <div class="cost-dropdown-arrow">▼</div>
+                <div class="cost-card-dropdown" id="costCardDropdown">
+                    <div class="cost-dropdown-item">
+                        <span class="cost-dropdown-label">In Fee Cost:</span>
+                        <span class="cost-dropdown-amount">$<?php echo number_format($in_fee_cost, 2); ?></span>
+                    </div>
+                    <div class="cost-dropdown-item">
+                        <span class="cost-dropdown-label">Out Fee Cost:</span>
+                        <span class="cost-dropdown-amount">$<?php echo number_format($out_fee_cost, 2); ?></span>
+                    </div>
+                    <div class="cost-dropdown-item">
+                        <span class="cost-dropdown-label">Est. Monthly Storage:</span>
+                        <span class="cost-dropdown-amount">$<?php echo number_format($monthly_storage_cost, 2); ?></span>
+                    </div>
+                    <div class="cost-dropdown-divider"></div>
+                    <div class="cost-dropdown-item total-item">
+                        <span class="cost-dropdown-label">Total Est. Cost:</span>
+                        <span class="cost-dropdown-amount">$<?php echo number_format($total_cost_to_date, 2); ?></span>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <!-- Tabs -->
         <div class="tabs-container">
@@ -932,12 +1322,24 @@ if ($conn) {
                              <th>Wattage</th>
                              <th>Quantity</th>
                              <th>Arrival Date</th>
+                             <th>Days Stored</th>
+                             <th>Est. Total Cost To Date</th>
                              <th>Actions</th>
                          </tr>
                      </thead>
                      <tbody>
                          <?php if (!empty($inventory_pallets)): ?>
-                             <?php foreach ($inventory_pallets as $pallet): ?>
+                             <?php foreach ($inventory_pallets as $pallet): 
+                                 // Calculate costs for this pallet
+                                 $days_stored = max(0, intval($pallet['days_stored'] ?? 0));
+                                 $monthly_storage_fee = floatval($warehouse_data['monthly_storage_fee'] ?? 0);
+                                 $daily_storage_cost = $monthly_storage_fee / 30; // Approximate daily cost
+                                 $storage_cost = $days_stored * $daily_storage_cost;
+                                 
+                                 // Add proportional in fee cost (in fee divided by total pallets)
+                                 $in_fee_per_pallet = $total_pallets_count > 0 ? $in_fee_cost / $total_pallets_count : 0;
+                                 $total_pallet_cost = $storage_cost + $in_fee_per_pallet;
+                             ?>
                                  <tr>
                                      <?php if ($warehouse_id && !$project_id && !$module_batch_id): // Show project column when viewing general warehouse ?>
                                      <td><?php echo !empty($pallet['project_name']) ? htmlspecialchars($pallet['project_name']) : 'Unassigned'; ?></td>
@@ -948,12 +1350,32 @@ if ($conn) {
                                      <td><?php echo number_format($pallet['quantity']); ?></td>
                                      <td><?php echo htmlspecialchars($pallet['arrival_date'] ?? 'N/A'); ?></td>
                                      <td>
-                                          <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?><?php if ($module_batch_id) echo '&origin_batch_id='.$module_batch_id; ?>" class="action-button" target="_blank" style="padding: 3px 8px; font-size: 0.9em;">View Details</a>
+                                         <span class="days-badge"><?php echo $days_stored; ?> days</span>
+                                     </td>
+                                     <td>
+                                         <span class="total-cost-clickable" 
+                                               onclick="showCostModal('<?php echo $pallet['pallet_identifier']; ?>', 
+                                                                     <?php echo $days_stored; ?>, 
+                                                                     <?php echo $monthly_storage_fee; ?>, 
+                                                                     <?php echo $storage_cost; ?>,
+                                                                     <?php echo $in_fee_per_pallet; ?>,
+                                                                     <?php echo $total_pallet_cost; ?>)">
+                                             $<?php echo number_format($total_pallet_cost, 2); ?>
+                                         </span>
+                                     </td>
+                                     <td>
+                                          <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?><?php if ($module_batch_id) echo '&origin_batch_id='.$module_batch_id; ?>" class="view-details-btn" target="_blank">
+                                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                                  <circle cx="12" cy="12" r="3"></circle>
+                                              </svg>
+                                              View Details
+                                          </a>
                                      </td>
                                  </tr>
                              <?php endforeach; ?>
                          <?php else: ?>
-                             <tr><td colspan="<?php echo ($warehouse_id && !$project_id && !$module_batch_id) ? '7' : '6'; ?>">No inventory currently stored<?php 
+                             <tr><td colspan="<?php echo ($warehouse_id && !$project_id && !$module_batch_id) ? '9' : '8'; ?>">No inventory currently stored<?php 
                                 if ($project_id) echo ' for this project'; 
                                 elseif ($module_batch_id) echo ' from this module batch'; 
                              ?> in this warehouse.</td></tr>
@@ -1113,6 +1535,35 @@ if ($conn) {
          </div>
          <!-- === END Standard Warehouse View === -->
     <?php endif; ?>
+
+    <!-- Cost Breakdown Modal -->
+    <div id="costModal" class="cost-modal">
+        <div class="cost-modal-content">
+            <div class="cost-modal-header">
+                <h3 id="modalTitle">Cost Breakdown</h3>
+                <span class="cost-modal-close" onclick="closeCostModal()">&times;</span>
+            </div>
+            <div class="cost-modal-body">
+                <div class="cost-breakdown-row">
+                    <span class="breakdown-label">Days Stored:</span>
+                    <span id="modalDaysStored" class="breakdown-value"></span>
+                </div>
+                <div class="cost-breakdown-row">
+                    <span class="breakdown-label">Daily Storage Rate:</span>
+                    <span id="modalDailyRate" class="breakdown-value"></span>
+                </div>
+                <div class="cost-breakdown-row">
+                    <span class="breakdown-label">Monthly Storage Fee:</span>
+                    <span id="modalMonthlyFee" class="breakdown-value"></span>
+                </div>
+                <div class="cost-breakdown-divider"></div>
+                <div class="cost-breakdown-row total-row">
+                    <span class="breakdown-label">Total Storage Cost:</span>
+                    <span id="modalTotalCost" class="breakdown-value"></span>
+                </div>
+            </div>
+        </div>
+    </div>
 
 </main>
 
@@ -1297,6 +1748,45 @@ if ($conn) {
          filterTable('inboundTruckloadsTable', 'inboundTruckloadSearch', 'inboundTruckloadWattageFilter', inboundDateFilters);
          filterTable('outboundTruckloadsTable', 'outboundTruckloadSearch', 'outboundTruckloadWattageFilter', outboundDateFilters);
      });
+
+     // Cost Modal Functions
+     function showCostModal(palletId, daysStored, monthlyFee, storageCost, inFeePortion, totalCost) {
+         const dailyRate = monthlyFee / 30;
+         
+         document.getElementById('modalTitle').textContent = `Cost Breakdown - ${palletId}`;
+         document.getElementById('modalDaysStored').textContent = `${daysStored} days`;
+         document.getElementById('modalDailyRate').textContent = `$${dailyRate.toFixed(2)} per day`;
+         document.getElementById('modalMonthlyFee').textContent = `$${monthlyFee.toFixed(2)}`;
+         document.getElementById('modalTotalCost').textContent = `Storage: $${storageCost.toFixed(2)} + In Fee: $${inFeePortion.toFixed(2)} = $${totalCost.toFixed(2)}`;
+         
+         document.getElementById('costModal').style.display = 'block';
+     }
+     
+     // Cost Card Dropdown Functions
+     function toggleCostDropdown() {
+         const costCard = document.querySelector('.clickable-cost-card');
+         costCard.classList.toggle('open');
+     }
+     
+     // Close dropdown when clicking outside
+     document.addEventListener('click', function(event) {
+         const costCard = document.querySelector('.clickable-cost-card');
+         if (costCard && !costCard.contains(event.target)) {
+             costCard.classList.remove('open');
+         }
+     });
+     
+     function closeCostModal() {
+         document.getElementById('costModal').style.display = 'none';
+     }
+     
+     // Close modal when clicking outside of it
+     window.onclick = function(event) {
+         const modal = document.getElementById('costModal');
+         if (event.target === modal) {
+             closeCostModal();
+         }
+     }
 
 </script>
 

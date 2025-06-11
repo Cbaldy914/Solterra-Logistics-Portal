@@ -266,38 +266,54 @@ document.addEventListener('DOMContentLoaded', function() {
         menu.classList.toggle('show');
     });
 
-    // Handle dropdown clicks for all screen sizes
+    // Handle dropdown interactions
     dropdownLinks.forEach(link => {
+        const parentLi = link.parentElement;
+        let hoverTimeout;
+
+        // Mouse enter - show dropdown immediately
+        parentLi.addEventListener('mouseenter', function() {
+            clearTimeout(hoverTimeout);
+            // Close other dropdowns first
+            document.querySelectorAll('.menu li.dropdown.open').forEach(openDropdown => {
+                if (openDropdown !== parentLi) {
+                    openDropdown.classList.remove('open');
+                }
+            });
+            parentLi.classList.add('open');
+        });
+
+        // Mouse leave - hide dropdown with small delay
+        parentLi.addEventListener('mouseleave', function() {
+            hoverTimeout = setTimeout(() => {
+                parentLi.classList.remove('open');
+            }, 150); // Small delay to allow cursor movement to dropdown
+        });
+
+        // Click handler as fallback (especially useful on mobile)
         link.addEventListener('click', function(e) {
             e.preventDefault();
-            const parentLi = this.parentElement;
-            
-            // Check if the dropdown is already open
             const isOpen = parentLi.classList.contains('open');
             
-            // Close all open dropdowns first
+            // Close all dropdowns first
             document.querySelectorAll('.menu li.dropdown.open').forEach(openDropdown => {
                 openDropdown.classList.remove('open');
             });
             
-            // If the clicked dropdown was not already open, open it
+            // Toggle this dropdown if it wasn't open
             if (!isOpen) {
                 parentLi.classList.add('open');
             }
         });
     });
 
-    // Close dropdown when clicking outside
+    // Close dropdowns when clicking outside
     document.addEventListener('click', function(e) {
-        // Find the dropdown that was clicked, if any
-        const clickedDropdown = e.target.closest('.dropdown');
-        
-        // Close all dropdowns that were not the one just clicked
-        document.querySelectorAll('.menu li.dropdown.open').forEach(openDropdown => {
-            if (openDropdown !== clickedDropdown) {
+        if (!e.target.closest('.dropdown')) {
+            document.querySelectorAll('.menu li.dropdown.open').forEach(openDropdown => {
                 openDropdown.classList.remove('open');
-            }
-        });
+            });
+        }
     });
 });
 </script>
