@@ -184,26 +184,103 @@ if (isset($_POST['bulk_edit_submit'])) {
         }
 
         if (!empty($updates)) {
-            // Build the UPDATE query with placeholders for each selected ID
-            $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
-            $sql = "UPDATE deliveries SET " . implode(", ", $updates) . " WHERE id IN ($placeholders)";
+            // Start transaction for bulk update
+            $conn->begin_transaction();
+            try {
+                // Build the UPDATE query with placeholders for each selected ID
+                $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+                $sql = "UPDATE deliveries SET " . implode(", ", $updates) . " WHERE id IN ($placeholders)";
 
-            $stmt = $conn->prepare($sql);
-            // Add 'i' for each selected ID to bind their values
-            $types .= str_repeat('i', count($selected_ids));
+                $stmt = $conn->prepare($sql);
+                // Add 'i' for each selected ID to bind their values
+                $types .= str_repeat('i', count($selected_ids));
 
-            // Merge $values with the list of selected IDs
-            foreach ($selected_ids as $id) {
-                $values[] = $id;
+                // Merge $values with the list of selected IDs
+                foreach ($selected_ids as $id) {
+                    $values[] = $id;
+                }
+
+                $stmt->bind_param($types, ...$values);
+                if (!$stmt->execute()) {
+                    throw new Exception("Error on bulk update: " . $stmt->error);
+                }
+                $stmt->close();
+
+                // Update associated pallet statuses if delivery status was changed
+                $total_pallet_updates = 0;
+                $new_delivery_status = null;
+                
+                // Check if status_of_delivery was updated
+                if (isset($_POST['status_of_delivery']) && $_POST['status_of_delivery'] !== '') {
+                    $new_delivery_status = $_POST['status_of_delivery'];
+                    
+                    // Map delivery statuses to corresponding pallet statuses
+                    $status_mapping = [
+                        'Delivered to Project' => 'Delivered to Project',
+                        'Delivered to Warehouse' => 'In Warehouse',
+                        'In Transit to Project' => 'In Transit to Project', 
+                        'In Transit to Warehouse' => 'In Transit to Warehouse',
+                        'Pending' => 'At Manufacturer' // Assume pallets go back to manufacturer if delivery is pending
+                    ];
+                    
+                    if (isset($status_mapping[$new_delivery_status])) {
+                        $new_pallet_status = $status_mapping[$new_delivery_status];
+                        
+                        // Get all pallets associated with the selected deliveries
+                        $delivery_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+                        $stmt_get_pallets = $conn->prepare("
+                            SELECT dp.inventory_pallet_id 
+                            FROM delivery_pallets dp 
+                            WHERE dp.delivery_id IN ($delivery_placeholders)
+                        ");
+                        
+                        if ($stmt_get_pallets) {
+                            $pallet_types = str_repeat('i', count($selected_ids));
+                            $stmt_get_pallets->bind_param($pallet_types, ...$selected_ids);
+                            $stmt_get_pallets->execute();
+                            $result_pallets = $stmt_get_pallets->get_result();
+                            $pallet_ids = [];
+                            
+                            while ($row = $result_pallets->fetch_assoc()) {
+                                $pallet_ids[] = $row['inventory_pallet_id'];
+                            }
+                            $stmt_get_pallets->close();
+                            
+                            // Update pallet statuses if we found any pallets
+                            if (!empty($pallet_ids)) {
+                                $pallet_placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
+                                $pallet_update_types = 's' . str_repeat('i', count($pallet_ids)); // status + pallet IDs
+                                
+                                $stmt_update_pallets = $conn->prepare("
+                                    UPDATE inventory_pallets 
+                                    SET status = ? 
+                                    WHERE id IN ($pallet_placeholders)
+                                ");
+                                
+                                if ($stmt_update_pallets) {
+                                    $stmt_update_pallets->bind_param($pallet_update_types, $new_pallet_status, ...$pallet_ids);
+                                    if ($stmt_update_pallets->execute()) {
+                                        $total_pallet_updates = $stmt_update_pallets->affected_rows;
+                                    }
+                                    $stmt_update_pallets->close();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                $conn->commit();
+                
+                $success_msg = "Bulk update successful.";
+                if ($total_pallet_updates > 0) {
+                    $success_msg .= " Also updated status for $total_pallet_updates associated pallet(s) to '$new_pallet_status'.";
+                }
+                $_SESSION['messages'][] = "<p>$success_msg</p>";
+                
+            } catch (Exception $e) {
+                $conn->rollback();
+                $_SESSION['messages'][] = "<p class='error-message'>Error during bulk update: " . $e->getMessage() . "</p>";
             }
-
-            $stmt->bind_param($types, ...$values);
-            if ($stmt->execute()) {
-                $_SESSION['messages'][] = "<p>Bulk update successful.</p>";
-            } else {
-                $_SESSION['messages'][] = "<p>Error on bulk update: " . $stmt->error . "</p>";
-            }
-            $stmt->close();
         } else {
             $_SESSION['messages'][] = "<p>No fields were filled in for bulk update.</p>";
         }
