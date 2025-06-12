@@ -160,6 +160,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         $palletsPerTruck = (isset($_POST['pallets_per_truck']) && is_numeric($_POST['pallets_per_truck']))
                            ? intval($_POST['pallets_per_truck'])
                            : 1;
+        
+        // Cost and logistics fields
+        $freightCost = isset($_POST['freight_cost']) && $_POST['freight_cost'] !== '' ? (float)$_POST['freight_cost'] : 0.0;
+        $accessorialCost = isset($_POST['accessorial_cost']) && $_POST['accessorial_cost'] !== '' ? (float)$_POST['accessorial_cost'] : 0.0;
+        $customerCost = isset($_POST['customer_cost']) && $_POST['customer_cost'] !== '' ? (float)$_POST['customer_cost'] : 0.0;
+        $miles = isset($_POST['miles']) && $_POST['miles'] !== '' ? (float)$_POST['miles'] : null;
 
         if (empty($palletIds)) {
             throw new Exception('No pallets selected to ship.');
@@ -208,11 +214,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         $deliveryTypes = "";
         $deliveryParams = [];
         if ($destinationType === 'project') {
-            $sqlDelivery = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, 'In Transit to Project')";
-            $deliveryTypes = "ississ";
+            $sqlDelivery = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, ?, ?, ?, 'In Transit to Project', ?, ?, ?, ?)";
+            $deliveryTypes = "ississdddd";
         } else {
-            $sqlDelivery = "INSERT INTO deliveries (project_id, warehouse_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse')";
-            $deliveryTypes = "iississ";
+            $sqlDelivery = "INSERT INTO deliveries (project_id, warehouse_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse', ?, ?, ?, ?)";
+            $deliveryTypes = "iississdddd";
         }
         $stmtDelivery = $conn->prepare($sqlDelivery);
         if (!$stmtDelivery) throw new Exception("Failed to prepare delivery insert: " . $conn->error);
@@ -235,10 +241,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
             foreach ($groupByWattage as $wattage => $palletsForWatt) {
                 $groupQty = array_sum(array_column($palletsForWatt, 'quantity'));
                 if ($destinationType === 'project') {
-                    $deliveryParams = [$destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate];
+                    $deliveryParams = [$destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate, $freightCost, $accessorialCost, $customerCost, $miles];
                 } else {
                     error_log("Attempting to insert delivery to warehouse. Project ID for delivery: " . print_r($source_project_id_for_delivery, true)); 
-                    $deliveryParams = [$source_project_id_for_delivery, $destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate];
+                    $deliveryParams = [$source_project_id_for_delivery, $destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate, $freightCost, $accessorialCost, $customerCost, $miles];
                 }
                 $stmtDelivery->bind_param($deliveryTypes, ...$deliveryParams);
                 if (!$stmtDelivery->execute()) {
@@ -1280,7 +1286,10 @@ $conn->close();
                             <label for="customer_cost">Customer Cost ($):</label>
                             <input type="number" id="customer_cost" name="customer_cost" step="0.01" min="0">
                         </div>
-                        <div></div>
+                        <div>
+                            <label for="miles">Miles:</label>
+                            <input type="number" id="miles" name="miles" step="0.01" min="0">
+                        </div>
                     </div>
                     <label style="margin-bottom: 10px; display:block;">Destination:</label>
                     <label class="radio-label">
@@ -1333,7 +1342,10 @@ $conn->close();
                             <label for="customer_cost_multi">Customer Cost ($):</label>
                             <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
                         </div>
-                        <div></div>
+                        <div>
+                            <label for="miles_multi">Miles:</label>
+                            <input type="number" id="miles_multi" name="miles_multi" step="0.01" min="0">
+                        </div>
                     </div>
                     <label style="margin-bottom: 10px; display:block;">Destination:</label>
                     <label class="radio-label">
@@ -1719,6 +1731,7 @@ if (openShipModalBtn) { // Button only exists for admins
             const freightCost = document.getElementById('freight_cost').value;
             const accessorialCost = document.getElementById('accessorial_cost').value;
             const customerCost = document.getElementById('customer_cost').value;
+            const miles = document.getElementById('miles').value;
 
             if (!targetId) {
                 alert('Please select a destination (Project/Warehouse).');
@@ -1734,6 +1747,7 @@ if (openShipModalBtn) { // Button only exists for admins
             setOrCreateHidden(mainForm, 'freight_cost', freightCost);
             setOrCreateHidden(mainForm, 'accessorial_cost', accessorialCost);
             setOrCreateHidden(mainForm, 'customer_cost', customerCost);
+            setOrCreateHidden(mainForm, 'miles', miles);
 
             mainForm.submit();
         });
@@ -1773,6 +1787,7 @@ if (openShipModalBtn) { // Button only exists for admins
             const freightCost = document.getElementById('freight_cost_multi').value;
             const accessorialCost = document.getElementById('accessorial_cost_multi').value;
             const customerCost = document.getElementById('customer_cost_multi').value;
+            const miles = document.getElementById('miles_multi').value;
 
             if (!targetId) {
                 alert('Please select a destination (Project/Warehouse).');
@@ -1788,6 +1803,7 @@ if (openShipModalBtn) { // Button only exists for admins
             setOrCreateHidden(mainForm, 'freight_cost', freightCost);
             setOrCreateHidden(mainForm, 'accessorial_cost', accessorialCost);
             setOrCreateHidden(mainForm, 'customer_cost', customerCost);
+            setOrCreateHidden(mainForm, 'miles', miles);
 
             mainForm.submit();
         });

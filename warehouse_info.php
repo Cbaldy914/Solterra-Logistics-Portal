@@ -386,12 +386,24 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $in_fee_cost  = ($warehouse_data['in_fee'] ?? 0)  * $total_inbound_pallets_count;
         $out_fee_cost = ($warehouse_data['out_fee'] ?? 0) * $total_outbound_pallets_count;
         
-        // Monthly Storage Cost Estimate (based on current pallet count)
-        $monthly_storage_cost = $total_pallets_count * ($warehouse_data['monthly_storage_fee'] ?? 0);
+        // Calculate actual storage costs and average months
+        $total_storage_cost_actual = 0;
+        $total_days_all_pallets = 0;
+        $monthly_storage_rate = $total_pallets_count * ($warehouse_data['monthly_storage_fee'] ?? 0);
         
-        $storage_cost_to_date = 0; // Removed calculation, set to 0
+        if (!empty($inventory_pallets)) {
+            foreach ($inventory_pallets as $pallet_calc) {
+                $days = max(0, intval($pallet_calc['days_stored'] ?? 0));
+                $total_days_all_pallets += $days;
+                $daily_rate = ($warehouse_data['monthly_storage_fee'] ?? 0) / 30;
+                $total_storage_cost_actual += $days * $daily_rate;
+            }
+        }
         
-        $total_cost_to_date = $in_fee_cost + $out_fee_cost; // Updated total cost
+        $average_days = $total_pallets_count > 0 ? $total_days_all_pallets / $total_pallets_count : 0;
+        $average_months = $average_days / 30;
+        
+        $total_cost_to_date = $in_fee_cost + $out_fee_cost + $total_storage_cost_actual;
 
     } catch (Exception $e) {
         $errorMessage = "Error fetching inventory data: " . $e->getMessage();
@@ -1236,7 +1248,7 @@ if ($conn) {
                     </div>
                     <div class="cost-dropdown-item">
                         <span class="cost-dropdown-label">Est. Monthly Storage:</span>
-                        <span class="cost-dropdown-amount">$<?php echo number_format($monthly_storage_cost, 2); ?></span>
+                        <span class="cost-dropdown-amount">$<?php echo number_format($monthly_storage_rate, 2); ?> × <?php echo number_format($average_months, 1); ?> mo = $<?php echo number_format($total_storage_cost_actual, 2); ?></span>
                     </div>
                     <div class="cost-dropdown-divider"></div>
                     <div class="cost-dropdown-item total-item">

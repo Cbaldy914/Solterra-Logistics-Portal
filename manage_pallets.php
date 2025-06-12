@@ -169,16 +169,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
     } else {
         $conn_ship->begin_transaction();
         try {
-            $destinationType = $_POST['destination_type'] ?? 'project';
-            $destinationId   = isset($_POST['destination_id']) ? intval($_POST['destination_id']) : 0;
-            $bolNumber       = trim($_POST['bol_number'] ?? '');
-            $departureDate   = $_POST['departure_date'] ?? null;
-            $estArrivalDate  = $_POST['est_arrival_date'] ?? null;
-            $palletIdsToShip = $_POST['selected_pallets'] ?? []; 
-            $shipmentMode    = $_POST['shipment_mode'] ?? 'single';
-            $palletsPerTruck = (isset($_POST['pallets_per_truck']) && is_numeric($_POST['pallets_per_truck']))
-                               ? intval($_POST['pallets_per_truck'])
-                               : 1;
+                    $destinationType = $_POST['destination_type'] ?? 'project';
+        $destinationId   = isset($_POST['destination_id']) ? intval($_POST['destination_id']) : 0;
+        $bolNumber       = trim($_POST['bol_number'] ?? '');
+        $departureDate   = $_POST['departure_date'] ?? null;
+        $estArrivalDate  = $_POST['est_arrival_date'] ?? null;
+        $palletIdsToShip = $_POST['selected_pallets'] ?? [];
+        $shipmentMode    = $_POST['shipment_mode'] ?? 'single';
+        $palletsPerTruck = (isset($_POST['pallets_per_truck']) && is_numeric($_POST['pallets_per_truck']))
+                           ? intval($_POST['pallets_per_truck'])
+                           : 1;
+        
+        // Cost and logistics fields
+        $freightCost = isset($_POST['freight_cost']) && $_POST['freight_cost'] !== '' ? (float)$_POST['freight_cost'] : 0.0;
+        $accessorialCost = isset($_POST['accessorial_cost']) && $_POST['accessorial_cost'] !== '' ? (float)$_POST['accessorial_cost'] : 0.0;
+        $customerCost = isset($_POST['customer_cost']) && $_POST['customer_cost'] !== '' ? (float)$_POST['customer_cost'] : 0.0;
+        $miles = isset($_POST['miles']) && $_POST['miles'] !== '' ? (float)$_POST['miles'] : null;
 
             if (empty($palletIdsToShip)) {
                 throw new Exception('No pallets selected to ship.');
@@ -267,13 +273,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     $deliveryTypes = "";
 
                     if ($destinationType === 'project') {
-                        $sqlDeliveryInsert = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, left_warehouse_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Project')";
-                        $deliveryTypes = "isissss";
-                        $deliveryParams = [$destinationId, $supplierForDelivery, $wattage, $groupQty, $bolNumber, $estArrivalDate, $departureDate];
+                        $sqlDeliveryInsert = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, left_warehouse_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Project', ?, ?, ?, ?)";
+                        $deliveryTypes = "isissssdddd";
+                        $deliveryParams = [$destinationId, $supplierForDelivery, $wattage, $groupQty, $bolNumber, $estArrivalDate, $departureDate, $freightCost, $accessorialCost, $customerCost, $miles];
                     } else { 
-                        $sqlDeliveryInsert = "INSERT INTO deliveries (warehouse_id, supplier, wattage, quantity, bol_number, left_warehouse_date, anticipated_delivery_date, status_of_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse')";
-                        $deliveryTypes = "isissss"; 
-                        $deliveryParams = [$destinationId, $supplierForDelivery, $wattage, $groupQty, $bolNumber, $departureDate, $estArrivalDate];
+                        $sqlDeliveryInsert = "INSERT INTO deliveries (warehouse_id, supplier, wattage, quantity, bol_number, left_warehouse_date, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse', ?, ?, ?, ?)";
+                        $deliveryTypes = "isissssdddd"; 
+                        $deliveryParams = [$destinationId, $supplierForDelivery, $wattage, $groupQty, $bolNumber, $departureDate, $estArrivalDate, $freightCost, $accessorialCost, $customerCost, $miles];
                     }
                     
                     $stmtDelivery = $conn_ship->prepare($sqlDeliveryInsert);
@@ -914,7 +920,10 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                             <label for="customer_cost_single">Customer Cost ($):</label>
                             <input type="number" id="customer_cost_single" name="customer_cost_single" step="0.01" min="0">
                         </div>
-                        <div></div>
+                        <div>
+                            <label for="miles_single">Miles:</label>
+                            <input type="number" id="miles_single" name="miles_single" step="0.01" min="0">
+                        </div>
                     </div>
                     <label style="margin-bottom: 10px; display:block;">Destination:</label>
                     <label class="radio-label">
@@ -967,7 +976,10 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                             <label for="customer_cost_multi">Customer Cost ($):</label>
                             <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
                         </div>
-                        <div></div>
+                        <div>
+                            <label for="miles_multi">Miles:</label>
+                            <input type="number" id="miles_multi" name="miles_multi" step="0.01" min="0">
+                        </div>
                     </div>
                     <label style="margin-bottom: 10px; display:block;">Destination:</label>
                     <label class="radio-label">
@@ -1486,9 +1498,10 @@ if (confirmShipmentBtn && mainShipForm) {
         const bol = document.getElementById('bol_number_single_modal').value;
         const departure = document.getElementById('departure_date_single_modal').value;
         const arrival = document.getElementById('est_arrival_date_single_modal').value;
-        const freightCost = document.getElementById('freight_cost_single').value;
-        const accessorialCost = document.getElementById('accessorial_cost_single').value;
-        const customerCost = document.getElementById('customer_cost_single').value;
+                    const freightCost = document.getElementById('freight_cost_single').value;
+            const accessorialCost = document.getElementById('accessorial_cost_single').value;
+            const customerCost = document.getElementById('customer_cost_single').value;
+            const miles = document.getElementById('miles_single').value;
 
         if (!targetId) { alert('Please select a destination.'); return; }
         if (!departure) { alert('Departure date is required.'); return; }
@@ -1502,6 +1515,7 @@ if (confirmShipmentBtn && mainShipForm) {
         setOrCreateHidden(mainShipForm, 'freight_cost', freightCost);
         setOrCreateHidden(mainShipForm, 'accessorial_cost', accessorialCost);
         setOrCreateHidden(mainShipForm, 'customer_cost', customerCost);
+        setOrCreateHidden(mainShipForm, 'miles', miles);
         mainShipForm.submit();
     });
 }
@@ -1524,6 +1538,7 @@ if (confirmMultiShipmentBtn && mainShipForm) {
         const freightCost = document.getElementById('freight_cost_multi').value;
         const accessorialCost = document.getElementById('accessorial_cost_multi').value;
         const customerCost = document.getElementById('customer_cost_multi').value;
+        const miles = document.getElementById('miles_multi').value;
 
         if (!targetId) { alert('Please select a destination.'); return; }
         if (!departure) { alert('Departure date is required.'); return; }
@@ -1537,6 +1552,7 @@ if (confirmMultiShipmentBtn && mainShipForm) {
         setOrCreateHidden(mainShipForm, 'freight_cost', freightCost);
         setOrCreateHidden(mainShipForm, 'accessorial_cost', accessorialCost);
         setOrCreateHidden(mainShipForm, 'customer_cost', customerCost);
+        setOrCreateHidden(mainShipForm, 'miles', miles);
         mainShipForm.submit();
     });
 }
