@@ -1383,60 +1383,40 @@ function createRouteLines(locations) {
         
         if (fromLocation && toLocation && fromLocation.position && toLocation.position && route.modules > 0) {
             // Calculate the total modules in the project to determine volume percentage
-            const totalProjectModules = movementData.reduce((sum, movement) => sum + parseInt(movement.quantity), 0);
+            const totalProjectModules = movementData.reduce((sum, movement) => sum + parseInt(movement.total_quantity || movement.quantity || 0), 0);
             const volumePercentage = route.modules / totalProjectModules;
             
-            // Determine dash pattern based on volume (4 levels + solid)
-            let strokePattern = null; // Default is solid line
+            // Determine line thickness based on volume (5 levels)
+            let strokeWeight = 2; // Default minimum thickness
             
-            if (volumePercentage >= 0.9) {
-                // Very high volume: solid line
-                strokePattern = null;
-            } else if (volumePercentage >= 0.65) {
-                // High volume: mostly solid with tiny gaps
-                strokePattern = [25, 2]; // 25px dash, 2px gap
-            } else if (volumePercentage >= 0.35) {
-                // Medium volume: moderately solid
-                strokePattern = [20, 4]; // 20px dash, 4px gap
-            } else if (volumePercentage >= 0.15) {
-                // Low volume: more dashed
-                strokePattern = [12, 8]; // 12px dash, 8px gap
+            if (volumePercentage >= 0.8) {
+                // Very high volume: thickest line (10px)
+                strokeWeight = 10;
+            } else if (volumePercentage >= 0.6) {
+                // High volume: thick line (8px)
+                strokeWeight = 8;
+            } else if (volumePercentage >= 0.4) {
+                // Medium volume: medium line (6px)
+                strokeWeight = 6;
+            } else if (volumePercentage >= 0.2) {
+                // Low volume: thin line (4px)
+                strokeWeight = 4;
             } else {
-                // Very low volume: heavily dashed
-                strokePattern = [8, 12]; // 8px dash, 12px gap
+                // Very low volume: thinnest line (2px)
+                strokeWeight = 2;
             }
             
-            console.log(`Creating route from ${fromLocation.name} to ${toLocation.name}: ${route.modules} modules (${Math.round(volumePercentage * 100)}% of total), pattern: ${strokePattern ? strokePattern.join(',') : 'solid'}`);
+            console.log(`Creating route from ${fromLocation.name} to ${toLocation.name}: ${route.modules} modules (${Math.round(volumePercentage * 100)}% of total), thickness: ${strokeWeight}px`);
             
             const polylineOptions = {
                 path: [fromLocation.position, toLocation.position],
                 geodesic: true,
                 strokeColor: route.color,
                 strokeOpacity: 0.8,
-                strokeWeight: 4, // Fixed width for all lines
+                strokeWeight: strokeWeight, // Variable thickness based on volume
                 map: map,
                 zIndex: 10
             };
-            
-            // Add dash pattern if not solid
-            if (strokePattern) {
-                // Create a dashed line using symbols
-                polylineOptions.strokeOpacity = 0.1; // Very faint base line
-                polylineOptions.icons = [
-                    {
-                        icon: {
-                            path: 'M 0,-2 0,2',
-                            strokeOpacity: 1,
-                            strokeWeight: 4,
-                            strokeColor: route.color
-                        },
-                        offset: '0',
-                        repeat: (strokePattern[0] + strokePattern[1]) + 'px'
-                    }
-                ];
-            } else {
-                // Solid line - no changes needed
-            }
             
             const polyline = new google.maps.Polyline(polylineOptions);
             
@@ -1455,7 +1435,7 @@ function createRouteLines(locations) {
                         <strong>To:</strong> ${toLocation.name}<br>
                         <strong>Pallets Moved:</strong> ${(route.pallet_count || route.pallets.length).toLocaleString()}<br>
                         <strong>Modules Moved:</strong> ${route.modules.toLocaleString()}<br>
-                        <em>Line style represents volume</em>
+                        <em>Line thickness represents volume</em>
                     </div>
                 `;
                 routeInfoWindow.setContent(routeInfo);
