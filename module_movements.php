@@ -190,7 +190,11 @@ try {
                 
                 -- Aggregated counts
                 COUNT(ip.id) as pallet_count,
-                SUM(ip.quantity) as total_quantity
+                SUM(ip.quantity) as total_quantity,
+                
+                -- Origin tracking
+                d.origin_type,
+                d.origin_id
                 
             FROM inventory_pallets ip
             
@@ -231,7 +235,8 @@ try {
                 mfg.name, mfg.street_address, mfg.city, mfg.state, mfg.zip_code,
                 w2.id, w2.name, w2.street_address, w2.city, w2.state, w2.zip_code,
                 w.id, w.name, w.street_address, w.city, w.state, w.zip_code,
-                p.project_name, p.street_address, p.city, p.state, p.zip_code
+                p.project_name, p.street_address, p.city, p.state, p.zip_code,
+                d.origin_type, d.origin_id
             ORDER BY ip.status ASC, m.vendor_name ASC
         ");
         
@@ -1216,22 +1221,30 @@ function createRouteLines(locations) {
         
         // Create direct manufacturer → project route (for aggregated groups that skipped warehouse)
         if (!warehouseKey && movement.status === 'Delivered to Project') {
-            const directRouteKey = `${manufacturerKey}_to_${projectKey}`;
-            if (!routes.has(directRouteKey)) {
-                routes.set(directRouteKey, {
-                    from: manufacturerKey,
-                    to: projectKey,
-                    pallets: [],
-                    modules: 0,
-                    pallet_count: 0,
-                    color: '#e74c3c', // Red for direct routes
-                    type: 'manufacturer_to_project_direct'
-                });
+            // Check if this is actually a direct delivery from manufacturer (not via warehouse)
+            // Use the new origin tracking data to make this determination
+            const isDirectFromManufacturer = movement.origin_type === 'manufacturer';
+            const isFromWarehouse = movement.origin_type === 'warehouse';
+            
+            if (isDirectFromManufacturer && !isFromWarehouse) {
+                const directRouteKey = `${manufacturerKey}_to_${projectKey}`;
+                if (!routes.has(directRouteKey)) {
+                    routes.set(directRouteKey, {
+                        from: manufacturerKey,
+                        to: projectKey,
+                        pallets: [],
+                        modules: 0,
+                        pallet_count: 0,
+                        color: '#e74c3c', // Red for direct routes
+                        type: 'manufacturer_to_project_direct'
+                    });
+                }
+                const route = routes.get(directRouteKey);
+                route.pallets.push(movement);
+                route.modules += parseInt(movement.total_quantity);
+                route.pallet_count += parseInt(movement.pallet_count);
             }
-            const route = routes.get(directRouteKey);
-            route.pallets.push(movement);
-            route.modules += parseInt(movement.total_quantity);
-            route.pallet_count += parseInt(movement.pallet_count);
+            // If origin_type is 'warehouse', this delivery will be handled by the warehouse → project route logic above
         }
     });
     
