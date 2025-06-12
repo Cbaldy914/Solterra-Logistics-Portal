@@ -167,6 +167,10 @@ try {
             $deliveryColumns[] = "project_id";
             $deliveryParams[] = $destination_id;
             $deliveryTypes .= "i";
+            // For warehouse-to-project moves, record the origin warehouse
+            $deliveryColumns[] = "warehouse_id";
+            $deliveryParams[] = $current_warehouse_id;
+            $deliveryTypes .= "i";
         } else { // Destination is warehouse
             $deliveryColumns[] = "warehouse_id";
             $deliveryParams[] = $destination_id;
