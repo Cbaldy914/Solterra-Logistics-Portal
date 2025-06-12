@@ -159,9 +159,9 @@ try {
         $groupPalletIds = $group['ids'];
 
         // --- Dynamically build INSERT for deliveries for *this group* ---
-        $deliveryColumns = ["supplier", "wattage", "quantity", "bol_number", "left_warehouse_date", "anticipated_delivery_date", "status_of_delivery"];
-        $deliveryParams = [$origin_warehouse_name, $wattage, $groupQty, $bol_number, $departure_date, $est_arrival_date, $delivery_status];
-        $deliveryTypes = "ssissss"; // Initial types
+        $deliveryColumns = ["supplier", "origin_type", "origin_id", "wattage", "quantity", "bol_number", "left_warehouse_date", "anticipated_delivery_date", "status_of_delivery"];
+        $deliveryParams = [$origin_warehouse_name, 'warehouse', $current_warehouse_id, $wattage, $groupQty, $bol_number, $departure_date, $est_arrival_date, $delivery_status];
+        $deliveryTypes = "sisssisss"; // Updated types: added 's' for origin_type and 'i' for origin_id
 
         if ($destination_type === 'project') {
             $deliveryColumns[] = "project_id";

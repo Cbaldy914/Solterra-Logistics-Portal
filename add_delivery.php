@@ -158,21 +158,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
         // Prepare INSERT statement once based on destination
         if ($assignType === 'project') {
     $sql = "INSERT INTO deliveries
-            (project_id, supplier, wattage, status_of_delivery, quantity, bol_number,
+            (project_id, supplier, origin_type, origin_id, wattage, status_of_delivery, quantity, bol_number,
                      anticipated_delivery_date, actual_delivery_date,
                      freight_cost, accessorial_costs_paid, accessorial_costs, customer_cost, proof_of_delivery, miles)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 14 placeholders
+                    VALUES (?, ?, 'manufacturer', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 16 placeholders
             $stmt = $conn->prepare($sql);
             if (!$stmt) throw new Exception("Prepare project delivery failed: " . $conn->error);
-            $bind_types = "isssisssddddsd"; // 14 characters: i,s,s,s,i,s,s,s,d,d,d,d,s,d
+            $bind_types = "isssississddddsd"; // 14 parameters: i,s,s,s,i,s,s,s,d,d,d,d,s,d
         } else { // Warehouse
             $sql = "INSERT INTO deliveries
-                    (warehouse_id, supplier, wattage, status_of_delivery, quantity, bol_number,
+                    (warehouse_id, supplier, origin_type, origin_id, wattage, status_of_delivery, quantity, bol_number,
                      freight_cost, accessorial_costs_paid, accessorial_costs, customer_cost, proof_of_delivery, miles)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 12 placeholders
+                    VALUES (?, ?, 'manufacturer', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 14 placeholders
             $stmt = $conn->prepare($sql);
              if (!$stmt) throw new Exception("Prepare warehouse delivery failed: " . $conn->error);
-             $bind_types = "isssisddddsd"; // 12 characters: i,s,s,s,i,s,d,d,d,d,s,d
+             $bind_types = "isssisddddsd"; // 12 parameters: i,s,s,s,i,s,d,d,d,d,s,d
         }
 
         // Loop through each wattage entry and insert

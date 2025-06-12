@@ -214,10 +214,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         $deliveryTypes = "";
         $deliveryParams = [];
         if ($destinationType === 'project') {
-            $sqlDelivery = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, ?, ?, ?, 'In Transit to Project', ?, ?, ?, ?)";
+            $sqlDelivery = "INSERT INTO deliveries (project_id, supplier, origin_type, origin_id, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, 'manufacturer', NULL, ?, ?, ?, ?, 'In Transit to Project', ?, ?, ?, ?)";
             $deliveryTypes = "ississdddd";
         } else {
-            $sqlDelivery = "INSERT INTO deliveries (project_id, warehouse_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse', ?, ?, ?, ?)";
+            $sqlDelivery = "INSERT INTO deliveries (project_id, warehouse_id, supplier, origin_type, origin_id, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, 'manufacturer', NULL, ?, ?, ?, ?, 'In Transit to Warehouse', ?, ?, ?, ?)";
             $deliveryTypes = "iississdddd";
         }
         $stmtDelivery = $conn->prepare($sqlDelivery);
