@@ -268,9 +268,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['move_truckload'])) {
             $proportional_miles = ($total_miles !== null) ? round($total_miles * $proportion, 2) : null;
             
             // Build delivery insert dynamically
-            $deliveryColumns = ["supplier", "wattage", "quantity", "bol_number", "left_warehouse_date", "anticipated_delivery_date", "status_of_delivery", "freight_cost", "accessorial_costs_paid", "accessorial_costs", "customer_cost", "miles"];
-            $deliveryParams = [$origin_warehouse_name, $wattage, $groupQty, $bol_number, $departure_date, $est_arrival_date, $delivery_status, $proportional_freight, $proportional_acc_paid, $proportional_acc_charged, $proportional_customer_cost, $proportional_miles];
-            $deliveryTypes = "sisssssddddd";
+            $deliveryColumns = ["supplier", "origin_type", "origin_id", "wattage", "quantity", "bol_number", "left_warehouse_date", "anticipated_delivery_date", "status_of_delivery", "freight_cost", "accessorial_costs_paid", "accessorial_costs", "customer_cost", "miles"];
+            $deliveryParams = [$origin_warehouse_name, 'warehouse', $warehouse_id, $wattage, $groupQty, $bol_number, $departure_date, $est_arrival_date, $delivery_status, $proportional_freight, $proportional_acc_paid, $proportional_acc_charged, $proportional_customer_cost, $proportional_miles];
+            $deliveryTypes = "ssissssssddddd";
             
             if ($proof_of_delivery_path) {
                 $deliveryColumns[] = "proof_of_delivery";

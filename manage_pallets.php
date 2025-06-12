@@ -273,12 +273,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     $deliveryTypes = "";
 
                     if ($destinationType === 'project') {
-                        $sqlDeliveryInsert = "INSERT INTO deliveries (project_id, supplier, wattage, quantity, bol_number, anticipated_delivery_date, left_warehouse_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Project', ?, ?, ?, ?)";
-                        $deliveryTypes = "isissssdddd";
+                        $sqlDeliveryInsert = "INSERT INTO deliveries (project_id, supplier, origin_type, origin_id, wattage, quantity, bol_number, anticipated_delivery_date, left_warehouse_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, 'manufacturer', NULL, ?, ?, ?, ?, ?, 'In Transit to Project', ?, ?, ?, ?)";
+                        $deliveryTypes = "ississsdddd";
                         $deliveryParams = [$destinationId, $supplierForDelivery, $wattage, $groupQty, $bolNumber, $estArrivalDate, $departureDate, $freightCost, $accessorialCost, $customerCost, $miles];
                     } else { 
-                        $sqlDeliveryInsert = "INSERT INTO deliveries (warehouse_id, supplier, wattage, quantity, bol_number, left_warehouse_date, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, ?, ?, ?, ?, 'In Transit to Warehouse', ?, ?, ?, ?)";
-                        $deliveryTypes = "isissssdddd"; 
+                        $sqlDeliveryInsert = "INSERT INTO deliveries (warehouse_id, supplier, origin_type, origin_id, wattage, quantity, bol_number, left_warehouse_date, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, 'manufacturer', NULL, ?, ?, ?, ?, ?, 'In Transit to Warehouse', ?, ?, ?, ?)";
+                        $deliveryTypes = "ississsdddd"; 
                         $deliveryParams = [$destinationId, $supplierForDelivery, $wattage, $groupQty, $bolNumber, $departureDate, $estArrivalDate, $freightCost, $accessorialCost, $customerCost, $miles];
                     }
                     
