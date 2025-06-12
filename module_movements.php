@@ -312,6 +312,134 @@ try {
                 $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $total_quantity;
             }
         }
+        
+        // Calculate pallet status breakdown separately to avoid double-counting from delivery JOINs
+        $detailed_breakdown = [];
+        if ($batch_id > 0) {
+            // Get item IDs for this batch
+            $batch_item_ids = [];
+            $stmtBatchItems = $conn->prepare("SELECT id FROM unassigned_module_items WHERE unassigned_module_id = ?");
+            if ($stmtBatchItems) {
+                $stmtBatchItems->bind_param("i", $batch_id);
+                $stmtBatchItems->execute();
+                $resultBatchItems = $stmtBatchItems->get_result();
+                while ($item = $resultBatchItems->fetch_assoc()) {
+                    $batch_item_ids[] = $item['id'];
+                }
+                $stmtBatchItems->close();
+            }
+            
+            // Fetch pallets for this batch (similar to module_overview.php approach)
+            if (!empty($batch_item_ids)) {
+                $placeholders = implode(',', array_fill(0, count($batch_item_ids), '?'));
+                $types = str_repeat('i', count($batch_item_ids));
+                
+                $sqlPalletBreakdown = "SELECT ip.id, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.current_project_id, w.name as warehouse_name, p.project_name 
+                                       FROM inventory_pallets ip
+                                       LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+                                       LEFT JOIN projects p ON ip.current_project_id = p.id
+                                       WHERE ip.unassigned_module_item_id IN ($placeholders)
+                                       ORDER BY ip.id ASC";
+                $stmtPalletBreakdown = $conn->prepare($sqlPalletBreakdown);
+                if ($stmtPalletBreakdown) {
+                    $stmtPalletBreakdown->bind_param($types, ...$batch_item_ids);
+                    $stmtPalletBreakdown->execute();
+                    $resultPalletBreakdown = $stmtPalletBreakdown->get_result();
+                    
+                    while ($pallet = $resultPalletBreakdown->fetch_assoc()) {
+                        $status = $pallet['status'];
+                        $wattage = $pallet['wattage'];
+                        $quantity = $pallet['quantity'];
+                        
+                        // Create location-specific key for breakdown
+                        $breakdown_key = '';
+                        if ($status === 'In Warehouse' && $pallet['warehouse_name']) {
+                            $breakdown_key = 'In Warehouse - ' . $pallet['warehouse_name'];
+                        } elseif ($status === 'Delivered to Project' && $pallet['project_name']) {
+                            $breakdown_key = 'Delivered to Project - ' . $pallet['project_name'];
+                        } elseif ($status === 'In Transit to Project' && $pallet['project_name']) {
+                            $breakdown_key = 'In Transit to Project - ' . $pallet['project_name'];
+                        } elseif ($status === 'In Transit to Warehouse' && $pallet['warehouse_name']) {
+                            $breakdown_key = 'In Transit to Warehouse - ' . $pallet['warehouse_name'];
+                        } else {
+                            $breakdown_key = $status;
+                        }
+                        
+                        // Initialize if not exists
+                        if (!isset($detailed_breakdown[$breakdown_key])) {
+                            $detailed_breakdown[$breakdown_key] = [
+                                'pallet_count' => 0,
+                                'total_modules' => 0,
+                                'wattage_breakdown' => []
+                            ];
+                        }
+                        
+                        // Update counts
+                        $detailed_breakdown[$breakdown_key]['pallet_count']++;
+                        $detailed_breakdown[$breakdown_key]['total_modules'] += $quantity;
+                        
+                        // Track wattage breakdown
+                        if (!isset($detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage])) {
+                            $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage] = [
+                                'pallets' => 0,
+                                'modules' => 0
+                            ];
+                        }
+                        
+                        $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['pallets']++;
+                        $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $quantity;
+                    }
+                    $stmtPalletBreakdown->close();
+                }
+            }
+        } else {
+            // For project-based view, use the existing movement data but be more careful about duplicates
+            // This is a fallback for when batch_id is not available
+            foreach ($movement_data as $movement) {
+                $status = $movement['status'];
+                $wattage = $movement['wattage'];
+                $pallet_count = $movement['pallet_count'];
+                $total_quantity = $movement['total_quantity'];
+                
+                // Create location-specific key for breakdown
+                $breakdown_key = '';
+                if ($status === 'In Warehouse' && $movement['current_warehouse_name']) {
+                    $breakdown_key = 'In Warehouse - ' . $movement['current_warehouse_name'];
+                } elseif ($status === 'Delivered to Project' && $movement['project_name']) {
+                    $breakdown_key = 'Delivered to Project - ' . $movement['project_name'];
+                } elseif ($status === 'In Transit to Project' && $movement['project_name']) {
+                    $breakdown_key = 'In Transit to Project - ' . $movement['project_name'];
+                } elseif ($status === 'In Transit to Warehouse' && $movement['delivery_warehouse_name']) {
+                    $breakdown_key = 'In Transit to Warehouse - ' . $movement['delivery_warehouse_name'];
+                } else {
+                    $breakdown_key = $status;
+                }
+                
+                // Initialize if not exists
+                if (!isset($detailed_breakdown[$breakdown_key])) {
+                    $detailed_breakdown[$breakdown_key] = [
+                        'pallet_count' => 0,
+                        'total_modules' => 0,
+                        'wattage_breakdown' => []
+                    ];
+                }
+                
+                // Update counts with aggregated data
+                $detailed_breakdown[$breakdown_key]['pallet_count'] += $pallet_count;
+                $detailed_breakdown[$breakdown_key]['total_modules'] += $total_quantity;
+                
+                // Track wattage breakdown
+                if (!isset($detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage])) {
+                    $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage] = [
+                        'pallets' => 0,
+                        'modules' => 0
+                    ];
+                }
+                
+                $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['pallets'] += $pallet_count;
+                $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $total_quantity;
+            }
+        }
     }
 
 } catch (Exception $e) {
