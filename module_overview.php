@@ -1139,6 +1139,21 @@ $conn->close();
                     </div>
                 </div>
                 
+                <!-- Additional filter row for Status -->
+                <div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px; padding-left: 0;">
+                    <label for="statusFilter">Status:</label>
+                    <select id="statusFilter" onchange="filterPallets()" style="margin-left: 10px;">
+                        <option value="">All</option>
+                        <?php
+                        $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
+                        sort($statuses);
+                        foreach ($statuses as $s) {
+                            echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>';
+                        }
+                        ?>
+                    </select>
+                </div>
+                
                 <div class="pagination-container">
                     <div class="pagination-info">
                         <span id="paginationInfo">Showing 0 of 0 pallets</span>
@@ -1199,6 +1214,21 @@ $conn->close();
                         sort($user_view_wattages);
                         foreach ($user_view_wattages as $w_user) {
                             echo '<option value="' . htmlspecialchars($w_user) . '">' . htmlspecialchars($w_user) . 'W</option>';
+                        }
+                        ?>
+                    </select>
+                </div>
+                
+                <!-- Additional filter row for Status -->
+                <div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px; padding-left: 0;">
+                    <label for="statusFilterUser">Status:</label>
+                    <select id="statusFilterUser" onchange="filterPalletsUserView()" style="margin-left: 10px;">
+                        <option value="">All</option>
+                        <?php
+                        $user_view_statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
+                        sort($user_view_statuses);
+                        foreach ($user_view_statuses as $s_user) {
+                            echo '<option value="' . htmlspecialchars($s_user) . '">' . htmlspecialchars($s_user) . '</option>';
                         }
                         ?>
                     </select>
@@ -1483,6 +1513,7 @@ function getFilteredRows() {
         
         const filter = document.getElementById('palletSearch')?.value.toLowerCase() || '';
         const wattageFilter = document.getElementById('wattageFilter')?.value || '';
+        const statusFilter = document.getElementById('statusFilter')?.value || '';
         
         // Get cell contents
         let textContent = '';
@@ -1499,6 +1530,14 @@ function getFilteredRows() {
         if (wattageFilter && row.cells[2]) {
             const cellWattage = (row.cells[2].textContent || row.cells[2].innerText || '').replace('W','').trim();
             if (cellWattage !== wattageFilter) {
+                return false;
+            }
+        }
+        
+        // Check status filter (assuming status is in column 4, index 4)
+        if (statusFilter && row.cells[4]) {
+            const cellStatus = (row.cells[4].textContent || row.cells[4].innerText || '').trim();
+            if (cellStatus !== statusFilter) {
                 return false;
             }
         }
@@ -1887,6 +1926,52 @@ if (openShipModalBtn) { // Button only exists for admins
         toggleDestinationSelectMulti();
     });
 } // End of admin-only JavaScript block
+
+// ----------------- USER VIEW PALLET FILTER -----------------
+function filterPalletsUserView() {
+    const table = document.getElementById('userPalletsTable');
+    if (!table) return;
+    
+    const filter = document.getElementById('palletSearchUser')?.value.toLowerCase() || '';
+    const wattageFilter = document.getElementById('wattageFilterUser')?.value || '';
+    const statusFilter = document.getElementById('statusFilterUser')?.value || '';
+    const rows = table.querySelectorAll('tbody tr');
+    
+    rows.forEach(function(row) {
+        if (!row || !row.cells) return;
+        
+        // Get cell contents (no checkbox column in user view)
+        let textContent = '';
+        for (let i = 0; i < row.cells.length; i++) {
+            textContent += (row.cells[i].textContent || row.cells[i].innerText || '').toLowerCase() + ' ';
+        }
+        
+        let showRow = true;
+        
+        // Check search filter
+        if (filter && !textContent.includes(filter)) {
+            showRow = false;
+        }
+        
+        // Check wattage filter (wattage is in column 1, index 1)
+        if (showRow && wattageFilter && row.cells[1]) {
+            const cellWattage = (row.cells[1].textContent || row.cells[1].innerText || '').replace('W','').trim();
+            if (cellWattage !== wattageFilter) {
+                showRow = false;
+            }
+        }
+        
+        // Check status filter (status is in column 3, index 3)
+        if (showRow && statusFilter && row.cells[3]) {
+            const cellStatus = (row.cells[3].textContent || row.cells[3].innerText || '').trim();
+            if (cellStatus !== statusFilter) {
+                showRow = false;
+            }
+        }
+        
+        row.style.display = showRow ? '' : 'none';
+    });
+}
 </script>
 </body>
 </html>
