@@ -213,48 +213,77 @@ $dateLabelsJSON    = json_encode($date_labels);
 $lineChartDataJSON = json_encode($lineChartData);
 
 // --------------- Delivery Status Table ---------------
+// Get delivered to project
 $stmt = $conn->prepare("
-    SELECT wattage, status_of_delivery, SUM(quantity) AS total_quantity
+    SELECT wattage, SUM(quantity) AS total_quantity
     FROM deliveries
-    WHERE project_id=?
-    GROUP BY wattage, status_of_delivery
+    WHERE project_id=? AND status_of_delivery = 'Delivered to Project'
+    GROUP BY wattage
 ");
 $stmt->bind_param("i", $project_id);
 $stmt->execute();
-$del_st_res = $stmt->get_result();
-$stmt->close();
+$delivered_result = $stmt->get_result();
 
 $delivery_totals = [];
-while ($row = $del_st_res->fetch_assoc()) {
+while ($row = $delivered_result->fetch_assoc()) {
     $w   = (float)$row['wattage'];
     $lbl = $w . 'W';
-    $st  = $row['status_of_delivery'];
     $q_calc = calculateQuantity((int)$row['total_quantity'], $w, $view_mode);
 
     if (!isset($delivery_totals[$lbl])) {
         $delivery_totals[$lbl] = [
-            'Delivered to Project'    => 0,
-            'Delivered to Warehouse' => 0,
-            'Pending'     => 0,
+            'Delivered to Project' => 0,
+            'In Warehouse' => 0,
+            'Pending' => 0,
         ];
     }
-    if (isset($delivery_totals[$lbl][$st])) {
-        $delivery_totals[$lbl][$st] = $q_calc;
-    }
+    $delivery_totals[$lbl]['Delivered to Project'] = $q_calc;
 }
+$stmt->close();
+
+// Get currently in warehouse using inventory_pallets status (matching module_movements.php logic)
+$stmt = $conn->prepare("
+    SELECT ip.wattage, SUM(ip.quantity) AS total_quantity
+    FROM inventory_pallets ip
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE ip.status = 'In Warehouse' 
+    AND (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
+    GROUP BY ip.wattage
+");
+$stmt->bind_param("iii", $project_id, $project_id, $project_id);
+$stmt->execute();
+$warehouse_result = $stmt->get_result();
+
+while ($row = $warehouse_result->fetch_assoc()) {
+    $w   = (float)$row['wattage'];
+    $lbl = $w . 'W';
+    $q_calc = calculateQuantity((int)$row['total_quantity'], $w, $view_mode);
+
+    if (!isset($delivery_totals[$lbl])) {
+        $delivery_totals[$lbl] = [
+            'Delivered to Project' => 0,
+            'In Warehouse' => 0,
+            'Pending' => 0,
+        ];
+    }
+    $delivery_totals[$lbl]['In Warehouse'] = $q_calc;
+}
+$stmt->close();
+
+// Note: We calculate pending as Total Order - Delivered to Project - In Warehouse
+// This ensures we don't double-count modules that have moved through the system
 
 // Summaries
 $total_order_combined      = 0;
 $delivered_combined        = 0;
 $in_warehouse_combined     = 0;
-$produced_combined         = 0;
-$not_yet_produced_combined = 0;
+$pending_combined          = 0;
 
 $pieChartData = [
     'Delivered to Project' => 0,
-    'Delivered to Warehouse'      => 0,
+    'In Warehouse'      => 0,
     'Pending'          => 0,
-    'Not Yet Produced'  => 0,
 ];
 
 $sub_rows        = [];
@@ -264,10 +293,12 @@ foreach ($total_orders as $lbl => $info) {
     $w  = (float)$info['wattage'];
     $to = (float)$info['total_order'];
 
-    $del = $delivery_totals[$lbl]['Delivered to Project']    ?? 0;
-    $inw = $delivery_totals[$lbl]['Delivered to Warehouse'] ?? 0;
-    $prd = $delivery_totals[$lbl]['Pending']     ?? 0;
-    $nyp = $to - ($del + $inw + $prd);
+    $del = $delivery_totals[$lbl]['Delivered to Project'] ?? 0;
+    $inw = $delivery_totals[$lbl]['In Warehouse'] ?? 0;
+    // Calculate pending as total order minus delivered and in warehouse
+    $pending = $to - ($del + $inw);
+    // Ensure pending is never negative  
+    $pending = max(0, $pending);
 
     // Next 5 Weeks
     $sub_rows[$lbl] = [
@@ -282,20 +313,17 @@ foreach ($total_orders as $lbl => $info) {
         'total_order'        => $to,
         'delivered'          => $del,
         'in_warehouse'       => $inw,
-        'produced'           => $prd,
-        'not_yet_produced'   => $nyp,
+        'pending'            => $pending,
     ];
 
     $total_order_combined      += $to;
     $delivered_combined        += $del;
     $in_warehouse_combined     += $inw;
-    $produced_combined         += $prd;
-    $not_yet_produced_combined += $nyp;
+    $pending_combined          += $pending;
 
     $pieChartData['Delivered to Project'] += $del;
-    $pieChartData['Delivered to Warehouse']      += $inw;
-    $pieChartData['Pending']          += $prd;
-    $pieChartData['Not Yet Produced']  += $nyp;
+    $pieChartData['In Warehouse']      += $inw;
+    $pieChartData['Pending']          += $pending;
 }
 $total_pie = array_sum($pieChartData);
 $pieChartPercentages = [];
@@ -877,17 +905,53 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     
     .left-side, .right-side {
         padding: 20px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
     }
     
     .toggle-buttons {
         margin: 20px 15px;
-        flex-direction: column;
-        gap: 8px;
+        width: calc(100% - 30px);
+        display: flex;
+        flex-direction: row;
+        justify-content: space-between;
+        gap: 2px;
     }
     
     .toggle-buttons button {
-        padding: 12px 20px;
-        width: 100%;
+        padding: 14px 16px;
+        flex: 1;
+        font-size: 14px;
+        min-width: auto;
+    }
+    
+    /* Better table responsiveness */
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        max-width: 100%;
+    }
+    
+    .table-responsive table {
+        min-width: 600px;
+        width: auto;
+    }
+    
+    .table-responsive th,
+    .table-responsive td {
+        padding: 10px 8px;
+        font-size: 0.85em;
+        white-space: nowrap;
+    }
+    
+    /* Chart containers */
+    .chart-container {
+        max-width: 100%;
+        margin: 20px 0;
+    }
+    
+    canvas {
+        max-width: 100% !important;
+        height: auto !important;
     }
 }
 
@@ -925,6 +989,55 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     .back-icon {
         margin-top: 20px;
         margin-left: 20px;
+    }
+    
+    /* Enhanced mobile layout for tables and charts */
+    .tables-and-charts {
+        margin: 10px;
+        gap: 15px;
+    }
+    
+    .left-side, .right-side {
+        padding: 15px;
+        margin: 0;
+        border-radius: 12px;
+    }
+    
+    .toggle-buttons {
+        margin: 15px 10px;
+        width: calc(100% - 20px);
+    }
+    
+    .toggle-buttons button {
+        padding: 12px 10px;
+        font-size: 13px;
+    }
+    
+    /* Table improvements for small screens */
+    .table-responsive {
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+    
+    .table-responsive table {
+        min-width: 500px;
+    }
+    
+    .table-responsive th,
+    .table-responsive td {
+        padding: 8px 6px;
+        font-size: 0.8em;
+    }
+    
+    .left-side h2, .right-side h2 {
+        font-size: 1.2em;
+        margin-bottom: 15px;
+    }
+    
+    /* Chart container adjustments */
+    .chart-container {
+        margin: 15px 0;
+        padding: 0 10px;
     }
 }
 
@@ -1139,9 +1252,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <th>Module Type</th>
                                 <th>Total Order</th>
                                 <th>Delivered to Project</th>
-                                <th>Delivered to Warehouse</th>
+                                <th>In Warehouse</th>
                                 <th>Pending</th>
-                                <th>Not Yet Produced</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1151,8 +1263,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
                                 <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
                                 <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
-                                <td><?php echo number_format($produced_combined,($view_mode=='mw')?2:0);?></td>
-                                <td><?php echo number_format($not_yet_produced_combined,($view_mode=='mw')?2:0);?></td>
+                                <td><?php echo number_format($pending_combined,($view_mode=='mw')?2:0);?></td>
                             </tr>
                             <?php foreach($sub_rows_status as $lbl=>$srs): ?>
                                 <tr class="status-row" style="display:none;">
@@ -1161,8 +1272,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
                                     <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
                                     <td><?php echo number_format($srs['in_warehouse'],($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($srs['produced'],($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($srs['not_yet_produced'],($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($srs['pending'],($view_mode=='mw')?2:0);?></td>
                                 </tr>
                             <?php endforeach;?>
                         </tbody>
@@ -1330,8 +1440,7 @@ var pieChart = new Chart(ctxPie,{
             backgroundColor:[
                 '#488C9A',
                 '#293E4C',
-                '#fbb040',
-                '#E4572E'
+                '#fbb040'
             ]
         }]
     },
