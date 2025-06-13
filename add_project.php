@@ -238,7 +238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             
-            $default_vendor_name = $manufacturer_name . " - " . htmlspecialchars($project_name);
+            $default_vendor_name = $manufacturer_name;
             
             // Use manufacturer address as initial location, fallback to project address
             if (!empty($manufacturer_address)) {

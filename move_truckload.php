@@ -17,6 +17,31 @@ require_once '../config.php';
 $conn = getDBConnection();
 if (!$conn) die("Unable to connect to database.");
 
+// --- Account Access Control ---
+$account_id_for_user = null;
+$is_global_admin = ($role === 'global_admin');
+$is_admin = ($role === 'admin');
+
+if (!$is_global_admin) {
+    // For admins, get their account_id
+    $stmt_account = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1");
+    if ($stmt_account) {
+        $stmt_account->bind_param("i", $user_id);
+        $stmt_account->execute();
+        $stmt_account->bind_result($account_id);
+        if ($stmt_account->fetch()) {
+            $account_id_for_user = $account_id;
+        }
+        $stmt_account->close();
+    }
+    
+    if (!$account_id_for_user) {
+        $_SESSION['move_pallet_message'] = "Error: User is not associated with an account.";
+        header("Location: manage_warehouses.php");
+        exit();
+    }
+}
+
 /* ───────────────────────────────── GET TRUCKLOAD DATA ────────────────────────────────── */
 $delivery_id = isset($_GET['delivery_id']) ? intval($_GET['delivery_id']) : 0;
 $warehouse_id = isset($_GET['warehouse_id']) ? intval($_GET['warehouse_id']) : 0;
@@ -102,15 +127,28 @@ try {
 $all_projects = [];
 $all_warehouses = [];
 
-// Fetch all projects
-$stmtP = $conn->prepare("SELECT id, project_name FROM projects ORDER BY project_name ASC");
-if ($stmtP) {
-    $stmtP->execute();
-    $resultP = $stmtP->get_result();
-    while ($proj = $resultP->fetch_assoc()) {
-        $all_projects[] = $proj;
+// Fetch projects (account-filtered for admins)
+if ($is_global_admin) {
+    $stmtP = $conn->prepare("SELECT id, project_name FROM projects ORDER BY project_name ASC");
+    if ($stmtP) {
+        $stmtP->execute();
+        $resultP = $stmtP->get_result();
+        while ($proj = $resultP->fetch_assoc()) {
+            $all_projects[] = $proj;
+        }
+        $stmtP->close();
     }
-    $stmtP->close();
+} else if ($account_id_for_user) {
+    $stmtP = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC");
+    if ($stmtP) {
+        $stmtP->bind_param("i", $account_id_for_user);
+        $stmtP->execute();
+        $resultP = $stmtP->get_result();
+        while ($proj = $resultP->fetch_assoc()) {
+            $all_projects[] = $proj;
+        }
+        $stmtP->close();
+    }
 }
 
 // Fetch other warehouses (exclude current warehouse)
@@ -395,7 +433,11 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <?php if ($is_global_admin): ?>
+            <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <?php else: ?>
+            <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <?php endif; ?>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
         <a href="manage_warehouses.php" style="color: #488C9A; text-decoration: none;">Manage Warehouses</a>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
