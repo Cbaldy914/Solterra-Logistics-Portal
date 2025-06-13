@@ -225,6 +225,7 @@ if (isset($_SESSION['role'])) {
                     <div class="dropdown-content">
                         <a href="modules">Module Batches</a>
                         <a href="module_movements">Module Movements</a>
+                        <a href="manage_pallets">View Pallets</a>
                     </div>
                 </li>
                 <li class="dropdown">
