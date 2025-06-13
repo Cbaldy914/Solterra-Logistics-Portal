@@ -141,6 +141,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                                     $_SESSION['messages'][] = "<p class='warning-message'>Line {$line_number}: Pallet '{$pallet_identifier_csv}' linked to Delivery ID '{$delivery_id_csv}', but failed to update pallet status and location: " . htmlspecialchars($stmt_update_pallet_comprehensive->error) . "</p>";
                                     // Decide if this is a critical error to rollback or just a warning
                                 }
+                                
+                                // Update delivery origin information if not already set
+                                $stmt_check_origin = $conn_csv->prepare("SELECT origin_type FROM deliveries WHERE id = ?");
+                                $stmt_check_origin->bind_param("i", $delivery_id_csv);
+                                $stmt_check_origin->execute();
+                                $result_origin = $stmt_check_origin->get_result();
+                                $origin_data = $result_origin->fetch_assoc();
+                                $stmt_check_origin->close();
+                                
+                                // If delivery doesn't have origin set, default to manufacturer
+                                if (!$origin_data || empty($origin_data['origin_type'])) {
+                                    $stmt_update_origin = $conn_csv->prepare("UPDATE deliveries SET origin_type = 'manufacturer', origin_id = NULL WHERE id = ?");
+                                    $stmt_update_origin->bind_param("i", $delivery_id_csv);
+                                    if (!$stmt_update_origin->execute()) {
+                                        $_SESSION['messages'][] = "<p class='warning-message'>Line {$line_number}: Failed to set origin for Delivery ID '{$delivery_id_csv}': " . htmlspecialchars($stmt_update_origin->error) . "</p>";
+                                    }
+                                    $stmt_update_origin->close();
+                                }
+                                
                                 $linked_count++;
                             } else {
                                 $_SESSION['messages'][] = "<p class='error-message'>Line {$line_number}: Failed to link Pallet '{$pallet_identifier_csv}' to Delivery ID '{$delivery_id_csv}'. Error: " . htmlspecialchars($stmt_insert_link->error) . "</p>";
@@ -154,11 +173,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                             $_SESSION['messages'][] = "<p class='error-message'>CSV import finished with {$error_count} errors. No changes were committed. Please review messages and try again.</p>";
                         } else {
                             $conn_csv->commit();
-                            if ($linked_count > 0) {
-                                $_SESSION['messages'][] = "<p class='success-message'>Successfully linked {$linked_count} pallet(s) from the CSV with synchronized status and locations.</p>";
-                            } else {
-                                $_SESSION['messages'][] = "<p class='info-message'>No new pallet links were made from the CSV (either all were already linked or no valid entries found).</p>";
-                            }
+                                                    if ($linked_count > 0) {
+                            $_SESSION['messages'][] = "<p class='success-message'>Successfully linked {$linked_count} pallet(s) from the CSV with synchronized status, locations, and origin tracking.</p>";
+                        } else {
+                            $_SESSION['messages'][] = "<p class='info-message'>No new pallet links were made from the CSV (either all were already linked or no valid entries found).</p>";
+                        }
                         }
                         // Close prepared statements
                         $stmt_check_delivery->close();
@@ -229,15 +248,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $stmt_insert_link = $conn_bulk->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
         $stmt_update_pallet_comprehensive = $conn_bulk->prepare("UPDATE inventory_pallets SET status = ?, current_project_id = ?, current_warehouse_id = ?, arrival_date = ? WHERE id = ?");
         
-        // Create a helper function to update pallet with delivery sync
-        $updatePalletWithDeliverySync = function($delivery, $pallet_id) use ($stmt_update_pallet_comprehensive) {
+        // Prepare origin update statement
+        $stmt_update_delivery_origin = $conn_bulk->prepare("UPDATE deliveries SET origin_type = 'manufacturer', origin_id = NULL WHERE id = ? AND (origin_type IS NULL OR origin_type = '')");
+        
+        // Create a helper function to update pallet with delivery sync and set delivery origin
+        $updatePalletWithDeliverySync = function($delivery, $pallet_id) use ($stmt_update_pallet_comprehensive, $stmt_update_delivery_origin) {
             $new_pallet_status = $delivery['status_of_delivery']; // Sync with delivery status
             $new_current_project_id = $delivery['project_id']; // Sync project assignment  
             $new_current_warehouse_id = $delivery['warehouse_id']; // Sync warehouse assignment
             $new_arrival_date = $delivery['anticipated_delivery_date']; // Sync arrival date
             
             $stmt_update_pallet_comprehensive->bind_param("siiss", $new_pallet_status, $new_current_project_id, $new_current_warehouse_id, $new_arrival_date, $pallet_id);
-            return $stmt_update_pallet_comprehensive->execute();
+            $pallet_success = $stmt_update_pallet_comprehensive->execute();
+            
+            // Update delivery origin if not already set (default to manufacturer for direct shipments)
+            $stmt_update_delivery_origin->bind_param("i", $delivery['id']);
+            $origin_success = $stmt_update_delivery_origin->execute();
+            
+            return $pallet_success; // Return pallet update success (origin update is supplementary)
         };
         
         if ($strategy === 'module_based') {
@@ -382,6 +410,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $stmt_check_existing->close();
         $stmt_insert_link->close();
         $stmt_update_pallet_comprehensive->close();
+        $stmt_update_delivery_origin->close();
         
         $conn_bulk->commit();
         
@@ -397,8 +426,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         
         $response = [
             'success' => true,
-            'message' => "Successfully linked $linked_count pallet(s) to deliveries using the $strategy_description strategy with synchronized status and locations.",
-            'details' => "Wattage: {$wattage}W | Strategy: $strategy_description | Pallets synchronized with delivery status",
+            'message' => "Successfully linked $linked_count pallet(s) to deliveries using the $strategy_description strategy with synchronized status, locations, and origin tracking.",
+            'details' => "Wattage: {$wattage}W | Strategy: $strategy_description | Pallets synchronized with delivery status | Origin set to manufacturer for tracking",
             'linked_pairs' => $linked_pairs,
             'linked_count' => $linked_count
         ];
@@ -418,6 +447,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 // End Bulk Linking Handling
+
+// --- Handle One-Time Origin Update for Existing Deliveries ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_existing_origins'])) {
+    $conn_origin = getDBConnection();
+    if (!$conn_origin) {
+        $_SESSION['messages'][] = "<p class='error-message'>Database connection failed during origin update.</p>";
+    } else {
+        try {
+            $conn_origin->begin_transaction();
+            
+            // Update all deliveries that don't have origin information set
+            $stmt_update_origins = $conn_origin->prepare("
+                UPDATE deliveries 
+                SET origin_type = 'manufacturer', origin_id = NULL 
+                WHERE (origin_type IS NULL OR origin_type = '') 
+                AND id IN (SELECT DISTINCT dp.delivery_id FROM delivery_pallets dp)
+            ");
+            
+            if ($stmt_update_origins->execute()) {
+                $updated_count = $stmt_update_origins->affected_rows;
+                $conn_origin->commit();
+                $_SESSION['messages'][] = "<p class='success-message'>Successfully updated origin information for {$updated_count} existing deliveries. They are now set to 'manufacturer' origin for proper movement tracking.</p>";
+            } else {
+                throw new Exception("Failed to update origins: " . $stmt_update_origins->error);
+            }
+            
+            $stmt_update_origins->close();
+            
+        } catch (Exception $e) {
+            $conn_origin->rollback();
+            $_SESSION['messages'][] = "<p class='error-message'>Error updating existing delivery origins: " . $e->getMessage() . "</p>";
+        }
+        
+        $conn_origin->close();
+    }
+    
+    // Redirect to avoid form resubmission
+    header("Location: link_pallet_deliveries.php?" . http_build_query($_GET));
+    exit();
+}
+// End One-Time Origin Update
 
 // Filter parameters (must be after potential redirect from CSV upload)
 $filter_project_id = isset($_GET['filter_project_id']) ? $_GET['filter_project_id'] : 'all';
@@ -797,6 +867,23 @@ if ($stmt_pallet_groups) {
     $stmt_pallet_groups->close();
 }
 // --- END NEW: Fetch Bulk Linking Data ---
+
+// --- Check if there are deliveries needing origin updates ---
+$deliveries_needing_origin_update = 0;
+$stmt_check_origins = $conn->prepare("
+    SELECT COUNT(*) as count_needing_update 
+    FROM deliveries d 
+    WHERE (d.origin_type IS NULL OR d.origin_type = '') 
+    AND EXISTS (SELECT 1 FROM delivery_pallets dp WHERE dp.delivery_id = d.id)
+");
+if ($stmt_check_origins) {
+    $stmt_check_origins->execute();
+    $result_origins = $stmt_check_origins->get_result();
+    if ($row_origins = $result_origins->fetch_assoc()) {
+        $deliveries_needing_origin_update = $row_origins['count_needing_update'];
+    }
+    $stmt_check_origins->close();
+}
 
 
 // Determine project name for page title (remains largely the same)
@@ -1326,6 +1413,23 @@ if (is_numeric($filter_project_id)) {
         <h2>Bulk Linking</h2>
         <p style="color: #666; margin-bottom: 20px;">Efficiently link existing pallets to existing deliveries using smart matching or CSV upload.</p>
         
+        <!-- One-Time Origin Update Section -->
+        <?php if ($deliveries_needing_origin_update > 0): ?>
+        <div class="origin-update-section" style="margin-bottom: 30px; padding: 20px; background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;">
+            <h3 style="margin-top: 0; color: #856404;">🔧 One-Time Origin Update</h3>
+            <p style="font-size: 0.9em; color: #856404; margin-bottom: 15px;">
+                <strong><?php echo $deliveries_needing_origin_update; ?> deliveries</strong> with linked pallets need origin tracking for the movement map. This will set them to 'manufacturer' origin.
+            </p>
+            <form action="link_pallet_deliveries.php" method="post" style="display: flex; gap: 15px; align-items: center;">
+                <button type="submit" name="update_existing_origins" class="action-button" style="background-color: #ffc107; color: #212529;" 
+                        onclick="return confirm('This will update <?php echo $deliveries_needing_origin_update; ?> existing deliveries to have manufacturer origin. Continue?')">
+                    Update <?php echo $deliveries_needing_origin_update; ?> Delivery Origins
+                </button>
+                <span style="font-size: 0.85em; color: #856404;">⚠️ Run this once to fix existing data</span>
+            </form>
+        </div>
+        <?php endif; ?>
+
         <!-- CSV Upload Section (moved here) -->
         <div class="csv-upload-section" style="margin-bottom: 30px; padding: 20px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
             <h3 style="margin-top: 0; color: #488C9A;">📄 Link Pallets via CSV</h3>
@@ -1349,6 +1453,42 @@ if (is_numeric($filter_project_id)) {
                     <div class="delivery-groups" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px;">
                         <?php if (!empty($delivery_groups)): ?>
                             <?php foreach ($delivery_groups as $group): ?>
+                                <?php
+                                // Determine the lane (Origin-Destination) for this delivery group
+                                // Check if any deliveries in this group have origin information
+                                $delivery_ids_array = explode(',', $group['delivery_ids']);
+                                $sample_delivery_id = $delivery_ids_array[0]; // Use first delivery as sample
+                                
+                                $lane_origin = 'Manufacturer'; // Default origin
+                                $lane_destination = $group['project_name'] ?? 'Unassigned';
+                                
+                                // Check if this delivery has specific origin information
+                                $stmt_check_lane = $conn->prepare("SELECT origin_type, warehouse_id FROM deliveries WHERE id = ?");
+                                if ($stmt_check_lane) {
+                                    $stmt_check_lane->bind_param("i", $sample_delivery_id);
+                                    $stmt_check_lane->execute();
+                                    $result_lane = $stmt_check_lane->get_result();
+                                    if ($lane_data = $result_lane->fetch_assoc()) {
+                                        if ($lane_data['origin_type'] === 'warehouse' && $lane_data['warehouse_id']) {
+                                            // Get warehouse name for origin
+                                            $stmt_wh = $conn->prepare("SELECT name FROM warehouses WHERE id = ?");
+                                            if ($stmt_wh) {
+                                                $stmt_wh->bind_param("i", $lane_data['warehouse_id']);
+                                                $stmt_wh->execute();
+                                                $result_wh = $stmt_wh->get_result();
+                                                if ($wh_data = $result_wh->fetch_assoc()) {
+                                                    $lane_origin = $wh_data['name'];
+                                                }
+                                                $stmt_wh->close();
+                                            }
+                                        }
+                                        // If origin_type is 'manufacturer' or null, keep default 'Manufacturer'
+                                    }
+                                    $stmt_check_lane->close();
+                                }
+                                
+                                $lane_display = $lane_origin . ' → ' . $lane_destination;
+                                ?>
                                 <div class="group-item delivery-group" data-wattage="<?php echo $group['wattage']; ?>" 
                                      data-project-id="<?php echo $group['project_id']; ?>"
                                      data-delivery-ids="<?php echo $group['delivery_ids']; ?>"
@@ -1366,6 +1506,9 @@ if (is_numeric($filter_project_id)) {
                                     <div style="font-size: 0.85em; color: #666; margin-top: 3px;">
                                         Project: <?php echo htmlspecialchars($group['project_name'] ?? 'Unassigned'); ?>
                                     </div>
+                                    <div style="font-size: 0.85em; color: #488C9A; margin-top: 2px; font-weight: 500;">
+                                        Lane: <?php echo htmlspecialchars($lane_display); ?>
+                                    </div>
                                 </div>
                             <?php endforeach; ?>
                         <?php else: ?>
@@ -1382,6 +1525,42 @@ if (is_numeric($filter_project_id)) {
                     <div class="pallet-groups" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px;">
                         <?php if (!empty($pallet_groups)): ?>
                             <?php foreach ($pallet_groups as $group): ?>
+                                <?php
+                                // Determine the lane for pallets - they're typically at manufacturer or warehouse
+                                // Check the status of a sample pallet to determine current location
+                                $pallet_ids_array = explode(',', $group['pallet_ids']);
+                                $sample_pallet_id = $pallet_ids_array[0]; // Use first pallet as sample
+                                
+                                $pallet_lane_origin = 'Manufacturer'; // Default
+                                $pallet_lane_destination = $group['assigned_project_name'] ?? 'Unassigned';
+                                
+                                // Check pallet's current location
+                                $stmt_check_pallet_lane = $conn->prepare("SELECT status, current_warehouse_id FROM inventory_pallets WHERE id = ?");
+                                if ($stmt_check_pallet_lane) {
+                                    $stmt_check_pallet_lane->bind_param("i", $sample_pallet_id);
+                                    $stmt_check_pallet_lane->execute();
+                                    $result_pallet_lane = $stmt_check_pallet_lane->get_result();
+                                    if ($pallet_lane_data = $result_pallet_lane->fetch_assoc()) {
+                                        if ($pallet_lane_data['status'] === 'In Warehouse' && $pallet_lane_data['current_warehouse_id']) {
+                                            // Get warehouse name for origin
+                                            $stmt_pallet_wh = $conn->prepare("SELECT name FROM warehouses WHERE id = ?");
+                                            if ($stmt_pallet_wh) {
+                                                $stmt_pallet_wh->bind_param("i", $pallet_lane_data['current_warehouse_id']);
+                                                $stmt_pallet_wh->execute();
+                                                $result_pallet_wh = $stmt_pallet_wh->get_result();
+                                                if ($pallet_wh_data = $result_pallet_wh->fetch_assoc()) {
+                                                    $pallet_lane_origin = $pallet_wh_data['name'];
+                                                }
+                                                $stmt_pallet_wh->close();
+                                            }
+                                        }
+                                        // For 'At Manufacturer', 'Produced', etc., keep default 'Manufacturer'
+                                    }
+                                    $stmt_check_pallet_lane->close();
+                                }
+                                
+                                $pallet_lane_display = $pallet_lane_origin . ' → ' . $pallet_lane_destination;
+                                ?>
                                 <div class="group-item pallet-group" data-wattage="<?php echo $group['wattage']; ?>" 
                                      data-project-id="<?php echo $group['assigned_project_id']; ?>"
                                      data-pallet-ids="<?php echo $group['pallet_ids']; ?>"
@@ -1398,6 +1577,9 @@ if (is_numeric($filter_project_id)) {
                                     </div>
                                     <div style="font-size: 0.85em; color: #666; margin-top: 3px;">
                                         Project: <?php echo htmlspecialchars($group['assigned_project_name'] ?? 'Unassigned'); ?>
+                                    </div>
+                                    <div style="font-size: 0.85em; color: #f39c12; margin-top: 2px; font-weight: 500;">
+                                        Lane: <?php echo htmlspecialchars($pallet_lane_display); ?>
                                     </div>
                                 </div>
                             <?php endforeach; ?>

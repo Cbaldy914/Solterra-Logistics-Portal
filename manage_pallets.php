@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure user has role admin or global_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
+// Ensure user has role admin, global_admin, or user
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin','user'])) {
     header("Location: unauthorized.php");
     exit();
 }
@@ -18,6 +18,39 @@ $successMessage = $_SESSION['manage_pallets_message'] ?? ''; // Check for messag
 $warningDetails = $_SESSION['manage_pallets_warning'] ?? null; // Check for warning message
 if (isset($_SESSION['manage_pallets_message'])) unset($_SESSION['manage_pallets_message']);
 if (isset($_SESSION['manage_pallets_warning'])) unset($_SESSION['manage_pallets_warning']);
+
+// --- Account Access Control ---
+$account_id_for_user = null;
+$is_global_admin = ($_SESSION['role'] === 'global_admin');
+$is_admin = ($_SESSION['role'] === 'admin');
+$is_user = ($_SESSION['role'] === 'user');
+
+if (!$is_global_admin) {
+    // For admins and users, get their account_id
+    $conn_account = getDBConnection();
+    if ($conn_account) {
+        if ($is_admin) {
+            $stmt_account = $conn_account->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1");
+        } else {
+            $stmt_account = $conn_account->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1");
+        }
+        
+        if ($stmt_account) {
+            $stmt_account->bind_param("i", $_SESSION['user_id']);
+            $stmt_account->execute();
+            $stmt_account->bind_result($account_id);
+            if ($stmt_account->fetch()) {
+                $account_id_for_user = $account_id;
+            }
+            $stmt_account->close();
+        }
+        $conn_account->close();
+    }
+    
+    if (!$account_id_for_user) {
+        $errorMessage = "Error: User is not associated with an account.";
+    }
+}
 
 // --- Handle CSV Upload (Global Admins Only) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_csv'])) {
@@ -406,52 +439,113 @@ try {
                 ip.unassigned_module_item_id,
                 ip.current_warehouse_id,
                 ip.current_project_id,
+                ip.assigned_project_id,
                 ip.flash_test_data,
                 m.vendor_name AS origin_vendor,
                 w.name AS current_warehouse_name,
-                p.project_name AS current_project_name,
+                p_current.project_name AS current_project_name,
+                p_assigned.project_name AS assigned_project_name,
+                COALESCE(p_current.project_name, p_assigned.project_name, 'Unassigned') AS display_project_name,
                 (SELECT COUNT(*) FROM delivery_pallets dp WHERE dp.inventory_pallet_id = ip.id) AS delivery_association_count,
                 CASE
                     WHEN ip.status = 'At Manufacturer' THEN 'At Manufacturer'
                     WHEN ip.status = 'In Warehouse' AND w.name IS NOT NULL THEN CONCAT('Warehouse: ', w.name)
                     WHEN ip.status = 'In Transit to Warehouse' AND w.name IS NOT NULL THEN CONCAT('In Transit to Warehouse: ', w.name)
-                    WHEN ip.status = 'Delivered to Project' AND p.project_name IS NOT NULL THEN CONCAT('Project: ', p.project_name)
-                    WHEN ip.status = 'In Transit to Project' AND p.project_name IS NOT NULL THEN CONCAT('In Transit to Project: ', p.project_name)
+                    WHEN ip.status = 'Delivered to Project' AND p_current.project_name IS NOT NULL THEN CONCAT('Project: ', p_current.project_name)
+                    WHEN ip.status = 'In Transit to Project' AND p_current.project_name IS NOT NULL THEN CONCAT('In Transit to Project: ', p_current.project_name)
                     ELSE ip.status
                 END AS current_location_display
             FROM inventory_pallets ip
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
             LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
-            LEFT JOIN projects p ON ip.current_project_id = p.id
-            ORDER BY ip.id DESC";
-            
-    $result = $conn->query($sql);
-
-    if ($result) {
-        while ($row = $result->fetch_assoc()) {
-            $pallets[] = $row;
+            LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
+            LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id";
+    
+    // Add account filtering for non-global admins
+    if (!$is_global_admin && $account_id_for_user) {
+        $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR (ip.current_project_id IS NULL AND ip.assigned_project_id IS NULL))";
+    }
+    
+    $sql .= " ORDER BY ip.id DESC";
+    
+    // Execute query with or without parameters
+    if (!$is_global_admin && $account_id_for_user) {
+        $stmt = $conn->prepare($sql);
+        if ($stmt) {
+            $stmt->bind_param("ii", $account_id_for_user, $account_id_for_user);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($result) {
+                while ($row = $result->fetch_assoc()) {
+                    $pallets[] = $row;
+                }
+            } else {
+                throw new Exception("Error fetching pallets: " . $stmt->error);
+            }
+            $stmt->close();
+        } else {
+            throw new Exception("Error preparing pallets query: " . $conn->error);
         }
     } else {
-        throw new Exception("Error fetching pallets: " . $conn->error);
+        $result = $conn->query($sql);
+        if ($result) {
+            while ($row = $result->fetch_assoc()) {
+                $pallets[] = $row;
+            }
+        } else {
+            throw new Exception("Error fetching pallets: " . $conn->error);
+        }
     }
 
     // Fetch all projects for page filter dropdown
-    $sqlProjects = "SELECT id, project_name FROM projects ORDER BY project_name ASC";
-    $resultProjects = $conn->query($sqlProjects);
-    if ($resultProjects) {
-        while ($row = $resultProjects->fetch_assoc()) {
-            $projects[] = $row; 
+    if ($is_global_admin) {
+        $sqlProjects = "SELECT id, project_name FROM projects ORDER BY project_name ASC";
+        $resultProjects = $conn->query($sqlProjects);
+        if ($resultProjects) {
+            while ($row = $resultProjects->fetch_assoc()) {
+                $projects[] = $row; 
+            }
+        }
+    } else if ($account_id_for_user) {
+        $sqlProjects = "SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+        $stmtProjects = $conn->prepare($sqlProjects);
+        if ($stmtProjects) {
+            $stmtProjects->bind_param("i", $account_id_for_user);
+            $stmtProjects->execute();
+            $resultProjects = $stmtProjects->get_result();
+            if ($resultProjects) {
+                while ($row = $resultProjects->fetch_assoc()) {
+                    $projects[] = $row; 
+                }
+            }
+            $stmtProjects->close();
         }
     }
 
     // Fetch all projects and warehouses for SHIPPING MODAL
     $all_projects_for_shipping = [];
-    $sqlAllProjectsModal = "SELECT id, project_name FROM projects ORDER BY project_name ASC";
-    $resultAllProjectsModal = $conn->query($sqlAllProjectsModal);
-    if ($resultAllProjectsModal) {
-        while ($row = $resultAllProjectsModal->fetch_assoc()) {
-            $all_projects_for_shipping[] = $row;
+    if ($is_global_admin) {
+        $sqlAllProjectsModal = "SELECT id, project_name FROM projects ORDER BY project_name ASC";
+        $resultAllProjectsModal = $conn->query($sqlAllProjectsModal);
+        if ($resultAllProjectsModal) {
+            while ($row = $resultAllProjectsModal->fetch_assoc()) {
+                $all_projects_for_shipping[] = $row;
+            }
+        }
+    } else if ($account_id_for_user) {
+        $sqlAllProjectsModal = "SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+        $stmtAllProjectsModal = $conn->prepare($sqlAllProjectsModal);
+        if ($stmtAllProjectsModal) {
+            $stmtAllProjectsModal->bind_param("i", $account_id_for_user);
+            $stmtAllProjectsModal->execute();
+            $resultAllProjectsModal = $stmtAllProjectsModal->get_result();
+            if ($resultAllProjectsModal) {
+                while ($row = $resultAllProjectsModal->fetch_assoc()) {
+                    $all_projects_for_shipping[] = $row;
+                }
+            }
+            $stmtAllProjectsModal->close();
         }
     }
 
@@ -689,7 +783,11 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 <main>
     <!-- Add breadcrumb navigation -->
     <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <?php if ($is_global_admin): ?>
+            <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <?php else: ?>
+            <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <?php endif; ?>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
         <span>Manage Pallets</span>
     </div>
@@ -716,7 +814,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
     <?php endif; ?>
 
     <!-- CSV Upload Section (Global Admins Only) -->
-    <?php if ($_SESSION['role'] === 'global_admin'): ?>
+    <?php if ($is_global_admin): ?>
     <div class="csv-upload-section" style="margin-bottom: 20px; padding: 15px; background-color: #f0f0f0; border: 1px solid #ddd; border-radius: 5px;">
         <h3>
             Bulk Update Pallets via CSV
@@ -736,9 +834,9 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         <div class="filter-container">
             <div class="filter-group-left">
                 <label for="filterInput">Search:</label>
-                <input type="text" id="filterInput" onkeyup="filterTable()" placeholder="Filter table...">
+                <input type="text" id="filterInput" onkeyup="filterBySearch()" placeholder="Filter table...">
                 <label for="projectFilter">Project:</label>
-                <select id="projectFilter" onchange="filterTable()">
+                <select id="projectFilter" onchange="filterByProject()">
                     <option value="">All Projects</option>
                     <option value="Unassigned">Unassigned</option>
                     <?php foreach ($projects as $proj): ?>
@@ -746,7 +844,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                     <?php endforeach; ?>
                 </select>
                 <label for="wattageFilter">Wattage:</label>
-                <select id="wattageFilter" onchange="filterTable()">
+                <select id="wattageFilter" onchange="filterByWattage()">
                     <option value="">All</option>
                     <?php
                     // Get unique wattages from pallets for filter dropdown
@@ -758,16 +856,20 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                     ?>
                 </select>
             </div>
+            <?php if (!$is_user): ?>
             <div class="filter-group-center">
                 <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
             </div>
+            <?php endif; ?>
             <div class="filter-group-right">
+                <?php if (!$is_user): ?>
                 <button type="button" id="openShipModalBtn" class="action-button" style="padding: 8px 15px; font-size: 0.9em;" disabled>
                     Create Delivery for Selected
                 </button>
                 <button type="button" id="deletePalletsBtn" class="action-button" style="padding: 8px 15px; font-size: 0.9em; background-color: #dc3545;" disabled>
                     Delete
                 </button>
+                <?php endif; ?>
                 <button type="button" id="exportCsvBtn" class="action-button" style="padding: 8px 15px; font-size: 0.9em;">Export to CSV</button>
             </div>
         </div>
@@ -790,7 +892,9 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
             <table id="palletsTable">
                 <thead>
                     <tr>
+                        <?php if (!$is_user): ?>
                         <th><input type="checkbox" id="selectAllPallets" title="Select/Deselect all visible pallets"></th>
+                        <?php endif; ?>
                         <th>Project</th>
                         <th>Identifier</th>
                         <th>Manufacturer</th>
@@ -818,8 +922,10 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                             }
                             ?>
                             <tr data-id="<?php echo htmlspecialchars($pallet['pallet_id']); ?>">
+                                <?php if (!$is_user): ?>
                                 <td><input type="checkbox" name="selected_pallets[]" value="<?php echo htmlspecialchars($pallet['pallet_id']); ?>" class="pallet-checkbox"></td>
-                                <td><?php echo htmlspecialchars($pallet['current_project_name'] ?? 'Unassigned'); ?></td>
+                                <?php endif; ?>
+                                <td><?php echo htmlspecialchars($pallet['display_project_name']); ?></td>
                                 <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                                 <td><?php echo htmlspecialchars($manufacturer); ?></td>
                                 <td><?php echo htmlspecialchars($pallet['wattage']); ?></td>
@@ -836,13 +942,15 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                 </td>
                                 <td>
                                     <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button">Pallet Details</a>
+                                    <?php if (!$is_user): ?>
                                     <button type="button" class="action-button" onclick="window.location.href='edit_pallet.php?pallet_id=<?php echo $pallet['pallet_id']; ?>'" style="background-color:#f0ad4e;">Edit Pallet</button>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="11">No pallets found in the system.</td> <!-- Updated colspan -->
+                            <td colspan="<?php echo $is_user ? '10' : '11'; ?>">No pallets found in the system.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -850,7 +958,11 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         </div>
 
         <div class="back-link" style="margin-top: 20px;">
-            <a href="admin_dashboard.php" class="action-button">&larr; Back to Admin Dashboard</a>
+            <?php if ($is_global_admin): ?>
+                <a href="admin_dashboard.php" class="action-button">&larr; Back to Admin Dashboard</a>
+            <?php else: ?>
+                <a href="dashboard.php" class="action-button">&larr; Back to Dashboard</a>
+            <?php endif; ?>
         </div>
     </form> <!-- End shipPalletsForm -->
 </main>
@@ -1007,6 +1119,9 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 <script>
     const projectsData = <?php echo json_encode($all_projects_for_shipping); ?>;
     const warehousesData = <?php echo json_encode($all_warehouses_for_shipping); ?>;
+    const isUser = <?php echo $is_user ? 'true' : 'false'; ?>;
+    const isAdmin = <?php echo $is_admin ? 'true' : 'false'; ?>;
+    const isGlobalAdmin = <?php echo $is_global_admin ? 'true' : 'false'; ?>;
 </script>
 
 <script>
@@ -1015,6 +1130,19 @@ function filterTable() {
     // Reset to page 1 when filter changes
     currentPage = 1;
     updatePagination();
+}
+
+// Add individual filter functions that call the main filter
+function filterBySearch() {
+    filterTable();
+}
+
+function filterByProject() {
+    filterTable();
+}
+
+function filterByWattage() {
+    filterTable();
 }
 
 // ----------------- PAGINATION -----------------
@@ -1075,8 +1203,12 @@ function getFilteredRows() {
         const projectFilterValue = document.getElementById("projectFilter")?.value || '';
         const wattageFilterValue = document.getElementById("wattageFilter")?.value || '';
         
-        // Check project filter (column index 1)
-        const projectCell = row.cells[1];
+        // Adjust column indices based on user role (users don't have checkbox column)
+        const projectColumnIndex = isUser ? 0 : 1;
+        const wattageColumnIndex = isUser ? 3 : 4;
+        
+        // Check project filter
+        const projectCell = row.cells[projectColumnIndex];
         let matchesProject = false;
         if (projectFilterValue === "") { 
             matchesProject = true;
@@ -1086,13 +1218,14 @@ function getFilteredRows() {
             matchesProject = projectCell && (projectCell.textContent || projectCell.innerText) === projectFilterValue;
         }
         
-        // Check wattage filter (column index 4)
-        const wattageCell = row.cells[4];
+        // Check wattage filter
+        const wattageCell = row.cells[wattageColumnIndex];
         let matchesWattage = false;
         if (wattageFilterValue === "") {
             matchesWattage = true;
         } else {
-            matchesWattage = wattageCell && (wattageCell.textContent || wattageCell.innerText).trim() === wattageFilterValue;
+            const cellWattage = wattageCell ? (wattageCell.textContent || wattageCell.innerText).trim() : '';
+            matchesWattage = cellWattage === wattageFilterValue;
         }
         
         // Check search filter
@@ -1100,7 +1233,8 @@ function getFilteredRows() {
         if (input === "") {
             matchesSearch = true; 
         } else {
-            for (let j = 1; j < row.cells.length - 1; j++) { 
+            const startColumn = isUser ? 0 : 1; // Skip checkbox column for admins
+            for (let j = startColumn; j < row.cells.length - 1; j++) { 
                 if (row.cells[j]) {
                     const txtValue = row.cells[j].textContent || row.cells[j].innerText;
                     if (txtValue.toUpperCase().indexOf(input) > -1) {
@@ -1157,41 +1291,53 @@ function updatePagination() {
     }
     
     // Update selection counts after pagination
-    updateSelectedCount();
-    const selectAllCheckbox = document.getElementById('selectAllPallets');
-    if (selectAllCheckbox) {
-        let allVisibleAreChecked = true;
-        let hasVisibleRows = false;
-        document.querySelectorAll('#palletsTable tbody tr').forEach(function(row) {
-            if (row.style.display !== 'none') {
-                hasVisibleRows = true;
-                const checkbox = row.querySelector('.pallet-checkbox');
-                if (checkbox && !checkbox.checked) {
-                    allVisibleAreChecked = false;
+    if (!isUser) {
+        updateSelectedCount();
+        const selectAllCheckbox = document.getElementById('selectAllPallets');
+        if (selectAllCheckbox) {
+            let allVisibleAreChecked = true;
+            let hasVisibleRows = false;
+            document.querySelectorAll('#palletsTable tbody tr').forEach(function(row) {
+                if (row.style.display !== 'none') {
+                    hasVisibleRows = true;
+                    const checkbox = row.querySelector('.pallet-checkbox');
+                    if (checkbox && !checkbox.checked) {
+                        allVisibleAreChecked = false;
+                    }
                 }
+            });
+            if(hasVisibleRows && allVisibleAreChecked){
+                selectAllCheckbox.checked = true;
+            } else {
+                selectAllCheckbox.checked = false;
             }
-        });
-        if(hasVisibleRows && allVisibleAreChecked){
-            selectAllCheckbox.checked = true;
-        } else {
-            selectAllCheckbox.checked = false;
         }
     }
 }
 
-// CSV Instructions Modal
-document.getElementById('openCsvInstructions').addEventListener('click', function() {
-    document.getElementById('csvInstructionsModal').style.display = 'block';
-});
-window.addEventListener('click', function(event) {
-    var csvModal = document.getElementById('csvInstructionsModal');
-    if (event.target == csvModal) {
-        csvModal.style.display = 'none';
+// CSV Instructions Modal (moved inside DOMContentLoaded)
+function initializeCsvModal() {
+    const openCsvBtn = document.getElementById('openCsvInstructions');
+    if (openCsvBtn) {
+        openCsvBtn.addEventListener('click', function() {
+            document.getElementById('csvInstructionsModal').style.display = 'block';
+        });
     }
-});
+    
+    window.addEventListener('click', function(event) {
+        var csvModal = document.getElementById('csvInstructionsModal');
+        if (event.target == csvModal) {
+            csvModal.style.display = 'none';
+        }
+    });
+}
 
-// Export to CSV 
-document.getElementById('exportCsvBtn').addEventListener('click', function() {
+// Export to CSV (moved inside DOMContentLoaded)
+function initializeExportCsv() {
+    const exportBtn = document.getElementById('exportCsvBtn');
+    if (!exportBtn) return;
+    
+    exportBtn.addEventListener('click', function() {
     var table = document.getElementById('palletsTable');
     var rows = table.querySelectorAll('tbody tr');
     var csvData = [];
@@ -1210,15 +1356,15 @@ document.getElementById('exportCsvBtn').addEventListener('click', function() {
             
             const columnIndices = {
                 id: row.getAttribute('data-id'), 
-                Project: 1,
-                pallet_identifier: 2,
-                Manufacturer: 3,
-                wattage: 4,
-                quantity: 5,
-                status: 6,
-                Current_Location: 7,
-                Associated_Deliveries: 8,
-                flash_test_data: 9 
+                Project: isUser ? 0 : 1,
+                pallet_identifier: isUser ? 1 : 2,
+                Manufacturer: isUser ? 2 : 3,
+                wattage: isUser ? 3 : 4,
+                quantity: isUser ? 4 : 5,
+                status: isUser ? 5 : 6,
+                Current_Location: isUser ? 6 : 7,
+                Associated_Deliveries: isUser ? 7 : 8,
+                flash_test_data: isUser ? 8 : 9 
             };
 
             headers.forEach(function(headerKey) {
@@ -1274,11 +1420,14 @@ document.getElementById('exportCsvBtn').addEventListener('click', function() {
     } else {
          alert("CSV export is not directly supported. Please try copying the data.");
     }
-});
+    });
+}
 
 
 // --- Pallet Selection and Shipping Modal JS (Adapted from module_overview.php) ---
 function toggleAllPalletCheckboxes(isChecked) {
+    if (isUser) return; // Users don't have checkboxes
+    
     document.querySelectorAll('#palletsTable tbody tr').forEach(function(row) {
         if (row.style.display !== 'none') { 
             const checkbox = row.querySelector('.pallet-checkbox');
@@ -1290,6 +1439,8 @@ function toggleAllPalletCheckboxes(isChecked) {
 }
 
 function updateOpenShipModalButtonState() {
+    if (isUser) return; // Users don't have these buttons
+    
     const openBtn = document.getElementById('openShipModalBtn');
     const deleteBtn = document.getElementById('deletePalletsBtn');
     const checkedCount = document.querySelectorAll('#palletsTable .pallet-checkbox:checked').length;
@@ -1299,132 +1450,168 @@ function updateOpenShipModalButtonState() {
 }
 
 function updateSelectedCount() {
-    let count = document.querySelectorAll('#palletsTable .pallet-checkbox:checked').length;
+    if (isUser) return; // Users don't have selection functionality
+    
+    let count = 0;
+    document.querySelectorAll('#palletsTable .pallet-checkbox').forEach(function(checkbox) {
+        if (checkbox.checked) {
+            count++;
+        }
+    });
+    
     const countEl = document.getElementById('selectedCount');
     if (countEl) {
         countEl.textContent = count + ' pallet' + (count === 1 ? '' : 's') + ' selected';
     }
+    
+    // Update button states
+    updateOpenShipModalButtonState();
+    
     if (typeof updateMultiShipSummary === 'function') {
         updateMultiShipSummary();
     }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    const selectAllPalletsCheckbox = document.getElementById('selectAllPallets');
-    if (selectAllPalletsCheckbox) {
-        selectAllPalletsCheckbox.addEventListener('change', function() {
-            toggleAllPalletCheckboxes(this.checked);
-        });
-    }
+    if (!isUser) {
+        const selectAllPalletsCheckbox = document.getElementById('selectAllPallets');
+        if (selectAllPalletsCheckbox) {
+            selectAllPalletsCheckbox.addEventListener('change', function() {
+                toggleAllPalletCheckboxes(this.checked);
+            });
+        }
 
-    document.querySelectorAll('#palletsTable .pallet-checkbox').forEach(function(checkbox) {
-        checkbox.addEventListener('change', function() {
-            updateOpenShipModalButtonState();
-            updateSelectedCount();
-            if (!this.checked && selectAllPalletsCheckbox) {
-                selectAllPalletsCheckbox.checked = false;
-            } else if (this.checked) {
-                let allVisibleChecked = true;
-                document.querySelectorAll('#palletsTable tbody tr').forEach(function(row) {
-                    if (row.style.display !== 'none') {
-                        const cb = row.querySelector('.pallet-checkbox');
-                        if (!cb || !cb.checked) {
-                            allVisibleChecked = false;
+        // Use event delegation for checkbox changes to handle dynamically shown/hidden rows
+        document.addEventListener('change', function(e) {
+            if (e.target && e.target.classList.contains('pallet-checkbox')) {
+                updateSelectedCount();
+                if (!e.target.checked && selectAllPalletsCheckbox) {
+                    selectAllPalletsCheckbox.checked = false;
+                } else if (e.target.checked) {
+                    let allVisibleChecked = true;
+                    document.querySelectorAll('#palletsTable tbody tr').forEach(function(row) {
+                        if (row.style.display !== 'none') {
+                            const cb = row.querySelector('.pallet-checkbox');
+                            if (!cb || !cb.checked) {
+                                allVisibleChecked = false;
+                            }
                         }
+                    });
+                    if (allVisibleChecked && selectAllPalletsCheckbox) {
+                        selectAllPalletsCheckbox.checked = true;
                     }
-                });
-                if (allVisibleChecked && selectAllPalletsCheckbox) {
-                    selectAllPalletsCheckbox.checked = true;
                 }
             }
         });
-    });
 
-    updateOpenShipModalButtonState();
-    updateSelectedCount();
+        updateOpenShipModalButtonState();
+        updateSelectedCount();
+    }
     
     // Initialize pagination
     initializePagination();
     
-    if (typeof toggleDestinationSelectSingle === 'function') toggleDestinationSelectSingle();
-    if (typeof toggleDestinationSelectMulti === 'function') toggleDestinationSelectMulti();
-    if (typeof updateMultiShipSummary === 'function') updateMultiShipSummary();
+    // Initialize CSV modal and export functionality
+    initializeCsvModal();
+    initializeExportCsv();
+    
+    // Initialize filters and counts
+    if (!isUser) {
+        updateSelectedCount();
+        updateOpenShipModalButtonState();
+    }
+    
+    // Initialize shipping modal functions
+    initializeShippingModal();
+    initializeDestinationToggles();
+    initializeShipmentButtons();
+    
+    // Initialize destination selects and summary
+    toggleDestinationSelectSingle();
+    toggleDestinationSelectMulti();
+    updateMultiShipSummary();
 
-    // Delete pallets functionality
-    const deletePalletsBtn = document.getElementById('deletePalletsBtn');
-    if (deletePalletsBtn) {
-        deletePalletsBtn.addEventListener('click', function() {
-            const checkedPallets = document.querySelectorAll('#palletsTable .pallet-checkbox:checked');
-            if (checkedPallets.length === 0) {
-                alert('Please select pallets to delete.');
-                return;
-            }
-            
-            const confirmation = confirm(`Are you sure you want to delete ${checkedPallets.length} selected pallet(s)? This action cannot be undone.`);
-            if (!confirmation) return;
-            
-            // Create a form and submit it
-            const form = document.getElementById('shipPalletsForm');
-            const actionInput = form.querySelector('input[name="action"]');
-            if (actionInput) {
-                actionInput.value = 'delete_pallets';
-            } else {
-                const newActionInput = document.createElement('input');
-                newActionInput.type = 'hidden';
-                newActionInput.name = 'action';
-                newActionInput.value = 'delete_pallets';
-                form.appendChild(newActionInput);
-            }
-            
-            form.submit();
-        });
+    // Delete pallets functionality (admins only)
+    if (!isUser) {
+        const deletePalletsBtn = document.getElementById('deletePalletsBtn');
+        if (deletePalletsBtn) {
+            deletePalletsBtn.addEventListener('click', function() {
+                const checkedPallets = document.querySelectorAll('#palletsTable .pallet-checkbox:checked');
+                if (checkedPallets.length === 0) {
+                    alert('Please select pallets to delete.');
+                    return;
+                }
+                
+                const confirmation = confirm(`Are you sure you want to delete ${checkedPallets.length} selected pallet(s)? This action cannot be undone.`);
+                if (!confirmation) return;
+                
+                // Create a form and submit it
+                const form = document.getElementById('shipPalletsForm');
+                const actionInput = form.querySelector('input[name="action"]');
+                if (actionInput) {
+                    actionInput.value = 'delete_pallets';
+                } else {
+                    const newActionInput = document.createElement('input');
+                    newActionInput.type = 'hidden';
+                    newActionInput.name = 'action';
+                    newActionInput.value = 'delete_pallets';
+                    form.appendChild(newActionInput);
+                }
+                
+                form.submit();
+            });
+        }
     }
 });
 
-// Shipment Modal Logic
-const shipModal = document.getElementById('shipModal');
-const openShipModalBtn = document.getElementById('openShipModalBtn');
-const closeShipModalBtn = shipModal ? shipModal.querySelector('.close-modal-btn') : null;
+// Shipment Modal Logic (moved to function)
+function initializeShippingModal() {
+    if (isUser) return; // Users don't have shipping functionality
+    
+    const shipModal = document.getElementById('shipModal');
+    const openShipModalBtn = document.getElementById('openShipModalBtn');
+    const closeShipModalBtn = shipModal ? shipModal.querySelector('.close-modal-btn') : null;
 
-function openShipModal() {
-    if (openShipModalBtn && openShipModalBtn.disabled) return;
-    if (shipModal) shipModal.style.display = 'block';
-    if (typeof toggleDestinationSelectSingle === 'function') toggleDestinationSelectSingle();
-    if (typeof toggleDestinationSelectMulti === 'function') toggleDestinationSelectMulti();
-}
-function closeShipModal() {
-    if (shipModal) shipModal.style.display = 'none';
-}
-
-if (openShipModalBtn) openShipModalBtn.addEventListener('click', openShipModal);
-if (closeShipModalBtn) closeShipModalBtn.addEventListener('click', closeShipModal);
-window.addEventListener('click', function(e) {
-    if (shipModal && e.target === shipModal) closeShipModal();
-});
-
-// Tab Switching
-const singleTabBtn = document.getElementById('singleTabBtn');
-const multiTabBtn = document.getElementById('multiTabBtn');
-const singleSection = document.getElementById('singleShipmentSection');
-const multiSection = document.getElementById('multiShipmentSection');
-
-if (singleTabBtn && multiTabBtn && singleSection && multiSection) {
-    function setActiveTab(isSingle) {
-        singleTabBtn.classList.toggle('active', isSingle);
-        multiTabBtn.classList.toggle('active', !isSingle);
-        singleSection.style.display = isSingle ? '' : 'none';
-        multiSection.style.display = isSingle ? 'none' : '';
-        singleTabBtn.style.background = isSingle ? '#f39c12' : '#293E4C';
-        singleTabBtn.style.color = isSingle ? '#000' : '#fff';
-        multiTabBtn.style.background = !isSingle ? '#f39c12' : '#293E4C';
-        multiTabBtn.style.color = !isSingle ? '#000' : '#fff';
+    function openShipModal() {
+        if (openShipModalBtn && openShipModalBtn.disabled) return;
+        if (shipModal) shipModal.style.display = 'block';
+        if (typeof toggleDestinationSelectSingle === 'function') toggleDestinationSelectSingle();
+        if (typeof toggleDestinationSelectMulti === 'function') toggleDestinationSelectMulti();
     }
-    singleTabBtn.addEventListener('click', () => setActiveTab(true));
-    multiTabBtn.addEventListener('click', () => setActiveTab(false));
-    setActiveTab(true); // Default
+    function closeShipModal() {
+        if (shipModal) shipModal.style.display = 'none';
+    }
+
+    if (openShipModalBtn) openShipModalBtn.addEventListener('click', openShipModal);
+    if (closeShipModalBtn) closeShipModalBtn.addEventListener('click', closeShipModal);
+    window.addEventListener('click', function(e) {
+        if (shipModal && e.target === shipModal) closeShipModal();
+    });
+
+    // Tab Switching
+    const singleTabBtn = document.getElementById('singleTabBtn');
+    const multiTabBtn = document.getElementById('multiTabBtn');
+    const singleSection = document.getElementById('singleShipmentSection');
+    const multiSection = document.getElementById('multiShipmentSection');
+
+    if (singleTabBtn && multiTabBtn && singleSection && multiSection) {
+        function setActiveTab(isSingle) {
+            singleTabBtn.classList.toggle('active', isSingle);
+            multiTabBtn.classList.toggle('active', !isSingle);
+            singleSection.style.display = isSingle ? '' : 'none';
+            multiSection.style.display = isSingle ? 'none' : '';
+            singleTabBtn.style.background = isSingle ? '#f39c12' : '#293E4C';
+            singleTabBtn.style.color = isSingle ? '#000' : '#fff';
+            multiTabBtn.style.background = !isSingle ? '#f39c12' : '#293E4C';
+            multiTabBtn.style.color = !isSingle ? '#000' : '#fff';
+        }
+        singleTabBtn.addEventListener('click', () => setActiveTab(true));
+        multiTabBtn.addEventListener('click', () => setActiveTab(false));
+        setActiveTab(true); // Default
+    }
 }
 
-// Toggle Destination Dropdowns
+// Toggle Destination Dropdowns (define functions globally)
 function populateDestinationDropdown(selectElement, labelElement, destinationType, dataSource, nameField, placeholderPrefix) {
     if (!selectElement || !labelElement) return;
     labelElement.textContent = destinationType === 'project' ? 'Project:' : 'Warehouse:';
@@ -1445,6 +1632,7 @@ function populateDestinationDropdown(selectElement, labelElement, destinationTyp
 }
 
 function toggleDestinationSelectSingle() {
+    if (isUser) return;
     const assignType = document.querySelector('input[name="destination_type_single_modal"]:checked')?.value;
     if (!assignType) return;
     populateDestinationDropdown(
@@ -1458,6 +1646,7 @@ function toggleDestinationSelectSingle() {
 }
 
 function toggleDestinationSelectMulti() {
+    if (isUser) return;
     const assignType = document.querySelector('input[name="destination_type_multi_modal"]:checked')?.value;
     if (!assignType) return;
      populateDestinationDropdown(
@@ -1470,14 +1659,13 @@ function toggleDestinationSelectMulti() {
     );
 }
 
-document.querySelectorAll('input[name="destination_type_single_modal"]').forEach(r => r.addEventListener('change', toggleDestinationSelectSingle));
-document.querySelectorAll('input[name="destination_type_multi_modal"]').forEach(r => r.addEventListener('change', toggleDestinationSelectMulti));
+function initializeDestinationToggles() {
+    if (isUser) return;
+    document.querySelectorAll('input[name="destination_type_single_modal"]').forEach(r => r.addEventListener('change', toggleDestinationSelectSingle));
+    document.querySelectorAll('input[name="destination_type_multi_modal"]').forEach(r => r.addEventListener('change', toggleDestinationSelectMulti));
+}
 
-// Confirm Shipment Buttons
-const confirmShipmentBtn = document.getElementById('confirmShipmentBtn');
-const confirmMultiShipmentBtn = document.getElementById('confirmMultiShipmentBtn');
-const mainShipForm = document.getElementById('shipPalletsForm'); 
-
+// Confirm Shipment Buttons (define functions globally)
 function setOrCreateHidden(form, fieldName, fieldValue) {
     if (!form) return;
     let el = form.querySelector(`input[type="hidden"][name="${fieldName}"]`);
@@ -1488,80 +1676,97 @@ function setOrCreateHidden(form, fieldName, fieldValue) {
     el.value = fieldValue;
 }
 
-if (confirmShipmentBtn && mainShipForm) {
-    confirmShipmentBtn.addEventListener('click', function() {
-        setOrCreateHidden(mainShipForm, 'shipment_mode', 'single');
-        setOrCreateHidden(mainShipForm, 'pallets_per_truck', '1');
+function initializeShipmentButtons() {
+    if (isUser) return;
+    
+    const confirmShipmentBtn = document.getElementById('confirmShipmentBtn');
+    const confirmMultiShipmentBtn = document.getElementById('confirmMultiShipmentBtn');
+    const mainShipForm = document.getElementById('shipPalletsForm');
 
-        const assignType = document.querySelector('input[name="destination_type_single_modal"]:checked').value;
-        const targetId = document.getElementById('destination_id_single').value;
-        const bol = document.getElementById('bol_number_single_modal').value;
-        const departure = document.getElementById('departure_date_single_modal').value;
-        const arrival = document.getElementById('est_arrival_date_single_modal').value;
-                    const freightCost = document.getElementById('freight_cost_single').value;
-            const accessorialCost = document.getElementById('accessorial_cost_single').value;
-            const customerCost = document.getElementById('customer_cost_single').value;
-            const miles = document.getElementById('miles_single').value;
+    if (confirmShipmentBtn && mainShipForm) {
+        confirmShipmentBtn.addEventListener('click', function() {
+            setOrCreateHidden(mainShipForm, 'shipment_mode', 'single');
+            setOrCreateHidden(mainShipForm, 'pallets_per_truck', '1');
 
-        if (!targetId) { alert('Please select a destination.'); return; }
-        if (!departure) { alert('Departure date is required.'); return; }
-        if (!arrival) { alert('Estimated arrival date is required.'); return; }
+            const assignType = document.querySelector('input[name="destination_type_single_modal"]:checked').value;
+            const targetId = document.getElementById('destination_id_single').value;
+            const bol = document.getElementById('bol_number_single_modal').value;
+            const departure = document.getElementById('departure_date_single_modal').value;
+            const arrival = document.getElementById('est_arrival_date_single_modal').value;
+                        const freightCost = document.getElementById('freight_cost_single').value;
+                const accessorialCost = document.getElementById('accessorial_cost_single').value;
+                const customerCost = document.getElementById('customer_cost_single').value;
+                const miles = document.getElementById('miles_single').value;
 
-        setOrCreateHidden(mainShipForm, 'destination_type', assignType);
-        setOrCreateHidden(mainShipForm, 'destination_id', targetId);
-        setOrCreateHidden(mainShipForm, 'bol_number', bol);
-        setOrCreateHidden(mainShipForm, 'departure_date', departure);
-        setOrCreateHidden(mainShipForm, 'est_arrival_date', arrival);
-        setOrCreateHidden(mainShipForm, 'freight_cost', freightCost);
-        setOrCreateHidden(mainShipForm, 'accessorial_cost', accessorialCost);
-        setOrCreateHidden(mainShipForm, 'customer_cost', customerCost);
-        setOrCreateHidden(mainShipForm, 'miles', miles);
-        mainShipForm.submit();
-    });
+            if (!targetId) { alert('Please select a destination.'); return; }
+            if (!departure) { alert('Departure date is required.'); return; }
+            if (!arrival) { alert('Estimated arrival date is required.'); return; }
+
+            setOrCreateHidden(mainShipForm, 'destination_type', assignType);
+            setOrCreateHidden(mainShipForm, 'destination_id', targetId);
+            setOrCreateHidden(mainShipForm, 'bol_number', bol);
+            setOrCreateHidden(mainShipForm, 'departure_date', departure);
+            setOrCreateHidden(mainShipForm, 'est_arrival_date', arrival);
+            setOrCreateHidden(mainShipForm, 'freight_cost', freightCost);
+            setOrCreateHidden(mainShipForm, 'accessorial_cost', accessorialCost);
+            setOrCreateHidden(mainShipForm, 'customer_cost', customerCost);
+            setOrCreateHidden(mainShipForm, 'miles', miles);
+            mainShipForm.submit();
+        });
+    }
+
+    if (confirmMultiShipmentBtn && mainShipForm) {
+        confirmMultiShipmentBtn.addEventListener('click', function() {
+            setOrCreateHidden(mainShipForm, 'shipment_mode', 'multi');
+            
+            const palletsPerTruckVal = document.getElementById('palletsPerTruck_modal').value;
+            if (!palletsPerTruckVal || parseInt(palletsPerTruckVal) < 1) {
+                alert('Pallets per truck must be at least 1.'); return;
+            }
+            setOrCreateHidden(mainShipForm, 'pallets_per_truck', palletsPerTruckVal);
+
+            const assignType = document.querySelector('input[name="destination_type_multi_modal"]:checked').value;
+            const targetId = document.getElementById('destination_id_multi').value;
+            const bol = document.getElementById('bol_number_multi_modal').value;
+            const departure = document.getElementById('departure_date_multi_modal').value;
+            const arrival = document.getElementById('est_arrival_date_multi_modal').value;
+            const freightCost = document.getElementById('freight_cost_multi').value;
+            const accessorialCost = document.getElementById('accessorial_cost_multi').value;
+            const customerCost = document.getElementById('customer_cost_multi').value;
+            const miles = document.getElementById('miles_multi').value;
+
+            if (!targetId) { alert('Please select a destination.'); return; }
+            if (!departure) { alert('Departure date is required.'); return; }
+            if (!arrival) { alert('Estimated arrival date is required.'); return; }
+            
+            setOrCreateHidden(mainShipForm, 'destination_type', assignType);
+            setOrCreateHidden(mainShipForm, 'destination_id', targetId);
+            setOrCreateHidden(mainShipForm, 'bol_number', bol);
+            setOrCreateHidden(mainShipForm, 'departure_date', departure);
+            setOrCreateHidden(mainShipForm, 'est_arrival_date', arrival);
+            setOrCreateHidden(mainShipForm, 'freight_cost', freightCost);
+            setOrCreateHidden(mainShipForm, 'accessorial_cost', accessorialCost);
+            setOrCreateHidden(mainShipForm, 'customer_cost', customerCost);
+            setOrCreateHidden(mainShipForm, 'miles', miles);
+            mainShipForm.submit();
+        });
+    }
+
+    // Multi-Shipment Summary
+    const palletsPerTruckInput = document.getElementById('palletsPerTruck_modal'); // Corrected ID
+    const multiShipSummary = document.getElementById('multiShipSummary');
+
+    if (palletsPerTruckInput) {
+        palletsPerTruckInput.addEventListener('input', updateMultiShipSummary);
+    }
 }
 
-if (confirmMultiShipmentBtn && mainShipForm) {
-    confirmMultiShipmentBtn.addEventListener('click', function() {
-        setOrCreateHidden(mainShipForm, 'shipment_mode', 'multi');
-        
-        const palletsPerTruckVal = document.getElementById('palletsPerTruck_modal').value;
-        if (!palletsPerTruckVal || parseInt(palletsPerTruckVal) < 1) {
-            alert('Pallets per truck must be at least 1.'); return;
-        }
-        setOrCreateHidden(mainShipForm, 'pallets_per_truck', palletsPerTruckVal);
-
-        const assignType = document.querySelector('input[name="destination_type_multi_modal"]:checked').value;
-        const targetId = document.getElementById('destination_id_multi').value;
-        const bol = document.getElementById('bol_number_multi_modal').value;
-        const departure = document.getElementById('departure_date_multi_modal').value;
-        const arrival = document.getElementById('est_arrival_date_multi_modal').value;
-        const freightCost = document.getElementById('freight_cost_multi').value;
-        const accessorialCost = document.getElementById('accessorial_cost_multi').value;
-        const customerCost = document.getElementById('customer_cost_multi').value;
-        const miles = document.getElementById('miles_multi').value;
-
-        if (!targetId) { alert('Please select a destination.'); return; }
-        if (!departure) { alert('Departure date is required.'); return; }
-        if (!arrival) { alert('Estimated arrival date is required.'); return; }
-        
-        setOrCreateHidden(mainShipForm, 'destination_type', assignType);
-        setOrCreateHidden(mainShipForm, 'destination_id', targetId);
-        setOrCreateHidden(mainShipForm, 'bol_number', bol);
-        setOrCreateHidden(mainShipForm, 'departure_date', departure);
-        setOrCreateHidden(mainShipForm, 'est_arrival_date', arrival);
-        setOrCreateHidden(mainShipForm, 'freight_cost', freightCost);
-        setOrCreateHidden(mainShipForm, 'accessorial_cost', accessorialCost);
-        setOrCreateHidden(mainShipForm, 'customer_cost', customerCost);
-        setOrCreateHidden(mainShipForm, 'miles', miles);
-        mainShipForm.submit();
-    });
-}
-
-// Multi-Shipment Summary
-const palletsPerTruckInput = document.getElementById('palletsPerTruck_modal'); // Corrected ID
-const multiShipSummary = document.getElementById('multiShipSummary');
-
+// Multi-Shipment Summary function (define globally)
 function updateMultiShipSummary() {
+    if (isUser) return;
+    const palletsPerTruckInput = document.getElementById('palletsPerTruck_modal');
+    const multiShipSummary = document.getElementById('multiShipSummary');
+    
     if (!palletsPerTruckInput || !multiShipSummary) return;
     const selected = document.querySelectorAll('#palletsTable .pallet-checkbox:checked').length;
     const perTruck = parseInt(palletsPerTruckInput.value, 10) || 1; 
@@ -1572,9 +1777,6 @@ function updateMultiShipSummary() {
     } else {
         multiShipSummary.textContent = 'Select pallets and specify pallets per truck.';
     }
-}
-if (palletsPerTruckInput) {
-    palletsPerTruckInput.addEventListener('input', updateMultiShipSummary);
 }
 </script>
 </body>

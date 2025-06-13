@@ -33,7 +33,11 @@ try {
                         ip.quantity,
                         ip.status,
                         ip.arrival_date,
-                        m.vendor_name AS origin_vendor,
+                        -- Clean manufacturer name by removing project suffix
+                        CASE
+                            WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
+                            ELSE m.vendor_name
+                        END AS origin_vendor,
                         w.name AS current_warehouse_name,
                         p.project_name AS current_project_name,
                         CASE
@@ -66,27 +70,32 @@ try {
     }
     $stmt_pallet->close();
 
-    // 2. Fetch Associated Deliveries with enhanced cost calculations
+    // 2. Fetch Associated Deliveries with BOL-based cost calculations
     $sql_deliveries = "SELECT 
                             d.id AS delivery_id,
                             d.bol_number,
                             d.status_of_delivery,
-                            d.supplier,
+                            -- Clean supplier name by removing project suffix
+                            CASE
+                                WHEN d.supplier LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(d.supplier, '-', 1))
+                                ELSE d.supplier
+                            END AS supplier,
                             d.anticipated_delivery_date,
                             d.actual_delivery_date,
                             proj.project_name AS delivery_project_name,
                             d.freight_cost,
                             d.accessorial_costs,
-                            -- Calculate total cost for truckload
-                            (COALESCE(d.freight_cost, 0) + COALESCE(d.accessorial_costs, 0)) AS truckload_cost,
-                            -- Count total pallets in this delivery
-                            (SELECT COUNT(*) FROM delivery_pallets dp2 WHERE dp2.delivery_id = d.id) AS total_pallets_in_delivery,
-                            -- Calculate cost per pallet (truckload cost divided by number of pallets)
-                            CASE 
-                                WHEN (SELECT COUNT(*) FROM delivery_pallets dp2 WHERE dp2.delivery_id = d.id) > 0 
-                                THEN (COALESCE(d.freight_cost, 0) + COALESCE(d.accessorial_costs, 0)) / (SELECT COUNT(*) FROM delivery_pallets dp2 WHERE dp2.delivery_id = d.id)
-                                ELSE 0 
-                            END AS pallet_cost
+                            -- Calculate total cost for this specific delivery
+                            (COALESCE(d.freight_cost, 0) + COALESCE(d.accessorial_costs, 0)) AS delivery_cost,
+                            -- Get total cost for entire BOL (sum all deliveries with same BOL)
+                            (SELECT SUM(COALESCE(d2.freight_cost, 0) + COALESCE(d2.accessorial_costs, 0)) 
+                             FROM deliveries d2 
+                             WHERE d2.bol_number = d.bol_number AND d2.bol_number IS NOT NULL AND d2.bol_number != '') AS bol_total_cost,
+                            -- Count total pallets for entire BOL
+                            (SELECT COUNT(DISTINCT dp3.inventory_pallet_id) 
+                             FROM deliveries d3 
+                             JOIN delivery_pallets dp3 ON d3.id = dp3.delivery_id 
+                             WHERE d3.bol_number = d.bol_number AND d3.bol_number IS NOT NULL AND d3.bol_number != '') AS bol_total_pallets
                         FROM deliveries d 
                         JOIN delivery_pallets dp ON d.id = dp.delivery_id
                         LEFT JOIN projects proj ON d.project_id = proj.id
@@ -101,12 +110,112 @@ try {
     $stmt_deliveries->execute();
     $result_deliveries = $stmt_deliveries->get_result();
 
-    $total_pallet_cost = 0; // Initialize total cost tracker
+    $total_delivery_cost = 0; // Initialize delivery cost tracker
+    $processed_bols = []; // Track BOLs to avoid double-counting
+    
     while ($row = $result_deliveries->fetch_assoc()) {
+        // Calculate pallet cost based on BOL totals
+        if ($row['bol_total_pallets'] > 0 && !empty($row['bol_number'])) {
+            $row['truckload_cost'] = $row['bol_total_cost'];
+            $row['pallet_cost'] = $row['bol_total_cost'] / $row['bol_total_pallets'];
+            
+            // Only add to total if we haven't processed this BOL yet
+            if (!in_array($row['bol_number'], $processed_bols)) {
+                $total_delivery_cost += $row['pallet_cost'];
+                $processed_bols[] = $row['bol_number'];
+            }
+        } else {
+            // Fallback for deliveries without BOL
+            $row['truckload_cost'] = $row['delivery_cost'];
+            $row['pallet_cost'] = $row['delivery_cost'];
+            $total_delivery_cost += $row['pallet_cost'];
+        }
+        
         $associated_deliveries[] = $row;
-        $total_pallet_cost += $row['pallet_cost']; // Add to total
     }
     $stmt_deliveries->close();
+
+    // 3. Fetch Warehouse History with proper warehouse cost calculations
+    $warehouse_history = [];
+    $sql_warehouse_history = "SELECT DISTINCT
+                                w.id AS warehouse_id,
+                                w.name AS warehouse_name,
+                                w.in_fee,
+                                w.out_fee,
+                                w.monthly_storage_fee,
+                                -- Get arrival info (when pallet first arrived at this warehouse)
+                                (SELECT MIN(d_arr.warehouse_arrival_date) 
+                                 FROM deliveries d_arr 
+                                 JOIN delivery_pallets dp_arr ON d_arr.id = dp_arr.delivery_id 
+                                 WHERE dp_arr.inventory_pallet_id = ? 
+                                 AND d_arr.warehouse_id = w.id 
+                                 AND d_arr.warehouse_arrival_date IS NOT NULL) AS arrival_date,
+                                -- Get departure info (when pallet left this warehouse)
+                                (SELECT MIN(d_dep.left_warehouse_date) 
+                                 FROM deliveries d_dep 
+                                 JOIN delivery_pallets dp_dep ON d_dep.id = dp_dep.delivery_id 
+                                 WHERE dp_dep.inventory_pallet_id = ? 
+                                 AND d_dep.origin_type = 'warehouse' 
+                                 AND d_dep.origin_id = w.id 
+                                 AND d_dep.left_warehouse_date IS NOT NULL) AS departure_date,
+                                -- Count deliveries for in/out fee calculations
+                                (SELECT COUNT(DISTINCT d_in.id) 
+                                 FROM deliveries d_in 
+                                 JOIN delivery_pallets dp_in ON d_in.id = dp_in.delivery_id 
+                                 WHERE dp_in.inventory_pallet_id = ? 
+                                 AND d_in.warehouse_id = w.id 
+                                 AND d_in.warehouse_arrival_date IS NOT NULL) AS inbound_deliveries,
+                                (SELECT COUNT(DISTINCT d_out.id) 
+                                 FROM deliveries d_out 
+                                 JOIN delivery_pallets dp_out ON d_out.id = dp_out.delivery_id 
+                                 WHERE dp_out.inventory_pallet_id = ? 
+                                 AND d_out.origin_type = 'warehouse' 
+                                 AND d_out.origin_id = w.id 
+                                 AND d_out.left_warehouse_date IS NOT NULL) AS outbound_deliveries
+                            FROM warehouses w
+                            WHERE w.id IN (
+                                SELECT DISTINCT COALESCE(d.warehouse_id, d.origin_id) 
+                                FROM deliveries d 
+                                JOIN delivery_pallets dp ON d.id = dp.delivery_id 
+                                WHERE dp.inventory_pallet_id = ? 
+                                AND (d.warehouse_id IS NOT NULL OR (d.origin_type = 'warehouse' AND d.origin_id IS NOT NULL))
+                            )
+                            ORDER BY arrival_date ASC";
+
+    $stmt_warehouse = $conn->prepare($sql_warehouse_history);
+    if (!$stmt_warehouse) {
+        throw new Exception("Error preparing warehouse history query: " . $conn->error);
+    }
+    $stmt_warehouse->bind_param("iiiii", $pallet_id, $pallet_id, $pallet_id, $pallet_id, $pallet_id);
+    $stmt_warehouse->execute();
+    $result_warehouse = $stmt_warehouse->get_result();
+
+    $total_warehouse_cost = 0;
+    while ($row = $result_warehouse->fetch_assoc()) {
+        // Calculate actual warehouse costs based on fees
+        $in_fee_cost = ($row['in_fee'] ?? 0) * ($row['inbound_deliveries'] ?? 0);
+        $out_fee_cost = ($row['out_fee'] ?? 0) * ($row['outbound_deliveries'] ?? 0);
+        
+        // Calculate storage cost based on days stored
+        $storage_cost = 0;
+        if (!empty($row['arrival_date'])) {
+            $arrival = new DateTime($row['arrival_date']);
+            $departure = !empty($row['departure_date']) ? new DateTime($row['departure_date']) : new DateTime();
+            $days_stored = $arrival->diff($departure)->days;
+            $daily_storage_fee = ($row['monthly_storage_fee'] ?? 0) / 30;
+            $storage_cost = $days_stored * $daily_storage_fee;
+        }
+        
+        $row['total_warehouse_costs'] = $in_fee_cost + $out_fee_cost + $storage_cost;
+        $row['cost_breakdown'] = "in_fee:{$in_fee_cost}|out_fee:{$out_fee_cost}|storage:{$storage_cost}|days:{$days_stored}";
+        
+        $total_warehouse_cost += $row['total_warehouse_costs'];
+        $warehouse_history[] = $row;
+    }
+    $stmt_warehouse->close();
+    
+    // Calculate total pallet cost (deliveries + warehouse)
+    $total_pallet_cost = $total_delivery_cost + $total_warehouse_cost;
 
 } catch (Exception $e) {
     $errorMessage = $e->getMessage();
@@ -343,10 +452,19 @@ $breadcrumbs[] = ['text' => 'Pallet Details'];
                 </dl>
             </div>
 
-            <?php if ($total_pallet_cost > 0): ?>
+            <?php if ($total_pallet_cost > 0 || $total_delivery_cost > 0 || $total_warehouse_cost > 0): ?>
             <div class="cost-summary">
-                <h3>Total Pallet Cost (All Deliveries)</h3>
-                <div class="cost-amount">$<?php echo number_format($total_pallet_cost, 2); ?></div>
+                <h3>Total Pallet Cost Breakdown</h3>
+                <div style="margin-bottom: 10px;">
+                    <strong>Pallet Cost (Deliveries):</strong> $<?php echo number_format($total_delivery_cost, 2); ?>
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <strong>Pallet Cost (Warehouse):</strong> $<?php echo number_format($total_warehouse_cost, 2); ?>
+                </div>
+                <hr style="margin: 10px 0; border: 1px solid #488C9A;">
+                <div class="cost-amount">
+                    <strong>Total Pallet Cost:</strong> $<?php echo number_format($total_pallet_cost, 2); ?>
+                </div>
             </div>
             <?php endif; ?>
 
@@ -361,6 +479,7 @@ $breadcrumbs[] = ['text' => 'Pallet Details'];
                                     <th>BOL Number</th>
                                     <th>Delivery Project</th>
                                     <th>Manufacturer</th>
+                                    <th>Origin</th>
                                     <th>Delivery Status</th>
                                     <th>Anticipated Date</th>
                                     <th>Actual Delivery</th>
@@ -382,12 +501,14 @@ $breadcrumbs[] = ['text' => 'Pallet Details'];
                                         <td><?php echo htmlspecialchars($delivery['delivery_project_name'] ?? ''); ?></td>
                                         <td>
                                             <?php 
-                                            // Extract manufacturer name (remove anything after " - ")
-                                            $manufacturer = $delivery['supplier'] ?? '';
-                                            if (strpos($manufacturer, ' - ') !== false) {
-                                                $manufacturer = trim(explode(' - ', $manufacturer)[0]);
-                                            }
-                                            echo htmlspecialchars($manufacturer); 
+                                            // Always show the actual manufacturer from pallet data
+                                            echo htmlspecialchars($pallet_data['origin_vendor'] ?? 'N/A'); 
+                                            ?>
+                                        </td>
+                                        <td>
+                                            <?php 
+                                            // Show the origin (supplier field from delivery)
+                                            echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); 
                                             ?>
                                         </td>
                                         <td>
@@ -436,8 +557,299 @@ $breadcrumbs[] = ['text' => 'Pallet Details'];
                 <?php endif; ?>
             </div>
 
+            <div class="deliveries-section">
+                <h2>Warehouse History</h2>
+                <?php if (!empty($warehouse_history)): ?>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Warehouse</th>
+                                    <th>Arrival Date</th>
+                                    <th>Departure Date</th>
+                                    <th>Days at Warehouse</th>
+                                    <th>Status</th>
+                                    <th>Total Costs</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($warehouse_history as $warehouse): ?>
+                                    <tr>
+                                        <td>
+                                            <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+                                                <a href="manage_warehouse_inventory.php?warehouse_id=<?php echo $warehouse['warehouse_id']; ?>" style="color: #488C9A; text-decoration: none; font-weight: 500;"><?php echo htmlspecialchars($warehouse['warehouse_name']); ?></a>
+                                            <?php else: ?>
+                                                <span style="font-weight: 500;"><?php echo htmlspecialchars($warehouse['warehouse_name']); ?></span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?php echo htmlspecialchars($warehouse['arrival_date'] ?? 'N/A'); ?></td>
+                                        <td>
+                                            <?php 
+                                            if (!empty($warehouse['departure_date'])) {
+                                                echo htmlspecialchars($warehouse['departure_date']);
+                                            } else {
+                                                echo '<span style="color: #856404; font-style: italic;">Still at warehouse</span>';
+                                            }
+                                            ?>
+                                        </td>
+                                        <td>
+                                            <?php 
+                                            if (!empty($warehouse['arrival_date'])) {
+                                                $arrival = new DateTime($warehouse['arrival_date']);
+                                                $departure = !empty($warehouse['departure_date']) ? new DateTime($warehouse['departure_date']) : new DateTime();
+                                                $days = $arrival->diff($departure)->days;
+                                                echo $days . ' day' . ($days != 1 ? 's' : '');
+                                            } else {
+                                                echo 'N/A';
+                                            }
+                                            ?>
+                                        </td>
+                                        <td>
+                                            <?php 
+                                            if (empty($warehouse['departure_date'])) {
+                                                echo '<span class="status-badge status-transit">Current Location</span>';
+                                            } else {
+                                                echo '<span class="status-badge status-delivered">Departed</span>';
+                                            }
+                                            ?>
+                                        </td>
+                                        <td>
+                                            <?php 
+                                            if ($warehouse['total_warehouse_costs'] > 0) {
+                                                $cost_data = htmlspecialchars($warehouse['cost_breakdown'] ?? '');
+                                                echo '<a href="#" onclick="showWarehouseCostModal(\'' . htmlspecialchars($warehouse['warehouse_name']) . '\', \'' . $cost_data . '\', ' . $warehouse['total_warehouse_costs'] . ')" style="color: #488C9A; text-decoration: none; font-weight: bold;">$' . number_format($warehouse['total_warehouse_costs'], 2) . '</a>';
+                                            } else {
+                                                echo '$0.00';
+                                            }
+                                            ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php else: ?>
+                    <div style="text-align: center; padding: 40px; background-color: #f8f9fa; border-radius: 8px; color: #6c757d;">
+                        <p style="margin: 0; font-size: 1.1em;">This pallet has no warehouse history recorded.</p>
+                    </div>
+                <?php endif; ?>
+            </div>
+
         <?php endif; ?> 
     </div>
 </main>
+
+<!-- Warehouse Cost Breakdown Modal -->
+<div id="warehouseCostModal" class="cost-modal">
+    <div class="cost-modal-content">
+        <div class="cost-modal-header">
+            <h3 id="warehouseModalTitle">Warehouse Cost Breakdown</h3>
+            <span class="cost-modal-close" onclick="closeWarehouseCostModal()">&times;</span>
+        </div>
+        <div class="cost-modal-body">
+            <div id="warehouseModalContent">
+                <!-- Content will be populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Cost Modal Styling */
+.cost-modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.cost-modal-content {
+    background-color: #fefefe;
+    margin: 10% auto;
+    padding: 0;
+    border: 1px solid #888;
+    width: 90%;
+    max-width: 600px;
+    border-radius: 8px;
+    animation: modalSlideIn 0.3s ease;
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-50px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.cost-modal-header {
+    color: white;
+    padding: 15px 20px;
+    border-radius: 8px 8px 0 0;
+    position: relative;
+}
+
+.cost-modal-header h3 {
+    margin: 0;
+    font-size: 1.2em;
+}
+
+.cost-modal-close {
+    position: absolute;
+    right: 15px;
+    top: 15px;
+    font-size: 24px;
+    cursor: pointer;
+    color: #293E4C;
+}
+
+.cost-modal-close:hover {
+    opacity: 0.7;
+}
+
+.cost-modal-body {
+    padding: 20px;
+}
+
+.breakdown-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.breakdown-item:last-child {
+    border-bottom: none;
+    font-weight: bold;
+    border-top: 2px solid #488C9A;
+    margin-top: 10px;
+    padding-top: 15px;
+}
+
+.breakdown-label {
+    font-weight: 500;
+    color: #333;
+}
+
+.breakdown-value {
+    font-weight: bold;
+    color: #488C9A;
+}
+</style>
+
+<script>
+// Warehouse Cost Modal Functions
+function showWarehouseCostModal(warehouseName, costData, totalCost) {
+    document.getElementById('warehouseModalTitle').textContent = `Cost Breakdown - ${warehouseName}`;
+    
+    const modalContent = document.getElementById('warehouseModalContent');
+    modalContent.innerHTML = '';
+    
+    if (costData && costData.trim() !== '') {
+        const costParts = costData.split('|');
+        let inFeeCost = 0;
+        let outFeeCost = 0;
+        let storageCost = 0;
+        let daysStored = 0;
+        
+        // Parse the new cost breakdown format
+        costParts.forEach(part => {
+            const [key, value] = part.split(':');
+            const numValue = parseFloat(value) || 0;
+            
+            switch(key) {
+                case 'in_fee':
+                    inFeeCost = numValue;
+                    break;
+                case 'out_fee':
+                    outFeeCost = numValue;
+                    break;
+                case 'storage':
+                    storageCost = numValue;
+                    break;
+                case 'days':
+                    daysStored = parseInt(value) || 0;
+                    break;
+            }
+        });
+        
+        // Create breakdown items
+        if (inFeeCost > 0) {
+            const inFeeDiv = document.createElement('div');
+            inFeeDiv.className = 'breakdown-item';
+            inFeeDiv.innerHTML = `
+                <div class="breakdown-label">
+                    Incoming Fee<br>
+                    <small style="color: #666;">Fee for receiving pallet</small>
+                </div>
+                <div class="breakdown-value">$${inFeeCost.toFixed(2)}</div>
+            `;
+            modalContent.appendChild(inFeeDiv);
+        }
+        
+        if (outFeeCost > 0) {
+            const outFeeDiv = document.createElement('div');
+            outFeeDiv.className = 'breakdown-item';
+            outFeeDiv.innerHTML = `
+                <div class="breakdown-label">
+                    Outgoing Fee<br>
+                    <small style="color: #666;">Fee for shipping pallet out</small>
+                </div>
+                <div class="breakdown-value">$${outFeeCost.toFixed(2)}</div>
+            `;
+            modalContent.appendChild(outFeeDiv);
+        }
+        
+        if (storageCost > 0) {
+            const storageDiv = document.createElement('div');
+            storageDiv.className = 'breakdown-item';
+            storageDiv.innerHTML = `
+                <div class="breakdown-label">
+                    Storage Fee<br>
+                    <small style="color: #666;">${daysStored} days of storage</small>
+                </div>
+                <div class="breakdown-value">$${storageCost.toFixed(2)}</div>
+            `;
+            modalContent.appendChild(storageDiv);
+        }
+        
+        // Add totals
+        const totalDiv = document.createElement('div');
+        totalDiv.className = 'breakdown-item';
+        totalDiv.innerHTML = `
+            <div class="breakdown-label">Total Warehouse Costs</div>
+            <div class="breakdown-value">$${totalCost.toFixed(2)}</div>
+        `;
+        modalContent.appendChild(totalDiv);
+        
+    } else {
+        modalContent.innerHTML = '<p>No detailed cost breakdown available.</p>';
+    }
+    
+    document.getElementById('warehouseCostModal').style.display = 'block';
+}
+
+function closeWarehouseCostModal() {
+    document.getElementById('warehouseCostModal').style.display = 'none';
+}
+
+// Close modal when clicking outside of it
+window.addEventListener('click', function(event) {
+    const modal = document.getElementById('warehouseCostModal');
+    if (event.target === modal) {
+        closeWarehouseCostModal();
+    }
+});
+</script>
+
 </body>
 </html> 
