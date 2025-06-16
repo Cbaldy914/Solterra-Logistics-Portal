@@ -148,41 +148,94 @@ $stmt_deliveries->execute();
 $deliveries_result = $stmt_deliveries->get_result();
 $stmt_deliveries->close();
 
-// Fetch warehouse info if any
-$stmtW = $conn->prepare("
-    SELECT w.id AS warehouse_id, w.in_fee, w.out_fee, w.monthly_storage_fee
-    FROM warehouses w
-    INNER JOIN projects p ON p.warehouse_id=w.id
-    WHERE p.id = ?
-    LIMIT 1
-");
-$stmtW->bind_param("i", $project_id);
-$stmtW->execute();
-$warehouse_res = $stmtW->get_result();
-$stmtW->close();
+// We'll fetch warehouse info per delivery instead of assuming one warehouse per project
 
-$warehouse = ($warehouse_res->num_rows>0)
-    ? $warehouse_res->fetch_assoc()
-    : null;
-
-// Helper for warehousing cost
-function calculateDeliveryWarehousingCost($delivery, $warehouse) {
-    if (!$warehouse || empty($delivery['warehouse_arrival_date'])) {
+// Helper for warehousing cost - now calculates based on actual pallet data like warehouse_info.php
+function calculateDeliveryWarehousingCost($delivery, $conn) {
+    if (!$conn || empty($delivery['warehouse_id'])) {
         return 0;
     }
-    $in_fee  = $warehouse['in_fee'];
-    $out_fee = (!empty($delivery['left_warehouse_date'])) ? $warehouse['out_fee'] : 0;
-
-    $start_date = new DateTime($delivery['warehouse_arrival_date']);
-    $end_date   = !empty($delivery['left_warehouse_date'])
-                    ? new DateTime($delivery['left_warehouse_date'])
-                    : new DateTime();
-
-    $interval = $start_date->diff($end_date);
-    $days_in_storage = $interval->days + 1;
-    $daily_storage_fee = $warehouse['monthly_storage_fee'] / 30;
-
-    return $in_fee + ($daily_storage_fee * $days_in_storage) + $out_fee;
+    
+    $delivery_id = $delivery['id'];
+    $warehouse_id = $delivery['warehouse_id'];
+    
+    // Get warehouse info for this specific delivery
+    $stmt_warehouse = $conn->prepare("
+        SELECT in_fee, out_fee, monthly_storage_fee 
+        FROM warehouses 
+        WHERE id = ?
+    ");
+    if (!$stmt_warehouse) {
+        return 0;
+    }
+    
+    $stmt_warehouse->bind_param("i", $warehouse_id);
+    $stmt_warehouse->execute();
+    $warehouse_result = $stmt_warehouse->get_result();
+    
+    if ($warehouse_result->num_rows === 0) {
+        $stmt_warehouse->close();
+        return 0;
+    }
+    
+    $warehouse = $warehouse_result->fetch_assoc();
+    $stmt_warehouse->close();
+    
+    // Get all pallets associated with this delivery
+    $stmt_pallets = $conn->prepare("
+        SELECT ip.id, ip.arrival_date, ip.current_warehouse_id, ip.status,
+               CASE 
+                   WHEN ip.status = 'In Warehouse' THEN DATEDIFF(CURDATE(), ip.arrival_date)
+                   WHEN ip.status = 'Delivered' THEN DATEDIFF(CURDATE(), ip.arrival_date)
+                   ELSE 0
+               END as days_stored,
+               CASE 
+                   WHEN ip.status = 'Delivered' THEN 1
+                   ELSE 0
+               END as has_left_warehouse
+        FROM delivery_pallets dp
+        JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+        WHERE dp.delivery_id = ?
+    ");
+    
+    if (!$stmt_pallets) {
+        return 0;
+    }
+    
+    $stmt_pallets->bind_param("i", $delivery_id);
+    $stmt_pallets->execute();
+    $result_pallets = $stmt_pallets->get_result();
+    
+    $pallet_count = 0;
+    $pallets_that_left = 0;
+    $total_storage_days = 0;
+    
+    while ($pallet = $result_pallets->fetch_assoc()) {
+        $pallet_count++;
+        $days_stored = max(0, intval($pallet['days_stored']));
+        $total_storage_days += $days_stored;
+        
+        if ($pallet['has_left_warehouse']) {
+            $pallets_that_left++;
+        }
+    }
+    $stmt_pallets->close();
+    
+    if ($pallet_count === 0) {
+        return 0;
+    }
+    
+    // Calculate costs like warehouse_info.php
+    $in_fee_cost = ($warehouse['in_fee'] ?? 0) * $pallet_count; // All pallets that arrived
+    $out_fee_cost = ($warehouse['out_fee'] ?? 0) * $pallets_that_left; // Only pallets that left
+    
+    // Storage cost based on actual days stored
+    $daily_storage_rate = ($warehouse['monthly_storage_fee'] ?? 0) / 30;
+    $storage_cost = $total_storage_days * $daily_storage_rate;
+    
+    $total_warehousing_cost = $in_fee_cost + $out_fee_cost + $storage_cost;
+    
+    return $total_warehousing_cost;
 }
 
 // Initialize totals
@@ -228,7 +281,7 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     }
 
     // Warehousing cost
-    $warehousing_cost = calculateDeliveryWarehousingCost($delivery, $warehouse);
+    $warehousing_cost = calculateDeliveryWarehousingCost($delivery, $conn);
     $total_warehousing_cost += $warehousing_cost;
 
     // Solterra fee only if actual_delivery_date
