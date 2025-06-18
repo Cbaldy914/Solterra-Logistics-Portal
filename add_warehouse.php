@@ -14,6 +14,9 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// Get Google Maps API key from config
+$google_maps_api_key = getGoogleMapsApiKey();
+
 // Prepare variables to hold user messages:
 $successMessage = "";
 $errorMessage   = "";
@@ -243,7 +246,7 @@ $conn->close();
 </main>
 
 <!-- Load the Google Maps JavaScript API with Places library -->
-<script src="https://maps.googleapis.com/maps/api/js?key=REDACTED_GOOGLE_MAPS_KEY&libraries=places"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
 
 <script>
 function initializeAddressAutocomplete() {

@@ -14,6 +14,9 @@ if (!$conn) {
     die("Database connection failed.");
 }
 
+// Get Google Maps API key from config
+$google_maps_api_key = getGoogleMapsApiKey();
+
 $role = $_SESSION['role'];
 $user_id = $_SESSION['user_id'];
 $selected_project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
@@ -855,7 +858,7 @@ $conn->close();
 </div>
 
 <!-- Load Google Maps JavaScript API -->
-<script src="https://maps.googleapis.com/maps/api/js?key=REDACTED_GOOGLE_MAPS_KEY&libraries=places"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
 
 <script>
 // Movement data from PHP
