@@ -1,6 +1,11 @@
 <?php
 // Set a unique session name for the logistics portal
 session_name("logistics_session");
+    // Ensure session cookies are sent only over HTTPS and are not accessible via JavaScript
+    session_set_cookie_params([
+        'secure' => true,
+        'httponly' => true,
+    ]);
 session_start();
 
 // Initialize variables
