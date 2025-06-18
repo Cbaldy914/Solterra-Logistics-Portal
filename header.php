@@ -2,6 +2,11 @@
 // Start the session if it's not already started
 if (session_status() == PHP_SESSION_NONE) {
     session_name("logistics_session");
+        // Ensure session cookies are sent only over HTTPS and are not accessible via JavaScript
+        session_set_cookie_params([
+            'secure' => true,
+            'httponly' => true,
+        ]);
     session_start();
 }
 
