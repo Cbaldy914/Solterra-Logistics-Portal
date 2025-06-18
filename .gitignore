@@ -1,0 +1,17 @@
+# Dependency directories
+vendor/
+node_modules/
+
+# Environment and configuration files
+config.php
+.env
+.env.*
+
+# Logs and cache
+*.log
+*.tmp
+*.cache
+
+# OS generated files
+.DS_Store
+Thumbs.db
