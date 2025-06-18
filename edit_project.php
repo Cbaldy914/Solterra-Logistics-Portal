@@ -14,6 +14,9 @@ if (!$conn) {
     die("Database connection failed.");
 }
 
+// Get Google Maps API key from config
+$google_maps_api_key = getGoogleMapsApiKey();
+
 // Check if we have a project_id (for both GET and POST)
 if (!isset($_REQUEST['project_id'])) {
     die("Project ID is missing.");
@@ -394,7 +397,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </main>
 
     <!-- Load the Google Maps JavaScript API with Places library -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCYF3qz_6niMzpTd0yklUX9YNpk73KviBM&libraries=places"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
 
     <script>
     function initializeAddressAutocomplete() {

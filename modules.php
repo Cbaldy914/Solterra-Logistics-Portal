@@ -496,7 +496,6 @@ if ($conn && $conn instanceof mysqli) {
             background-color: #e8690b;
         }
         .action-buttons.project {
-            background-color: #6f42c1;
             color: white;
             padding: 4px 8px;
             text-decoration: none;
@@ -505,7 +504,7 @@ if ($conn && $conn instanceof mysqli) {
             margin-right: 5px;
         }
         .action-buttons.project:hover {
-            background-color: #5a32a3;
+            background-color: #293E4C;
         }
         .error-message {
             color: #721c24;
@@ -1109,7 +1108,7 @@ if ($conn && $conn instanceof mysqli) {
                                     </div>
                                 </div>
                                 <?php elseif (isset($_SESSION['role']) && $_SESSION['role'] === 'user' && !empty($batch['project_id'])): ?>
-                                <a href="project_overview.php?id=<?php echo $batch['project_id']; ?>" class="action-buttons project">Project Overview</a>
+                                <a href="project_overview.php?project_id=<?php echo $batch['project_id']; ?>" class="action-buttons project">Project Overview</a>
                                 <?php endif; ?>
                             </td>
                         </tr>
