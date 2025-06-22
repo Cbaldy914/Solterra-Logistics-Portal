@@ -314,7 +314,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // Close dropdowns when clicking outside
-    document.addEventListener('click', function(e) {
+document.addEventListener('click', function(e) {
         if (!e.target.closest('.dropdown')) {
             document.querySelectorAll('.menu li.dropdown.open').forEach(openDropdown => {
                 openDropdown.classList.remove('open');
@@ -323,3 +323,5 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
+<div id="sunny-chat"></div>
+<script src="/Solterra-Logistics-Portal/components/chat-widget.js" defer></script>
