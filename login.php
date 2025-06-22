@@ -160,5 +160,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <footer>
         <p>© Solterra Solutions. All Rights Reserved.</p>
     </footer>
+    <div id="sunny-chat"></div>
+    <script src="/Solterra-Logistics-Portal/components/chat-widget.js" defer></script>
 </body>
 </html>
