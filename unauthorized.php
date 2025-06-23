@@ -9,7 +9,5 @@
     <h1>Unauthorized Access</h1>
     <p>You do not have permission to view this page.</p>
     <a href="login">Return to Login</a>
-    <div id="sunny-chat"></div>
-    <script src="/Solterra-Logistics-Portal/components/chat-widget.js" defer></script>
 </body>
 </html>

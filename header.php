@@ -323,5 +323,4 @@ document.addEventListener('click', function(e) {
     });
 });
 </script>
-<div id="sunny-chat"></div>
-<script src="/Solterra-Logistics-Portal/components/chat-widget.js" defer></script>
+
