@@ -324,3 +324,8 @@ document.addEventListener('click', function(e) {
 });
 </script>
 
+<?php
+// Include Sunny Chat Assistant Component
+include_once __DIR__ . '/ai-assistant/components/sunny-chat.php';
+?>
+
