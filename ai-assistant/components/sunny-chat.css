@@ -534,6 +534,37 @@
     animation: slideUp 0.3s ease-out;
 }
 
+#sunny-chat-window.fullscreen {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    bottom: 20px;
+    width: calc(100vw - 40px);
+    height: calc(100vh - 40px);
+    z-index: 10000;
+    animation: expandToFullscreen 0.3s ease-out;
+}
+
+@keyframes expandToFullscreen {
+    from {
+        width: 400px;
+        height: 600px;
+        top: auto;
+        left: auto;
+        right: 20px;
+        bottom: 90px;
+    }
+    to {
+        width: calc(100vw - 40px);
+        height: calc(100vh - 40px);
+        top: 20px;
+        left: 20px;
+        right: 20px;
+        bottom: 20px;
+    }
+}
+
 .sunny-chat-header {
     background: linear-gradient(135deg, var(--primary-blue) 0%, var(--secondary-blue) 100%);
     color: white;
@@ -587,11 +618,28 @@
     color: var(--error-red);
 }
 
+.sunny-expand-btn {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s ease;
+    margin-left: 8px;
+}
+
+.sunny-expand-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
 .sunny-quick-actions {
-    padding: 16px 20px;
-    border-bottom: 1px solid #eee;
     display: flex;
     gap: 8px;
+    margin-bottom: 12px;
     flex-wrap: wrap;
 }
 
@@ -665,20 +713,24 @@
 
 .message-content {
     background: white;
-    border-radius: 12px;
-    padding: 12px 16px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border-radius: 18px 18px 18px 4px;
+    padding: 14px 18px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border: 1px solid #f0f0f0;
 }
 
 .message.user .message-content {
     background: var(--secondary-blue);
     color: white;
+    border-radius: 18px 18px 4px 18px;
+    border: none;
 }
 
 .message-text {
     margin: 0;
     font-size: 14px;
-    line-height: 1.4;
+    line-height: 1.5;
+    font-weight: 400;
 }
 
 .message-time {

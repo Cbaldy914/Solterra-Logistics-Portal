@@ -36,26 +36,32 @@ class SunnyChat {
             <div class="sunny-chat-header">
                 <div class="sunny-avatar-small">☀️</div>
                 <div class="sunny-header-info">
-                    <div class="sunny-name">Hi ${window.currentUser || 'there'}! 👋</div>
-                    <div class="sunny-subtitle">I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</div>
+                    <div class="sunny-name">Sunny</div>
+                    <div class="sunny-subtitle">Logistics Assistant</div>
                 </div>
                 <div class="sunny-connection-status" id="sunny-connection-status">
                     <div class="connection-indicator"></div>
-                    <span class="connection-text">Connecting...</span>
                 </div>
-            </div>
-            
-            <div class="sunny-quick-actions">
-                <button class="quick-action-btn" data-action="Recent Deliveries">Recent Deliveries</button>
-                <button class="quick-action-btn" data-action="Project Status">Project Status</button>
-                <button class="quick-action-btn" data-action="Inventory Summary">Inventory Summary</button>
+                <button class="sunny-expand-btn" id="sunny-expand-btn" title="Expand to fullscreen">
+                    <svg class="expand-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                    </svg>
+                    <svg class="collapse-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                        <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+                    </svg>
+                </button>
             </div>
             
             <div class="sunny-messages" id="sunny-messages">
-                <div class="message assistant">
-                    <div class="message-content">
-                        <div class="message-text">Hello! I'm ready to help you with your logistics questions. Try clicking one of the quick actions above or ask me anything!</div>
-                    </div>
+                <div class="sunny-welcome-message">
+                    <h4>Hi ${window.currentUser || 'there'}! 👋</h4>
+                    <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
+                </div>
+                
+                <div class="sunny-quick-actions">
+                    <button class="quick-action-btn" data-action="Recent Deliveries">Recent Deliveries</button>
+                    <button class="quick-action-btn" data-action="Project Status">Project Status</button>
+                    <button class="quick-action-btn" data-action="Inventory Summary">Inventory Summary</button>
                 </div>
             </div>
             
@@ -78,6 +84,7 @@ class SunnyChat {
         const sendBtn = document.getElementById('sunny-send-btn');
         const input = document.getElementById('sunny-input');
         const quickActionBtns = document.querySelectorAll('.quick-action-btn');
+        const expandBtn = document.getElementById('sunny-expand-btn');
 
         chatButton.addEventListener('click', (e) => {
             if (e.target.id === 'sunny-close-btn') {
@@ -90,6 +97,11 @@ class SunnyChat {
         closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this.toggleChat();
+        });
+
+        expandBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleFullscreen();
         });
 
         sendBtn.addEventListener('click', () => this.sendMessage());
@@ -125,6 +137,38 @@ class SunnyChat {
         } else {
             chatWindow.classList.remove('open');
             chatButton.classList.remove('chat-open');
+            // Also remove fullscreen if closing
+            chatWindow.classList.remove('fullscreen');
+            this.updateExpandButton(false);
+        }
+    }
+
+    toggleFullscreen() {
+        const chatWindow = document.getElementById('sunny-chat-window');
+        const isFullscreen = chatWindow.classList.contains('fullscreen');
+        
+        if (isFullscreen) {
+            chatWindow.classList.remove('fullscreen');
+        } else {
+            chatWindow.classList.add('fullscreen');
+        }
+        
+        this.updateExpandButton(!isFullscreen);
+    }
+
+    updateExpandButton(isFullscreen) {
+        const expandBtn = document.getElementById('sunny-expand-btn');
+        const expandIcon = expandBtn.querySelector('.expand-icon');
+        const collapseIcon = expandBtn.querySelector('.collapse-icon');
+        
+        if (isFullscreen) {
+            expandIcon.style.display = 'none';
+            collapseIcon.style.display = 'block';
+            expandBtn.title = 'Exit fullscreen';
+        } else {
+            expandIcon.style.display = 'block';
+            collapseIcon.style.display = 'none';
+            expandBtn.title = 'Expand to fullscreen';
         }
     }
 
@@ -154,16 +198,11 @@ class SunnyChat {
         this.isConnected = connected;
         const statusElement = document.getElementById('sunny-connection-status');
         const indicator = statusElement.querySelector('.connection-indicator');
-        const text = statusElement.querySelector('.connection-text');
         
         if (connected) {
             indicator.className = 'connection-indicator connected';
-            text.textContent = message;
-            text.className = 'connection-text connected';
         } else {
             indicator.className = 'connection-indicator disconnected';
-            text.textContent = message;
-            text.className = 'connection-text disconnected';
         }
     }
 
