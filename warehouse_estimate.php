@@ -26,6 +26,43 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// Helper function to safely validate database connection
+function validateDatabaseConnection(&$conn) {
+    if (!$conn || !is_object($conn)) {
+        $conn = getDBConnection();
+        return ($conn !== false);
+    }
+    
+    // Check if connection has errors
+    if (isset($conn->connect_errno) && $conn->connect_errno) {
+        $conn = getDBConnection();
+        return ($conn !== false);
+    }
+    
+    // Try to ping the connection
+    try {
+        if (!$conn->ping()) {
+            $conn = getDBConnection();
+            return ($conn !== false);
+        }
+    } catch (Error $e) {
+        // Connection is closed or invalid
+        $conn = getDBConnection();
+        return ($conn !== false);
+    } catch (Exception $e) {
+        // Any other connection issue
+        $conn = getDBConnection();
+        return ($conn !== false);
+    }
+    
+    return true;
+}
+
+// Validate initial connection
+if (!validateDatabaseConnection($conn)) {
+    die("Connection failed after reconnection attempt");     
+}
+
 // Initialize variables
 $estimate_name = '';
 $project_location = '';
@@ -45,16 +82,30 @@ $error_message = '';
 if (isset($_GET['delete_estimate'])) {
     $estimate_id_to_delete = intval($_GET['delete_estimate']);
 
-    // Verify that the estimate belongs to the current user
-    $stmt = $conn->prepare("DELETE FROM warehouse_quotes WHERE id = ? AND user_id = ?");
-    $stmt->bind_param("ii", $estimate_id_to_delete, $user_id);
-
-    if ($stmt->execute()) {
-        $success_message = "Estimate deleted successfully!";
-    } else {
-        $error_message = "Error deleting estimate: " . $stmt->error;
+    // Validate connection before using it
+    if (!validateDatabaseConnection($conn)) {
+        $error_message = "Database connection error.";
     }
-    $stmt->close();
+    
+    if ($conn) {
+        // Verify that the estimate belongs to the current user
+        $stmt = $conn->prepare("DELETE FROM warehouse_quotes WHERE id = ? AND user_id = ?");
+        if ($stmt) {
+            $stmt->bind_param("ii", $estimate_id_to_delete, $user_id);
+
+            if ($stmt->execute()) {
+                $success_message = "Estimate deleted successfully!";
+            } else {
+                $error_message = "Error deleting estimate: " . $stmt->error;
+            }
+            $stmt->close();
+        } else {
+            $error_message = "Database error: Unable to prepare delete statement.";
+            error_log("Failed to prepare delete statement: " . $conn->error);
+        }
+    } else {
+        $error_message = "Database connection error.";
+    }
 
     // Refresh the page to update the list
     header("Location: " . basename($_SERVER['PHP_SELF']));
@@ -345,16 +396,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <button id="saved-estimates-button" class="submit-button">Saved Quotes</button>
     <div id="saved-estimates-list" style="display: none;">
         <?php
-        // Fetch user's saved estimates
-        $stmt = $conn->prepare("SELECT id, name, created_at FROM warehouse_quotes WHERE user_id = ? ORDER BY created_at DESC");
-        $stmt->bind_param("i", $user_id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $saved_estimates = [];
-        while ($row = $result->fetch_assoc()) {
-            $saved_estimates[] = $row;
+        // Validate connection before using it
+        validateDatabaseConnection($conn);
+        
+        if ($conn) {
+            // Fetch user's saved estimates
+            $stmt = $conn->prepare("SELECT id, name, created_at FROM warehouse_quotes WHERE user_id = ? ORDER BY created_at DESC");
+            if ($stmt) {
+                $stmt->bind_param("i", $user_id);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                $saved_estimates = [];
+                while ($row = $result->fetch_assoc()) {
+                    $saved_estimates[] = $row;
+                }
+                $stmt->close();
+            } else {
+                $saved_estimates = [];
+                error_log("Failed to prepare saved estimates query: " . $conn->error);
+            }
+        } else {
+            $saved_estimates = [];
+            error_log("Database connection lost when fetching saved estimates");
         }
-        $stmt->close();
         ?>
 
         <?php if (!empty($saved_estimates)): ?>

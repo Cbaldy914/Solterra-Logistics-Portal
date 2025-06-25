@@ -29,6 +29,7 @@ if (empty($message)) {
 require_once __DIR__ . '/../../../config.php';
 require_once __DIR__ . '/query-executor.php';
 require_once __DIR__ . '/sunny-tools.php';
+require_once __DIR__ . '/openai-client.php';
 
 // Load Sunny configuration
 $sunnyConfig = require_once __DIR__ . '/../config/sunny-config.php';
@@ -36,13 +37,41 @@ $sunnyConfig = require_once __DIR__ . '/../config/sunny-config.php';
 // Get user context
 $user_id = $_SESSION['user_id'];
 $user_role = $_SESSION['role'] ?? 'user';
-$account_id = null; // Will be fetched from database if needed
+$account_id = $_SESSION['account_id'] ?? null; // Get from session
 $user_name = $_SESSION['username'] ?? 'User';
 
+// For non-global-admin users, ensure account_id is set
+if ($user_role !== 'global_admin' && $account_id === null) {
+    // Try to get account_id from customer_account_users table
+    try {
+        $conn = getDBConnection();
+        if ($conn) {
+            $stmt = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ?");
+            $stmt->bind_param("i", $user_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if ($row = $result->fetch_assoc()) {
+                $account_id = $row['account_id'];
+            }
+            $stmt->close();
+        }
+    } catch (Exception $e) {
+        error_log("Failed to get account_id for user {$user_id}: " . $e->getMessage());
+    }
+}
+
 try {
+    // Check for OpenAI API key
+    $apiKey = $sunnyConfig['openai']['api_key'];
+    if (empty($apiKey)) {
+        echo "data: " . json_encode(['type' => 'error', 'message' => 'OpenAI API key not configured']) . "\n\n";
+        exit;
+    }
+
     // Initialize components
     $queryExecutor = new SunnyQueryExecutor($user_role, $account_id);
     $sunnyTools = new SunnyTools($user_role, $account_id);
+    $openAIClient = new OpenAIClient($apiKey, $sunnyConfig['openai']['base_url'], $sunnyConfig['openai']['model']);
     
     // Build user context
     $userContext = [
@@ -69,16 +98,12 @@ try {
         }
     }
     
-    // Build context for Ollama
-    $systemPrompt = file_get_contents(__DIR__ . '/../sunny_system_prompt.md');
-    $contextData = buildContextForOllama($userContext, $toolResults, $message);
-    
-    // Stream response from Ollama
-    streamOllamaResponse($systemPrompt, $contextData, $message);
+    // Stream response from OpenAI
+    streamOpenAIResponse($openAIClient, $userContext, $toolResults, $message);
     
 } catch (Exception $e) {
-    error_log("Chat stream error: " . $e->getMessage());
-    echo "data: " . json_encode(['type' => 'error', 'message' => 'An error occurred while processing your request']) . "\n\n";
+    error_log("Chat stream error: " . $e->getMessage() . " | File: " . $e->getFile() . " | Line: " . $e->getLine());
+    echo "data: " . json_encode(['type' => 'error', 'message' => 'An error occurred while processing your request. Please try again.']) . "\n\n";
 }
 
 function detectToolsFromMessage($message) {
@@ -91,6 +116,7 @@ function detectToolsFromMessage($message) {
         '/^(how are you|how\'s it going|what\'s up|sup)[\s\!\?]*$/i',
         '/^(thanks|thank you|thx|bye|goodbye|see you|take care)[\s\!\?]*$/i',
         '/^(yes|no|ok|okay|sure|fine|great|awesome|cool)[\s\!\?]*$/i',
+        '/^(test|testing|hello|hi there)[\s\!\?]*$/i', // Simple test messages
         '/^(what is \d+\+\d+|what is \d+ plus \d+|calculate|math)/', // Math questions
         '/^(who are you|what can you do|help|what do you do)[\s\!\?]*$/i'
     ];
@@ -147,78 +173,21 @@ function detectToolsFromMessage($message) {
     return array_unique($tools);
 }
 
-function buildContextForOllama($userContext, $toolResults, $message) {
-    $context = "";
-    
-    // Add user context if available
-    if (!empty($userContext['user_name'])) {
-        $context .= "User: " . $userContext['user_name'];
-        if (!empty($userContext['role'])) {
-            $context .= " (" . $userContext['role'] . ")";
-        }
-        $context .= "\n\n";
-    }
-    
-    // Add tool results if available
-    if (!empty($toolResults)) {
-        $context .= "Available Data:\n";
-        foreach ($toolResults as $tool => $data) {
-            if (isset($data['success']) && $data['success'] && !empty($data['data'])) {
-                $toolName = ucfirst(str_replace(['get', 'search'], '', $tool));
-                $count = is_array($data['data']) ? count($data['data']) : 0;
-                $context .= "- {$toolName}: {$count} records found\n";
-            }
-        }
-        $context .= "\n";
-    }
-    
-    // Add the user's message clearly
-    $context .= "User says: \"" . $message . "\"\n\n";
-    $context .= "Please respond as Sunny:";
-    
-    return $context;
-}
-
-function streamOllamaResponse($systemPrompt, $context, $userMessage) {
+function streamOpenAIResponse($openAIClient, $userContext, $toolResults, $userMessage) {
     global $sunnyConfig, $streamBuffer;
     
     // Clear any leftover buffer from previous requests
     $streamBuffer = '';
     
-    // Ollama endpoint
-    $ollamaUrl = $sunnyConfig['ollama']['base_url'] . '/api/generate';
+    // Set up streaming callback
+    $openAIClient->setStreamCallback('handleOpenAIStream');
     
-    // Build the prompt cleanly
-    $fullPrompt = $systemPrompt . "\n\n" . $context;
+    // Start streaming
+    $result = $openAIClient->generateStreamingResponse($userMessage, $userContext, $toolResults);
     
-    $postData = json_encode([
-        'model' => $sunnyConfig['ollama']['model'],
-        'prompt' => $fullPrompt,
-        'stream' => true,
-        'options' => $sunnyConfig['ollama']['options']
-    ]);
-    
-    // Initialize cURL for streaming
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $ollamaUrl);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'Content-Length: ' . strlen($postData)
-    ]);
-    curl_setopt($ch, CURLOPT_WRITEFUNCTION, 'handleOllamaStream');
-    curl_setopt($ch, CURLOPT_TIMEOUT, $sunnyConfig['ollama']['timeout']);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    
-    // Execute the request
-    $result = curl_exec($ch);
-    
-    if (curl_error($ch)) {
+    if (!$result['success']) {
         echo "data: " . json_encode(['type' => 'error', 'message' => 'Failed to connect to AI service']) . "\n\n";
     }
-    
-    curl_close($ch);
     
     // Send completion signal
     echo "data: " . json_encode(['type' => 'complete']) . "\n\n";
@@ -228,7 +197,7 @@ function streamOllamaResponse($systemPrompt, $context, $userMessage) {
 // Global buffer to handle partial JSON responses
 $streamBuffer = '';
 
-function handleOllamaStream($ch, $data) {
+function handleOpenAIStream($data) {
     global $streamBuffer;
     
     // Add new data to buffer
@@ -239,24 +208,31 @@ function handleOllamaStream($ch, $data) {
         $line = substr($streamBuffer, 0, $pos);
         $streamBuffer = substr($streamBuffer, $pos + 1);
         
-        // Skip empty lines
-        if (empty(trim($line))) continue;
+        // Skip empty lines and non-data lines
+        if (empty(trim($line)) || strpos($line, 'data: ') !== 0) {
+            continue;
+        }
+        
+        // Extract JSON from data: prefix
+        $jsonData = trim(substr($line, 6));
+        
+        // Check for stream end
+        if ($jsonData === '[DONE]') {
+            $streamBuffer = '';
+            break;
+        }
         
         try {
-            $json = json_decode($line, true);
-            if ($json && isset($json['response']) && $json['response'] !== '') {
-                // Send token to client
-                echo "data: " . json_encode([
-                    'type' => 'token',
-                    'content' => $json['response']
-                ]) . "\n\n";
-                flush();
-                
-                // Check if generation is done
-                if (isset($json['done']) && $json['done']) {
-                    // Clear buffer when done
-                    $streamBuffer = '';
-                    break;
+            $json = json_decode($jsonData, true);
+            if ($json && isset($json['choices'][0]['delta']['content'])) {
+                $content = $json['choices'][0]['delta']['content'];
+                if ($content !== '') {
+                    // Send token to client
+                    echo "data: " . json_encode([
+                        'type' => 'token',
+                        'content' => $content
+                    ]) . "\n\n";
+                    flush();
                 }
             }
         } catch (Exception $e) {

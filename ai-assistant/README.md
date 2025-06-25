@@ -4,12 +4,13 @@ Sunny is an intelligent logistics assistant for the Solterra Solutions portal th
 
 ## Features
 
-- 🤖 **AI-Powered Chat**: Uses Ollama with Gemma 2B model for intelligent responses
+- 🤖 **AI-Powered Chat**: Uses OpenAI O3 model for high-quality intelligent responses
 - 🔒 **Role-Based Security**: Respects portal user roles and account access
 - 📊 **Data Integration**: Access to projects, deliveries, warehouses, and more
-- ⚡ **Real-time Streaming**: WebSocket-based streaming for instant responses
+- ⚡ **Real-time Streaming**: Server-sent events for instant responses
 - 🎨 **Portal Integration**: Seamlessly integrated with existing portal design
 - 📱 **Mobile Responsive**: Works perfectly on all device sizes
+- 💰 **Cost-Effective**: Pay-per-use pricing with built-in cost tracking
 
 ## Architecture
 
@@ -18,127 +19,83 @@ Sunny is an intelligent logistics assistant for the Solterra Solutions portal th
 1. **Frontend UI** (`components/`)
    - `sunny-chat.php` - Main chat component
    - `sunny-chat.css` - Styling and animations
-   - `sunny-chat.js` - Client-side JavaScript with Socket.IO
+   - `sunny-chat.js` - Client-side JavaScript with EventSource
 
 2. **Backend API** (`api/`)
    - `query-executor.php` - Secure database query handler
    - `sunny-tools.php` - Pre-built logistics functions
-   - `ollama-client.php` - Ollama API integration
+   - `openai-client.php` - OpenAI API integration
+   - `chat-stream.php` - Server-sent events streaming
+   - `test-connection.php` - API connectivity testing
 
-3. **WebSocket Server** (`server/`)
-   - `server.js` - Node.js Socket.IO server
-   - Handles real-time communication and streaming
+3. **Configuration** (`config/`)
+   - `sunny-config.php` - OpenAI and application settings
 
 4. **AI Configuration**
    - `sunny_system_prompt.md` - AI behavior and tool definitions
 
 ## Prerequisites
 
-- **PHP 7.4+** with MySQLi extension
-- **Node.js 16+** and npm
-- **Ollama server** running with Gemma 2B model
+- **PHP 7.4+** with MySQLi and cURL extensions
+- **OpenAI API Key** (O3 model access)
 - **MySQL/MariaDB** database access
-- **Web server** (Apache/Nginx) with WebSocket support
+- **Web server** (Apache/Nginx) with standard PHP support
 
 ## Installation
 
-### 1. Backend Setup
+### 1. Upload Files
 
-The PHP components are already integrated into your portal structure. Sunny will automatically appear on all portal pages for logged-in users.
+Upload the entire `ai-assistant` folder to your web server under your logistics portal directory.
 
-### 2. Node.js Server Setup
+### 2. API Key Configuration
 
-```bash
-# Navigate to the server directory
-cd Solterra-Logistics-Portal/ai-assistant/server
+The OpenAI API key is automatically configured through your existing `env.php` system:
 
-# Install dependencies
-npm install
-
-# Copy and configure environment
-cp config.env.example .env
-nano .env  # Edit with your settings
-
-# Start the server
-./start-sunny.sh
+```php
+// Already added to your env.php
+putenv('OPENAI_API_KEY=your_api_key_here');
 ```
 
-### 3. Environment Configuration
+### 3. Verify Configuration
 
-Edit `.env` file in the server directory:
-
-```bash
-# Server Settings
-SUNNY_PORT=3001
-NODE_ENV=production
-
-# Ollama Configuration
-OLLAMA_URL=https://ai.solterrasol.com:11434
-OLLAMA_MODEL=gemma:2b
-
-# Database Configuration
-DB_HOST=localhost
-DB_USER=SolterraSolutions
-DB_PASSWORD=CompanyAdmin!
-DB_NAME=solterra_portal
+Test the setup by visiting:
+```
+https://yourdomain.com/Solterra-Logistics-Portal/ai-assistant/api/test-connection.php
 ```
 
-### 4. Ollama Model Setup
+### 4. Integration
 
-Ensure your Ollama server has the Gemma 2B model:
-
-```bash
-# On your Ollama server
-ollama pull gemma:2b
-ollama list  # Verify model is available
-```
+The PHP components integrate automatically with your portal. Sunny will appear on all portal pages for logged-in users.
 
 ## Deployment
 
 ### Production Deployment
 
-1. **Reverse Proxy Setup** (Nginx example):
+1. **File Upload**: Upload the `ai-assistant` folder to your web server
 
-```nginx
-# Add to your nginx config
-location /socket.io/ {
-    proxy_pass http://localhost:3001;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-```
+2. **Permissions**: Ensure proper file permissions:
+   ```bash
+   # Set directory permissions
+   chmod 755 ai-assistant/
+   chmod 644 ai-assistant/api/*.php
+   chmod 644 ai-assistant/config/*.php
+   chmod 644 ai-assistant/components/*
+   ```
 
-2. **Process Management** (PM2 example):
+3. **Logs Directory**: Create a logs directory for cost tracking:
+   ```bash
+   mkdir ai-assistant/logs
+   chmod 755 ai-assistant/logs
+   ```
 
-```bash
-# Install PM2
-npm install -g pm2
+4. **SSL/HTTPS**: Standard HTTPS configuration through your web server
 
-# Start Sunny with PM2
-cd Solterra-Logistics-Portal/ai-assistant/server
-pm2 start server.js --name "sunny-chat"
-pm2 startup  # Configure auto-start
-pm2 save
-```
+### No Additional Infrastructure Required
 
-3. **SSL/HTTPS Configuration**:
-   - Ensure your web server supports WebSocket over HTTPS
-   - Update CORS origins in the Node.js server configuration
-
-### Firewall Configuration
-
-```bash
-# Allow internal communication to Node.js server
-ufw allow 3001/tcp
-
-# Or restrict to localhost only
-ufw allow from 127.0.0.1 to any port 3001
-```
+- ✅ **No Node.js server** needed
+- ✅ **No additional ports** to open  
+- ✅ **No process management** required
+- ✅ **Standard PHP hosting** works perfectly
 
 ## Configuration
 
@@ -177,35 +134,33 @@ Sunny has access to these pre-built functions:
 ### Health Checks
 
 ```bash
-# Check server status
-curl http://localhost:3001/health
+# Test API connectivity
+curl https://yourdomain.com/Solterra-Logistics-Portal/ai-assistant/api/test-connection.php
 
-# Check Ollama connectivity
-curl https://ai.solterrasol.com:11434/api/tags
+# Check OpenAI API status
+# (API key and connectivity test built into the test endpoint)
 ```
 
 ### Logs
 
-Server logs are stored in `server/logs/`:
-- `combined.log` - All log entries
-- `error.log` - Error messages only
+Application logs are stored in `ai-assistant/logs/`:
+- `sunny.log` - Chat interactions and errors
+- `sunny-costs.log` - Cost tracking and usage metrics
 
 ```bash
-# Monitor logs
-tail -f server/logs/combined.log
+# Monitor chat logs
+tail -f ai-assistant/logs/sunny.log
+
+# Monitor cost usage
+tail -f ai-assistant/logs/sunny-costs.log
 ```
 
-### Performance Monitoring
+### Cost Monitoring
 
-```bash
-# With PM2
-pm2 status
-pm2 monit
-
-# Or check Node.js process
-ps aux | grep node
-netstat -tulpn | grep 3001
-```
+Built-in cost tracking helps you monitor OpenAI API usage:
+- Daily cost limits per user (configurable)
+- Real-time usage tracking
+- Cost breakdowns by model and tokens
 
 ## Usage
 
@@ -231,34 +186,34 @@ netstat -tulpn | grep 3001
 1. **Chat not appearing**:
    - Verify user is logged into portal
    - Check browser console for JavaScript errors
-   - Ensure CSS file is loading correctly
+   - Ensure CSS and JS files are loading correctly
 
 2. **Connection errors**:
-   - Verify Node.js server is running (`ps aux | grep node`)
-   - Check firewall settings
-   - Verify WebSocket support in web server config
+   - Test API connectivity using test-connection.php
+   - Verify OpenAI API key is correctly set in env.php
+   - Check server error logs for cURL or API issues
 
 3. **No AI responses**:
-   - Check Ollama server accessibility
-   - Verify model is loaded (`ollama list`)
-   - Check Node.js server logs
+   - Verify OpenAI API key has correct permissions
+   - Check if daily cost limits have been reached
+   - Review cost logs for API errors
 
 4. **Database errors**:
-   - Verify database credentials in .env
+   - Verify database credentials in main config
    - Check user permissions for read access
    - Verify account_id relationships
 
 ### Debug Mode
 
-Enable debug logging:
+Enable debug logging in the configuration:
 
-```bash
-# Set in .env file
-LOG_LEVEL=debug
-NODE_ENV=development
-
-# Restart server
-pm2 restart sunny-chat
+```php
+// In sunny-config.php
+'logging' => [
+    'enable_chat_logs' => true,
+    'enable_error_logs' => true,
+    'enable_cost_logs' => true
+]
 ```
 
 ## Customization
@@ -266,38 +221,47 @@ pm2 restart sunny-chat
 ### Adding New Tools
 
 1. Add function to `api/sunny-tools.php`
-2. Update tool parsing in `server/server.js`
-3. Add pattern matching in `api/ollama-client.php`
+2. Update tool parsing in `api/openai-client.php`
+3. Test new functionality with the test connection endpoint
 
 ### Modifying System Prompt
 
-Edit `ai-assistant/sunny_system_prompt.md` or update the default prompt in `api/ollama-client.php`.
+Edit `ai-assistant/sunny_system_prompt.md` to update Sunny's behavior and personality.
 
 ### Styling Changes
 
 Modify `components/sunny-chat.css` to match your portal's theme.
 
+### Cost Management
+
+Adjust cost limits and tracking in `config/sunny-config.php`:
+- Daily cost limits per user
+- Rate limiting settings  
+- Model selection (O3, GPT-4o, GPT-4o-mini)
+
 ## Security Considerations
 
 - Sunny only executes read-only database queries
 - All queries are filtered by user's account access
-- No sensitive data (passwords, API keys) is exposed
-- WebSocket connections are authenticated
-- Rate limiting prevents abuse
+- OpenAI API key secured through env.php system
+- Session-based authentication required
+- Built-in rate limiting and cost controls
+- No sensitive data exposed to AI model
 
 ## Support
 
 For issues or questions:
 
-1. Check the logs first (`server/logs/`)
-2. Verify all prerequisites are met
-3. Test each component individually
-4. Contact Solterra Solutions support if needed
+1. Check the application logs first (`ai-assistant/logs/`)
+2. Test API connectivity using test-connection.php
+3. Verify all prerequisites are met
+4. Review cost logs for usage patterns
+5. Contact Solterra Solutions support if needed
 
 ## Version Information
 
-- **Version**: 1.0.0
+- **Version**: 2.0.0 (OpenAI Migration)
 - **Compatible with**: Solterra Logistics Portal
-- **Node.js**: 16+ required
+- **AI Model**: OpenAI O3 (with GPT-4o fallback options)
 - **PHP**: 7.4+ required
-- **Ollama**: Compatible with Gemma 2B model 
+- **Dependencies**: cURL extension, existing portal authentication 
