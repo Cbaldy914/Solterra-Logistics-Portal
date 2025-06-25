@@ -54,7 +54,7 @@ class SunnyChat {
             
             <div class="sunny-messages" id="sunny-messages">
                 <div class="sunny-welcome-message">
-                    <h4>Hi ${window.currentUser || 'there'}! 👋</h4>
+                    <h4>Hi ${window.SunnyConfig?.username || 'there'}! 👋</h4>
                     <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
                 </div>
                 
@@ -174,19 +174,31 @@ class SunnyChat {
 
     async testConnection() {
         try {
-            const response = await fetch('/Solterra-Logistics-Portal/ai-assistant/api/test-connection.php', {
-                method: 'POST',
+            console.log('Testing Sunny connection...');
+            const response = await fetch('./ai-assistant/api/test-connection-clean.php', {
+                method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 credentials: 'same-origin'
             });
 
+            console.log('Response status:', response.status);
+            
             if (response.ok) {
-                this.setConnectionStatus(true, 'Connected to Sunny');
-                this.enableInput();
+                const result = await response.json();
+                console.log('Connection test result:', result);
+                
+                if (result.success) {
+                    this.setConnectionStatus(true, 'Connected to Sunny');
+                    this.enableInput();
+                } else {
+                    throw new Error(result.error || 'Connection test failed');
+                }
             } else {
-                throw new Error('Connection test failed');
+                const text = await response.text();
+                console.error('Response not OK:', response.status, text);
+                throw new Error(`HTTP ${response.status}: ${text}`);
             }
         } catch (error) {
             console.error('Connection test failed:', error);
@@ -240,7 +252,7 @@ class SunnyChat {
             }
 
             // Create new EventSource for streaming response
-            const eventSource = new EventSource(`/Solterra-Logistics-Portal/ai-assistant/api/chat-stream.php?message=${encodeURIComponent(messageText)}`);
+            const eventSource = new EventSource(`./ai-assistant/api/chat-stream.php?message=${encodeURIComponent(messageText)}`);
             this.currentEventSource = eventSource;
 
             let assistantMessageId = null;
