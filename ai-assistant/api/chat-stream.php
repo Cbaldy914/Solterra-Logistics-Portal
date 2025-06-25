@@ -72,6 +72,10 @@ try {
     $account_id = $_SESSION['account_id'] ?? null;
     $user_name = $_SESSION['username'] ?? 'User';
     
+    // Load existing chat history from session (max 10 messages)
+    $chatHistory = $_SESSION['sunny_chat_history'] ?? [];
+    $maxHistory = 10;
+
     // Get account_id if needed (for tools)
     if ($user_role !== 'global_admin' && $account_id === null) {
         try {
@@ -141,25 +145,32 @@ try {
         foreach ($toolResults as $tool => $data) {
             if ($data['success'] && !empty($data['data'])) {
                 $systemMessage .= "{$tool}: " . json_encode($data['data']) . "\n";
+            } else if ($data['success'] && empty($data['data'])) {
+                $systemMessage .= "{$tool}: (no rows returned)\n";
+            } else {
+                $systemMessage .= "{$tool}: (error: " . ($data['error'] ?? 'unknown') . ")\n";
             }
         }
     } else {
         $systemMessage .= "\n\n(If the user requests specific logistics data that isn't provided above, gently let them know data isn't available and offer general guidance.)";
     }
 
-    // OpenAI API call
+    // Construct message array: system prompt + trimmed chat history + current user msg
+    $messagesForOpenAI = [];
+    $messagesForOpenAI[] = ['role' => 'system', 'content' => $systemMessage];
+
+    // Append recent history
+    foreach ($chatHistory as $entry) {
+        $messagesForOpenAI[] = $entry; // each entry already ['role'=>..,'content'=>..]
+    }
+
+    // Current user message
+    $messagesForOpenAI[] = ['role' => 'user', 'content' => $message];
+
+    // OpenAI API payload
     $chatData = [
         'model' => $sunnyConfig['openai']['model'],
-        'messages' => [
-            [
-                'role' => 'system',
-                'content' => $systemMessage
-            ],
-            [
-                'role' => 'user',
-                'content' => $message
-            ]
-        ],
+        'messages' => $messagesForOpenAI,
         'max_tokens' => 300,
         'temperature' => 0.7,
         'stream' => true
@@ -181,6 +192,10 @@ try {
         CURLOPT_SSL_VERIFYHOST => 2
     ]);
 
+    // Capture assistant response globally during stream
+    global $assistantResponseBuffer;
+    $assistantResponseBuffer = '';
+
     $result = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $error = curl_error($ch);
@@ -199,6 +214,18 @@ try {
     // Send completion signal
     echo "data: " . json_encode(['type' => 'complete']) . "\n\n";
     flush();
+
+    // ---- Persist chat history ----
+    if (!empty($assistantResponseBuffer)) {
+        // Append new user & assistant messages
+        $chatHistory[] = ['role' => 'user', 'content' => $message];
+        $chatHistory[] = ['role' => 'assistant', 'content' => $assistantResponseBuffer];
+        // Trim to last N entries
+        if (count($chatHistory) > $maxHistory) {
+            $chatHistory = array_slice($chatHistory, -1 * $maxHistory);
+        }
+        $_SESSION['sunny_chat_history'] = $chatHistory;
+    }
 
 } catch (Exception $e) {
     error_log("Chat stream error: " . $e->getMessage() . " | File: " . $e->getFile() . " | Line: " . $e->getLine());
@@ -299,6 +326,10 @@ function handleStreamData($ch, $data) {
             if ($json && isset($json['choices'][0]['delta']['content'])) {
                 $content = $json['choices'][0]['delta']['content'];
                 if ($content !== '') {
+                    // Append token to full assistant response for history
+                    global $assistantResponseBuffer;
+                    $assistantResponseBuffer .= $content;
+
                     // Send token to client
                     echo "data: " . json_encode([
                         'type' => 'token',
