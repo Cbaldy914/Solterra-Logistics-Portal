@@ -9,9 +9,10 @@ header('X-Accel-Buffering: no'); // Disable nginx buffering
 set_time_limit(0);
 ignore_user_abort(false);
 
-// Start session and check authentication
-session_name("logistics_session");
-session_start();
+// Use existing session from portal (don't start new session)
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 if (!isset($_SESSION['user_id'])) {
     echo "data: " . json_encode(['type' => 'error', 'message' => 'Authentication required']) . "\n\n";
     exit;
@@ -40,8 +41,8 @@ $user_name = $_SESSION['username'] ?? 'User';
 
 try {
     // Initialize components
-    $queryExecutor = new QueryExecutor();
-    $sunnyTools = new SunnyTools();
+    $queryExecutor = new SunnyQueryExecutor($user_role, $account_id);
+    $sunnyTools = new SunnyTools($user_role, $account_id);
     
     // Build user context
     $userContext = [
@@ -84,6 +85,22 @@ function detectToolsFromMessage($message) {
     $message = strtolower($message);
     $tools = [];
     
+    // Check for casual conversation first - don't use tools for these
+    $casualPatterns = [
+        '/^(hi|hello|hey|good morning|good afternoon|good evening)[\s\!\?]*$/i',
+        '/^(how are you|how\'s it going|what\'s up|sup)[\s\!\?]*$/i',
+        '/^(thanks|thank you|thx|bye|goodbye|see you|take care)[\s\!\?]*$/i',
+        '/^(yes|no|ok|okay|sure|fine|great|awesome|cool)[\s\!\?]*$/i',
+        '/^(what is \d+\+\d+|what is \d+ plus \d+|calculate|math)/', // Math questions
+        '/^(who are you|what can you do|help|what do you do)[\s\!\?]*$/i'
+    ];
+    
+    foreach ($casualPatterns as $pattern) {
+        if (preg_match($pattern, trim($message))) {
+            return []; // No tools needed for casual conversation
+        }
+    }
+    
     // Delivery related
     if (preg_match('/\b(delivery|deliveries|shipment|tracking|carrier)\b/', $message)) {
         $tools[] = 'getDeliveryStatus';
@@ -122,34 +139,42 @@ function detectToolsFromMessage($message) {
         $tools[] = 'searchLogistics';
     }
     
-    // If no specific tools detected, use general ones
-    if (empty($tools)) {
-        $tools = ['getProjectSummary', 'getDeliveryStatus'];
+    // Only use default tools for actual logistics questions
+    if (empty($tools) && preg_match('/\b(show|get|tell|what|how|when|where|list)\b/', $message)) {
+        $tools = ['getProjectSummary'];
     }
     
     return array_unique($tools);
 }
 
 function buildContextForOllama($userContext, $toolResults, $message) {
-    $context = "User Information:\n";
-    $context .= "- Name: " . $userContext['user_name'] . "\n";
-    $context .= "- Role: " . $userContext['role'] . "\n";
-    $context .= "- Account ID: " . $userContext['account_id'] . "\n";
-    $context .= "- Time: " . $userContext['timestamp'] . "\n\n";
+    $context = "";
     
+    // Add user context if available
+    if (!empty($userContext['user_name'])) {
+        $context .= "User: " . $userContext['user_name'];
+        if (!empty($userContext['role'])) {
+            $context .= " (" . $userContext['role'] . ")";
+        }
+        $context .= "\n\n";
+    }
+    
+    // Add tool results if available
     if (!empty($toolResults)) {
         $context .= "Available Data:\n";
         foreach ($toolResults as $tool => $data) {
-            $context .= "\n" . ucfirst(str_replace(['get', 'search'], '', $tool)) . ":\n";
-            if (is_array($data)) {
-                $context .= json_encode($data, JSON_PRETTY_PRINT) . "\n";
-            } else {
-                $context .= $data . "\n";
+            if (isset($data['success']) && $data['success'] && !empty($data['data'])) {
+                $toolName = ucfirst(str_replace(['get', 'search'], '', $tool));
+                $count = is_array($data['data']) ? count($data['data']) : 0;
+                $context .= "- {$toolName}: {$count} records found\n";
             }
         }
+        $context .= "\n";
     }
     
-    $context .= "\nUser Question: " . $message . "\n";
+    // Add the user's message clearly
+    $context .= "User says: \"" . $message . "\"\n\n";
+    $context .= "Please respond as Sunny:";
     
     return $context;
 }
@@ -160,8 +185,8 @@ function streamOllamaResponse($systemPrompt, $context, $userMessage) {
     // Ollama endpoint
     $ollamaUrl = $sunnyConfig['ollama']['base_url'] . '/api/generate';
     
-    // Build the prompt
-    $fullPrompt = $systemPrompt . "\n\n" . $context . "\n\nPlease provide a helpful response:";
+    // Build the prompt cleanly
+    $fullPrompt = $systemPrompt . "\n\n" . $context;
     
     $postData = json_encode([
         'model' => $sunnyConfig['ollama']['model'],

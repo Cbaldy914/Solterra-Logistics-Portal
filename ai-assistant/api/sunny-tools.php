@@ -337,6 +337,65 @@ class SunnyTools {
     }
     
     /**
+     * Execute a specific tool by name - dispatcher method
+     */
+    public function executeTool($toolName, $message = '', $userContext = []) {
+        try {
+            switch ($toolName) {
+                case 'getProjectSummary':
+                    return $this->getProjectSummary();
+                    
+                case 'getDeliveryStatus':
+                    return $this->getDeliveryStatus();
+                    
+                case 'getWarehouseInventory':
+                    return $this->getWarehouseInventory();
+                    
+                case 'getModuleMovements':
+                    return $this->getModuleMovements();
+                    
+                case 'getProjectCostAnalysis':
+                    return $this->getProjectCostAnalysis();
+                    
+                case 'getDeliveryPerformance':
+                    return $this->getDeliveryPerformance();
+                    
+                case 'searchLogistics':
+                    // Extract search term from message if available
+                    $searchTerm = $this->extractSearchTerm($message);
+                    return $this->searchLogistics($searchTerm);
+                    
+                case 'getKPIDashboard':
+                    return $this->getKPIDashboard();
+                    
+                default:
+                    return [
+                        'success' => false,
+                        'error' => "Unknown tool: {$toolName}"
+                    ];
+            }
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => "Tool execution failed: " . $e->getMessage()
+            ];
+        }
+    }
+    
+    /**
+     * Extract search term from user message
+     */
+    private function extractSearchTerm($message) {
+        // Simple extraction - look for keywords after "search", "find", "lookup"
+        $message = strtolower($message);
+        if (preg_match('/(?:search|find|lookup)\s+(?:for\s+)?(.+)/', $message, $matches)) {
+            return trim($matches[1]);
+        }
+        // Fallback - use the whole message as search term
+        return $message;
+    }
+
+    /**
      * Execute custom SQL query (with safety checks)
      */
     public function executeCustomQuery($sql, $params = []) {
