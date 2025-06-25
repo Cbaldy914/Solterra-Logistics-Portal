@@ -180,7 +180,10 @@ function buildContextForOllama($userContext, $toolResults, $message) {
 }
 
 function streamOllamaResponse($systemPrompt, $context, $userMessage) {
-    global $sunnyConfig;
+    global $sunnyConfig, $streamBuffer;
+    
+    // Clear any leftover buffer from previous requests
+    $streamBuffer = '';
     
     // Ollama endpoint
     $ollamaUrl = $sunnyConfig['ollama']['base_url'] . '/api/generate';
@@ -222,15 +225,26 @@ function streamOllamaResponse($systemPrompt, $context, $userMessage) {
     flush();
 }
 
+// Global buffer to handle partial JSON responses
+$streamBuffer = '';
+
 function handleOllamaStream($ch, $data) {
-    $lines = explode("\n", trim($data));
+    global $streamBuffer;
     
-    foreach ($lines as $line) {
-        if (empty($line)) continue;
+    // Add new data to buffer
+    $streamBuffer .= $data;
+    
+    // Process complete lines from buffer
+    while (($pos = strpos($streamBuffer, "\n")) !== false) {
+        $line = substr($streamBuffer, 0, $pos);
+        $streamBuffer = substr($streamBuffer, $pos + 1);
+        
+        // Skip empty lines
+        if (empty(trim($line))) continue;
         
         try {
             $json = json_decode($line, true);
-            if ($json && isset($json['response'])) {
+            if ($json && isset($json['response']) && $json['response'] !== '') {
                 // Send token to client
                 echo "data: " . json_encode([
                     'type' => 'token',
@@ -240,11 +254,14 @@ function handleOllamaStream($ch, $data) {
                 
                 // Check if generation is done
                 if (isset($json['done']) && $json['done']) {
+                    // Clear buffer when done
+                    $streamBuffer = '';
                     break;
                 }
             }
         } catch (Exception $e) {
-            // Skip malformed JSON
+            // Skip malformed JSON but log for debugging
+            error_log("JSON parse error in stream: " . $e->getMessage() . " | Line: " . $line);
             continue;
         }
     }
