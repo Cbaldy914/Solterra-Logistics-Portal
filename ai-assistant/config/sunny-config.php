@@ -12,9 +12,13 @@ return [
         'model' => 'gemma:2b',
         'timeout' => 60,
         'options' => [
-            'temperature' => 0.7,
-            'top_p' => 0.9,
-            'max_tokens' => 1000
+            'temperature' => 0.3,
+            'top_p' => 0.8,
+            'num_predict' => 50,
+            'num_ctx' => 512,
+            'top_k' => 10,
+            'num_thread' => 4,
+            'num_batch' => 8
         ]
     ],
     

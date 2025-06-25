@@ -19,7 +19,7 @@ class SunnyQueryExecutor {
         $this->setAllowedTables();
         
         // Get database connection
-        require_once dirname(__DIR__, 2) . '/config.php';
+        require_once dirname(__DIR__, 3) . '/config.php';
         $this->conn = getDBConnection();
         if (!$this->conn) {
             throw new Exception("Database connection failed");
