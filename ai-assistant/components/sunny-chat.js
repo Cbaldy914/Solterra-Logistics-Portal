@@ -267,12 +267,15 @@ class SunnyChat {
                         if (typingId) {
                             this.removeTypingIndicator(typingId);
                         }
+
+                        // Append the incoming chunk to the running response FIRST
+                        fullResponse += data.content;
                         
-                        // Create or update assistant message
                         if (!assistantMessageId) {
-                            assistantMessageId = this.addMessage('assistant', data.content);
+                            // First chunk – create the assistant message
+                            assistantMessageId = this.addMessage('assistant', fullResponse);
                         } else {
-                            fullResponse += data.content;
+                            // Subsequent chunks – update existing message
                             this.updateMessage(assistantMessageId, fullResponse);
                         }
                     } else if (data.type === 'complete') {

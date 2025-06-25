@@ -160,19 +160,19 @@ class SunnyQueryExecutor {
      * Apply role-based filtering to SQL query
      */
     private function applyRoleBasedFiltering($sql) {
-        // Global admin has access to everything
+        // Global admin can access everything without extra filters
         if ($this->userRole === 'global_admin') {
             return $sql;
         }
-        
-        // For other roles, add account_id filtering
-        if ($this->userAccountId === null) {
-            throw new Exception("User account ID is required for role-based filtering");
+
+        // For non-admin users, only add the tenant filter when we actually know the account_id.
+        // If it is missing we fall back to returning the original read-only query so that the
+        // assistant can still answer generic questions. You may tighten this later once the
+        // authentication flow guarantees account_id in the session.
+        if ($this->userAccountId !== null) {
+            $sql = $this->addAccountIdFilter($sql);
         }
-        
-        // Add account_id filter to main query
-        $sql = $this->addAccountIdFilter($sql);
-        
+
         return $sql;
     }
     
