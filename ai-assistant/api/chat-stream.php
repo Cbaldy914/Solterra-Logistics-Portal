@@ -25,118 +25,233 @@ if (empty($message)) {
     exit;
 }
 
-// Include required files
-require_once __DIR__ . '/../../../config.php';
-require_once __DIR__ . '/query-executor.php';
-require_once __DIR__ . '/sunny-tools.php';
-require_once __DIR__ . '/openai-client.php';
-
-// Load Sunny configuration
-$sunnyConfig = require_once __DIR__ . '/../config/sunny-config.php';
-
-// Get user context
-$user_id = $_SESSION['user_id'];
-$user_role = $_SESSION['role'] ?? 'user';
-$account_id = $_SESSION['account_id'] ?? null; // Get from session
-$user_name = $_SESSION['username'] ?? 'User';
-
-// For non-global-admin users, ensure account_id is set
-if ($user_role !== 'global_admin' && $account_id === null) {
-    // Try to get account_id from customer_account_users table
-    try {
-        $conn = getDBConnection();
-        if ($conn) {
-            $stmt = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ?");
-            $stmt->bind_param("i", $user_id);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            if ($row = $result->fetch_assoc()) {
-                $account_id = $row['account_id'];
-            }
-            $stmt->close();
-        }
-    } catch (Exception $e) {
-        error_log("Failed to get account_id for user {$user_id}: " . $e->getMessage());
-    }
-}
+// Global variable for streaming buffer
+$streamBuffer = '';
 
 try {
+    // Try to load config files with multiple paths
+    $configPaths = [
+        __DIR__ . '/../../../config.php',
+        __DIR__ . '/../../config.php',
+        dirname(__DIR__, 3) . '/config.php'
+    ];
+    
+    $configLoaded = false;
+    foreach ($configPaths as $path) {
+        if (file_exists($path)) {
+            require_once $path;
+            $configLoaded = true;
+            break;
+        }
+    }
+    
+    if (!$configLoaded) {
+        echo "data: " . json_encode(['type' => 'error', 'message' => 'Could not load config.php']) . "\n\n";
+        exit;
+    }
+
+    // Load Sunny configuration
+    $sunnyConfigPath = __DIR__ . '/../config/sunny-config.php';
+    if (!file_exists($sunnyConfigPath)) {
+        echo "data: " . json_encode(['type' => 'error', 'message' => 'Sunny config not found']) . "\n\n";
+        exit;
+    }
+    
+    $sunnyConfig = require_once $sunnyConfigPath;
+
     // Check for OpenAI API key
-    $apiKey = $sunnyConfig['openai']['api_key'];
+    $apiKey = $sunnyConfig['openai']['api_key'] ?? '';
     if (empty($apiKey)) {
         echo "data: " . json_encode(['type' => 'error', 'message' => 'OpenAI API key not configured']) . "\n\n";
         exit;
     }
 
-    // Initialize components
-    $queryExecutor = new SunnyQueryExecutor($user_role, $account_id);
-    $sunnyTools = new SunnyTools($user_role, $account_id);
-    $openAIClient = new OpenAIClient($apiKey, $sunnyConfig['openai']['base_url'], $sunnyConfig['openai']['model']);
+    // Get user context
+    $user_id = $_SESSION['user_id'];
+    $user_role = $_SESSION['role'] ?? 'user';
+    $account_id = $_SESSION['account_id'] ?? null;
+    $user_name = $_SESSION['username'] ?? 'User';
     
-    // Build user context
-    $userContext = [
-        'user_id' => $user_id,
-        'user_name' => $user_name,
-        'role' => $user_role,
-        'account_id' => $account_id,
-        'timestamp' => date('Y-m-d H:i:s')
-    ];
-    
-    // Detect which tools to use based on the message
-    $toolsToUse = detectToolsFromMessage($message);
-    
-    // Execute tools and gather context
-    $toolResults = [];
-    foreach ($toolsToUse as $tool) {
+    // Get account_id if needed (for tools)
+    if ($user_role !== 'global_admin' && $account_id === null) {
         try {
-            $result = $sunnyTools->executeTool($tool, $message, $userContext);
-            if ($result) {
-                $toolResults[$tool] = $result;
+            $conn = getDBConnection();
+            if ($conn) {
+                $stmt = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ?");
+                $stmt->bind_param("i", $user_id);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                if ($row = $result->fetch_assoc()) {
+                    $account_id = $row['account_id'];
+                }
+                $stmt->close();
             }
         } catch (Exception $e) {
-            error_log("Tool execution error for $tool: " . $e->getMessage());
+            error_log("Failed to get account_id for user {$user_id}: " . $e->getMessage());
+        }
+    }
+
+    // Load tools if needed (carefully)
+    $toolResults = [];
+    $needsTools = needsLogisticsTools($message);
+    
+    if ($needsTools) {
+        try {
+            // Only load tools if we actually need them
+            require_once __DIR__ . '/query-executor.php';
+            require_once __DIR__ . '/sunny-tools.php';
+            
+            $sunnyTools = new SunnyTools($user_role, $account_id);
+            $toolsToUse = detectToolsFromMessage($message);
+            
+            // Execute tools
+            foreach ($toolsToUse as $tool) {
+                try {
+                    $result = $sunnyTools->executeTool($tool, $message, [
+                        'user_id' => $user_id,
+                        'user_name' => $user_name,
+                        'role' => $user_role,
+                        'account_id' => $account_id
+                    ]);
+                    if ($result) {
+                        $toolResults[$tool] = $result;
+                    }
+                } catch (Exception $e) {
+                    error_log("Tool execution error for $tool: " . $e->getMessage());
+                }
+            }
+        } catch (Exception $e) {
+            error_log("Tools loading error: " . $e->getMessage());
+            // Continue without tools if they fail
+        }
+    }
+
+    // Build system message starting with the canonical Sunny system prompt (markdown file)
+    $promptPath = dirname(__DIR__) . '/sunny_system_prompt.md';
+    if (file_exists($promptPath)) {
+        $systemMessage = file_get_contents($promptPath);
+    } else {
+        // Fallback in unlikely scenario the file is missing
+        $systemMessage = "You are Sunny, a helpful logistics assistant for Solterra Solutions.";
+    }
+
+    // Append dynamic tool context (if any) so the model can ground its answer
+    if (!empty($toolResults)) {
+        $systemMessage .= "\n\n**Available Data From Tools**\n";
+        foreach ($toolResults as $tool => $data) {
+            if ($data['success'] && !empty($data['data'])) {
+                $systemMessage .= "{$tool}: " . json_encode($data['data']) . "\n";
+            }
+        }
+    } else {
+        $systemMessage .= "\n\n(If the user requests specific logistics data that isn't provided above, gently let them know data isn't available and offer general guidance.)";
+    }
+
+    // OpenAI API call
+    $chatData = [
+        'model' => $sunnyConfig['openai']['model'],
+        'messages' => [
+            [
+                'role' => 'system',
+                'content' => $systemMessage
+            ],
+            [
+                'role' => 'user',
+                'content' => $message
+            ]
+        ],
+        'max_tokens' => 300,
+        'temperature' => 0.7,
+        'stream' => true
+    ];
+
+    // Make streaming request to OpenAI
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $sunnyConfig['openai']['base_url'] . '/chat/completions',
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($chatData),
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $apiKey
+        ],
+        CURLOPT_WRITEFUNCTION => 'handleStreamData',
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2
+    ]);
+
+    $result = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    if ($result === false || !empty($error)) {
+        echo "data: " . json_encode(['type' => 'error', 'message' => 'OpenAI API request failed: ' . $error]) . "\n\n";
+        exit;
+    }
+    
+    if ($httpCode !== 200) {
+        echo "data: " . json_encode(['type' => 'error', 'message' => 'OpenAI API returned HTTP ' . $httpCode]) . "\n\n";
+        exit;
+    }
+
+    // Send completion signal
+    echo "data: " . json_encode(['type' => 'complete']) . "\n\n";
+    flush();
+
+} catch (Exception $e) {
+    error_log("Chat stream error: " . $e->getMessage() . " | File: " . $e->getFile() . " | Line: " . $e->getLine());
+    echo "data: " . json_encode(['type' => 'error', 'message' => 'Error: ' . $e->getMessage()]) . "\n\n";
+}
+
+function needsLogisticsTools($message) {
+    $message = strtolower($message);
+    
+    // Don't use tools for casual conversation
+    $casualPatterns = [
+        '/^(hi|hello|hey|good morning|good afternoon|good evening)[\s\!\?]*$/i',
+        '/^(how are you|how\'s it going|what\'s up|sup)[\s\!\?]*$/i',
+        '/^(thanks|thank you|thx|bye|goodbye|see you|take care)[\s\!\?]*$/i',
+        '/^(yes|no|ok|okay|sure|fine|great|awesome|cool)[\s\!\?]*$/i',
+        '/^(what is \d+\+\d+|what is \d+ plus \d+|calculate|math)/',
+        '/^(who are you|what can you do|help|what do you do)[\s\!\?]*$/i'
+    ];
+    
+    foreach ($casualPatterns as $pattern) {
+        if (preg_match($pattern, trim($message))) {
+            return false;
         }
     }
     
-    // Stream response from OpenAI
-    streamOpenAIResponse($openAIClient, $userContext, $toolResults, $message);
+    // Use tools for logistics questions
+    $logisticsPatterns = [
+        '/\b(project|projects|delivery|deliveries|shipment|tracking|carrier|inventory|warehouse|storage|stock|module|modules)\b/',
+        '/\b(recent|latest|new|status|summary|overview|performance)\b/',
+        '/\b(show|get|tell|what|how|when|where|list)\b/'
+    ];
     
-} catch (Exception $e) {
-    error_log("Chat stream error: " . $e->getMessage() . " | File: " . $e->getFile() . " | Line: " . $e->getLine());
-    echo "data: " . json_encode(['type' => 'error', 'message' => 'An error occurred while processing your request. Please try again.']) . "\n\n";
+    foreach ($logisticsPatterns as $pattern) {
+        if (preg_match($pattern, $message)) {
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 function detectToolsFromMessage($message) {
     $message = strtolower($message);
     $tools = [];
     
-    // Check for casual conversation first - don't use tools for these
-    $casualPatterns = [
-        '/^(hi|hello|hey|good morning|good afternoon|good evening)[\s\!\?]*$/i',
-        '/^(how are you|how\'s it going|what\'s up|sup)[\s\!\?]*$/i',
-        '/^(thanks|thank you|thx|bye|goodbye|see you|take care)[\s\!\?]*$/i',
-        '/^(yes|no|ok|okay|sure|fine|great|awesome|cool)[\s\!\?]*$/i',
-        '/^(test|testing|hello|hi there)[\s\!\?]*$/i', // Simple test messages
-        '/^(what is \d+\+\d+|what is \d+ plus \d+|calculate|math)/', // Math questions
-        '/^(who are you|what can you do|help|what do you do)[\s\!\?]*$/i'
-    ];
-    
-    foreach ($casualPatterns as $pattern) {
-        if (preg_match($pattern, trim($message))) {
-            return []; // No tools needed for casual conversation
-        }
+    // Project related
+    if (preg_match('/\b(project|projects|status)\b/', $message)) {
+        $tools[] = 'getProjectSummary';
     }
     
     // Delivery related
     if (preg_match('/\b(delivery|deliveries|shipment|tracking|carrier)\b/', $message)) {
         $tools[] = 'getDeliveryStatus';
-        $tools[] = 'getDeliveryPerformance';
-    }
-    
-    // Project related
-    if (preg_match('/\b(project|projects|status)\b/', $message)) {
-        $tools[] = 'getProjectSummary';
-        $tools[] = 'getProjectCostAnalysis';
     }
     
     // Inventory/warehouse related
@@ -144,60 +259,15 @@ function detectToolsFromMessage($message) {
         $tools[] = 'getWarehouseInventory';
     }
     
-    // Module related
-    if (preg_match('/\b(module|modules|movement|location)\b/', $message)) {
-        $tools[] = 'getModuleMovements';
-    }
-    
-    // Recent activities
-    if (preg_match('/\b(recent|latest|new)\b/', $message)) {
-        $tools[] = 'getDeliveryStatus';
-        $tools[] = 'getModuleMovements';
-    }
-    
-    // KPI/dashboard related
-    if (preg_match('/\b(kpi|dashboard|summary|overview|performance)\b/', $message)) {
-        $tools[] = 'getKPIDashboard';
-    }
-    
-    // Search related
-    if (preg_match('/\b(search|find|lookup)\b/', $message)) {
-        $tools[] = 'searchLogistics';
-    }
-    
-    // Only use default tools for actual logistics questions
-    if (empty($tools) && preg_match('/\b(show|get|tell|what|how|when|where|list)\b/', $message)) {
+    // Default for general logistics questions
+    if (empty($tools) && preg_match('/\b(show|get|tell|what|recent|latest)\b/', $message)) {
         $tools = ['getProjectSummary'];
     }
     
     return array_unique($tools);
 }
 
-function streamOpenAIResponse($openAIClient, $userContext, $toolResults, $userMessage) {
-    global $sunnyConfig, $streamBuffer;
-    
-    // Clear any leftover buffer from previous requests
-    $streamBuffer = '';
-    
-    // Set up streaming callback
-    $openAIClient->setStreamCallback('handleOpenAIStream');
-    
-    // Start streaming
-    $result = $openAIClient->generateStreamingResponse($userMessage, $userContext, $toolResults);
-    
-    if (!$result['success']) {
-        echo "data: " . json_encode(['type' => 'error', 'message' => 'Failed to connect to AI service']) . "\n\n";
-    }
-    
-    // Send completion signal
-    echo "data: " . json_encode(['type' => 'complete']) . "\n\n";
-    flush();
-}
-
-// Global buffer to handle partial JSON responses
-$streamBuffer = '';
-
-function handleOpenAIStream($data) {
+function handleStreamData($ch, $data) {
     global $streamBuffer;
     
     // Add new data to buffer
@@ -208,8 +278,10 @@ function handleOpenAIStream($data) {
         $line = substr($streamBuffer, 0, $pos);
         $streamBuffer = substr($streamBuffer, $pos + 1);
         
+        $line = trim($line);
+        
         // Skip empty lines and non-data lines
-        if (empty(trim($line)) || strpos($line, 'data: ') !== 0) {
+        if (empty($line) || strpos($line, 'data: ') !== 0) {
             continue;
         }
         
@@ -236,8 +308,7 @@ function handleOpenAIStream($data) {
                 }
             }
         } catch (Exception $e) {
-            // Skip malformed JSON but log for debugging
-            error_log("JSON parse error in stream: " . $e->getMessage() . " | Line: " . $line);
+            // Skip malformed JSON but continue processing
             continue;
         }
     }
