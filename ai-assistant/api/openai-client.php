@@ -1,19 +1,22 @@
 <?php
 /**
- * Ollama Client for Sunny AI Assistant
- * Handles communication with Ollama API and streaming responses
+ * OpenAI Client for Sunny AI Assistant
+ * Handles communication with OpenAI API and streaming responses
  */
 
-class OllamaClient {
+class OpenAIClient {
+    private $apiKey;
     private $baseUrl;
     private $model;
     private $systemPrompt;
     private $timeout;
+    private $streamCallback;
     
-    public function __construct($baseUrl = 'https://ai.solterrasol.com:11434', $model = 'gemma:2b') {
+    public function __construct($apiKey, $baseUrl = 'https://api.openai.com/v1', $model = 'gpt-4o-mini') {
+        $this->apiKey = $apiKey;
         $this->baseUrl = rtrim($baseUrl, '/');
         $this->model = $model;
-        $this->timeout = 120; // 2 minutes timeout
+        $this->timeout = 30;
         $this->loadSystemPrompt();
     }
     
@@ -51,87 +54,89 @@ class OllamaClient {
     }
     
     /**
-     * Generate a streaming response from Ollama
+     * Generate a streaming response from OpenAI
      */
     public function generateStreamingResponse($userMessage, $context = [], $toolResults = []) {
-        $prompt = $this->buildPrompt($userMessage, $context, $toolResults);
+        $messages = $this->buildMessages($userMessage, $context, $toolResults);
         
         $data = [
             'model' => $this->model,
-            'prompt' => $prompt,
+            'messages' => $messages,
             'stream' => true,
-            'options' => [
-                'temperature' => 0.7,
-                'top_k' => 40,
-                'top_p' => 0.9,
-                'num_predict' => 1000
-            ]
+            'temperature' => 0.7,
+            'max_tokens' => 1000,
+            'top_p' => 0.9
         ];
         
-        return $this->streamRequest('/api/generate', $data);
+        return $this->streamRequest('/chat/completions', $data);
     }
     
     /**
-     * Generate a non-streaming response from Ollama
+     * Generate a non-streaming response from OpenAI
      */
     public function generateResponse($userMessage, $context = [], $toolResults = []) {
-        $prompt = $this->buildPrompt($userMessage, $context, $toolResults);
+        $messages = $this->buildMessages($userMessage, $context, $toolResults);
         
         $data = [
             'model' => $this->model,
-            'prompt' => $prompt,
+            'messages' => $messages,
             'stream' => false,
-            'options' => [
-                'temperature' => 0.7,
-                'top_k' => 40,
-                'top_p' => 0.9,
-                'num_predict' => 1000
-            ]
+            'temperature' => 0.7,
+            'max_tokens' => 1000,
+            'top_p' => 0.9
         ];
         
-        return $this->makeRequest('/api/generate', $data);
+        return $this->makeRequest('/chat/completions', $data);
     }
     
     /**
-     * Build the complete prompt with system prompt, context, and user message
+     * Build the messages array for OpenAI API
      */
-    private function buildPrompt($userMessage, $context = [], $toolResults = []) {
-        $prompt = $this->systemPrompt . "\n\n";
+    private function buildMessages($userMessage, $context = [], $toolResults = []) {
+        $messages = [];
+        
+        // System message
+        $systemMessage = $this->systemPrompt;
         
         // Add user context
         if (!empty($context)) {
-            $prompt .= "**User Context:**\n";
-            $prompt .= "Role: " . ($context['role'] ?? 'user') . "\n";
-            $prompt .= "Account ID: " . ($context['account_id'] ?? 'unknown') . "\n";
+            $systemMessage .= "\n\n**User Context:**\n";
+            $systemMessage .= "Role: " . ($context['role'] ?? 'user') . "\n";
+            $systemMessage .= "Account ID: " . ($context['account_id'] ?? 'unknown') . "\n";
             if (isset($context['username'])) {
-                $prompt .= "Username: " . $context['username'] . "\n";
+                $systemMessage .= "Username: " . $context['username'] . "\n";
             }
-            $prompt .= "\n";
         }
         
         // Add tool results if available
         if (!empty($toolResults)) {
-            $prompt .= "**Available Data:**\n";
+            $systemMessage .= "\n\n**Available Data:**\n";
             foreach ($toolResults as $toolName => $result) {
-                $prompt .= "Tool: {$toolName}\n";
+                $systemMessage .= "Tool: {$toolName}\n";
                 if ($result['success']) {
-                    $prompt .= "Result: " . json_encode($result['data'], JSON_PRETTY_PRINT) . "\n";
+                    $systemMessage .= "Result: " . json_encode($result['data'], JSON_PRETTY_PRINT) . "\n";
                 } else {
-                    $prompt .= "Error: " . $result['error'] . "\n";
+                    $systemMessage .= "Error: " . $result['error'] . "\n";
                 }
-                $prompt .= "\n";
+                $systemMessage .= "\n";
             }
         }
         
-        // Add the actual user message
-        $prompt .= "**User Question:** " . $userMessage . "\n\n";
-        $prompt .= "**Response:**";
+        $messages[] = [
+            'role' => 'system',
+            'content' => $systemMessage
+        ];
         
-        return $prompt;
+        $messages[] = [
+            'role' => 'user',
+            'content' => $userMessage
+        ];
+        
+        return $messages;
     }
     
     /**
-     * Make a streaming request to Ollama API
+     * Make a streaming request to OpenAI API
      */
     private function streamRequest($endpoint, $data) {
         $url = $this->baseUrl . $endpoint;
@@ -143,13 +148,13 @@ class OllamaClient {
             CURLOPT_POSTFIELDS => json_encode($data),
             CURLOPT_HTTPHEADER => [
                 'Content-Type: application/json',
-                'Accept: application/json'
+                'Authorization: Bearer ' . $this->apiKey
             ],
             CURLOPT_WRITEFUNCTION => [$this, 'handleStreamChunk'],
             CURLOPT_TIMEOUT => $this->timeout,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_SSL_VERIFYPEER => false, // For development - should be true in production
-            CURLOPT_SSL_VERIFYHOST => false
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2
         ]);
         
         $this->streamCallback = null;
@@ -196,7 +201,7 @@ class OllamaClient {
     }
     
     /**
-     * Make a regular (non-streaming) request to Ollama API
+     * Make a regular (non-streaming) request to OpenAI API
      */
     private function makeRequest($endpoint, $data) {
         $url = $this->baseUrl . $endpoint;
@@ -208,13 +213,13 @@ class OllamaClient {
             CURLOPT_POSTFIELDS => json_encode($data),
             CURLOPT_HTTPHEADER => [
                 'Content-Type: application/json',
-                'Accept: application/json'
+                'Authorization: Bearer ' . $this->apiKey
             ],
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => $this->timeout,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_SSL_VERIFYPEER => false, // For development
-            CURLOPT_SSL_VERIFYHOST => false
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2
         ]);
         
         $response = curl_exec($ch);
@@ -252,85 +257,42 @@ class OllamaClient {
     }
     
     /**
-     * Check if Ollama service is available
+     * Check API health by making a simple request
      */
     public function checkHealth() {
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $this->baseUrl . '/api/tags',
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 10,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false
-        ]);
+        $response = $this->makeRequest('/models', []);
+        return $response['success'] ?? false;
+    }
+    
+    /**
+     * Calculate token usage and cost
+     */
+    public function calculateCost($inputTokens, $outputTokens) {
+        // Cost per 1K tokens (in USD) - Updated pricing
+        $costs = [
+            'gpt-4o-mini' => ['input' => 0.00015, 'output' => 0.0006],
+            'gpt-4o' => ['input' => 0.0025, 'output' => 0.01],
+            'o3' => ['input' => 2.0, 'output' => 8.0], // Updated pricing!
+            'o3-mini' => ['input' => 1.0, 'output' => 4.0]
+        ];
         
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        $modelCosts = $costs[$this->model] ?? $costs['gpt-4o-mini'];
+        
+        $inputCost = ($inputTokens / 1000) * $modelCosts['input'];
+        $outputCost = ($outputTokens / 1000) * $modelCosts['output'];
         
         return [
-            'available' => ($response !== false && $httpCode === 200),
-            'http_code' => $httpCode,
-            'base_url' => $this->baseUrl
+            'input_tokens' => $inputTokens,
+            'output_tokens' => $outputTokens,
+            'input_cost' => $inputCost,
+            'output_cost' => $outputCost,
+            'total_cost' => $inputCost + $outputCost,
+            'model' => $this->model
         ];
     }
     
     /**
-     * Get available models
-     */
-    public function getModels() {
-        return $this->makeRequest('/api/tags', []);
-    }
-    
-    /**
-     * Process tool usage in user message
-     */
-    public function parseToolUsage($userMessage) {
-        $tools = [];
-        
-        // Simple pattern matching for tool usage
-        // In a more sophisticated implementation, you'd use the AI to determine tool usage
-        
-        if (stripos($userMessage, 'project') !== false) {
-            if (stripos($userMessage, 'summary') !== false || stripos($userMessage, 'status') !== false) {
-                $tools[] = 'getProjectSummary';
-            }
-        }
-        
-        if (stripos($userMessage, 'deliver') !== false || stripos($userMessage, 'shipment') !== false) {
-            $tools[] = 'getDeliveryStatus';
-        }
-        
-        if (stripos($userMessage, 'warehouse') !== false || stripos($userMessage, 'inventory') !== false) {
-            $tools[] = 'getWarehouseInventory';
-        }
-        
-        if (stripos($userMessage, 'movement') !== false) {
-            $tools[] = 'getModuleMovements';
-        }
-        
-        if (stripos($userMessage, 'cost') !== false || stripos($userMessage, 'analysis') !== false) {
-            $tools[] = 'getProjectCostAnalysis';
-        }
-        
-        if (stripos($userMessage, 'performance') !== false || stripos($userMessage, 'metrics') !== false) {
-            $tools[] = 'getDeliveryPerformance';
-        }
-        
-        if (stripos($userMessage, 'dashboard') !== false || stripos($userMessage, 'overview') !== false) {
-            $tools[] = 'getKPIDashboard';
-        }
-        
-        // Search functionality
-        if (stripos($userMessage, 'search') !== false || stripos($userMessage, 'find') !== false) {
-            $tools[] = 'searchLogistics';
-        }
-        
-        return $tools;
-    }
-    
-    /**
-     * Update system prompt
+     * Set system prompt
      */
     public function setSystemPrompt($prompt) {
         $this->systemPrompt = $prompt;
@@ -342,4 +304,19 @@ class OllamaClient {
     public function getSystemPrompt() {
         return $this->systemPrompt;
     }
-} 
+    
+    /**
+     * Set model
+     */
+    public function setModel($model) {
+        $this->model = $model;
+    }
+    
+    /**
+     * Get current model
+     */
+    public function getModel() {
+        return $this->model;
+    }
+}
+?> 
