@@ -255,25 +255,29 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     if ($stmt_export && !empty($paramTypes)) {
         $stmt_export->bind_param($paramTypes, ...$params);
     }
-    $stmt_export->execute();
-    $res_export = $stmt_export->get_result();
+    if ($stmt_export) {
+        $stmt_export->execute();
+        $res_export = $stmt_export->get_result();
 
-    while ($row = $res_export->fetch_assoc()) {
-        fputcsv($output, [
-            $row['supplier'] ?? '',
-            $row['wattage'] ?? '',
-            $row['status_of_delivery'] ?? '',
-            $row['quantity'] ?? '',
-            $row['bol_number'] ?? '',
-            !empty($row['anticipated_delivery_date']) ? date('m-d-Y', strtotime($row['anticipated_delivery_date'])) : '',
-            !empty($row['actual_delivery_date']) ? date('m-d-Y', strtotime($row['actual_delivery_date'])) : '',
-            $row['associated_pallets'] ?? '',
-            !empty($row['proof_of_delivery']) ? 'Yes' : 'No'
-        ]);
+        while ($row = $res_export->fetch_assoc()) {
+            fputcsv($output, [
+                $row['supplier'] ?? '',
+                $row['wattage'] ?? '',
+                $row['status_of_delivery'] ?? '',
+                $row['quantity'] ?? '',
+                $row['bol_number'] ?? '',
+                !empty($row['anticipated_delivery_date']) ? date('m-d-Y', strtotime($row['anticipated_delivery_date'])) : '',
+                !empty($row['actual_delivery_date']) ? date('m-d-Y', strtotime($row['actual_delivery_date'])) : '',
+                $row['associated_pallets'] ?? '',
+                !empty($row['proof_of_delivery']) ? 'Yes' : 'No'
+            ]);
+        }
+        $stmt_export->close();
     }
     fclose($output);
-    $stmt_export->close();
-    $conn->close();
+    if ($conn && !$conn->connect_errno) {
+        $conn->close();
+    }
     exit();
 }
 
@@ -285,17 +289,19 @@ $sql = "
     ORDER BY $filterColumn DESC
 ";
 $stmt = $conn->prepare($sql);
-if ($stmt && !empty($paramTypes)) {
-    $stmt->bind_param($paramTypes, ...$params);
-}
-$stmt->execute();
-$deliveries_result = $stmt->get_result();
-
 $deliveries = [];
-while ($delivery = $deliveries_result->fetch_assoc()) {
-    $deliveries[] = $delivery;
+if ($stmt) {
+    if (!empty($paramTypes)) {
+        $stmt->bind_param($paramTypes, ...$params);
+    }
+    $stmt->execute();
+    $deliveries_result = $stmt->get_result();
+
+    while ($delivery = $deliveries_result->fetch_assoc()) {
+        $deliveries[] = $delivery;
+    }
+    $stmt->close();
 }
-$stmt->close();
 
 // Get delivery counts for tabs
 $delivery_counts = ['project' => 0, 'warehouse' => 0, 'all' => 0];
@@ -359,17 +365,19 @@ if (!empty($status_filter)) {
 
 $count_sql = $count_base_query . " " . $count_where_clause;
 $count_stmt = $conn->prepare($count_sql);
-if ($count_stmt && !empty($count_param_types)) {
-    $count_stmt->bind_param($count_param_types, ...$count_params);
-}
-$count_stmt->execute();
-$count_stmt->bind_result($project_count, $warehouse_count, $total_count);
-$count_stmt->fetch();
-$count_stmt->close();
+if ($count_stmt) {
+    if (!empty($count_param_types)) {
+        $count_stmt->bind_param($count_param_types, ...$count_params);
+    }
+    $count_stmt->execute();
+    $count_stmt->bind_result($project_count, $warehouse_count, $total_count);
+    $count_stmt->fetch();
+    $count_stmt->close();
 
-$delivery_counts['project'] = $project_count ?: 0;
-$delivery_counts['warehouse'] = $warehouse_count ?: 0;
-$delivery_counts['all'] = $total_count ?: 0;
+    $delivery_counts['project'] = $project_count ?: 0;
+    $delivery_counts['warehouse'] = $warehouse_count ?: 0;
+    $delivery_counts['all'] = $total_count ?: 0;
+}
 
 // Don't close connection yet - we need it for pallet fetching in the HTML section
 ?>
@@ -614,12 +622,18 @@ $delivery_counts['all'] = $total_count ?: 0;
                 <tbody>
                     <?php if (!empty($deliveries)): ?>
                         <?php 
-                        // Prepare statement for fetching pallets outside the loop for efficiency
-                        $stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
-                        if (!$stmtPallets) {
-                            // Handle error appropriately - maybe log it or display a generic error
-                            echo "Error preparing pallet statement: " . $conn->error;
-                            // Optionally exit or skip the loop
+                        // Create a fresh connection for pallet fetching to avoid connection issues
+                        $palletConn = getDBConnection();
+                        $stmtPallets = null;
+                        if ($palletConn && !$palletConn->connect_errno) {
+                            $stmtPallets = $palletConn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
+                            if (!$stmtPallets) {
+                                // Handle error appropriately - maybe log it or display a generic error
+                                echo "Error preparing pallet statement: " . $palletConn->error;
+                                // Optionally exit or skip the loop
+                            }
+                        } else {
+                            echo "Database connection is not available for pallet fetching.";
                         }
                         ?>
                         <?php foreach ($deliveries as $delivery): ?>
@@ -683,8 +697,14 @@ $delivery_counts['all'] = $total_count ?: 0;
                         <?php 
                         // Close the prepared statement after the loop
                         if ($stmtPallets) $stmtPallets->close(); 
-                        // Now we can close the database connection
-                        $conn->close();
+                        // Close the pallet connection
+                        if ($palletConn && !$palletConn->connect_errno) {
+                            $palletConn->close();
+                        }
+                        // Close the main connection if it's still open
+                        if ($conn && !$conn->connect_errno) {
+                            $conn->close();
+                        }
                         ?>
                     <?php else: ?>
                         <tr>
