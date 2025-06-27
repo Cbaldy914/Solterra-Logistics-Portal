@@ -732,10 +732,13 @@ $sql = "
     ORDER BY $filterColumn DESC
 ";
 $stmt = $conn->prepare($sql);
-$stmt->bind_param($paramTypes, ...$params);
-$stmt->execute();
-$deliveries_result = $stmt->get_result();
-$stmt->close();
+$deliveries_result = null;
+if ($stmt) {
+    $stmt->bind_param($paramTypes, ...$params);
+    $stmt->execute();
+    $deliveries_result = $stmt->get_result();
+    $stmt->close();
+}
 
 /*
   -----------------------------------------------------------------------------
@@ -793,11 +796,13 @@ $sql_costs = "
 ";
 
 $stmt = $conn->prepare($sql_costs);
-$stmt->bind_param($costParamTypes, ...$costParams);
-$stmt->execute();
-$stmt->bind_result($total_freight_cost, $total_accessorial_costs);
-$stmt->fetch();
-$stmt->close();
+if ($stmt) {
+    $stmt->bind_param($costParamTypes, ...$costParams);
+    $stmt->execute();
+    $stmt->bind_result($total_freight_cost, $total_accessorial_costs);
+    $stmt->fetch();
+    $stmt->close();
+}
 
 /*
   -----------------------------------------------------------------------------
@@ -857,13 +862,15 @@ $count_sql = "
 ";
 
 $count_stmt = $conn->prepare($count_sql);
-if (!empty($count_params)) {
-    $count_stmt->bind_param($count_types, ...$count_params);
+if ($count_stmt) {
+    if (!empty($count_params)) {
+        $count_stmt->bind_param($count_types, ...$count_params);
+    }
+    $count_stmt->execute();
+    $count_stmt->bind_result($project_count, $warehouse_count, $total_count);
+    $count_stmt->fetch();
+    $count_stmt->close();
 }
-$count_stmt->execute();
-$count_stmt->bind_result($project_count, $warehouse_count, $total_count);
-$count_stmt->fetch();
-$count_stmt->close();
 
 $delivery_counts['project'] = $project_count ?: 0;
 $delivery_counts['warehouse'] = $warehouse_count ?: 0;
@@ -988,64 +995,68 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
     ";
     
     $export_stmt = $conn->prepare($export_sql);
-    $export_stmt->bind_param($export_param_types, ...$export_params);
-    $export_stmt->execute();
-    $export_result = $export_stmt->get_result();
-    
-    // Generate filename
-    $filename = 'deliveries_export_' . date('Y-m-d_H-i-s') . '.csv';
-    
-    // Set headers for CSV download
-    header('Content-Type: text/csv');
-    header('Content-Disposition: attachment; filename="' . $filename . '"');
-    header('Cache-Control: must-revalidate');
-    
-    // Create file pointer
-    $output = fopen('php://output', 'w');
-    
-    // Add CSV headers
-    $csv_headers = [
-        'Delivery ID',
-        'Project Name',
-        'Manufacturer',
-        'Wattage',
-        'Status',
-        'Quantity',
-        'BOL Number',
-        'Anticipated Delivery Date',
-        'Warehouse Arrival Date',
-        'Actual Delivery Date',
-        'Miles',
-        'Freight Cost',
-        'Accessorial Costs',
-        'Created At'
-    ];
-    fputcsv($output, $csv_headers);
-    
-    // Add data rows
-    while ($row = $export_result->fetch_assoc()) {
-        $csv_row = [
-            $row['id'],
-            $row['project_name'],
-            $row['manufacturer_name'],
-            $row['wattage'],
-            $row['status_of_delivery'],
-            $row['quantity'],
-            $row['bol_number'],
-            $row['anticipated_delivery_date'],
-            $row['warehouse_arrival_date'],
-            $row['actual_delivery_date'],
-            $row['miles'],
-            number_format($row['freight_cost_with_default'], 2),
-            number_format($row['accessorial_costs'], 2),
-            $row['created_at']
+    if ($export_stmt) {
+        $export_stmt->bind_param($export_param_types, ...$export_params);
+        $export_stmt->execute();
+        $export_result = $export_stmt->get_result();
+        
+        // Generate filename
+        $filename = 'deliveries_export_' . date('Y-m-d_H-i-s') . '.csv';
+        
+        // Set headers for CSV download
+        header('Content-Type: text/csv');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: must-revalidate');
+        
+        // Create file pointer
+        $output = fopen('php://output', 'w');
+        
+        // Add CSV headers
+        $csv_headers = [
+            'Delivery ID',
+            'Project Name',
+            'Manufacturer',
+            'Wattage',
+            'Status',
+            'Quantity',
+            'BOL Number',
+            'Anticipated Delivery Date',
+            'Warehouse Arrival Date',
+            'Actual Delivery Date',
+            'Miles',
+            'Freight Cost',
+            'Accessorial Costs',
+            'Created At'
         ];
-        fputcsv($output, $csv_row);
+        fputcsv($output, $csv_headers);
+        
+        // Add data rows
+        while ($row = $export_result->fetch_assoc()) {
+            $csv_row = [
+                $row['id'],
+                $row['project_name'],
+                $row['manufacturer_name'],
+                $row['wattage'],
+                $row['status_of_delivery'],
+                $row['quantity'],
+                $row['bol_number'],
+                $row['anticipated_delivery_date'],
+                $row['warehouse_arrival_date'],
+                $row['actual_delivery_date'],
+                $row['miles'],
+                number_format($row['freight_cost_with_default'], 2),
+                number_format($row['accessorial_costs'], 2),
+                $row['created_at']
+            ];
+            fputcsv($output, $csv_row);
+        }
+        
+        fclose($output);
+        $export_stmt->close();
     }
-    
-    fclose($output);
-    $export_stmt->close();
-    $conn->close();
+    if ($conn && !$conn->connect_errno) {
+        $conn->close();
+    }
     exit();
 }
 ?>
@@ -1555,14 +1566,20 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                     <th>Associated Pallets</th>
                     <th>Actions</th>
                 </tr>
-                <?php if ($deliveries_result->num_rows > 0): ?>
+                <?php if ($deliveries_result && $deliveries_result->num_rows > 0): ?>
                     <?php 
-                    // Prepare statement for fetching pallets outside the loop for efficiency
-                    $stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
-                    if (!$stmtPallets) {
-                        // Handle error appropriately - maybe log it or display a generic error
-                        echo "Error preparing pallet statement: " . $conn->error;
-                        // Optionally exit or skip the loop
+                    // Create a fresh connection for pallet fetching to avoid connection issues
+                    $palletConn = getDBConnection();
+                    $stmtPallets = null;
+                    if ($palletConn && !$palletConn->connect_errno) {
+                        $stmtPallets = $palletConn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
+                        if (!$stmtPallets) {
+                            // Handle error appropriately - maybe log it or display a generic error
+                            echo "Error preparing pallet statement: " . $palletConn->error;
+                            // Optionally exit or skip the loop
+                        }
+                    } else {
+                        echo "Database connection is not available for pallet fetching.";
                     }
                     ?>
                     <?php while($delivery = $deliveries_result->fetch_assoc()): ?>
@@ -1652,6 +1669,10 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                     <?php 
                     // Close the prepared statement after the loop
                     if ($stmtPallets) $stmtPallets->close(); 
+                    // Close the pallet connection
+                    if ($palletConn && !$palletConn->connect_errno) {
+                        $palletConn->close();
+                    }
                     ?>
                 <?php else: ?>
                     <tr>
@@ -1978,5 +1999,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
 </body>
 </html>
 <?php
-$conn->close();
+if ($conn && !$conn->connect_errno) {
+    $conn->close();
+}
 ?>
