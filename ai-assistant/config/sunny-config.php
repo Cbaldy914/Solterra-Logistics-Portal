@@ -13,7 +13,7 @@ return [
     'openai' => [
         'api_key' => getOpenAIApiKey(), // Use config helper function
         'base_url' => 'https://api.openai.com/v1',
-        'model' => 'gpt-4o-mini', // Start cost-effective, can upgrade to O3 later
+        'model' => 'gpt-4.1-mini', // Upgraded to GPT-4.1-mini for better reasoning
         'timeout' => 30,
         'options' => [
             'temperature' => 0.3,
@@ -29,6 +29,11 @@ return [
             'cost_per_1k_input' => 0.0025,
             'cost_per_1k_output' => 0.01,
             'description' => 'Good quality, higher cost than O3'
+        ],
+        'gpt-4.1-mini' => [
+            'cost_per_1k_input' => 0.0004,  // $0.40 / 1M tokens
+            'cost_per_1k_output' => 0.0016, // $1.60 / 1M tokens
+            'description' => 'Stronger reasoning & longer context with modest cost increase'
         ],
         'gpt-4o-mini' => [
             'cost_per_1k_input' => 0.00015,

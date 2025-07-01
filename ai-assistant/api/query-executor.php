@@ -31,20 +31,21 @@ class SunnyQueryExecutor {
             'global_admin' => [
                 'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
                 'manufacturers', 'accounts', 'customer_accounts', 'users', 'inventory_pallets',
-                'freight_estimates', 'warehouse_estimates', 'sites', 'project_invoices'
+                'freight_estimates', 'warehouse_estimates', 'sites', 'project_invoices',
+                'project_wattage_orders'
             ],
             'admin' => [
                 'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
                 'manufacturers', 'inventory_pallets', 'freight_estimates', 'warehouse_estimates',
-                'project_invoices'
+                'project_invoices', 'project_wattage_orders'
             ],
             'user' => [
                 'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
-                'inventory_pallets', 'project_invoices'
+                'inventory_pallets', 'project_invoices', 'project_wattage_orders'
             ],
             'DDPm' => [
                 'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
-                'inventory_pallets'
+                'inventory_pallets', 'project_wattage_orders'
             ]
         ];
     }
@@ -180,31 +181,36 @@ class SunnyQueryExecutor {
      * Add account_id filtering to SQL query
      */
     private function addAccountIdFilter($sql) {
-        // This is a simplified approach - in production, you'd want more sophisticated SQL parsing
-        
-        // Check if WHERE clause exists
+        // Only add the filter if at least one table in the query is known to have an account_id column
+        $tablesWithAccountId = ['projects', 'modules', 'accounts', 'customer_accounts'];
+        $tablesInQuery = $this->extractTablesFromQuery($sql);
+
+        $hasAccountTable = false;
+        foreach ($tablesInQuery as $tbl) {
+            if (in_array($tbl, $tablesWithAccountId)) {
+                $hasAccountTable = true;
+                break;
+            }
+        }
+
+        if (!$hasAccountTable) {
+            return $sql; // Skip injection if no table supports account_id
+        }
+
+        // Simple insertion similar to previous logic
         if (stripos($sql, 'WHERE') !== false) {
-            // Add account_id condition to existing WHERE clause
             $sql = preg_replace('/WHERE/i', "WHERE account_id = {$this->userAccountId} AND", $sql, 1);
         } else {
-            // Add WHERE clause with account_id condition
-            // Find the position to insert WHERE clause (before ORDER BY, GROUP BY, LIMIT, etc.)
             $insertPos = strlen($sql);
             $keywords = ['ORDER BY', 'GROUP BY', 'HAVING', 'LIMIT'];
-            
             foreach ($keywords as $keyword) {
                 $pos = stripos($sql, $keyword);
                 if ($pos !== false && $pos < $insertPos) {
                     $insertPos = $pos;
                 }
             }
-            
-            $beforeClause = substr($sql, 0, $insertPos);
-            $afterClause = substr($sql, $insertPos);
-            
-            $sql = $beforeClause . " WHERE account_id = {$this->userAccountId} " . $afterClause;
+            $sql = substr_replace($sql, " WHERE account_id = {$this->userAccountId} ", $insertPos, 0);
         }
-        
         return $sql;
     }
     
