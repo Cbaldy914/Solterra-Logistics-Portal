@@ -56,24 +56,56 @@ class SunnyTools {
             if ($result['success'] && !empty($result['data'])) {
                 foreach ($result['data'] as &$project) {
                     $projectId = $project['id'];
-                    $storedSize = floatval($project['stored_project_size']);
                     
-                    // Always try to calculate from wattage orders first, since stored size might be unreliable
-                    $sizeSql = "SELECT SUM(CAST(wattage AS UNSIGNED) * total_order) / 1000000 as calculated_size FROM project_wattage_orders WHERE project_id = ?";
+                    // --- Project Size: always derive from project_wattage_orders ---
+                    $sizeSql = "SELECT SUM(CAST(wattage AS UNSIGNED) * total_order) / 1000000 AS calculated_size FROM project_wattage_orders WHERE project_id = ?";
                     $sizeResult = $this->queryExecutor->executeQuery($sizeSql, [$projectId]);
-                    
-                    if ($sizeResult['success'] && !empty($sizeResult['data']) && $sizeResult['data'][0]['calculated_size'] > 0) {
-                        $project['project_size_mw'] = floatval($sizeResult['data'][0]['calculated_size']);
-                    } else {
-                        $project['project_size_mw'] = $storedSize;
+                    $project['project_size_mw'] = 0.0;
+                    if ($sizeResult['success'] && !empty($sizeResult['data'])) {
+                        $project['project_size_mw'] = floatval($sizeResult['data'][0]['calculated_size'] ?? 0);
                     }
                     
-                    $deliveredMW = floatval($project['total_delivered_mw']);
-                    $storageMW = floatval($project['mw_in_storage']);
-                    
+                    // -------------------------------------------------------------------------
+                    // Recalculate Delivered and Storage MWs using the same logic as dashboard
+                    // -------------------------------------------------------------------------
+                    // 1) Delivered MWs via deliveries table (status_of_delivery = 'Delivered to Project')
+                    $deliveredSql = "SELECT SUM(wattage * quantity) / 1000000 AS delivered_mw
+                                    FROM deliveries
+                                    WHERE project_id = ? AND status_of_delivery = 'Delivered to Project'";
+                    $deliveredRes = $this->queryExecutor->executeQuery($deliveredSql, [$projectId]);
+                    $deliveredMW = 0.0;
+                    if ($deliveredRes['success'] && !empty($deliveredRes['data'])) {
+                        $deliveredMW = floatval($deliveredRes['data'][0]['delivered_mw']);
+                    }
+
+                    if ($deliveredMW == 0) {
+                        // Fallback: use inventory_pallets that have made it to the project
+                        $deliveredInvSql = "SELECT SUM(ip.wattage * ip.quantity) / 1000000 AS delivered_mw
+                                            FROM inventory_pallets ip
+                                            WHERE ip.status = 'Delivered to Project' AND (ip.assigned_project_id = ? OR ip.current_project_id = ?)";
+                        $deliveredInvRes = $this->queryExecutor->executeQuery($deliveredInvSql, [$projectId, $projectId]);
+                        if ($deliveredInvRes['success'] && !empty($deliveredInvRes['data'])) {
+                            $deliveredMW = floatval($deliveredInvRes['data'][0]['delivered_mw']);
+                        }
+                    }
+
+                    // 2) MW currently sitting in warehouse
+                    $storageSql = "SELECT SUM(ip.wattage * ip.quantity) / 1000000 AS storage_mw
+                                    FROM inventory_pallets ip
+                                    WHERE ip.status = 'In Warehouse' AND (ip.assigned_project_id = ? OR ip.current_project_id = ?)";
+                    $storageRes = $this->queryExecutor->executeQuery($storageSql, [$projectId, $projectId]);
+                    $storageMW = 0.0;
+                    if ($storageRes['success'] && !empty($storageRes['data'])) {
+                        $storageMW = floatval($storageRes['data'][0]['storage_mw']);
+                    }
+
+                    // Overwrite the earlier quick-join calculations with the more accurate figures
+                    $project['total_delivered_mw'] = $deliveredMW;
+                    $project['mw_in_storage_raw']  = $storageMW;
+
                     // Calculate remaining MW
                     $project['remaining_mw'] = round($project['project_size_mw'] - $deliveredMW, 3);
-                    
+
                     // Format storage as single field (only show if > 0)
                     if ($storageMW > 0) {
                         $project['mw_in_storage'] = round($storageMW, 3) . ' MW';
@@ -81,7 +113,7 @@ class SunnyTools {
                         $project['mw_in_storage'] = null; // Don't show storage if 0
                     }
                     
-                    // Clean up the stored project size field
+                    // Remove stored project size field to avoid confusion
                     unset($project['stored_project_size']);
                 }
             }
@@ -441,7 +473,21 @@ class SunnyTools {
             
             $sql .= " ORDER BY d.actual_delivery_date DESC LIMIT 50";
             
-            return $this->queryExecutor->executeQuery($sql, $params);
+            $result = $this->queryExecutor->executeQuery($sql, $params);
+            
+            // Post-process to inject front-end URLs for any available PODs
+            if ($result['success'] && !empty($result['data'])) {
+                foreach ($result['data'] as &$row) {
+                    if (!empty($row['proof_of_delivery'])) {
+                        // Generate view link (same as portal uses)
+                        $row['pod_url'] = 'view_pod?delivery_id=' . $row['id'];
+                    } else {
+                        $row['pod_url'] = null;
+                    }
+                }
+            }
+            
+            return $result;
             
         } catch (Exception $e) {
             return [

@@ -12,7 +12,7 @@ class OpenAIClient {
     private $timeout;
     private $streamCallback;
     
-    public function __construct($apiKey, $baseUrl = 'https://api.openai.com/v1', $model = 'gpt-4o-mini') {
+    public function __construct($apiKey, $baseUrl = 'https://api.openai.com/v1', $model = 'gpt-4.1-mini') {
         $this->apiKey = $apiKey;
         $this->baseUrl = rtrim($baseUrl, '/');
         $this->model = $model;
@@ -270,6 +270,7 @@ class OpenAIClient {
     public function calculateCost($inputTokens, $outputTokens) {
         // Cost per 1K tokens (in USD) - Updated pricing
         $costs = [
+            'gpt-4.1-mini' => ['input' => 0.0004, 'output' => 0.0016],
             'gpt-4o-mini' => ['input' => 0.00015, 'output' => 0.0006],
             'gpt-4o' => ['input' => 0.0025, 'output' => 0.01],
             'o3' => ['input' => 2.0, 'output' => 8.0], // Updated pricing!
