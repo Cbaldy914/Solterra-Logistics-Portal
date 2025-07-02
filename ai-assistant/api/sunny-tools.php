@@ -3,6 +3,7 @@
  * Sunny AI Tools
  * Provides pre-built functions for common logistics queries
  * Updated to match actual database schema focusing on PODs, BOLs, Flash Test Data, inventory, and project status
+ * Note: 'supplier' field refers to the manufacturer (e.g., "Trina Solar"), not the shipping carrier
  */
 
 require_once __DIR__ . '/query-executor.php';
@@ -69,42 +70,66 @@ class SunnyTools {
                     // Recalculate Delivered and Storage MWs using the same logic as dashboard
                     // -------------------------------------------------------------------------
                     // 1) Delivered MWs via deliveries table (status_of_delivery = 'Delivered to Project')
-                    $deliveredSql = "SELECT SUM(wattage * quantity) / 1000000 AS delivered_mw
+                    $deliveredSql = "SELECT SUM(wattage * quantity) / 1000000 AS delivered_mw,
+                                           SUM(quantity) AS delivered_modules
                                     FROM deliveries
                                     WHERE project_id = ? AND status_of_delivery = 'Delivered to Project'";
                     $deliveredRes = $this->queryExecutor->executeQuery($deliveredSql, [$projectId]);
                     $deliveredMW = 0.0;
+                    $deliveredModules = 0;
                     if ($deliveredRes['success'] && !empty($deliveredRes['data'])) {
                         $deliveredMW = floatval($deliveredRes['data'][0]['delivered_mw']);
+                        $deliveredModules = intval($deliveredRes['data'][0]['delivered_modules'] ?? 0);
                     }
 
                     if ($deliveredMW == 0) {
                         // Fallback: use inventory_pallets that have made it to the project
-                        $deliveredInvSql = "SELECT SUM(ip.wattage * ip.quantity) / 1000000 AS delivered_mw
+                        $deliveredInvSql = "SELECT SUM(ip.wattage * ip.quantity) / 1000000 AS delivered_mw,
+                                                  SUM(ip.quantity) AS delivered_modules
                                             FROM inventory_pallets ip
                                             WHERE ip.status = 'Delivered to Project' AND (ip.assigned_project_id = ? OR ip.current_project_id = ?)";
                         $deliveredInvRes = $this->queryExecutor->executeQuery($deliveredInvSql, [$projectId, $projectId]);
                         if ($deliveredInvRes['success'] && !empty($deliveredInvRes['data'])) {
                             $deliveredMW = floatval($deliveredInvRes['data'][0]['delivered_mw']);
+                            $deliveredModules = intval($deliveredInvRes['data'][0]['delivered_modules'] ?? 0);
                         }
                     }
 
-                    // 2) MW currently sitting in warehouse
-                    $storageSql = "SELECT SUM(ip.wattage * ip.quantity) / 1000000 AS storage_mw
+                    // 2) MW and modules currently sitting in warehouse
+                    $storageSql = "SELECT SUM(ip.wattage * ip.quantity) / 1000000 AS storage_mw,
+                                         SUM(ip.quantity) AS storage_modules,
+                                         COUNT(ip.id) AS storage_pallets
                                     FROM inventory_pallets ip
                                     WHERE ip.status = 'In Warehouse' AND (ip.assigned_project_id = ? OR ip.current_project_id = ?)";
                     $storageRes = $this->queryExecutor->executeQuery($storageSql, [$projectId, $projectId]);
                     $storageMW = 0.0;
+                    $storageModules = 0;
+                    $storagePallets = 0;
                     if ($storageRes['success'] && !empty($storageRes['data'])) {
                         $storageMW = floatval($storageRes['data'][0]['storage_mw']);
+                        $storageModules = intval($storageRes['data'][0]['storage_modules'] ?? 0);
+                        $storagePallets = intval($storageRes['data'][0]['storage_pallets'] ?? 0);
+                    }
+
+                    // Get total project size in modules for conversion
+                    $projectSizeModulesSql = "SELECT SUM(total_order) AS total_modules FROM project_wattage_orders WHERE project_id = ?";
+                    $projectSizeModulesRes = $this->queryExecutor->executeQuery($projectSizeModulesSql, [$projectId]);
+                    $projectSizeModules = 0;
+                    if ($projectSizeModulesRes['success'] && !empty($projectSizeModulesRes['data'])) {
+                        $projectSizeModules = intval($projectSizeModulesRes['data'][0]['total_modules'] ?? 0);
                     }
 
                     // Overwrite the earlier quick-join calculations with the more accurate figures
                     $project['total_delivered_mw'] = $deliveredMW;
+                    $project['total_delivered_modules'] = $deliveredModules;
                     $project['mw_in_storage_raw']  = $storageMW;
+                    $project['modules_in_storage'] = $storageModules;
+                    $project['pallets_in_storage'] = $storagePallets;
+                    $project['project_size_modules'] = $projectSizeModules;
 
-                    // Calculate remaining MW
+                    // Calculate remaining MW and modules
                     $project['remaining_mw'] = round($project['project_size_mw'] - $deliveredMW, 3);
+                    $project['remaining_modules'] = $projectSizeModules - $deliveredModules;
 
                     // Format storage as single field (only show if > 0)
                     if ($storageMW > 0) {
@@ -130,6 +155,7 @@ class SunnyTools {
     
     /**
      * Get delivery status with BOL and POD information
+     * Note: supplier refers to manufacturer (e.g., "Trina Solar"), not shipping carrier
      */
     public function getDeliveryStatus($projectId = null, $status = null, $days = 30) {
         try {
@@ -137,7 +163,7 @@ class SunnyTools {
                 SELECT 
                     d.id,
                     d.bol_number,
-                    d.supplier,
+                    d.supplier as manufacturer,
                     d.status_of_delivery,
                     d.wattage,
                     d.quantity,
@@ -150,7 +176,9 @@ class SunnyTools {
                     d.accessorial_costs,
                     d.pay_status,
                     p.project_name,
-                    w.name as warehouse_name
+                    w.name as warehouse_name,
+                    -- Calculate MW for this delivery
+                    (d.wattage * d.quantity) / 1000000 as delivery_mw
                 FROM deliveries d
                 LEFT JOIN projects p ON d.project_id = p.id
                 LEFT JOIN warehouses w ON d.warehouse_id = w.id
@@ -170,6 +198,52 @@ class SunnyTools {
             }
             
             $sql .= " ORDER BY d.anticipated_delivery_date DESC LIMIT 50";
+            
+            return $this->queryExecutor->executeQuery($sql, $params);
+            
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Get upcoming deliveries within specified date range
+     */
+    public function getUpcomingDeliveries($projectId = null, $weeks = 4) {
+        try {
+            $sql = "
+                SELECT 
+                    d.id,
+                    d.bol_number,
+                    d.supplier as manufacturer,
+                    d.status_of_delivery,
+                    d.wattage,
+                    d.quantity,
+                    d.anticipated_delivery_date,
+                    d.actual_delivery_date,
+                    p.project_name,
+                    w.name as warehouse_name,
+                    -- Calculate MW and pallet count
+                    (d.wattage * d.quantity) / 1000000 as delivery_mw,
+                    CEIL(d.quantity / 30) as estimated_pallets
+                FROM deliveries d
+                LEFT JOIN projects p ON d.project_id = p.id
+                LEFT JOIN warehouses w ON d.warehouse_id = w.id
+                WHERE d.anticipated_delivery_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? WEEK)
+                AND d.actual_delivery_date IS NULL
+            ";
+            
+            $params = [$weeks];
+            
+            if ($projectId) {
+                $sql .= " AND d.project_id = ?";
+                $params[] = $projectId;
+            }
+            
+            $sql .= " ORDER BY d.anticipated_delivery_date ASC LIMIT 50";
             
             return $this->queryExecutor->executeQuery($sql, $params);
             
@@ -200,6 +274,7 @@ class SunnyTools {
                     -- Current inventory metrics
                     COUNT(CASE WHEN ip.status = 'In Warehouse' THEN ip.id END) as pallets_in_storage,
                     SUM(CASE WHEN ip.status = 'In Warehouse' THEN ip.quantity ELSE 0 END) as modules_in_storage,
+                    SUM(CASE WHEN ip.status = 'In Warehouse' THEN (ip.wattage * ip.quantity) ELSE 0 END) / 1000000 as mw_in_storage,
                     -- Average days stored for current inventory
                     AVG(CASE WHEN ip.status = 'In Warehouse' AND ip.arrival_date IS NOT NULL 
                         THEN DATEDIFF(CURDATE(), ip.arrival_date) ELSE NULL END) as avg_days_stored,
@@ -263,13 +338,15 @@ class SunnyTools {
                     $warehouse['total_out_fees'] = round($totalOutFees, 2);
                     $warehouse['total_estimated_cost'] = round($totalEstimatedCost, 2);
                     $warehouse['avg_days_stored'] = round($avgDaysStored, 1);
+                    $warehouse['mw_in_storage'] = round(floatval($warehouse['mw_in_storage'] ?? 0), 3);
                     
                     // Get top projects by module count
                     $projectSql = "
                         SELECT 
                             p.project_name,
                             COUNT(ip.id) as pallet_count,
-                            SUM(ip.quantity) as module_count
+                            SUM(ip.quantity) as module_count,
+                            SUM(ip.wattage * ip.quantity) / 1000000 as project_mw_in_storage
                         FROM inventory_pallets ip
                         JOIN projects p ON ip.assigned_project_id = p.id
                         WHERE ip.current_warehouse_id = ? AND ip.status = 'In Warehouse'
@@ -287,8 +364,9 @@ class SunnyTools {
                     
                     // Format summary text
                     $modulesInStorage = intval($warehouse['modules_in_storage'] ?? 0);
+                    $mwInStorage = $warehouse['mw_in_storage'];
                     if ($modulesInStorage > 0) {
-                        $warehouse['inventory_summary'] = "{$palletsInStorage} pallets, {$modulesInStorage} modules in storage";
+                        $warehouse['inventory_summary'] = "{$palletsInStorage} pallets, {$modulesInStorage} modules ({$mwInStorage} MW) in storage";
                         if ($avgDaysStored > 0) {
                             $warehouse['inventory_summary'] .= " (avg {$warehouse['avg_days_stored']} days stored)";
                         }
@@ -361,7 +439,9 @@ class SunnyTools {
                     ip.updated_at,
                     wh.name as current_warehouse,
                     p_assigned.project_name as assigned_project,
-                    p_current.project_name as current_project
+                    p_current.project_name as current_project,
+                    -- Calculate MW for this pallet
+                    (ip.wattage * ip.quantity) / 1000000 as pallet_mw
                 FROM inventory_pallets ip
                 LEFT JOIN warehouses wh ON ip.current_warehouse_id = wh.id
                 LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
@@ -396,6 +476,7 @@ class SunnyTools {
     
     /**
      * Get BOL (Bill of Lading) information
+     * Note: supplier refers to manufacturer (e.g., "Trina Solar"), not shipping carrier
      */
     public function getBOLInformation($bolNumber = null, $days = 60) {
         try {
@@ -403,7 +484,7 @@ class SunnyTools {
                 SELECT 
                     d.id as delivery_id,
                     d.bol_number,
-                    d.supplier,
+                    d.supplier as manufacturer,
                     d.wattage,
                     d.quantity,
                     d.status_of_delivery,
@@ -414,7 +495,10 @@ class SunnyTools {
                     ss.start_time as scheduled_time,
                     ss.arrival_time,
                     ss.departure_time,
-                    ss.bol_file
+                    ss.bol_file,
+                    -- Calculate MW and estimated pallets
+                    (d.wattage * d.quantity) / 1000000 as delivery_mw,
+                    CEIL(d.quantity / 30) as estimated_pallets
                 FROM deliveries d
                 LEFT JOIN projects p ON d.project_id = p.id
                 LEFT JOIN site_scheduling ss ON d.bol_number = ss.bol_number
@@ -442,6 +526,7 @@ class SunnyTools {
     
     /**
      * Get POD (Proof of Delivery) status
+     * Note: supplier refers to manufacturer (e.g., "Trina Solar"), not shipping carrier
      */
     public function getPODStatus($projectId = null, $days = 30) {
         try {
@@ -449,11 +534,15 @@ class SunnyTools {
                 SELECT 
                     d.id,
                     d.bol_number,
-                    d.supplier,
+                    d.supplier as manufacturer,
                     d.proof_of_delivery,
                     d.actual_delivery_date,
                     d.status_of_delivery,
+                    d.wattage,
+                    d.quantity,
                     p.project_name,
+                    -- Calculate MW for this delivery
+                    (d.wattage * d.quantity) / 1000000 as delivery_mw,
                     CASE 
                         WHEN d.proof_of_delivery IS NOT NULL THEN 'Available'
                         WHEN d.actual_delivery_date IS NOT NULL THEN 'Delivered - POD Missing'
@@ -512,7 +601,9 @@ class SunnyTools {
                     SUM(d.accessorial_costs) as total_accessorial_costs,
                     SUM(d.customer_cost) as total_customer_costs,
                     AVG(d.freight_cost) as avg_freight_per_delivery,
-                    SUM(ap.amount) as total_payables
+                    SUM(ap.amount) as total_payables,
+                    -- Calculate total MW delivered
+                    SUM(d.wattage * d.quantity) / 1000000 as total_delivered_mw
                 FROM projects p
                 LEFT JOIN deliveries d ON p.id = d.project_id
                 LEFT JOIN accounts_payable ap ON p.id = ap.project_id
@@ -527,40 +618,6 @@ class SunnyTools {
             $sql .= " GROUP BY p.id ORDER BY total_freight_cost DESC LIMIT 20";
             
             return $this->queryExecutor->executeQuery($sql, $params);
-            
-        } catch (Exception $e) {
-            return [
-                'success' => false,
-                'error' => $e->getMessage()
-            ];
-        }
-    }
-    
-    /**
-     * Get delivery performance metrics
-     */
-    public function getDeliveryPerformance($days = 90) {
-        try {
-            $sql = "
-                SELECT 
-                    COUNT(*) as total_deliveries,
-                    SUM(CASE WHEN actual_delivery_date IS NOT NULL THEN 1 ELSE 0 END) as completed_deliveries,
-                    SUM(CASE WHEN actual_delivery_date IS NULL AND anticipated_delivery_date < CURDATE() THEN 1 ELSE 0 END) as overdue_deliveries,
-                    SUM(CASE WHEN proof_of_delivery IS NOT NULL THEN 1 ELSE 0 END) as deliveries_with_pod,
-                    AVG(CASE 
-                        WHEN actual_delivery_date IS NOT NULL AND anticipated_delivery_date IS NOT NULL 
-                        THEN DATEDIFF(actual_delivery_date, anticipated_delivery_date) 
-                        ELSE NULL 
-                    END) as avg_delay_days,
-                    supplier,
-                    AVG(freight_cost) as avg_freight_cost
-                FROM deliveries 
-                WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
-                GROUP BY supplier
-                ORDER BY total_deliveries DESC
-            ";
-            
-            return $this->queryExecutor->executeQuery($sql, [$days]);
             
         } catch (Exception $e) {
             return [
@@ -586,9 +643,10 @@ class SunnyTools {
                 }
             }
             
-            // Search deliveries by BOL number
+            // Search deliveries by BOL number or manufacturer
             if ($searchType === 'all' || $searchType === 'deliveries') {
-                $sql = "SELECT d.id, d.bol_number, d.supplier, d.status_of_delivery, p.project_name 
+                $sql = "SELECT d.id, d.bol_number, d.supplier as manufacturer, d.status_of_delivery, p.project_name,
+                              (d.wattage * d.quantity) / 1000000 as delivery_mw
                        FROM deliveries d 
                        LEFT JOIN projects p ON d.project_id = p.id 
                        WHERE d.bol_number LIKE ? OR d.supplier LIKE ? LIMIT 10";
@@ -600,7 +658,8 @@ class SunnyTools {
             
             // Search pallets by identifier
             if ($searchType === 'all' || $searchType === 'pallets') {
-                $sql = "SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, w.name as warehouse_name
+                $sql = "SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, w.name as warehouse_name,
+                              (ip.wattage * ip.quantity) / 1000000 as pallet_mw
                        FROM inventory_pallets ip 
                        LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
                        WHERE ip.pallet_identifier LIKE ? LIMIT 10";
@@ -625,46 +684,6 @@ class SunnyTools {
     }
     
     /**
-     * Get key performance indicators dashboard
-     */
-    public function getKPIDashboard() {
-        try {
-            $kpis = [];
-            
-            // Total active projects
-            $projectsResult = $this->queryExecutor->executeQuery("SELECT COUNT(*) as count FROM projects");
-            $kpis['total_projects'] = $projectsResult['data'][0]['count'] ?? 0;
-            
-            // Pending deliveries
-            $deliveriesResult = $this->queryExecutor->executeQuery("SELECT COUNT(*) as count FROM deliveries WHERE actual_delivery_date IS NULL");
-            $kpis['pending_deliveries'] = $deliveriesResult['data'][0]['count'] ?? 0;
-            
-            // Pallets in storage
-            $palletsResult = $this->queryExecutor->executeQuery("SELECT COUNT(*) as count FROM inventory_pallets WHERE status = 'In Warehouse'");
-            $kpis['pallets_in_storage'] = $palletsResult['data'][0]['count'] ?? 0;
-            
-            // This month's completed deliveries
-            $completedResult = $this->queryExecutor->executeQuery("SELECT COUNT(*) as count FROM deliveries WHERE actual_delivery_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
-            $kpis['recent_deliveries'] = $completedResult['data'][0]['count'] ?? 0;
-            
-            // Missing PODs
-            $podResult = $this->queryExecutor->executeQuery("SELECT COUNT(*) as count FROM deliveries WHERE actual_delivery_date IS NOT NULL AND proof_of_delivery IS NULL");
-            $kpis['missing_pods'] = $podResult['data'][0]['count'] ?? 0;
-            
-            return [
-                'success' => true,
-                'data' => $kpis
-            ];
-            
-        } catch (Exception $e) {
-            return [
-                'success' => false,
-                'error' => $e->getMessage()
-            ];
-        }
-    }
-    
-    /**
      * Execute a specific tool by name - dispatcher method
      */
     public function executeTool($toolName, $message = '', $userContext = []) {
@@ -673,7 +692,7 @@ class SunnyTools {
             $normalizedToolName = strtolower(trim($toolName));
             
             switch ($normalizedToolName) {
-                // Quick action mappings - try multiple variations
+                // Core tools - project and delivery info
                 case 'project status':
                 case 'projectstatus':
                 case 'getprojectsummary':
@@ -694,35 +713,52 @@ class SunnyTools {
                 case 'recent_deliveries':
                     return $this->getDeliveryStatus();
                     
+                case 'upcoming deliveries':
+                case 'upcomingdeliveries':
+                case 'getupcomingdeliveries':
+                case 'upcoming_deliveries':
+                    $projectId = $this->extractProjectId($message);
+                    $weeks = $this->extractWeeks($message) ?? 4;
+                    return $this->getUpcomingDeliveries($projectId, $weeks);
+                    
+                // Flash test and POD tools
                 case 'getflashtestdata':
+                case 'flash_test_data':
+                case 'flashtestdata':
                     $projectId = $this->extractProjectId($message);
                     return $this->getFlashTestData($projectId);
                     
-                case 'getpalletmovements':
-                    return $this->getPalletMovements();
-                    
-                case 'getbolinformation':
-                    $bolNumber = $this->extractBOLNumber($message);
-                    return $this->getBOLInformation($bolNumber);
-                    
                 case 'getpodstatus':
+                case 'pod_status':
+                case 'podstatus':
                     $projectId = $this->extractProjectId($message);
                     return $this->getPODStatus($projectId);
                     
+                // Movement and BOL tools
+                case 'getpalletmovements':
+                case 'pallet_movements':
+                case 'palletmovements':
+                    return $this->getPalletMovements();
+                    
+                case 'getbolinformation':
+                case 'bol_information':
+                case 'bolinformation':
+                    $bolNumber = $this->extractBOLNumber($message);
+                    return $this->getBOLInformation($bolNumber);
+                    
+                // Cost analysis and search
                 case 'getprojectcostanalysis':
+                case 'project_cost_analysis':
+                case 'projectcostanalysis':
                     $projectId = $this->extractProjectId($message);
                     return $this->getProjectCostAnalysis($projectId);
                     
-                case 'getdeliveryperformance':
-                    return $this->getDeliveryPerformance();
-                    
                 case 'searchlogistics':
+                case 'search_logistics':
                     $searchTerm = $this->extractSearchTerm($message);
                     return $this->searchLogistics($searchTerm);
                     
-                case 'getkpidashboard':
-                    return $this->getKPIDashboard();
-                    
+                // Memory management tools
                 case 'storememory':
                     // Extract parameters from message context
                     $title = $userContext['title'] ?? 'User preference';
@@ -797,6 +833,13 @@ class SunnyTools {
     private function extractBOLNumber($message) {
         if (preg_match('/bol[:\s#]*([a-z0-9\-]+)/i', $message, $matches)) {
             return trim($matches[1]);
+        }
+        return null;
+    }
+    
+    private function extractWeeks($message) {
+        if (preg_match('/(\d+)\s*weeks?/i', $message, $matches)) {
+            return intval($matches[1]);
         }
         return null;
     }

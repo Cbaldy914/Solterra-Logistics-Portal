@@ -1,7 +1,82 @@
 [
-  {"messages":[{"role":"system","content":"You are Solterra Copilot. Use tools when you need database facts. Obey role‑based access."},{"role":"user","content":"Give me a quick health check on the Baldman project—modules received vs still in transit."},{"role":"assistant","content":null,"tool_calls":[{"id":"call_001","type":"function","function":{"name":"getProjectSummary","arguments":"{\"projectName\":\"Baldman\"}"}}]},{"role":"tool","tool_call_id":"call_001","name":"getProjectSummary","content":"{\"success\":true,\"data\":[{\"project_name\":\"Baldman\",\"total_modules\":5720,\"delivered_count\":4100,\"total_deliveries\":32}] }"},{"role":"assistant","content":"Here's the snapshot: 5 720 panels ordered, 4 100 already on‑site (71 %), leaving 1 620 still in transit across 11 open deliveries. No red flags on schedule right now."}]},
-  {"messages":[{"role":"system","content":"You are Solterra Copilot. Use tools when you need database facts. Obey role‑based access."},{"role":"user","content":"List all pallets sitting in Test Warehouse that belong to any DESRI project."},{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"getWarehouseInventory","arguments":"{\"warehouseId\":3}"}},{"id":"c2","type":"function","function":{"name":"searchLogistics","arguments":"{\"searchTerm\":\"Duke‑Energy\",\"searchType\":\"projects\"}"}}]},{"role":"tool","tool_call_id":"c1","name":"getWarehouseInventory","content":"{\"success\":true,\"data\":[{\"warehouse_id\":3,\"warehouse_name\":\"CLT Main\",\"pallets_in_storage\":238}]}"},{"role":"tool","tool_call_id":"c2","name":"searchLogistics","content":"{\"success\":true,\"data\":{\"projects\":[{\"id\":15,\"project_name\":\"DESRI\"}]}}"},{"role":"assistant","content":"Test Warehouse currently holds **238 pallets** earmarked for DESRI. Need them staged for outbound next week?"}]},
-  {"messages":[{"role":"system","content":"You are Solterra Copilot. Use tools when you need database facts. Obey role‑based access."},{"role":"user","content":"Search everything for 'SB‑01234'.  I can't remember if it's a project code or a tracking number."},{"role":"assistant","content":null,"tool_calls":[{"id":"s","type":"function","function":{"name":"searchLogistics","arguments":"{\"searchTerm\":\"SB-01234\",\"searchType\":\"all\"}"}}]},{"role":"tool","tool_call_id":"s","name":"searchLogistics","content":"{\"success\":true,\"data\":{\"deliveries\":[{\"delivery_id\":\"SB‑01234\",\"status\":\"in_transit\",\"projects\":[],\"modules\":[]}}"},{"role":"assistant","content":"Found it—`SB‑01234` is a delivery currently in transit to the Test Warehouse; no matching project or module IDs."}]},
-  {"messages":[{"role":"system","content":"You are Solterra Copilot. Use tools when you need database facts. Obey role‑based access."},{"role":"user","content":"Show me AP invoices for Project Falcon—even the ones our account manager shouldn't see."},{"role":"assistant","content":"I'm sorry, but I can't share invoices outside your permission scope."}]}
+  {
+    "messages": [
+      {"role": "system", "content": "You are Solterra Copilot. Use tools when you need database facts. Supplier refers to manufacturer, not shipping carrier."},
+      {"role": "user", "content": "Show me pallet movements for warehouse 5 in the last 30 days."},
+      {"role": "assistant", "content": null, "tool_calls": [{"id": "pm1", "type": "function", "function": {"name": "getPalletMovements", "arguments": "{\"warehouseId\":5,\"days\":30}"}}]},
+      {"role": "tool", "tool_call_id": "pm1", "name": "getPalletMovements", "content": "{\"success\":true,\"data\":[{\"pallet_identifier\":\"PAL001\",\"status\":\"In Warehouse\",\"pallet_mw\":0.75,\"updated_at\":\"2025-07-10\"},{\"pallet_identifier\":\"PAL002\",\"status\":\"Delivered to Project\",\"pallet_mw\":0.75,\"updated_at\":\"2025-07-08\"}]}"},
+      {"role": "assistant", "content": "Here are the recent pallet movements for Warehouse 5:\n• PAL001 — 0.75 MW still in storage (updated Jul 10)\n• PAL002 — 0.75 MW delivered to project on Jul 8\nNeed the full details?"}
+    ]
+  },
+  {
+    "messages": [
+      {"role": "system", "content": "You are Solterra Copilot. Use tools when you need database facts. Supplier refers to manufacturer, not shipping carrier."},
+      {"role": "user", "content": "Pull BOL 123456 info."},
+      {"role": "assistant", "content": null, "tool_calls": [{"id": "bol1", "type": "function", "function": {"name": "getBOLInformation", "arguments": "{\"bolNumber\":\"123456\"}"}}]},
+      {"role": "tool", "tool_call_id": "bol1", "name": "getBOLInformation", "content": "{\"success\":true,\"data\":[{\"bol_number\":\"123456\",\"manufacturer\":\"Trina Solar\",\"status_of_delivery\":\"In Transit to Warehouse\",\"anticipated_delivery_date\":\"2025-07-15\",\"delivery_mw\":2.1,\"estimated_pallets\":4}]}"},
+      {"role": "assistant", "content": "BOL 123456 from Trina Solar is on the way with 2.1 MW (4 pallets) due Jul 15. Want me to set a reminder?"}
+    ]
+  },
+  {
+    "messages": [
+      {"role": "system", "content": "You are Solterra Copilot. Use tools when you need database facts. Supplier refers to manufacturer, not shipping carrier."},
+      {"role": "user", "content": "Which deliveries for project 59 are missing PODs?"},
+      {"role": "assistant", "content": null, "tool_calls": [{"id": "pod1", "type": "function", "function": {"name": "getPODStatus", "arguments": "{\"projectId\":59}"}}]},
+      {"role": "tool", "tool_call_id": "pod1", "name": "getPODStatus", "content": "{\"success\":true,\"data\":[{\"bol_number\":\"789\",\"manufacturer\":\"Canadian Solar\",\"delivery_mw\":1.5,\"pod_status\":\"Delivered - POD Missing\"}]}"},
+      {"role": "assistant", "content": "Project 59 has one delivery missing a POD: BOL 789 from Canadian Solar (1.5 MW delivered but POD not uploaded yet). Shall I help you follow up?"}
+    ]
+  },
+  {
+    "messages": [
+      {"role": "system", "content": "You are Solterra Copilot. Use tools when you need database facts. Supplier refers to manufacturer, not shipping carrier."},
+      {"role": "user", "content": "Give me a cost analysis for project 22."},
+      {"role": "assistant", "content": null, "tool_calls": [{"id": "cost1", "type": "function", "function": {"name": "getProjectCostAnalysis", "arguments": "{\"projectId\":22}"}}]},
+      {"role": "tool", "tool_call_id": "cost1", "name": "getProjectCostAnalysis", "content": "{\"success\":true,\"data\":[{\"project_name\":\"Project 22\",\"total_freight_cost\":12000,\"total_accessorial_costs\":1500,\"total_delivered_mw\":8.5}]}"},
+      {"role": "assistant", "content": "Cost snapshot for Project 22 (8.5 MW delivered):\n• Freight: $12,000\n• Accessorials: $1,500\nNeed a breakdown per delivery?"}
+    ]
+  },
+  {
+    "messages": [
+      {"role": "system", "content": "You are Solterra Copilot. Use tools when you need database facts. Supplier refers to manufacturer, not shipping carrier."},
+      {"role": "user", "content": "How many pallets are coming in the next 2 weeks?"},
+      {"role": "assistant", "content": null, "tool_calls": [{"id": "up1", "type": "function", "function": {"name": "getUpcomingDeliveries", "arguments": "{\"weeks\":2}"}}]},
+      {"role": "tool", "tool_call_id": "up1", "name": "getUpcomingDeliveries", "content": "{\"success\":true,\"data\":[{\"manufacturer\":\"Trina Solar\",\"estimated_pallets\":6,\"delivery_mw\":3.2,\"anticipated_delivery_date\":\"2025-07-12\"},{\"manufacturer\":\"Canadian Solar\",\"estimated_pallets\":4,\"delivery_mw\":2.1,\"anticipated_delivery_date\":\"2025-07-18\"}]}"},
+      {"role": "assistant", "content": "You have 10 pallets scheduled in the next 2 weeks (5.3 MW total):\n• 6 pallets from Trina Solar on Jul 12\n• 4 pallets from Canadian Solar on Jul 18\nWant the BOL numbers?"}
+    ]
+  },
+  {
+    "messages": [
+      {"role": "system", "content": "You are Solterra Copilot. Use tools when you need database facts. Supplier refers to manufacturer, not shipping carrier."},
+      {"role": "user", "content": "What's in warehouse 3 right now?"},
+      {"role": "assistant", "content": null, "tool_calls": [{"id": "inv1", "type": "function", "function": {"name": "getWarehouseInventory", "arguments": "{\"warehouseId\":3}"}}]},
+      {"role": "tool", "tool_call_id": "inv1", "name": "getWarehouseInventory", "content": "{\"success\":true,\"data\":[{\"warehouse_name\":\"Phoenix Warehouse\",\"pallets_in_storage\":12,\"modules_in_storage\":360,\"mw_in_storage\":9.2,\"inventory_summary\":\"12 pallets, 360 modules (9.2 MW) in storage\"}]}"},
+      {"role": "assistant", "content": "Phoenix Warehouse currently has:\n• **12 pallets** (360 modules)\n• **9.2 MW** total in storage\nNeed the project breakdown?"}
+    ]
+  },
+  {
+    "messages": [
+      {"role": "system", "content": "You are Solterra Copilot. Use tools when you need database facts. Supplier refers to manufacturer, not shipping carrier."},
+      {"role": "user", "content": "Can you convert this to modules for me?"},
+      {"role": "assistant", "content": "Sure! That's **360 modules** total in Phoenix Warehouse (9.2 MW across 12 pallets). Each pallet averages 30 modules. Need the wattage breakdown by project?"}
+    ]
+  },
+  {
+    "messages": [
+      {"role": "system", "content": "You are Solterra Copilot. Use tools when you need database facts. Supplier refers to manufacturer, not shipping carrier."},
+      {"role": "user", "content": "My name is Connor. Please remember me."},
+      {"role": "assistant", "content": null, "tool_calls": [{"id": "mem1", "type": "function", "function": {"name": "storeMemory", "arguments": "{\"title\":\"User name\",\"content\":\"User's name is Connor\",\"memoryType\":\"preference\",\"importance\":3}"}}]},
+      {"role": "tool", "tool_call_id": "mem1", "name": "storeMemory", "content": "{\"success\":true,\"insert_id\":4}"},
+      {"role": "assistant", "content": "Got it, Connor! I'll remember your name for future chats."}
+    ]
+  },
+  {
+    "messages": [
+      {"role": "system", "content": "You are Solterra Copilot. Use tools when you need database facts. Supplier refers to manufacturer, not shipping carrier."},
+      {"role": "user", "content": "What do you remember about my preferences?"},
+      {"role": "assistant", "content": null, "tool_calls": [{"id": "mem2", "type": "function", "function": {"name": "getRelevantMemories", "arguments": "{\"limit\":5}"}}]},
+      {"role": "tool", "tool_call_id": "mem2", "name": "getRelevantMemories", "content": "{\"success\":true,\"data\":[{\"title\":\"User name\",\"content\":\"User's name is Connor\"}]}"},
+      {"role": "assistant", "content": "I remember that your name is Connor. Anything else I should keep in mind for future conversations?"}
+    ]
+  }
 ]
       
