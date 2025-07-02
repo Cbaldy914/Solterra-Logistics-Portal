@@ -400,102 +400,19 @@ CREATE TABLE `warranty_claims` (
   `manufacturer_notes` text DEFAULT NULL,
   `new_delivery_date` date DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
-ALTER TABLE `accounts`
-ALTER TABLE `accounts_payable`
-ALTER TABLE `account_users`
-ALTER TABLE `customer_accounts`
-ALTER TABLE `customer_account_users`
-ALTER TABLE `deliveries`
-ALTER TABLE `delivery_pallets`
-ALTER TABLE `flash_test_data`
-ALTER TABLE `forecast_items`
-ALTER TABLE `forecast_projects`
-ALTER TABLE `freight_estimates`
-ALTER TABLE `inventory_pallets`
-ALTER TABLE `manufacturers`
-ALTER TABLE `modules`
-ALTER TABLE `overheads`
-ALTER TABLE `projects`
-ALTER TABLE `project_invoices`
-ALTER TABLE `project_wattage_orders`
-ALTER TABLE `sites`
-ALTER TABLE `site_module_info`
-ALTER TABLE `site_module_wattages`
-ALTER TABLE `site_operating_hours`
-ALTER TABLE `site_safety`
-ALTER TABLE `site_scheduling`
-ALTER TABLE `site_users`
-ALTER TABLE `unassigned_module_items`
-ALTER TABLE `users`
-ALTER TABLE `vendors`
-ALTER TABLE `warehouses`
-ALTER TABLE `warehouse_estimates`
-ALTER TABLE `warehouse_quotes`
-ALTER TABLE `warranty_claims`
-ALTER TABLE `accounts`
-ALTER TABLE `accounts_payable`
-ALTER TABLE `account_users`
-ALTER TABLE `customer_accounts`
-ALTER TABLE `customer_account_users`
-ALTER TABLE `deliveries`
-ALTER TABLE `flash_test_data`
-ALTER TABLE `forecast_items`
-ALTER TABLE `forecast_projects`
-ALTER TABLE `freight_estimates`
-ALTER TABLE `inventory_pallets`
-ALTER TABLE `manufacturers`
-ALTER TABLE `modules`
-ALTER TABLE `overheads`
-ALTER TABLE `projects`
-ALTER TABLE `project_invoices`
-ALTER TABLE `project_wattage_orders`
-ALTER TABLE `sites`
-ALTER TABLE `site_module_info`
-ALTER TABLE `site_module_wattages`
-ALTER TABLE `site_operating_hours`
-ALTER TABLE `site_safety`
-ALTER TABLE `site_scheduling`
-ALTER TABLE `site_users`
-ALTER TABLE `unassigned_module_items`
-ALTER TABLE `users`
-ALTER TABLE `vendors`
-ALTER TABLE `warehouses`
-ALTER TABLE `warehouse_estimates`
-ALTER TABLE `warehouse_quotes`
-ALTER TABLE `warranty_claims`
-ALTER TABLE `accounts_payable`
-ALTER TABLE `account_users`
-ALTER TABLE `customer_account_users`
-ALTER TABLE `deliveries`
-ALTER TABLE `delivery_pallets`
-ALTER TABLE `flash_test_data`
-ALTER TABLE `forecast_items`
-ALTER TABLE `forecast_projects`
-ALTER TABLE `freight_estimates`
-ALTER TABLE `inventory_pallets`
-ALTER TABLE `modules`
-ALTER TABLE `projects`
-ALTER TABLE `project_invoices`
-ALTER TABLE `project_wattage_orders`
-ALTER TABLE `site_module_info`
-ALTER TABLE `site_module_wattages`
-ALTER TABLE `site_operating_hours`
-ALTER TABLE `site_safety`
-ALTER TABLE `unassigned_module_items`
-ALTER TABLE `warehouse_estimates`
-ALTER TABLE `warehouse_quotes`
-ALTER TABLE `warranty_claims`
-
-
--- =====================================================
--- END OF SCHEMA DEFINITION
--- =====================================================
--- Note: This schema file contains table structures only.
--- Primary keys, foreign keys, and indexes are defined in the original database.
--- For complete database setup, you may need to add:
--- - ALTER TABLE statements for primary keys
--- - ALTER TABLE statements for foreign key constraints 
--- - CREATE INDEX statements for performance optimization
--- =====================================================
-
-COMMIT;
+CREATE TABLE `sunny_memory` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) NOT NULL,
+  `account_id` int(11) DEFAULT NULL,
+  `memory_type` enum('preference','context','issue','note') NOT NULL DEFAULT 'note',
+  `category` varchar(100) DEFAULT NULL COMMENT 'project, delivery, warehouse, etc.',
+  `entity_id` int(11) DEFAULT NULL COMMENT 'Related project_id, delivery_id, etc.',
+  `title` varchar(255) NOT NULL,
+  `content` text NOT NULL,
+  `importance` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1=low, 2=medium, 3=high',
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `idx_user_account` (`user_id`, `account_id`),
+  KEY `idx_category_entity` (`category`, `entity_id`),
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`)
