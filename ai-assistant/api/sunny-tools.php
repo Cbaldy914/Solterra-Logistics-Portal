@@ -723,6 +723,33 @@ class SunnyTools {
                 case 'getkpidashboard':
                     return $this->getKPIDashboard();
                     
+                case 'storememory':
+                    // Extract parameters from message context
+                    $title = $userContext['title'] ?? 'User preference';
+                    $content = $userContext['content'] ?? $message;
+                    $memoryType = $userContext['memory_type'] ?? 'preference';
+                    $category = $userContext['category'] ?? null;
+                    $entityId = $userContext['entity_id'] ?? null;
+                    $importance = $userContext['importance'] ?? 1;
+                    return $this->storeMemory($title, $content, $memoryType, $category, $entityId, $importance);
+                    
+                case 'getrelevantmemories':
+                    $category = $userContext['category'] ?? null;
+                    $entityId = $userContext['entity_id'] ?? null;
+                    $limit = $userContext['limit'] ?? 10;
+                    return $this->getRelevantMemories($category, $entityId, $limit);
+                    
+                case 'updatememory':
+                    $memoryId = $userContext['memory_id'] ?? null;
+                    $title = $userContext['title'] ?? null;
+                    $content = $userContext['content'] ?? null;
+                    $importance = $userContext['importance'] ?? null;
+                    return $this->updateMemory($memoryId, $title, $content, $importance);
+                    
+                case 'deletememory':
+                    $memoryId = $userContext['memory_id'] ?? null;
+                    return $this->deleteMemory($memoryId);
+                    
                 default:
                     return [
                         'success' => false,
@@ -795,6 +822,172 @@ class SunnyTools {
         if ($this->queryExecutor) {
             $this->queryExecutor->close();
         }
+    }
+    
+    /**
+     * Memory Management Methods
+     */
+    
+    /**
+     * Store a memory for the current user
+     */
+    public function storeMemory($title, $content, $memoryType = 'note', $category = null, $entityId = null, $importance = 1) {
+        try {
+            $sql = "INSERT INTO sunny_memory (user_id, account_id, memory_type, category, entity_id, title, content, importance) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+            
+            $params = [
+                $this->getUserId(),
+                $this->userAccountId,
+                $memoryType,
+                $category,
+                $entityId,
+                $title,
+                $content,
+                $importance
+            ];
+            
+            // Use direct connection since QueryExecutor blocks INSERTs
+            require_once dirname(__DIR__, 3) . '/config.php';
+            $conn = getDBConnection();
+            if (!$conn) {
+                throw new Exception('Database connection failed');
+            }
+
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                throw new Exception('Prepare failed: ' . $conn->error);
+            }
+
+            // Bind parameters dynamically
+            $stmt->bind_param(
+                "iississi",
+                $params[0], // user_id
+                $params[1], // account_id
+                $params[2], // memory_type
+                $params[3], // category
+                $params[4], // entity_id
+                $params[5], // title
+                $params[6], // content
+                $params[7]  // importance
+            );
+            if (!$stmt->execute()) {
+                $err = $stmt->error;
+                $stmt->close();
+                $conn->close();
+                throw new Exception('Insert failed: ' . $err);
+            }
+            $stmt->close();
+            $conn->close();
+
+            return ['success' => true, 'insert_id' => $conn->insert_id ?? null];
+            
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+    
+    /**
+     * Retrieve memories for context injection
+     */
+    public function getRelevantMemories($category = null, $entityId = null, $limit = 10) {
+        try {
+            $sql = "SELECT id, title, content, memory_type, category, entity_id, importance, created_at
+                    FROM sunny_memory 
+                    WHERE user_id = ? AND (account_id = ? OR account_id IS NULL)";
+            
+            $params = [$this->getUserId(), $this->userAccountId];
+            
+            if ($category) {
+                $sql .= " AND category = ?";
+                $params[] = $category;
+            }
+            
+            if ($entityId) {
+                $sql .= " AND entity_id = ?";
+                $params[] = $entityId;
+            }
+            
+            $sql .= " ORDER BY importance DESC, created_at DESC LIMIT ?";
+            $params[] = $limit;
+            
+            return $this->queryExecutor->executeQuery($sql, $params);
+            
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+    
+    /**
+     * Update existing memory
+     */
+    public function updateMemory($memoryId, $title = null, $content = null, $importance = null) {
+        try {
+            $updates = [];
+            $params = [];
+            
+            if ($title !== null) {
+                $updates[] = "title = ?";
+                $params[] = $title;
+            }
+            
+            if ($content !== null) {
+                $updates[] = "content = ?";
+                $params[] = $content;
+            }
+            
+            if ($importance !== null) {
+                $updates[] = "importance = ?";
+                $params[] = $importance;
+            }
+            
+            if (empty($updates)) {
+                return ['success' => false, 'error' => 'No updates provided'];
+            }
+            
+            $sql = "UPDATE sunny_memory SET " . implode(', ', $updates) . " WHERE id = ? AND user_id = ?";
+            $params[] = $memoryId;
+            $params[] = $this->getUserId();
+            
+            return $this->queryExecutor->executeQuery($sql, $params);
+            
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+    
+    /**
+     * Delete a memory
+     */
+    public function deleteMemory($memoryId) {
+        try {
+            $sql = "DELETE FROM sunny_memory WHERE id = ? AND user_id = ?";
+            $params = [$memoryId, $this->getUserId()];
+            
+            return $this->queryExecutor->executeQuery($sql, $params);
+            
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+    
+    /**
+     * Get user ID from session or context
+     */
+    private function getUserId() {
+        return $_SESSION['user_id'] ?? 1; // Fallback for testing
     }
     
     public function __destruct() {

@@ -97,15 +97,46 @@ try {
 
     // Load tools if needed (carefully)
     $toolResults = [];
+    $memoryResults = [];
     $needsTools = needsLogisticsTools($message);
+    
+    // Always try to load memory context and detect memory operations
+    try {
+        require_once __DIR__ . '/query-executor.php';
+        require_once __DIR__ . '/sunny-tools.php';
+        
+        $sunnyTools = new SunnyTools($user_role, $account_id);
+        
+        // Check if user wants to store a memory
+        if (shouldStoreMemory($message)) {
+            $memoryData = extractMemoryFromMessage($message);
+            $result = $sunnyTools->storeMemory(
+                $memoryData['title'],
+                $memoryData['content'],
+                $memoryData['type'],
+                $memoryData['category'],
+                $memoryData['entity_id'],
+                $memoryData['importance']
+            );
+            $memoryResults['store'] = $result;
+        }
+        
+        // Always retrieve relevant memories for context
+        $memories = $sunnyTools->getRelevantMemories(null, null, 5);
+        if ($memories['success'] && !empty($memories['data'])) {
+            $memoryResults['context'] = $memories['data'];
+        }
+        
+    } catch (Exception $e) {
+        error_log("Memory loading error: " . $e->getMessage());
+    }
     
     if ($needsTools) {
         try {
-            // Only load tools if we actually need them
-            require_once __DIR__ . '/query-executor.php';
-            require_once __DIR__ . '/sunny-tools.php';
-            
-            $sunnyTools = new SunnyTools($user_role, $account_id);
+            // Tools already loaded above for memory
+            if (!isset($sunnyTools)) {
+                $sunnyTools = new SunnyTools($user_role, $account_id);
+            }
             $toolsToUse = detectToolsFromMessage($message);
             
             // Execute tools
@@ -153,6 +184,14 @@ try {
         }
     } else {
         $systemMessage .= "\n\n(If the user requests specific logistics data that isn't provided above, gently let them know data isn't available and offer general guidance.)";
+    }
+
+    // Add memory context to system message
+    if (!empty($memoryResults['context'])) {
+        $systemMessage .= "\n\n**Previous Context & Preferences**\n";
+        foreach ($memoryResults['context'] as $memory) {
+            $systemMessage .= "- {$memory['title']}: {$memory['content']}\n";
+        }
     }
 
     // Construct message array: system prompt + trimmed chat history + current user msg
@@ -292,6 +331,70 @@ function detectToolsFromMessage($message) {
     }
     
     return array_unique($tools);
+}
+
+// Memory detection functions
+function shouldStoreMemory($message) {
+    $message = strtolower($message);
+    $patterns = [
+        '/\b(remember|save|store|my name is|call me|i prefer|i like|i need|i want)\b/',
+        '/\b(please remember|don\'t forget|keep in mind|note that)\b/'
+    ];
+    
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $message)) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+function extractMemoryFromMessage($message) {
+    $message = trim($message);
+    $messageLower = strtolower($message);
+    
+    // Default values
+    $title = 'User preference';
+    $content = $message;
+    $type = 'preference';
+    $category = null;
+    $entityId = null;
+    $importance = 1;
+    
+    // Extract name
+    if (preg_match('/my name is\s+([a-zA-Z\s]+)/i', $message, $matches)) {
+        $name = trim($matches[1]);
+        $title = 'User name';
+        $content = "User's name is {$name}";
+        $type = 'preference';
+        $importance = 3;
+    }
+    // Extract preferences
+    else if (preg_match('/i prefer\s+(.+)/i', $message, $matches)) {
+        $preference = trim($matches[1]);
+        $title = 'User preference';
+        $content = "User prefers {$preference}";
+        $type = 'preference';
+        $importance = 2;
+    }
+    // General remember requests
+    else if (preg_match('/remember\s+(.+)/i', $message, $matches)) {
+        $toRemember = trim($matches[1]);
+        $title = 'User note';
+        $content = $toRemember;
+        $type = 'note';
+        $importance = 2;
+    }
+    
+    return [
+        'title' => $title,
+        'content' => $content,
+        'type' => $type,
+        'category' => $category,
+        'entity_id' => $entityId,
+        'importance' => $importance
+    ];
 }
 
 function handleStreamData($ch, $data) {
