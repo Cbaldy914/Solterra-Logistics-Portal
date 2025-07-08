@@ -1,6 +1,7 @@
 class SunnyChat {
     constructor() {
         this.isOpen = false;
+        this.isMinimized = false;
         this.isConnected = false;
         this.currentEventSource = null;
         this.messageHistory = [];
@@ -42,14 +43,17 @@ class SunnyChat {
                 <div class="sunny-connection-status" id="sunny-connection-status">
                     <div class="connection-indicator"></div>
                 </div>
-                <button class="sunny-expand-btn" id="sunny-expand-btn" title="Expand to fullscreen">
-                    <svg class="expand-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
-                    </svg>
-                    <svg class="collapse-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
-                        <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
-                    </svg>
-                </button>
+                <div class="sunny-header-buttons">
+                    <button class="sunny-expand-btn" id="sunny-expand-btn" title="Expand to fullscreen">
+                        <svg class="expand-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                        </svg>
+                        <svg class="collapse-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                            <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+                        </svg>
+                    </button>
+                    <button class="sunny-chat-close-btn" id="sunny-chat-close-btn" title="Close chat">×</button>
+                </div>
             </div>
             
             <div class="sunny-messages" id="sunny-messages">
@@ -81,6 +85,7 @@ class SunnyChat {
     bindEvents() {
         const chatButton = document.getElementById('sunny-chat-button');
         const closeBtn = document.getElementById('sunny-close-btn');
+        const chatCloseBtn = document.getElementById('sunny-chat-close-btn');
         const sendBtn = document.getElementById('sunny-send-btn');
         const input = document.getElementById('sunny-input');
         const quickActionBtns = document.querySelectorAll('.quick-action-btn');
@@ -88,7 +93,7 @@ class SunnyChat {
 
         chatButton.addEventListener('click', (e) => {
             if (e.target.id === 'sunny-close-btn') {
-                this.toggleChat();
+                this.minimizeChat();
             } else {
                 this.toggleChat();
             }
@@ -96,7 +101,12 @@ class SunnyChat {
 
         closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.toggleChat();
+            this.minimizeChat();
+        });
+
+        chatCloseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.closeChat();
         });
 
         expandBtn.addEventListener('click', (e) => {
@@ -129,18 +139,54 @@ class SunnyChat {
         const chatWindow = document.getElementById('sunny-chat-window');
         const chatButton = document.getElementById('sunny-chat-button');
         
-        this.isOpen = !this.isOpen;
-        
-        if (this.isOpen) {
-            chatWindow.classList.add('open');
+        if (this.isMinimized) {
+            // If minimized, restore to normal state
+            this.isMinimized = false;
+            chatButton.classList.remove('minimized');
             chatButton.classList.add('chat-open');
+            this.isOpen = true;
+            chatWindow.classList.add('open');
         } else {
-            chatWindow.classList.remove('open');
-            chatButton.classList.remove('chat-open');
-            // Also remove fullscreen if closing
-            chatWindow.classList.remove('fullscreen');
-            this.updateExpandButton(false);
+            // Normal toggle behavior
+            this.isOpen = !this.isOpen;
+            
+            if (this.isOpen) {
+                chatWindow.classList.add('open');
+                chatButton.classList.add('chat-open');
+            } else {
+                chatWindow.classList.remove('open');
+                chatButton.classList.remove('chat-open');
+                // Also remove fullscreen if closing
+                chatWindow.classList.remove('fullscreen');
+                this.updateExpandButton(false);
+            }
         }
+    }
+
+    closeChat() {
+        const chatWindow = document.getElementById('sunny-chat-window');
+        const chatButton = document.getElementById('sunny-chat-button');
+        
+        this.isOpen = false;
+        chatWindow.classList.remove('open');
+        chatButton.classList.remove('chat-open');
+        // Also remove fullscreen if closing
+        chatWindow.classList.remove('fullscreen');
+        this.updateExpandButton(false);
+    }
+
+    minimizeChat() {
+        const chatWindow = document.getElementById('sunny-chat-window');
+        const chatButton = document.getElementById('sunny-chat-button');
+        
+        this.isOpen = false;
+        this.isMinimized = true;
+        chatWindow.classList.remove('open');
+        chatButton.classList.remove('chat-open');
+        chatButton.classList.add('minimized');
+        // Also remove fullscreen if minimizing
+        chatWindow.classList.remove('fullscreen');
+        this.updateExpandButton(false);
     }
 
     toggleFullscreen() {
