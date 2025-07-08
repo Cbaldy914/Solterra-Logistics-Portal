@@ -131,6 +131,22 @@ class SunnyTools {
                     $project['remaining_mw'] = round($project['project_size_mw'] - $deliveredMW, 3);
                     $project['remaining_modules'] = $projectSizeModules - $deliveredModules;
 
+                    // -----------------------------------------------------------------
+                    // NEW: Fetch wattage breakdown (wattage => total_order)
+                    // -----------------------------------------------------------------
+                    $wattageSql = "SELECT wattage, total_order FROM project_wattage_orders WHERE project_id = ? ORDER BY CAST(wattage AS UNSIGNED)";
+                    $wattageRes = $this->queryExecutor->executeQuery($wattageSql, [$projectId]);
+                    if ($wattageRes['success'] && !empty($wattageRes['data'])) {
+                        $project['wattage_breakdown'] = array_map(function($row) {
+                            return [
+                                'wattage' => $row['wattage'],
+                                'total_order' => intval($row['total_order'])
+                            ];
+                        }, $wattageRes['data']);
+                    } else {
+                        $project['wattage_breakdown'] = [];
+                    }
+
                     // Format storage as single field (only show if > 0)
                     if ($storageMW > 0) {
                         $project['mw_in_storage'] = round($storageMW, 3) . ' MW';

@@ -64,6 +64,7 @@ if ($delivery['project_id']) {
 /* ──────────────── FETCH ASSOCIATED PALLETS ──────────────── */
 // Fetch ALREADY associated pallets
 $associated_pallets = [];
+$calculated_quantity = 0;
 $stmt_assoc = $conn->prepare("
     SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity 
     FROM delivery_pallets dp 
@@ -77,6 +78,7 @@ if ($stmt_assoc) {
     $result_assoc = $stmt_assoc->get_result();
     while ($row = $result_assoc->fetch_assoc()) {
         $associated_pallets[] = $row;
+        $calculated_quantity += (int)$row['quantity']; // Sum up quantities from all pallets
     }
     $stmt_assoc->close();
 } else {
@@ -97,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         $supplier           = $_POST['manufacturer']          ?? ''; // Map manufacturer to supplier for backward compatibility
         $wattage            = $delivery['wattage']; // Keep original wattage, not editable here
         $status             = $_POST['status_of_delivery'] ?? '';
-        $quantity           = (int)($_POST['quantity']     ?? 0);
+        $quantity           = $calculated_quantity; // Use calculated quantity from pallets, not form input
         $bol_number         = $_POST['bol_number']         ?? '';
 
         $anticipated_date   = $_POST['anticipated_delivery_date'] ?: null;
@@ -330,13 +332,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;500;600;700&display=swap" rel="stylesheet">
 
 <style>
-  form { max-width: 800px; } 
+  .form-columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+      margin-top: 20px;
+  }
+  @media (max-width: 900px) {
+      .form-columns {
+          grid-template-columns: 1fr;
+          gap: 20px;
+      }
+  }
   fieldset {
       border: 1px solid #ddd;
       padding: 15px;
       margin-bottom: 20px;
       background-color: #fdfdfd;
-      position: relative; /* for potential positioned elements */
+      position: relative;
+      height: fit-content;
   }
   legend {
       font-weight: bold; 
@@ -363,17 +377,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
       border-radius: 4px;
       box-sizing: border-box;
   }
+  input[readonly] {
+      background-color: #f8f9fa;
+      color: #6c757d;
+      cursor: not-allowed;
+  }
   button.form-submit-button {
       background: #488C9A;
       color: #fff;
-      padding: 10px 15px;
+      padding: 12px 20px;
       border: none;
       border-radius: 4px;
       cursor: pointer; 
       font-size: 1em;
       display: block;
       width: fit-content;
-      margin-top: 20px;
+      margin: 30px auto 20px auto;
+      grid-column: 1 / -1;
   }
   button.form-submit-button:hover {
       background: #3A6E7F;
@@ -403,6 +423,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
   }
   .manage-pallets-button:hover {
       background-color: #28606C;
+  }
+  .quantity-note {
+      font-size: 0.85em;
+      color: #666;
+      font-style: italic;
+      margin-top: -10px;
+      margin-bottom: 15px;
   }
 </style>
 </head>
@@ -510,6 +537,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 </fieldset>
 
 <!-- Main form for editing Delivery details -->
+<div class="form-container">
 <form 
   action="edit_delivery.php?delivery_id=<?php echo $delivery_id; ?><?php if ($project_id_from_url) { echo '&project_id=' . $project_id_from_url; } ?>" 
   method="post" 
@@ -517,154 +545,164 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 >
   <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token'];?>">
 
-  <!-- Delivery Details -->
-  <fieldset>
-    <legend>Delivery Details</legend>
-            <label>Manufacturer:
-            <input type="text" name="manufacturer" value="<?php echo htmlspecialchars($delivery['supplier']);?>" required>
-    </label>
-    <label>Wattage:
-      <input 
-        type="text" 
-        name="wattage" 
-        value="<?php echo htmlspecialchars($delivery['wattage']);?>" 
-        required 
-        readonly 
-        title="Wattage cannot be changed here. Manage associated pallets via the table above."
-      >
-    </label>
-    <label>Status:
-      <select name="status_of_delivery">
+  <div class="form-columns">
+    <!-- Left Column -->
+    <div class="column-left">
+      <!-- Delivery Details -->
+      <fieldset>
+        <legend>Delivery Details</legend>
+        <label>Manufacturer:
+          <input type="text" name="manufacturer" value="<?php echo htmlspecialchars($delivery['supplier']);?>" required>
+        </label>
+        <label>Wattage:
+          <input 
+            type="text" 
+            name="wattage" 
+            value="<?php echo htmlspecialchars($delivery['wattage']);?>" 
+            required 
+            readonly 
+            title="Wattage cannot be changed here. Manage associated pallets via the table above."
+          >
+        </label>
+        <label>Status:
+          <select name="status_of_delivery">
+            <?php
+            $statuses = ['Pending', 'In Transit to Warehouse', 'Delivered to Warehouse', 'In Transit to Project', 'Delivered to Project', 'Canceled'];
+            foreach ($statuses as $st):
+            ?>
+              <option value="<?php echo $st;?>" 
+                      <?php if ($delivery['status_of_delivery'] === $st) echo 'selected';?>>
+                <?php echo $st;?>
+              </option>
+            <?php endforeach;?>
+          </select>
+        </label>
+        <label>Quantity:
+          <input type="number" name="quantity" value="<?php echo $calculated_quantity;?>" readonly title="Quantity is automatically calculated from associated pallets">
+        </label>
+        <div class="quantity-note">Calculated from associated pallets (<?php echo count($associated_pallets);?> pallets)</div>
+        <label>BOL Number:
+          <input type="text" name="bol_number" value="<?php echo htmlspecialchars($delivery['bol_number']);?>">
+        </label>
+      </fieldset>
+
+      <!-- Dates -->
+      <fieldset>
+        <legend>Dates</legend>
+        <label>Anticipated Delivery Date:
+          <input type="date" name="anticipated_delivery_date" value="<?php echo htmlspecialchars($delivery['anticipated_delivery_date']);?>">
+        </label>
+        <label>Warehouse Arrival Date:
+          <input type="date" name="warehouse_arrival_date" value="<?php echo htmlspecialchars($delivery['warehouse_arrival_date']);?>">
+        </label>
+        <label>Actual Delivery Date:
+          <input type="date" name="actual_delivery_date" value="<?php echo htmlspecialchars($delivery['actual_delivery_date']);?>">
+        </label>
+        <label>Left Warehouse Date:
+          <input type="date" name="left_warehouse_date" value="<?php echo htmlspecialchars($delivery['left_warehouse_date']);?>">
+        </label>
+      </fieldset>
+    </div>
+
+    <!-- Right Column -->
+    <div class="column-right">
+      <!-- Costs -->
+      <fieldset>
+        <legend>Costs</legend>
+        <label>Freight Cost:
+          <input 
+            type="number" 
+            step="0.01" 
+            name="freight_cost" 
+            value="<?php echo number_format((float)($delivery['freight_cost'] ?? 0), 2, '.', '');?>"
+          >
+        </label>
+
         <?php
-        $statuses = ['Pending', 'In Transit to Warehouse', 'Delivered to Warehouse', 'In Transit to Project', 'Delivered to Project', 'Canceled'];
-        foreach ($statuses as $st):
+          $paidVal    = number_format((float)($delivery['accessorial_costs_paid'] ?? 0), 2, '.', '');
+          $chargedVal = number_format((float)($delivery['accessorial_costs']       ?? 0), 2, '.', '');
+          $checked    = ((float)$delivery['accessorial_costs'] > 0) ? 'checked' : '';
         ?>
-          <option value="<?php echo $st;?>" 
-                  <?php if ($delivery['status_of_delivery'] === $st) echo 'selected';?>>
-            <?php echo $st;?>
-          </option>
-        <?php endforeach;?>
-      </select>
-    </label>
-    <label>Quantity:
-      <input type="number" name="quantity" value="<?php echo (int)$delivery['quantity'];?>" required>
-    </label>
-    <label>BOL Number:
-      <input type="text" name="bol_number" value="<?php echo htmlspecialchars($delivery['bol_number']);?>">
-    </label>
-  </fieldset>
+        <label>Accessorial Cost (Paid to Carrier):
+          <input 
+            type="number" 
+            step="0.01" 
+            id="accessorial_costs_paid" 
+            name="accessorial_costs_paid" 
+            value="<?php echo $paidVal;?>"
+          >
+        </label>
 
-  <!-- Dates -->
-  <fieldset>
-    <legend>Dates</legend>
-    <label>Anticipated Delivery Date:
-      <input type="date" name="anticipated_delivery_date" value="<?php echo htmlspecialchars($delivery['anticipated_delivery_date']);?>">
-    </label>
-    <label>Warehouse Arrival Date:
-      <input type="date" name="warehouse_arrival_date" value="<?php echo htmlspecialchars($delivery['warehouse_arrival_date']);?>">
-    </label>
-    <label>Actual Delivery Date:
-      <input type="date" name="actual_delivery_date" value="<?php echo htmlspecialchars($delivery['actual_delivery_date']);?>">
-    </label>
-    <label>Left Warehouse Date:
-      <input type="date" name="left_warehouse_date" value="<?php echo htmlspecialchars($delivery['left_warehouse_date']);?>">
-    </label>
-  </fieldset>
+        <label style="display:flex;align-items:center;margin-bottom:15px">
+          <input 
+            type="checkbox" 
+            id="charge_customer_ckb" 
+            <?php echo $checked;?> 
+            style="width: auto; margin-right: 10px;"
+          >
+          Charge Customer This Amount?
+        </label>
 
-  <!-- Costs -->
-  <fieldset>
-    <legend>Costs</legend>
-    <label>Freight Cost:
-      <input 
-        type="number" 
-        step="0.01" 
-        name="freight_cost" 
-        value="<?php echo number_format((float)($delivery['freight_cost'] ?? 0), 2, '.', '');?>"
-      >
-    </label>
-
-    <?php
-      $paidVal    = number_format((float)($delivery['accessorial_costs_paid'] ?? 0), 2, '.', '');
-      $chargedVal = number_format((float)($delivery['accessorial_costs']       ?? 0), 2, '.', '');
-      $checked    = ((float)$delivery['accessorial_costs'] > 0) ? 'checked' : '';
-    ?>
-    <label>Accessorial Cost (Paid to Carrier):
-      <input 
-        type="number" 
-        step="0.01" 
-        id="accessorial_costs_paid" 
-        name="accessorial_costs_paid" 
-        value="<?php echo $paidVal;?>"
-      >
-    </label>
-
-    <label style="display:flex;align-items:center;margin-bottom:15px">
-      <input 
-        type="checkbox" 
-        id="charge_customer_ckb" 
-        <?php echo $checked;?> 
-        style="width: auto; margin-right: 10px;"
-      >
-      Charge Customer This Amount?
-    </label>
-
-    <!-- Hidden field for accessorial_costs -->
-    <input 
-      type="hidden" 
-      id="accessorial_costs" 
-      name="accessorial_costs" 
-      value="<?php echo $chargedVal;?>"
-    >
-
-    <label>Customer Cost:
-      <input 
-        type="number" 
-        step="0.01" 
-        id="customer_cost"
-        name="customer_cost" 
-        value="<?php echo number_format((float)($delivery['customer_cost'] ?? 0), 2, '.', '');?>"
-      >
-    </label>
-
-    <label>Miles:
-      <input 
-        type="number" 
-        step="0.01" 
-        name="miles" 
-        value="<?php echo number_format((float)($delivery['miles'] ?? 0), 2, '.', '');?>"
-      >
-    </label>
-  </fieldset>
-
-  <!-- POD -->
-  <fieldset>
-    <legend>Proof of Delivery (POD)</legend>
-    <?php if (!empty($delivery['proof_of_delivery'])): ?>
-      <p>
-        Current POD: 
-        <a href="view_pod?delivery_id=<?php echo $delivery['id'];?>" target="_blank">
-          view
-        </a>
-      </p>
-      <label style="display: flex; align-items: center;">
+        <!-- Hidden field for accessorial_costs -->
         <input 
-          type="checkbox" 
-          name="remove_pod" 
-          value="1" 
-          style="width: auto; margin-right: 10px;"
+          type="hidden" 
+          id="accessorial_costs" 
+          name="accessorial_costs" 
+          value="<?php echo $chargedVal;?>"
         >
-        Remove current POD
-      </label>
-    <?php endif;?>
-    <label>Upload new POD:
-      <input type="file" name="pod_file" accept=".pdf,.jpg,.jpeg,.png">
-    </label>
-  </fieldset>
 
-  <button type="submit" name="update_delivery" class="form-submit-button">
-    Update Delivery Details
-  </button>
+        <label>Customer Cost:
+          <input 
+            type="number" 
+            step="0.01" 
+            id="customer_cost"
+            name="customer_cost" 
+            value="<?php echo number_format((float)($delivery['customer_cost'] ?? 0), 2, '.', '');?>"
+          >
+        </label>
+
+        <label>Miles:
+          <input 
+            type="number" 
+            step="0.01" 
+            name="miles" 
+            value="<?php echo number_format((float)($delivery['miles'] ?? 0), 2, '.', '');?>"
+          >
+        </label>
+      </fieldset>
+
+      <!-- POD -->
+      <fieldset>
+        <legend>Proof of Delivery (POD)</legend>
+        <?php if (!empty($delivery['proof_of_delivery'])): ?>
+          <p>
+            Current POD: 
+            <a href="view_pod?delivery_id=<?php echo $delivery['id'];?>" target="_blank">
+              view
+            </a>
+          </p>
+          <label style="display: flex; align-items: center;">
+            <input 
+              type="checkbox" 
+              name="remove_pod" 
+              value="1" 
+              style="width: auto; margin-right: 10px;"
+            >
+            Remove current POD
+          </label>
+        <?php endif;?>
+        <label>Upload new POD:
+          <input type="file" name="pod_file" accept=".pdf,.jpg,.jpeg,.png">
+        </label>
+      </fieldset>
+    </div>
+
+    <button type="submit" name="update_delivery" class="form-submit-button">
+      Update Delivery Details
+    </button>
+  </div>
 </form>
+</div>
 
 </main>
 

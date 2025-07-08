@@ -2,14 +2,17 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure user has role global_admin only
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'global_admin') {
+// Ensure user has role global_admin or admin
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
     header("Location: unauthorized.php");
     exit();
 }
 
 require_once '../config.php';
 $conn = getDBConnection();
+
+// Determine dashboard link based on user role
+$dashboard_link = ($_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php';
 
 $manufacturers = [];
 $errorMessage = '';
@@ -266,7 +269,7 @@ $conn->close();
 <main>
     <!-- Breadcrumb navigation -->
     <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <a href="<?php echo htmlspecialchars($dashboard_link); ?>" style="color: #488C9A; text-decoration: none;">Dashboard</a>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
         <span>Manage Manufacturers</span>
     </div>

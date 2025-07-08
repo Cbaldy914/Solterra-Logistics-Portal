@@ -476,6 +476,27 @@
     border-radius: 12px;
 }
 
+#sunny-chat-button.minimized {
+    transform: translateX(140px);
+    min-width: 50px;
+    padding: 12px 15px;
+    border-radius: 50px;
+    opacity: 0.6;
+}
+
+#sunny-chat-button.minimized .sunny-info {
+    display: none;
+}
+
+#sunny-chat-button.minimized .sunny-close {
+    display: none;
+}
+
+#sunny-chat-button.minimized:hover {
+    opacity: 0.8;
+    transform: translateX(120px);
+}
+
 .sunny-avatar span {
     font-size: 20px;
 }
@@ -570,7 +591,7 @@
     color: white;
     padding: 16px 20px;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 12px;
 }
 
@@ -587,7 +608,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-top: 8px;
+    margin-left: auto;
 }
 
 .connection-indicator {
@@ -618,6 +639,13 @@
     color: var(--error-red);
 }
 
+.sunny-header-buttons {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+}
+
 .sunny-expand-btn {
     background: none;
     border: none;
@@ -629,10 +657,32 @@
     align-items: center;
     justify-content: center;
     transition: background-color 0.2s ease;
-    margin-left: 8px;
+    width: 32px;
+    height: 32px;
 }
 
 .sunny-expand-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.sunny-chat-close-btn {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s ease;
+    font-size: 18px;
+    font-weight: bold;
+    width: 32px;
+    height: 32px;
+}
+
+.sunny-chat-close-btn:hover {
     background: rgba(255, 255, 255, 0.1);
 }
 
