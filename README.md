@@ -45,3 +45,52 @@ Set `DB_HOST`, `DB_USER`, `DB_PASS` and `DB_NAME` in your environment to match y
 
 ---
 
+## New Feature: Return to Origin Functionality
+
+### Overview
+When pallets are accidentally shipped to the wrong location (e.g., too many pallets sent to a jobsite), the admin can now easily "return" them to their origin by deleting the delivery or removing pallets from a delivery.
+
+### How It Works
+The system tracks the origin of each delivery using the `origin_type` and `origin_id` fields:
+- **Manufacturer**: Pallets return to "At Manufacturer" status
+- **Warehouse**: Pallets return to "In Warehouse" status and are reassigned to the origin warehouse
+- **Project**: Pallets return to "Delivered to Project" status and are reassigned to the origin project
+
+### Functionality Locations
+
+#### 1. Delivery Deletion (manage_deliveries.php)
+- **Bulk Delete**: When deleting multiple deliveries, all associated pallets are automatically returned to their origin
+- **Individual Delete**: Single deliveries can be deleted, returning their pallets to origin
+- **Admin Training**: Perfect for when admin accidentally creates too many deliveries
+
+#### 2. Pallet Removal (manage_delivery_pallets.php)
+- **Individual Pallet Return**: Remove specific pallets from a delivery, returning just those pallets to their origin
+- **Precise Control**: Allows fine-tuned adjustments without affecting the entire delivery
+
+#### 3. Module Batch Deletion (delete_module_batch.php)
+- **Cascade Return**: When deleting module batches, all associated pallets in deliveries are returned to origin before deletion
+- **Data Integrity**: Ensures no pallets are left orphaned during batch operations
+
+#### 4. Project Cascade Deletion (delete_project_cascade.php)
+- **Project Cleanup**: When deleting projects, all associated delivery pallets are properly returned to their origins
+- **Complete Cleanup**: Maintains data consistency during large-scale deletions
+
+### Testing the Functionality
+
+1. **Create a test delivery** with pallets from a warehouse to a project
+2. **Delete the delivery** using the bulk delete in manage_deliveries.php
+3. **Verify** that the pallets have returned to the warehouse with "In Warehouse" status
+4. **Check** that pallet locations have been updated correctly
+
+### Benefits for Admins
+- **Easy Correction**: Simple way to fix shipping mistakes
+- **Automatic Tracking**: No manual status updates needed
+- **Origin Preservation**: Pallets always know where they came from
+- **Data Integrity**: Prevents orphaned or incorrectly located pallets
+
+### Technical Implementation
+- Uses delivery `origin_type` and `origin_id` fields to determine proper return location
+- Automatically updates pallet status and location fields
+- Integrated into all delivery deletion workflows
+- Transaction-safe operations prevent partial updates
+
