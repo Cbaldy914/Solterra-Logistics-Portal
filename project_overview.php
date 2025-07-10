@@ -414,7 +414,7 @@ $dres = $stmt->get_result();
 $stmt->close();
 
 // Totals
-$total_freight_cost      = 0;
+$total_customer_cost     = 0;
 $total_accessorial_costs = 0;
 $total_warehousing_cost  = 0;
 $total_solterra_fee      = 0;
@@ -462,7 +462,7 @@ if ($whres->num_rows > 0) {
 while ($dv = $dres->fetch_assoc()) {
     $stat = $dv['status_of_delivery'];
     $watt= (float)$dv['wattage'];
-    $f   = (float)$dv['freight_cost'];
+    $c   = (float)$dv['customer_cost'];
     $a   = (float)$dv['accessorial_costs'];
     $q   = (int)$dv['quantity'];
 
@@ -474,9 +474,9 @@ while ($dv = $dres->fetch_assoc()) {
         $soltFeeForThisDelivery = 0;
     }
 
-    $tc = $f + $a + $wcost + $soltFeeForThisDelivery;
+    $tc = $c + $a + $wcost + $soltFeeForThisDelivery;
 
-    $total_freight_cost      += $f;
+    $total_customer_cost     += $c;
     $total_accessorial_costs += $a;
     $total_warehousing_cost  += $wcost;
     $total_solterra_fee      += $soltFeeForThisDelivery;
@@ -561,10 +561,10 @@ $combined_ppw = ($sum_watts>0)?($combined_total_costs/$sum_watts):0;
 
 // Cost Breakdown Pie
 $pieChartDataFinancial = [
-    'Freight'      => $total_freight_cost,
-    'Warehousing'  => $total_warehousing_cost,
-    'Accessorial'  => $total_accessorial_costs,
-    'Solterra Fee' => $total_solterra_fee,
+    'Customer Cost' => $total_customer_cost,
+    'Warehousing'   => $total_warehousing_cost,
+    'Accessorial'   => $total_accessorial_costs,
+    'Solterra Fee'  => $total_solterra_fee,
 ];
 
 // Next 5 weeks for Invoices/Cashflow
@@ -652,10 +652,10 @@ while($dv = $allDel->fetch_assoc()) {
     if(!empty($adate)){
         $weekKey = getWeekEndingSunday($adate);
         $wh   = calcWarehousingCost($dv, $warehouse);
-        $fr   = (float)$dv['freight_cost'];
+        $cc   = (float)$dv['customer_cost'];
         $ac   = (float)$dv['accessorial_costs'];
         $fee  = $solterra_fee*($watt*$qty);
-        $actual_tc = $fr + $ac + $wh + $fee;
+        $actual_tc = $cc + $ac + $wh + $fee;
         if(!isset($deliveries_by_date_actual_cost[$weekKey])) {
             $deliveries_by_date_actual_cost[$weekKey] = 0;
         }
@@ -1499,10 +1499,10 @@ function initializeFinancialCharts(){
     var costPieValues = Object.values(pieChartDataFinancial);
 
     var colorMap = {
-        'Freight':      '#488C9A',
-        'Warehousing':  '#293E4C',
-        'Accessorial':  '#fbb040',
-        'Solterra Fee': '#BFBFBF'
+        'Customer Cost': '#488C9A',
+        'Warehousing':   '#293E4C',
+        'Accessorial':   '#fbb040',
+        'Solterra Fee':  '#BFBFBF'
     };
     var backgroundColors = costPieLabels.map(function(lbl){
         return colorMap[lbl] || '#000000';

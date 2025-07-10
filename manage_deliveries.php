@@ -161,7 +161,8 @@ if (isset($_POST['bulk_edit_submit'])) {
             'actual_delivery_date'    => 's',
             'miles'                   => 'd',
             'freight_cost'            => 'd',
-            'accessorial_costs'       => 'd'
+            'accessorial_costs'       => 'd',
+            'customer_cost'           => 'd'
         ];
 
         // For each field, if user has provided a value, add to the update set
@@ -789,7 +790,8 @@ if (!$is_global_admin && !$account_id_for_admin) {
 $sql_costs = "
     SELECT 
         SUM(IF(d.status_of_delivery IN ('Delivered to Project', 'Delivered to Warehouse'), IFNULL(d.freight_cost, ?), 0)) AS total_freight_cost,
-        SUM(IFNULL(d.accessorial_costs, 0)) AS total_accessorial_costs
+        SUM(IF(d.status_of_delivery IN ('Delivered to Project', 'Delivered to Warehouse'), IFNULL(d.accessorial_costs, 0), 0)) AS total_accessorial_costs,
+        SUM(IF(d.status_of_delivery IN ('Delivered to Project', 'Delivered to Warehouse'), IFNULL(d.customer_cost, 0), 0)) AS total_customer_cost
     FROM deliveries d
     WHERE 1=1 
     {$currentProjectConditionForCosts}  -- Use the correctly built condition for costs
@@ -799,7 +801,7 @@ $stmt = $conn->prepare($sql_costs);
 if ($stmt) {
     $stmt->bind_param($costParamTypes, ...$costParams);
     $stmt->execute();
-    $stmt->bind_result($total_freight_cost, $total_accessorial_costs);
+    $stmt->bind_result($total_freight_cost, $total_accessorial_costs, $total_customer_cost);
     $stmt->fetch();
     $stmt->close();
 }
@@ -978,6 +980,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                d.miles,
                IFNULL(d.freight_cost, ?) AS freight_cost_with_default,
                d.accessorial_costs,
+               d.customer_cost,
                d.created_at
         FROM deliveries d
         LEFT JOIN projects p ON d.project_id = p.id
@@ -1026,6 +1029,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             'Miles',
             'Freight Cost',
             'Accessorial Costs',
+            'Customer Cost',
             'Created At'
         ];
         fputcsv($output, $csv_headers);
@@ -1046,6 +1050,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                 $row['miles'],
                 number_format($row['freight_cost_with_default'], 2),
                 number_format($row['accessorial_costs'], 2),
+                number_format($row['customer_cost'], 2),
                 $row['created_at']
             ];
             fputcsv($output, $csv_row);
@@ -1448,15 +1453,17 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             </div>
         </div>
 
-        <!-- Freight Costs Overview Section -->
+        <!-- Total Freight Costs Overview Section -->
         <div class="right-section">
-            <h2>Freight Costs</h2>
+            <h2>Total Freight Costs</h2>
             <table class="freight-costs">
                 <tr>
-                    <th>Total Freight Cost</th>
-                    <th>Total Accessorial Costs</th>
+                    <th>Customer Cost</th>
+                    <th>Carrier Cost</th>
+                    <th>Accessorial Costs</th>
                 </tr>
                 <tr>
+                    <td>$<?php echo number_format($total_customer_cost, 2); ?></td>
                     <td>$<?php echo number_format($total_freight_cost, 2); ?></td>
                     <td>$<?php echo number_format($total_accessorial_costs, 2); ?></td>
                 </tr>
@@ -1563,6 +1570,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                     <th>Miles</th>
                     <th>Freight Cost</th>
                     <th>Accessorial Costs</th>
+                    <th>Customer Cost</th>
                     <th>Associated Pallets</th>
                     <th>Actions</th>
                 </tr>
@@ -1647,6 +1655,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                             <td><?php echo htmlspecialchars($delivery['miles']); ?></td>
                             <td>$<?php echo number_format($delivery['freight_cost_with_default'], 2); ?></td>
                             <td>$<?php echo number_format($delivery['accessorial_costs'], 2); ?></td>
+                            <td>$<?php echo number_format($delivery['customer_cost'], 2); ?></td>
                             <td>
                                 <?php if ($stmtPallets && $palletCount > 0): ?>
                                     <button type="button" class="action-buttons" 
@@ -1676,7 +1685,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                     ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="<?php echo ($filter_project_id === 'all' || $filter_project_id === 'unassigned') ? '16' : '15'; ?>">No delivery entries found.</td>
+                        <td colspan="<?php echo ($filter_project_id === 'all' || $filter_project_id === 'unassigned') ? '17' : '16'; ?>">No delivery entries found.</td>
                     </tr>
                 <?php endif; ?>
             </table>
@@ -1777,6 +1786,14 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                             <div class="modal-field cost-field-half">
                                 <label for="bulk_accessorial_costs">Accessorial ($)</label>
                                 <input type="number" step="0.01" id="bulk_accessorial_costs" name="accessorial_costs">
+                            </div>
+                        </div>
+                        
+                        <!-- Customer Cost on a separate line -->
+                        <div class="customer-cost-row">
+                            <div class="modal-field cost-field-half">
+                                <label for="bulk_customer_cost">Customer Cost ($)</label>
+                                <input type="number" step="0.01" id="bulk_customer_cost" name="customer_cost">
                             </div>
                         </div>
                     </div>
