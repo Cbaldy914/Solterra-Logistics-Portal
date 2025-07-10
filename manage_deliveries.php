@@ -29,6 +29,138 @@ if (!$conn) {
     die("Connection failed");
 }
 
+/**
+ * Returns pallets to their origin based on delivery's origin_type and origin_id
+ * @param mysqli $conn Database connection
+ * @param array $delivery_ids Array of delivery IDs to process
+ * @return array Array with success status and message
+ */
+function returnPalletsToOrigin($conn, $delivery_ids) {
+    if (empty($delivery_ids)) {
+        return ['success' => false, 'message' => 'No delivery IDs provided'];
+    }
+    
+    $returned_pallets = 0;
+    $errors = [];
+    
+    try {
+        // Get all pallets associated with these deliveries along with their delivery origin info
+        $placeholders = implode(',', array_fill(0, count($delivery_ids), '?'));
+        $types = str_repeat('i', count($delivery_ids));
+        
+        $stmt = $conn->prepare("
+            SELECT dp.inventory_pallet_id, d.origin_type, d.origin_id, d.id as delivery_id,
+                   w.name as origin_warehouse_name, p.project_name as origin_project_name
+            FROM delivery_pallets dp
+            JOIN deliveries d ON dp.delivery_id = d.id
+            LEFT JOIN warehouses w ON d.origin_type = 'warehouse' AND d.origin_id = w.id
+            LEFT JOIN projects p ON d.origin_type = 'project' AND d.origin_id = p.id
+            WHERE dp.delivery_id IN ($placeholders)
+        ");
+        
+        if (!$stmt) {
+            throw new Exception("Failed to prepare pallet query: " . $conn->error);
+        }
+        
+        $stmt->bind_param($types, ...$delivery_ids);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        
+        $pallets_by_origin = [];
+        while ($row = $result->fetch_assoc()) {
+            $origin_key = $row['origin_type'] . '_' . ($row['origin_id'] ?? 'null');
+            if (!isset($pallets_by_origin[$origin_key])) {
+                $pallets_by_origin[$origin_key] = [
+                    'type' => $row['origin_type'],
+                    'id' => $row['origin_id'],
+                    'name' => $row['origin_warehouse_name'] ?? $row['origin_project_name'] ?? 'Manufacturer',
+                    'pallets' => []
+                ];
+            }
+            $pallets_by_origin[$origin_key]['pallets'][] = $row['inventory_pallet_id'];
+        }
+        $stmt->close();
+        
+        // Process each origin group
+        foreach ($pallets_by_origin as $origin_data) {
+            $origin_type = $origin_data['type'];
+            $origin_id = $origin_data['id'];
+            $origin_name = $origin_data['name'];
+            $pallet_ids = $origin_data['pallets'];
+            
+            if (empty($pallet_ids)) continue;
+            
+            // Determine the correct status and location based on origin type
+            $new_status = 'At Manufacturer';
+            $new_warehouse_id = null;
+            $new_project_id = null;
+            
+            switch ($origin_type) {
+                case 'warehouse':
+                    $new_status = 'In Warehouse';
+                    $new_warehouse_id = $origin_id;
+                    break;
+                case 'project':
+                    $new_status = 'Delivered to Project';
+                    $new_project_id = $origin_id;
+                    break;
+                case 'manufacturer':
+                default:
+                    $new_status = 'At Manufacturer';
+                    break;
+            }
+            
+            // Update pallets to return to origin
+            $pallet_placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
+            $pallet_types = 's' . ($new_warehouse_id ? 'i' : '') . ($new_project_id ? 'i' : '') . str_repeat('i', count($pallet_ids));
+            
+            $update_sql = "UPDATE inventory_pallets SET status = ?";
+            $update_params = [$new_status];
+            
+            if ($new_warehouse_id) {
+                $update_sql .= ", current_warehouse_id = ?";
+                $update_params[] = $new_warehouse_id;
+            } else {
+                $update_sql .= ", current_warehouse_id = NULL";
+            }
+            
+            if ($new_project_id) {
+                $update_sql .= ", current_project_id = ?";
+                $update_params[] = $new_project_id;
+            } else {
+                $update_sql .= ", current_project_id = NULL";
+            }
+            
+            $update_sql .= " WHERE id IN ($pallet_placeholders)";
+            $update_params = array_merge($update_params, $pallet_ids);
+            
+            $stmt_update = $conn->prepare($update_sql);
+            if (!$stmt_update) {
+                $errors[] = "Failed to prepare update for {$origin_name}: " . $conn->error;
+                continue;
+            }
+            
+            $stmt_update->bind_param($pallet_types, ...$update_params);
+            if ($stmt_update->execute()) {
+                $returned_pallets += $stmt_update->affected_rows;
+            } else {
+                $errors[] = "Failed to return pallets to {$origin_name}: " . $stmt_update->error;
+            }
+            $stmt_update->close();
+        }
+        
+        $message = "Successfully returned {$returned_pallets} pallet(s) to their origin.";
+        if (!empty($errors)) {
+            $message .= " Errors: " . implode(', ', $errors);
+        }
+        
+        return ['success' => true, 'message' => $message, 'returned_count' => $returned_pallets];
+        
+    } catch (Exception $e) {
+        return ['success' => false, 'message' => 'Error returning pallets to origin: ' . $e->getMessage()];
+    }
+}
+
 // --- NEW: Admin Account Fetching and Permission Setup ---
 $account_id_for_admin = null;
 $is_global_admin = ($_SESSION['role'] === 'global_admin');
@@ -366,14 +498,48 @@ if (isset($_POST['delete_selected'])) {
         }
         // If 'all', no project condition, so it deletes from any project (dangerous, ensure this is intended or add further checks)
 
-        $stmt = $conn->prepare("DELETE FROM deliveries WHERE id IN ($ids_placeholder) $delete_project_condition");
-        $stmt->bind_param($delete_types, ...$delete_params);
-        if ($stmt->execute()) {
-            $_SESSION['messages'][] = "<p>Selected deliveries have been deleted.</p>";
-        } else {
-            $_SESSION['messages'][] = "<p>Error deleting deliveries: " . $stmt->error . "</p>";
+        // Start transaction for safe deletion with pallet return
+        $conn->begin_transaction();
+        try {
+            // Return pallets to their origin before deleting deliveries
+            $return_result = returnPalletsToOrigin($conn, $selected_ids);
+            
+            // Delete delivery_pallets links first
+            $delivery_pallets_deleted = 0;
+            if (!empty($selected_ids)) {
+                $dp_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+                $dp_types = str_repeat('i', count($selected_ids));
+                $stmt_dp = $conn->prepare("DELETE FROM delivery_pallets WHERE delivery_id IN ($dp_placeholders)");
+                if ($stmt_dp) {
+                    $stmt_dp->bind_param($dp_types, ...$selected_ids);
+                    if ($stmt_dp->execute()) {
+                        $delivery_pallets_deleted = $stmt_dp->affected_rows;
+                    }
+                    $stmt_dp->close();
+                }
+            }
+            
+            // Now delete the deliveries
+            $stmt = $conn->prepare("DELETE FROM deliveries WHERE id IN ($ids_placeholder) $delete_project_condition");
+            $stmt->bind_param($delete_types, ...$delete_params);
+            if (!$stmt->execute()) {
+                throw new Exception("Failed to delete deliveries: " . $stmt->error);
+            }
+            $deleted_deliveries = $stmt->affected_rows;
+            $stmt->close();
+            
+            $conn->commit();
+            
+            $success_message = "Successfully deleted {$deleted_deliveries} delivery(ies).";
+            if ($return_result['success'] && $return_result['returned_count'] > 0) {
+                $success_message .= " " . $return_result['message'];
+            }
+            $_SESSION['messages'][] = "<p>{$success_message}</p>";
+            
+        } catch (Exception $e) {
+            $conn->rollback();
+            $_SESSION['messages'][] = "<p class='error-message'>Error deleting deliveries: " . $e->getMessage() . "</p>";
         }
-        $stmt->close();
     } else {
         $_SESSION['messages'][] = "<p>No deliveries selected for deletion.</p>";
     }

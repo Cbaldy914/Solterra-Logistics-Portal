@@ -158,11 +158,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_pallet_associati
         $stmt_link = $conn->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
         $stmt_update_status_add = $conn->prepare("UPDATE inventory_pallets SET status = ?, current_project_id = ?, current_warehouse_id = ?, arrival_date = ? WHERE id = ?");
         $stmt_unlink = $conn->prepare("DELETE FROM delivery_pallets WHERE delivery_id = ? AND inventory_pallet_id = ?");
-        $stmt_get_status_remove = $conn->prepare("SELECT current_warehouse_id FROM inventory_pallets WHERE id = ?");
-        // We'll re-prepare $stmt_update_status_remove inside the loop
-        // to set the correct status for each pallet.
 
-        if (!$stmt_link || !$stmt_update_status_add || !$stmt_unlink || !$stmt_get_status_remove) {
+        if (!$stmt_link || !$stmt_update_status_add || !$stmt_unlink) {
             throw new Exception("Error preparing statements: " . $conn->error);
         }
 
@@ -181,33 +178,79 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_pallet_associati
             $added_count++;
         }
 
-        // Remove old associations
+        // Remove old associations and return pallets to origin
         foreach ($pallets_to_remove as $pallet_id) {
+            // First get the delivery's origin information before unlinking
+            $stmt_get_origin = $conn->prepare("
+                SELECT d.origin_type, d.origin_id, w.name as origin_warehouse_name, p.project_name as origin_project_name
+                FROM deliveries d
+                LEFT JOIN warehouses w ON d.origin_type = 'warehouse' AND d.origin_id = w.id
+                LEFT JOIN projects p ON d.origin_type = 'project' AND d.origin_id = p.id
+                WHERE d.id = ?
+            ");
+            if (!$stmt_get_origin) {
+                throw new Exception("Failed to prepare origin query: " . $conn->error);
+            }
+            
+            $stmt_get_origin->bind_param("i", $delivery_id);
+            $stmt_get_origin->execute();
+            $stmt_get_origin->bind_result($origin_type, $origin_id, $origin_warehouse_name, $origin_project_name);
+            
+            $origin_name = 'Manufacturer';
+            $new_status = 'At Manufacturer';
+            $new_warehouse_id = null;
+            $new_project_id = null;
+            
+            if ($stmt_get_origin->fetch()) {
+                switch ($origin_type) {
+                    case 'warehouse':
+                        $new_status = 'In Warehouse';
+                        $new_warehouse_id = $origin_id;
+                        $origin_name = $origin_warehouse_name ?? 'Unknown Warehouse';
+                        break;
+                    case 'project':
+                        $new_status = 'Delivered to Project';
+                        $new_project_id = $origin_id;
+                        $origin_name = $origin_project_name ?? 'Unknown Project';
+                        break;
+                    case 'manufacturer':
+                    default:
+                        $new_status = 'At Manufacturer';
+                        $origin_name = 'Manufacturer';
+                        break;
+                }
+            }
+            $stmt_get_origin->close();
+            
+            // Unlink the pallet from delivery
             $stmt_unlink->bind_param("ii", $delivery_id, $pallet_id);
             if (!$stmt_unlink->execute()) {
                 throw new Exception("Failed to unlink pallet ID {$pallet_id}: " . $stmt_unlink->error);
             }
             
-            // Determine the status to revert to
-            $stmt_get_status_remove->bind_param("i", $pallet_id);
-            $stmt_get_status_remove->execute();
-            $stmt_get_status_remove->bind_result($warehouse_id);
-            
-            $new_status = 'At Manufacturer'; // Default
-            if ($stmt_get_status_remove->fetch()) {
-                if ($warehouse_id !== null) {
-                    $new_status = 'In Warehouse';
+            // Return pallet to its origin
+            if ($new_warehouse_id) {
+                $stmt_update_status_remove = $conn->prepare("UPDATE inventory_pallets SET status = ?, current_warehouse_id = ?, current_project_id = NULL WHERE id = ?");
+                if (!$stmt_update_status_remove) {
+                    throw new Exception("Failed to prepare warehouse return update: " . $conn->error);
                 }
+                $stmt_update_status_remove->bind_param("sii", $new_status, $new_warehouse_id, $pallet_id);
+            } elseif ($new_project_id) {
+                $stmt_update_status_remove = $conn->prepare("UPDATE inventory_pallets SET status = ?, current_project_id = ?, current_warehouse_id = NULL WHERE id = ?");
+                if (!$stmt_update_status_remove) {
+                    throw new Exception("Failed to prepare project return update: " . $conn->error);
+                }
+                $stmt_update_status_remove->bind_param("sii", $new_status, $new_project_id, $pallet_id);
+            } else {
+                $stmt_update_status_remove = $conn->prepare("UPDATE inventory_pallets SET status = ?, current_warehouse_id = NULL, current_project_id = NULL WHERE id = ?");
+                if (!$stmt_update_status_remove) {
+                    throw new Exception("Failed to prepare manufacturer return update: " . $conn->error);
+                }
+                $stmt_update_status_remove->bind_param("si", $new_status, $pallet_id);
             }
-            $stmt_get_status_remove->free_result();
-
-            $stmt_update_status_remove = $conn->prepare("UPDATE inventory_pallets SET status = ? WHERE id = ?");
-            if (!$stmt_update_status_remove) {
-                throw new Exception("Failed to prepare status update for removal: " . $conn->error);
-            }
-            $stmt_update_status_remove->bind_param("si", $new_status, $pallet_id);
+            
             if (!$stmt_update_status_remove->execute()) {
-                throw new Exception("Failed to update status for removed pallet ID {$pallet_id}: " . $stmt_update_status_remove->error);
+                throw new Exception("Failed to return pallet ID {$pallet_id} to {$origin_name}: " . $stmt_update_status_remove->error);
             }
             $stmt_update_status_remove->close();
 
@@ -218,11 +261,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_pallet_associati
         $stmt_link->close();
         $stmt_update_status_add->close();
         $stmt_unlink->close();
-        $stmt_get_status_remove->close();
 
         $conn->commit();
         $_SESSION['edit_delivery_success'] = 
-            "Pallet associations updated with synchronized status and locations. Added: {$added_count}, Removed: {$removed_count}.";
+            "Pallet associations updated with synchronized status and locations. Added: {$added_count}, Removed: {$removed_count}. Removed pallets have been returned to their origin.";
 
     } catch (Exception $e) {
         $conn->rollback();
