@@ -444,11 +444,17 @@ try {
         
         $sqlPallets = "SELECT ip.id, ip.pallet_identifier, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name as warehouse_name, p.project_name,
                               w.street_address as warehouse_street, w.city as warehouse_city, w.state as warehouse_state, w.zip_code as warehouse_zip,
-                              p.street_address as project_street, p.city as project_city, p.state as project_state, p.zip_code as project_zip
+                              p.street_address as project_street, p.city as project_city, p.state as project_state, p.zip_code as project_zip,
+                              GROUP_CONCAT(DISTINCT CONCAT(d.id, ':', COALESCE(d.bol_number, 'No BOL')) ORDER BY d.id SEPARATOR '|') as delivery_info
                        FROM inventory_pallets ip
                        LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
                        LEFT JOIN projects p ON ip.current_project_id = p.id
+                       LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+                       LEFT JOIN deliveries d ON dp.delivery_id = d.id
                        WHERE ip.unassigned_module_item_id IN ($placeholders)
+                       GROUP BY ip.id, ip.pallet_identifier, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name, p.project_name,
+                              w.street_address, w.city, w.state, w.zip_code,
+                              p.street_address, p.city, p.state, p.zip_code
                        ORDER BY ip.id ASC";
         $stmtPallets = $conn->prepare($sqlPallets);
         if (!$stmtPallets) throw new Exception("Prepare pallets fetch failed: " . $conn->error);
@@ -1252,7 +1258,8 @@ $conn->close();
                                 <th>Wattage</th>
                                 <th>Quantity</th>
                                 <th>Status</th>
-                                <th>Current Location</th>
+                                <th>Deliveries</th>
+                                <th>Pallet Details</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1262,8 +1269,49 @@ $conn->close();
                                     <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                                     <td><?php echo $pallet['wattage']; ?>W</td>
                                     <td><?php echo number_format($pallet['quantity']); ?></td>
-                                    <td><?php echo htmlspecialchars($pallet['status']); ?></td>
-                                    <td><?php echo htmlspecialchars($pallet['display_location']); ?></td>
+                                    <td>
+                                        <?php 
+                                        $status = htmlspecialchars($pallet['status']);
+                                        if ($status === 'In Transit to Warehouse' && $pallet['current_warehouse_id']) {
+                                            echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                        } elseif ($status === 'In Warehouse' && $pallet['current_warehouse_id']) {
+                                            echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                        } else {
+                                            echo $status;
+                                        }
+                                        ?>
+                                    </td>
+                                    <td>
+                                        <?php 
+                                        $deliveryInfo = $pallet['delivery_info'] ?? '';
+                                        if (empty($deliveryInfo)) {
+                                            echo 'No deliveries';
+                                        } else {
+                                            $deliveries = explode('|', $deliveryInfo);
+                                            if (count($deliveries) == 1) {
+                                                $parts = explode(':', $deliveries[0]);
+                                                $deliveryId = $parts[0];
+                                                $bolNumber = $parts[1];
+                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
+                                            } else {
+                                                echo '<div class="delivery-dropdown">';
+                                                echo '<button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (' . count($deliveries) . ')</button>';
+                                                echo '<div class="delivery-list" style="display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 3px; z-index: 1000; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">';
+                                                foreach ($deliveries as $delivery) {
+                                                    $parts = explode(':', $delivery);
+                                                    $deliveryId = $parts[0];
+                                                    $bolNumber = $parts[1];
+                                                    echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
+                                                }
+                                                echo '</div>';
+                                                echo '</div>';
+                                            }
+                                        }
+                                        ?>
+                                    </td>
+                                    <td>
+                                        <a href="pallet_details.php?pallet_id=<?php echo $pallet['id']; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -1315,7 +1363,8 @@ $conn->close();
                             <th>Wattage</th>
                             <th>Quantity</th>
                             <th>Status</th>
-                            <th>Current Location</th>
+                            <th>Deliveries</th>
+                            <th>Pallet Details</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1324,8 +1373,49 @@ $conn->close();
                                 <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                                 <td><?php echo $pallet['wattage']; ?>W</td>
                                 <td><?php echo number_format($pallet['quantity']); ?></td>
-                                <td><?php echo htmlspecialchars($pallet['status']); ?></td>
-                                <td><?php echo htmlspecialchars($pallet['display_location']); ?></td>
+                                <td>
+                                    <?php 
+                                    $status = htmlspecialchars($pallet['status']);
+                                    if ($status === 'In Transit to Warehouse' && $pallet['current_warehouse_id']) {
+                                        echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                    } elseif ($status === 'In Warehouse' && $pallet['current_warehouse_id']) {
+                                        echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                    } else {
+                                        echo $status;
+                                    }
+                                    ?>
+                                </td>
+                                <td>
+                                    <?php 
+                                    $deliveryInfo = $pallet['delivery_info'] ?? '';
+                                    if (empty($deliveryInfo)) {
+                                        echo 'No deliveries';
+                                    } else {
+                                        $deliveries = explode('|', $deliveryInfo);
+                                        if (count($deliveries) == 1) {
+                                            $parts = explode(':', $deliveries[0]);
+                                            $deliveryId = $parts[0];
+                                            $bolNumber = $parts[1];
+                                            echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
+                                        } else {
+                                            echo '<div class="delivery-dropdown">';
+                                            echo '<button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (' . count($deliveries) . ')</button>';
+                                            echo '<div class="delivery-list" style="display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 3px; z-index: 1000; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">';
+                                            foreach ($deliveries as $delivery) {
+                                                $parts = explode(':', $delivery);
+                                                $deliveryId = $parts[0];
+                                                $bolNumber = $parts[1];
+                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
+                                            }
+                                            echo '</div>';
+                                            echo '</div>';
+                                        }
+                                    }
+                                    ?>
+                                </td>
+                                <td>
+                                    <a href="pallet_details.php?pallet_id=<?php echo $pallet['id']; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -2414,6 +2504,29 @@ function filterPalletsUserView() {
         row.style.display = showRow ? '' : 'none';
     });
 }
+
+// ----------------- DELIVERY DROPDOWN FUNCTIONALITY -----------------
+function toggleDeliveryDropdown(button) {
+    const dropdown = button.nextElementSibling;
+    const isVisible = dropdown.style.display !== 'none';
+    
+    // Close all other dropdowns first
+    document.querySelectorAll('.delivery-list').forEach(function(list) {
+        list.style.display = 'none';
+    });
+    
+    // Toggle this dropdown
+    dropdown.style.display = isVisible ? 'none' : 'block';
+}
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', function(event) {
+    if (!event.target.closest('.delivery-dropdown')) {
+        document.querySelectorAll('.delivery-list').forEach(function(list) {
+            list.style.display = 'none';
+        });
+    }
+});
 </script>
 </body>
 </html>
