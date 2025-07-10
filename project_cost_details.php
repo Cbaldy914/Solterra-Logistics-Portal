@@ -239,7 +239,7 @@ function calculateDeliveryWarehousingCost($delivery, $conn) {
 }
 
 // Initialize totals
-$total_freight_cost      = 0;
+$total_customer_cost     = 0;
 $total_accessorial_costs = 0;
 $total_warehousing_cost  = 0;
 $total_solterra_fee      = 0;
@@ -255,12 +255,12 @@ $deliveries = [];
 $stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
 
 while ($delivery = $deliveries_result->fetch_assoc()) {
-    $freight_cost      = (float)$delivery['freight_cost'];
+    $customer_cost     = (float)$delivery['customer_cost'];
     $accessorial_costs = (float)$delivery['accessorial_costs'];
     $quantity          = (int)($delivery['quantity'] ?? 0);
     $wattage           = (float)($delivery['wattage'] ?? 0);
 
-    $total_freight_cost      += $freight_cost;
+    $total_customer_cost     += $customer_cost;
     $total_accessorial_costs += $accessorial_costs;
 
     $total_quantity         += $quantity;
@@ -292,7 +292,7 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     }
     $total_solterra_fee += $solterraFeeForThisDelivery;
 
-    $line_total = $freight_cost + $accessorial_costs + $warehousing_cost + $solterraFeeForThisDelivery;
+    $line_total = $customer_cost + $accessorial_costs + $warehousing_cost + $solterraFeeForThisDelivery;
     $total_logistics_cost += $line_total;
 
     // Calculate cost per pallet for this delivery
@@ -369,7 +369,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             $d['status_of_delivery'] ?? '',
             $d['actual_delivery_date_formatted'],
             number_format($d['warehousing_cost'], 2),
-            number_format($d['freight_cost'], 2),
+            number_format($d['customer_cost'], 2),
             number_format($d['accessorial_costs'], 2),
             number_format($d['solterra_fee'], 2),
             number_format($d['total_logistics_cost'], 2)
@@ -688,7 +688,7 @@ $conn->close();
             <div class="cost-row">
                 <div class="cost-metric">
                     <h3>🚛 Freight Cost<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
-                    <p>$<?php echo number_format($total_freight_cost, 2); ?></p>
+                    <p>$<?php echo number_format($total_customer_cost, 2); ?></p>
                 </div>
                 <div class="cost-metric">
                     <h3>📋 Accessorial Cost<?php echo ($filter === 'ytd') ? ' (YTD)' : ''; ?></h3>
@@ -812,7 +812,7 @@ $conn->close();
                         <td><?php echo htmlspecialchars($d['status_of_delivery'] ?? ''); ?></td>
                         <td><?php echo $d['actual_delivery_date_formatted']; ?></td>
                         <td style="text-align: right;">$<?php echo number_format($d['warehousing_cost'], 2); ?></td>
-                        <td style="text-align: right;">$<?php echo number_format($d['freight_cost'], 2); ?></td>
+                        <td style="text-align: right;">$<?php echo number_format($d['customer_cost'], 2); ?></td>
                         <td style="text-align: right;">$<?php echo number_format($d['accessorial_costs'], 2); ?></td>
                         <td style="text-align: right; font-weight: bold; background-color: #f8f9fa;">$<?php echo number_format($d['total_logistics_cost'], 2); ?></td>
                     </tr>

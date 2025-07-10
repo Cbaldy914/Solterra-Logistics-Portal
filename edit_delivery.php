@@ -710,13 +710,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 /**
  * Keep the hidden customer charge field in sync 
  * with the 'Charge Customer' checkbox and the paid amount,
- * and calculate customer cost automatically
+ * and calculate customer cost automatically only if blank or user hasn't manually set it
  */
 const ckb       = document.getElementById('charge_customer_ckb');
 const paidInput = document.getElementById('accessorial_costs_paid');
 const hiddenCst = document.getElementById('accessorial_costs');
 const freightCostInput = document.querySelector('input[name="freight_cost"]');
 const customerCostInput = document.getElementById('customer_cost');
+
+// Track whether user has manually entered customer cost
+let userHasSetCustomerCost = false;
+const originalCustomerCost = customerCostInput ? parseFloat(customerCostInput.value) || 0 : 0;
 
 function syncAccessorialCharge() {
   if (!ckb || !paidInput || !hiddenCst) return;
@@ -727,10 +731,35 @@ function syncAccessorialCharge() {
 
 function calculateCustomerCost() {
   if (!freightCostInput || !customerCostInput || !hiddenCst) return;
-  const freightCost = parseFloat(freightCostInput.value) || 0;
-  const accessorialCharged = parseFloat(hiddenCst.value) || 0;
-  const totalCustomerCost = freightCost + accessorialCharged;
-  customerCostInput.value = totalCustomerCost.toFixed(2);
+  
+  // Only auto-calculate if user hasn't manually set the customer cost
+  // or if the customer cost field is empty/zero
+  const currentCustomerCost = parseFloat(customerCostInput.value) || 0;
+  
+  if (!userHasSetCustomerCost || currentCustomerCost === 0) {
+    const freightCost = parseFloat(freightCostInput.value) || 0;
+    const accessorialCharged = parseFloat(hiddenCst.value) || 0;
+    const totalCustomerCost = freightCost + accessorialCharged;
+    customerCostInput.value = totalCustomerCost.toFixed(2);
+  }
+}
+
+// Track when user manually enters customer cost
+if (customerCostInput) {
+  customerCostInput.addEventListener('input', () => {
+    userHasSetCustomerCost = true;
+  });
+  
+  // Also track focus/blur to detect manual changes
+  customerCostInput.addEventListener('focus', () => {
+    customerCostInput.dataset.previousValue = customerCostInput.value;
+  });
+  
+  customerCostInput.addEventListener('blur', () => {
+    if (customerCostInput.value !== customerCostInput.dataset.previousValue) {
+      userHasSetCustomerCost = true;
+    }
+  });
 }
 
 if (ckb) {
@@ -749,10 +778,25 @@ if (freightCostInput) {
   freightCostInput.addEventListener('input', calculateCustomerCost);
 }
 
-// Initial sync on page load
+// Initial sync on page load - only if customer cost is currently 0 or matches calculated value
 document.addEventListener('DOMContentLoaded', () => {
+  // Check if the current customer cost matches what would be auto-calculated
+  if (originalCustomerCost > 0) {
+    const freightCost = parseFloat(freightCostInput.value) || 0;
+    const accessorialCharged = parseFloat(hiddenCst.value) || 0;
+    const calculatedCost = freightCost + accessorialCharged;
+    
+    // If current value doesn't match calculated, assume user set it manually
+    if (Math.abs(originalCustomerCost - calculatedCost) > 0.01) {
+      userHasSetCustomerCost = true;
+    }
+  }
+  
   syncAccessorialCharge();
-  calculateCustomerCost();
+  // Only calculate on initial load if customer cost is 0 or user hasn't set it
+  if (!userHasSetCustomerCost) {
+    calculateCustomerCost();
+  }
 });
 </script>
 
