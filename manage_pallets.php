@@ -448,27 +448,22 @@ try {
                 p_current.street_address as project_street, p_current.city as project_city, p_current.state as project_state, p_current.zip_code as project_zip,
                 p_assigned.project_name AS assigned_project_name,
                 COALESCE(p_current.project_name, p_assigned.project_name, 'Unassigned') AS display_project_name,
-                (SELECT COUNT(*) FROM delivery_pallets dp WHERE dp.inventory_pallet_id = ip.id) AS delivery_association_count,
-                CASE
-                    WHEN ip.status = 'At Manufacturer' THEN 'At Manufacturer'
-                    WHEN ip.status = 'In Warehouse' AND w.name IS NOT NULL THEN CONCAT('Warehouse: ', w.name)
-                    WHEN ip.status = 'In Transit to Warehouse' AND w.name IS NOT NULL THEN CONCAT('In Transit to Warehouse: ', w.name)
-                    WHEN ip.status = 'Delivered to Project' AND p_current.project_name IS NOT NULL THEN CONCAT('Project: ', p_current.project_name)
-                    WHEN ip.status = 'In Transit to Project' AND p_current.project_name IS NOT NULL THEN CONCAT('In Transit to Project: ', p_current.project_name)
-                    ELSE ip.status
-                END AS current_location_display
+                GROUP_CONCAT(DISTINCT CONCAT(d.id, ':', COALESCE(d.bol_number, 'No BOL')) ORDER BY d.id SEPARATOR '|') as delivery_info
             FROM inventory_pallets ip
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
             LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
             LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
-            LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id";
+            LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+            LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+            LEFT JOIN deliveries d ON dp.delivery_id = d.id";
     
     // Add account filtering for non-global admins
     if (!$is_global_admin && $account_id_for_user) {
         $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR (ip.current_project_id IS NULL AND ip.assigned_project_id IS NULL))";
     }
     
+    $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.flash_test_data, m.vendor_name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name";
     $sql .= " ORDER BY ip.id DESC";
     
     // Execute query with or without parameters
@@ -987,8 +982,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                         <th>Wattage</th>
                         <th>Quantity</th>
                         <th>Status</th>
-                        <th>Current Location</th>
-                        <th>Associated Deliveries</th>
+                        <th>Deliveries</th>
                         <th>Flash Test Data</th>
                         <th>Actions</th>
                     </tr>
@@ -1016,9 +1010,46 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                 <td><?php echo htmlspecialchars($manufacturer); ?></td>
                                 <td><?php echo htmlspecialchars($pallet['wattage']); ?></td>
                                 <td><?php echo number_format($pallet['quantity']); ?></td>
-                                <td><?php echo htmlspecialchars($pallet['status']); ?></td>
-                                <td><?php echo htmlspecialchars($pallet['current_location_display']); ?></td>
-                                <td><?php echo $pallet['delivery_association_count']; ?></td>
+                                <td>
+                                    <?php 
+                                    $status = htmlspecialchars($pallet['status']);
+                                    if ($status === 'In Transit to Warehouse' && $pallet['current_warehouse_id']) {
+                                        echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                    } elseif ($status === 'In Warehouse' && $pallet['current_warehouse_id']) {
+                                        echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                    } else {
+                                        echo $status;
+                                    }
+                                    ?>
+                                </td>
+                                <td>
+                                    <?php 
+                                    $deliveryInfo = $pallet['delivery_info'] ?? '';
+                                    if (empty($deliveryInfo)) {
+                                        echo 'No deliveries';
+                                    } else {
+                                        $deliveries = explode('|', $deliveryInfo);
+                                        if (count($deliveries) == 1) {
+                                            $parts = explode(':', $deliveries[0]);
+                                            $deliveryId = $parts[0];
+                                            $bolNumber = $parts[1];
+                                            echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
+                                        } else {
+                                            echo '<div class="delivery-dropdown">';
+                                            echo '<button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (' . count($deliveries) . ')</button>';
+                                            echo '<div class="delivery-list" style="display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 3px; z-index: 1000; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">';
+                                            foreach ($deliveries as $delivery) {
+                                                $parts = explode(':', $delivery);
+                                                $deliveryId = $parts[0];
+                                                $bolNumber = $parts[1];
+                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
+                                            }
+                                            echo '</div>';
+                                            echo '</div>';
+                                        }
+                                    }
+                                    ?>
+                                </td>
                                 <td>
                                     <?php if (!empty($pallet['flash_test_data'])): ?>
                                         <a href="view_flash_test.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" target="_blank" class="action-button" style="background-color: #5bc0de;">View</a>
@@ -1036,7 +1067,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="<?php echo $is_user ? '10' : '11'; ?>">No pallets found in the system.</td>
+                            <td colspan="<?php echo $is_user ? '9' : '10'; ?>">No pallets found in the system.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -2300,6 +2331,29 @@ function initializeModalHandlers() {
         updateMultiShipSummary();
     }
 }
+
+// ----------------- DELIVERY DROPDOWN FUNCTIONALITY -----------------
+function toggleDeliveryDropdown(button) {
+    const dropdown = button.nextElementSibling;
+    const isVisible = dropdown.style.display !== 'none';
+    
+    // Close all other dropdowns first
+    document.querySelectorAll('.delivery-list').forEach(function(list) {
+        list.style.display = 'none';
+    });
+    
+    // Toggle this dropdown
+    dropdown.style.display = isVisible ? 'none' : 'block';
+}
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', function(event) {
+    if (!event.target.closest('.delivery-dropdown')) {
+        document.querySelectorAll('.delivery-list').forEach(function(list) {
+            list.style.display = 'none';
+        });
+    }
+});
 </script>
 </body>
 </html> 
