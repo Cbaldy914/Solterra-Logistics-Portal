@@ -443,7 +443,9 @@ try {
                 ip.flash_test_data,
                 m.vendor_name AS origin_vendor,
                 w.name AS current_warehouse_name,
+                w.street_address as warehouse_street, w.city as warehouse_city, w.state as warehouse_state, w.zip_code as warehouse_zip,
                 p_current.project_name AS current_project_name,
+                p_current.street_address as project_street, p_current.city as project_city, p_current.state as project_state, p_current.zip_code as project_zip,
                 p_assigned.project_name AS assigned_project_name,
                 COALESCE(p_current.project_name, p_assigned.project_name, 'Unassigned') AS display_project_name,
                 (SELECT COUNT(*) FROM delivery_pallets dp WHERE dp.inventory_pallet_id = ip.id) AS delivery_association_count,
@@ -498,6 +500,19 @@ try {
         }
     }
 
+    // Add full addresses for origin determination (like in module_overview.php)
+    foreach ($pallets as &$pallet) {
+        if ($pallet['status'] === 'In Warehouse' && $pallet['current_warehouse_id']) {
+            $warehouse_address_parts = array_filter([$pallet['warehouse_street'], $pallet['warehouse_city'], $pallet['warehouse_state'], $pallet['warehouse_zip']]);
+            $pallet['warehouse_full_address'] = implode(', ', $warehouse_address_parts);
+        }
+        if ($pallet['status'] === 'Delivered to Project' && $pallet['current_project_id']) {
+            $project_address_parts = array_filter([$pallet['project_street'], $pallet['project_city'], $pallet['project_state'], $pallet['project_zip']]);
+            $pallet['project_full_address'] = implode(', ', $project_address_parts);
+        }
+    }
+    unset($pallet); // Unset reference after loop
+
     // Fetch all projects for page filter dropdown
     if ($is_global_admin) {
         $sqlProjects = "SELECT id, project_name FROM projects ORDER BY project_name ASC";
@@ -523,18 +538,24 @@ try {
         }
     }
 
-    // Fetch all projects and warehouses for SHIPPING MODAL
+    // Get Google Maps API key from config
+    $google_maps_api_key = getGoogleMapsApiKey();
+
+    // Fetch all projects and warehouses for SHIPPING MODAL (with addresses)
     $all_projects_for_shipping = [];
     if ($is_global_admin) {
-        $sqlAllProjectsModal = "SELECT id, project_name FROM projects ORDER BY project_name ASC";
+        $sqlAllProjectsModal = "SELECT id, project_name, street_address, city, state, zip_code FROM projects ORDER BY project_name ASC";
         $resultAllProjectsModal = $conn->query($sqlAllProjectsModal);
         if ($resultAllProjectsModal) {
             while ($row = $resultAllProjectsModal->fetch_assoc()) {
+                // Build full address for Google Maps
+                $address_parts = array_filter([$row['street_address'], $row['city'], $row['state'], $row['zip_code']]);
+                $row['full_address'] = implode(', ', $address_parts);
                 $all_projects_for_shipping[] = $row;
             }
         }
     } else if ($account_id_for_user) {
-        $sqlAllProjectsModal = "SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+        $sqlAllProjectsModal = "SELECT id, project_name, street_address, city, state, zip_code FROM projects WHERE account_id = ? ORDER BY project_name ASC";
         $stmtAllProjectsModal = $conn->prepare($sqlAllProjectsModal);
         if ($stmtAllProjectsModal) {
             $stmtAllProjectsModal->bind_param("i", $account_id_for_user);
@@ -542,6 +563,9 @@ try {
             $resultAllProjectsModal = $stmtAllProjectsModal->get_result();
             if ($resultAllProjectsModal) {
                 while ($row = $resultAllProjectsModal->fetch_assoc()) {
+                    // Build full address for Google Maps
+                    $address_parts = array_filter([$row['street_address'], $row['city'], $row['state'], $row['zip_code']]);
+                    $row['full_address'] = implode(', ', $address_parts);
                     $all_projects_for_shipping[] = $row;
                 }
             }
@@ -550,11 +574,27 @@ try {
     }
 
     $all_warehouses_for_shipping = [];
-    $sqlAllWarehousesModal = "SELECT id, name FROM warehouses ORDER BY name ASC";
+    $sqlAllWarehousesModal = "SELECT id, name, street_address, city, state, zip_code FROM warehouses ORDER BY name ASC";
     $resultAllWarehousesModal = $conn->query($sqlAllWarehousesModal);
     if ($resultAllWarehousesModal) {
         while ($row = $resultAllWarehousesModal->fetch_assoc()) {
+            // Build full address for Google Maps
+            $address_parts = array_filter([$row['street_address'], $row['city'], $row['state'], $row['zip_code']]);
+            $row['full_address'] = implode(', ', $address_parts);
             $all_warehouses_for_shipping[] = $row;
+        }
+    }
+
+    // Fetch Manufacturers for origin selection (with addresses)
+    $all_manufacturers_for_shipping = [];
+    $sqlAllManufacturersModal = "SELECT id, name, street_address, city, state, zip_code FROM manufacturers WHERE is_active = 1 ORDER BY name ASC";
+    $resultAllManufacturersModal = $conn->query($sqlAllManufacturersModal);
+    if ($resultAllManufacturersModal) {
+        while ($row = $resultAllManufacturersModal->fetch_assoc()) {
+            // Build full address for Google Maps
+            $address_parts = array_filter([$row['street_address'], $row['city'], $row['state'], $row['zip_code']]);
+            $row['full_address'] = implode(', ', $address_parts);
+            $all_manufacturers_for_shipping[] = $row;
         }
     }
 
@@ -685,7 +725,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         }
         #shipModal .modal-content {
             background-color: #fefefe; margin: 5% auto; padding: 30px 30px 20px 30px; border: 1px solid #888;
-            width: 100%; max-width: 500px; border-radius: 8px; position: relative; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            width: 100%; max-width: 600px; border-radius: 8px; position: relative; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
         }
         #shipModal .close-modal-btn {
             color: #aaa; position: absolute; top: 10px; right: 20px; font-size: 28px;
@@ -724,6 +764,52 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
             border-radius: 4px; cursor: pointer; font-weight: 500; font-size: 1em; margin-top: 10px;
         }
         #shipModal .action-button:hover { background-color: #3A6E7F; }
+        
+        /* Origin-Destination Layout Styling */
+        #shipModal .origin-destination-section {
+            margin: 20px 0;
+        }
+        
+        #shipModal .location-container {
+            align-items: flex-start;
+            display: flex;
+            gap: 20px;
+        }
+        
+        #shipModal .origin-section, #shipModal .destination-section {
+            min-width: 0; /* Allow flex items to shrink */
+            flex: 1;
+        }
+        
+        #shipModal .distance-separator {
+            min-width: 80px;
+            text-align: center;
+        }
+        
+        #shipModal .destination-radio-group {
+            flex-wrap: wrap;
+            display: flex;
+            gap: 15px;
+            margin-bottom: 10px;
+        }
+        
+        @media (max-width: 768px) {
+            #shipModal .location-container {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            #shipModal .distance-separator {
+                flex-direction: row;
+                justify-content: center;
+                margin-top: 0;
+            }
+            
+            #shipModal .distance-separator > div:first-child {
+                transform: rotate(90deg);
+                margin-right: 10px;
+            }
+        }
 
         .table-responsive { width: 100%; overflow-x: auto; }
         .warning-message { /* For CSV warnings */
@@ -1023,32 +1109,48 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                             <input type="number" id="freight_cost_single" name="freight_cost_single" step="0.01" min="0">
                         </div>
                         <div>
-                            <label for="accessorial_cost_single">Accessorial Cost ($):</label>
-                            <input type="number" id="accessorial_cost_single" name="accessorial_cost_single" step="0.01" min="0">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div>
                             <label for="customer_cost_single">Customer Cost ($):</label>
                             <input type="number" id="customer_cost_single" name="customer_cost_single" step="0.01" min="0">
                         </div>
-                        <div>
-                            <label for="miles_single">Miles:</label>
-                            <input type="number" id="miles_single" name="miles_single" step="0.01" min="0">
-                        </div>
                     </div>
-                    <label style="margin-bottom: 10px; display:block;">Destination:</label>
-                    <label class="radio-label">
-                        <input type="radio" name="destination_type_single_modal" value="project" checked onchange="toggleDestinationSelectSingle()"> Project
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="destination_type_single_modal" value="warehouse" onchange="toggleDestinationSelectSingle()"> Warehouse
-                    </label>
-                    <div id="destinationSelectContainer">
-                        <label for="destination_id_single_modal" id="destinationLabelSingle">Project:</label>
-                        <select name="destination_id_single_modal" id="destination_id_single" required>
-                            <!-- Options will be populated by JavaScript -->
-                        </select>
+                    
+                    <!-- Origin and Destination Section -->
+                    <div class="origin-destination-section">
+                        <div class="location-container" style="display: flex; align-items: flex-start; gap: 20px;">
+                            <div class="origin-section" style="flex: 1;">
+                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Origin:</label>
+                                <div id="originDisplay" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
+                                    <strong id="originLocationText">Select pallets to see origin</strong>
+                                </div>
+                                <input type="hidden" id="origin_type" name="origin_type" value="">
+                                <input type="hidden" id="origin_id" name="origin_id" value="">
+                            </div>
+                            
+                            <div class="distance-separator" style="display: flex; flex-direction: column; justify-content: center; align-items: center; margin-top: 35px;">
+                                <div style="font-size: 1.8em; color: #488C9A; margin-bottom: 5px;">→</div>
+                                <div id="distanceDisplay" style="text-align: center; font-weight: bold; color: #488C9A; white-space: nowrap; font-size: 0.85em;">
+                                    <!-- Distance will be calculated and displayed here -->
+                                </div>
+                            </div>
+                            
+                            <div class="destination-section" style="flex: 1;">
+                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Destination:</label>
+                                <div class="destination-radio-group" style="display: flex; gap: 15px; margin-bottom: 10px;">
+                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                        <input type="radio" name="destination_type" value="project" checked onchange="toggleDestinationSelectSingle()" style="margin-right: 5px;"> Project
+                                    </label>
+                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                        <input type="radio" name="destination_type" value="warehouse" onchange="toggleDestinationSelectSingle()" style="margin-right: 5px;"> Warehouse
+                                    </label>
+                                </div>
+                                <div id="destinationSelectContainer">
+                                    <select name="destination_id" id="destination_id" required onchange="calculateDistance()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                        <!-- Filled by JS -->
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="miles" name="miles" value="">
                     </div>
                     <button type="button" id="confirmShipmentBtn" class="action-button" style="margin-top:15px;">
                         Create Delivery
@@ -1079,32 +1181,48 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                             <input type="number" id="freight_cost_multi" name="freight_cost_multi" step="0.01" min="0">
                         </div>
                         <div>
-                            <label for="accessorial_cost_multi">Accessorial Cost ($):</label>
-                            <input type="number" id="accessorial_cost_multi" name="accessorial_cost_multi" step="0.01" min="0">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div>
                             <label for="customer_cost_multi">Customer Cost ($):</label>
                             <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
                         </div>
-                        <div>
-                            <label for="miles_multi">Miles:</label>
-                            <input type="number" id="miles_multi" name="miles_multi" step="0.01" min="0">
-                        </div>
                     </div>
-                    <label style="margin-bottom: 10px; display:block;">Destination:</label>
-                    <label class="radio-label">
-                        <input type="radio" name="destination_type_multi_modal" value="project" checked onchange="toggleDestinationSelectMulti()"> Project
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="destination_type_multi_modal" value="warehouse" onchange="toggleDestinationSelectMulti()"> Warehouse
-                    </label>
-                    <div id="destinationSelectContainerMulti">
-                        <label for="destination_id_multi_modal" id="destinationLabelMulti">Project:</label>
-                        <select name="destination_id_multi_modal" id="destination_id_multi" required>
-                           <!-- Options will be populated by JavaScript -->
-                        </select>
+                    
+                    <!-- Origin and Destination Section -->
+                    <div class="origin-destination-section">
+                        <div class="location-container" style="display: flex; align-items: flex-start; gap: 20px;">
+                            <div class="origin-section" style="flex: 1;">
+                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Origin:</label>
+                                <div id="originDisplayMulti" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
+                                    <strong id="originLocationTextMulti">Select pallets to see origin</strong>
+                                </div>
+                                <input type="hidden" id="origin_type_multi" name="origin_type_multi" value="">
+                                <input type="hidden" id="origin_id_multi" name="origin_id_multi" value="">
+                            </div>
+                            
+                            <div class="distance-separator" style="display: flex; flex-direction: column; justify-content: center; align-items: center; margin-top: 35px;">
+                                <div style="font-size: 1.8em; color: #488C9A; margin-bottom: 5px;">→</div>
+                                <div id="distanceDisplayMulti" style="text-align: center; font-weight: bold; color: #488C9A; white-space: nowrap; font-size: 0.85em;">
+                                    <!-- Distance will be calculated and displayed here -->
+                                </div>
+                            </div>
+                            
+                            <div class="destination-section" style="flex: 1;">
+                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Destination:</label>
+                                <div class="destination-radio-group" style="display: flex; gap: 15px; margin-bottom: 10px;">
+                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                        <input type="radio" name="destination_type_multi" value="project" checked onchange="toggleDestinationSelectMulti()" style="margin-right: 5px;"> Project
+                                    </label>
+                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                        <input type="radio" name="destination_type_multi" value="warehouse" onchange="toggleDestinationSelectMulti()" style="margin-right: 5px;"> Warehouse
+                                    </label>
+                                </div>
+                                <div id="destinationSelectContainerMulti">
+                                    <select name="destination_id_multi" id="destination_id_multi" required onchange="calculateDistanceMulti()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                        <!-- Filled by JS -->
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="miles_multi" name="miles_multi" value="">
                     </div>
                     <button type="button" id="confirmMultiShipmentBtn" class="action-button" style="margin-top:15px;">
                         Create Deliveries
@@ -1119,10 +1237,15 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 <script>
     const projectsData = <?php echo json_encode($all_projects_for_shipping); ?>;
     const warehousesData = <?php echo json_encode($all_warehouses_for_shipping); ?>;
+    const manufacturersData = <?php echo json_encode($all_manufacturers_for_shipping); ?>;
+    const palletsData = <?php echo json_encode($pallets); ?>;
     const isUser = <?php echo $is_user ? 'true' : 'false'; ?>;
     const isAdmin = <?php echo $is_admin ? 'true' : 'false'; ?>;
     const isGlobalAdmin = <?php echo $is_global_admin ? 'true' : 'false'; ?>;
 </script>
+
+<!-- Load the Google Maps JavaScript API with Places library -->
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
 
 <script>
 // Combined filter for project, wattage, and general search
@@ -1478,6 +1601,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (selectAllPalletsCheckbox) {
             selectAllPalletsCheckbox.addEventListener('change', function() {
                 toggleAllPalletCheckboxes(this.checked);
+                updateOriginDisplay();
+                updateMultiShipSummary();
             });
         }
 
@@ -1485,6 +1610,8 @@ document.addEventListener('DOMContentLoaded', function() {
         document.addEventListener('change', function(e) {
             if (e.target && e.target.classList.contains('pallet-checkbox')) {
                 updateSelectedCount();
+                updateOriginDisplay();
+                updateMultiShipSummary();
                 if (!e.target.checked && selectAllPalletsCheckbox) {
                     selectAllPalletsCheckbox.checked = false;
                 } else if (e.target.checked) {
@@ -1523,13 +1650,13 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize shipping modal functions
     initializeShippingModal();
-    initializeDestinationToggles();
+    initializeModalHandlers();
     initializeShipmentButtons();
     
-    // Initialize destination selects and summary
-    toggleDestinationSelectSingle();
-    toggleDestinationSelectMulti();
-    updateMultiShipSummary();
+    // Update origin display when pallets are selected
+    if (!isUser) {
+        updateOriginDisplay();
+    }
 
     // Delete pallets functionality (admins only)
     if (!isUser) {
@@ -1611,11 +1738,217 @@ function initializeShippingModal() {
     }
 }
 
-// Toggle Destination Dropdowns (define functions globally)
-function populateDestinationDropdown(selectElement, labelElement, destinationType, dataSource, nameField, placeholderPrefix) {
-    if (!selectElement || !labelElement) return;
-    labelElement.textContent = destinationType === 'project' ? 'Project:' : 'Warehouse:';
-    selectElement.innerHTML = ''; 
+// ---------- DISTANCE CALCULATION WITH GOOGLE MAPS ----------
+let directionsService;
+let initialized = false;
+
+function initializeGoogleMaps() {
+    if (isUser) return;
+    if (initialized || !window.google) return;
+    directionsService = new google.maps.DirectionsService();
+    initialized = true;
+}
+
+function calculateDistanceFromAddresses(originAddress, destinationAddress, callback) {
+    if (isUser) return;
+    if (!initialized) {
+        initializeGoogleMaps();
+    }
+    
+    if (!directionsService || !originAddress || !destinationAddress) {
+        callback(null, 'Missing address information');
+        return;
+    }
+
+    if (originAddress.toLowerCase() === destinationAddress.toLowerCase()) {
+        callback(null, 'Origin and destination cannot be the same');
+        return;
+    }
+
+    const request = {
+        origin: originAddress,
+        destination: destinationAddress,
+        travelMode: 'DRIVING'
+    };
+
+    directionsService.route(request, function(result, status) {
+        if (status === 'OK') {
+            const distanceInMeters = result.routes[0].legs[0].distance.value;
+            const distanceInMiles = (distanceInMeters / 1609.34).toFixed(2);
+            callback(distanceInMiles, null);
+        } else {
+            callback(null, 'Could not calculate distance');
+        }
+    });
+}
+
+// ---------- ORIGIN DETERMINATION FROM PALLETS ----------
+function getSelectedPallets() {
+    if (isUser) return [];
+    const selectedCheckboxes = document.querySelectorAll('#palletsTable .pallet-checkbox:checked');
+    const selectedPallets = [];
+    
+    selectedCheckboxes.forEach(checkbox => {
+        const palletId = parseInt(checkbox.value);
+        const pallet = palletsData.find(p => p.pallet_id === palletId);
+        if (pallet) {
+            selectedPallets.push(pallet);
+        }
+    });
+    
+    return selectedPallets;
+}
+
+function determineOriginFromSelectedPallets() {
+    if (isUser) return { success: false, message: 'User role cannot create deliveries' };
+    
+    const selectedPallets = getSelectedPallets();
+    
+    if (selectedPallets.length === 0) {
+        return {
+            success: false,
+            message: 'No pallets selected'
+        };
+    }
+
+    // Group pallets by their origin
+    const origins = {};
+    
+    selectedPallets.forEach(pallet => {
+        let originKey;
+        if (pallet.status === 'At Manufacturer') {
+            originKey = `manufacturer_${pallet.origin_vendor}`;
+        } else if (pallet.status === 'In Warehouse' && pallet.current_warehouse_name) {
+            originKey = `warehouse_${pallet.current_warehouse_id}`;
+        } else if (pallet.status === 'Delivered to Project' && pallet.current_project_name) {
+            originKey = `project_${pallet.current_project_id}`;
+        } else {
+            originKey = 'unknown';
+        }
+        
+        if (!origins[originKey]) {
+            origins[originKey] = [];
+        }
+        origins[originKey].push(pallet);
+    });
+
+    const originKeys = Object.keys(origins);
+    
+    if (originKeys.length > 1) {
+        return {
+            success: false,
+            message: 'Selected pallets must all have the same origin location'
+        };
+    }
+    
+    if (originKeys.length === 0 || originKeys[0] === 'unknown') {
+        return {
+            success: false,
+            message: 'Cannot determine origin for selected pallets'
+        };
+    }
+
+    const originKey = originKeys[0];
+    const firstPallet = origins[originKey][0];
+    
+    // Determine origin details
+    let originInfo = {};
+    
+    if (firstPallet.status === 'At Manufacturer') {
+        // Find manufacturer by vendor name
+        const manufacturer = manufacturersData.find(m => m.name === firstPallet.origin_vendor);
+        if (manufacturer) {
+            originInfo = {
+                type: 'manufacturer',
+                id: manufacturer.id,
+                name: manufacturer.name,
+                address: manufacturer.full_address,
+                displayText: `Manufacturer: ${manufacturer.name}`
+            };
+        } else {
+            return {
+                success: false,
+                message: `Manufacturer "${firstPallet.origin_vendor}" not found in system`
+            };
+        }
+    } else if (firstPallet.status === 'In Warehouse') {
+        originInfo = {
+            type: 'warehouse',
+            id: firstPallet.current_warehouse_id,
+            name: firstPallet.current_warehouse_name,
+            address: firstPallet.warehouse_full_address,
+            displayText: `Warehouse: ${firstPallet.current_warehouse_name}`
+        };
+    } else if (firstPallet.status === 'Delivered to Project') {
+        originInfo = {
+            type: 'project',
+            id: firstPallet.current_project_id,
+            name: firstPallet.current_project_name,
+            address: firstPallet.project_full_address,
+            displayText: `Project: ${firstPallet.current_project_name}`
+        };
+    }
+
+    return {
+        success: true,
+        origin: originInfo
+    };
+}
+
+function updateOriginDisplay() {
+    if (isUser) return;
+    const result = determineOriginFromSelectedPallets();
+    
+    // Update single shipment display
+    const originText = document.getElementById('originLocationText');
+    const originType = document.getElementById('origin_type');
+    const originId = document.getElementById('origin_id');
+    
+    // Update multi shipment display
+    const originTextMulti = document.getElementById('originLocationTextMulti');
+    const originTypeMulti = document.getElementById('origin_type_multi');
+    const originIdMulti = document.getElementById('origin_id_multi');
+    
+    if (result.success) {
+        const displayText = result.origin.displayText;
+        
+        if (originText) originText.textContent = displayText;
+        if (originTextMulti) originTextMulti.textContent = displayText;
+        
+        if (originType) originType.value = result.origin.type;
+        if (originId) originId.value = result.origin.id;
+        if (originTypeMulti) originTypeMulti.value = result.origin.type;
+        if (originIdMulti) originIdMulti.value = result.origin.id;
+        
+        // Calculate distance
+        calculateDistance();
+        calculateDistanceMulti();
+    } else {
+        const errorText = result.message;
+        
+        if (originText) originText.textContent = errorText;
+        if (originTextMulti) originTextMulti.textContent = errorText;
+        
+        if (originType) originType.value = '';
+        if (originId) originId.value = '';
+        if (originTypeMulti) originTypeMulti.value = '';
+        if (originIdMulti) originIdMulti.value = '';
+        
+        // Clear distance display
+        const distanceDisplay = document.getElementById('distanceDisplay');
+        const distanceDisplayMulti = document.getElementById('distanceDisplayMulti');
+        if (distanceDisplay) distanceDisplay.innerHTML = '';
+        if (distanceDisplayMulti) distanceDisplayMulti.innerHTML = '';
+    }
+}
+
+// ---------- DESTINATION SELECTION FUNCTIONS ----------
+function populateDropdown(selectElement, type, dataSource, nameField, placeholderPrefix) {
+    if (isUser) return;
+    if (!selectElement) return;
+    
+    selectElement.innerHTML = '';
+
     if (!dataSource || dataSource.length === 0) {
         selectElement.innerHTML = `<option value="">No ${placeholderPrefix.toLowerCase()} found</option>`;
         selectElement.disabled = true;
@@ -1626,52 +1959,138 @@ function populateDestinationDropdown(selectElement, labelElement, destinationTyp
             const opt = document.createElement('option');
             opt.value = item.id;
             opt.textContent = item[nameField];
+            opt.setAttribute('data-address', item.full_address || '');
             selectElement.appendChild(opt);
         });
     }
 }
 
+function getAddressFromSelection(selectElement, type) {
+    if (isUser) return '';
+    if (!selectElement || !selectElement.value) return '';
+    const selectedOption = selectElement.options[selectElement.selectedIndex];
+    return selectedOption ? selectedOption.getAttribute('data-address') : '';
+}
+
 function toggleDestinationSelectSingle() {
     if (isUser) return;
-    const assignType = document.querySelector('input[name="destination_type_single_modal"]:checked')?.value;
-    if (!assignType) return;
-    populateDestinationDropdown(
-        document.getElementById('destination_id_single'),
-        document.getElementById('destinationLabelSingle'),
-        assignType,
-        assignType === 'project' ? projectsData : warehousesData,
-        assignType === 'project' ? 'project_name' : 'name',
-        assignType === 'project' ? 'Project' : 'Warehouse'
-    );
+    const destType = document.querySelector('input[name="destination_type"]:checked').value;
+    const destSelect = document.getElementById('destination_id');
+    
+    const data = (destType === 'project') ? projectsData : warehousesData;
+    const nameField = (destType === 'project') ? 'project_name' : 'name';
+    const placeholder = (destType === 'project') ? 'Project' : 'Warehouse';
+
+    populateDropdown(destSelect, destType, data, nameField, placeholder);
+    calculateDistance();
 }
 
 function toggleDestinationSelectMulti() {
     if (isUser) return;
-    const assignType = document.querySelector('input[name="destination_type_multi_modal"]:checked')?.value;
-    if (!assignType) return;
-     populateDestinationDropdown(
-        document.getElementById('destination_id_multi'),
-        document.getElementById('destinationLabelMulti'),
-        assignType,
-        assignType === 'project' ? projectsData : warehousesData,
-        assignType === 'project' ? 'project_name' : 'name',
-        assignType === 'project' ? 'Project' : 'Warehouse'
-    );
+    const destType = document.querySelector('input[name="destination_type_multi"]:checked').value;
+    const destSelect = document.getElementById('destination_id_multi');
+    
+    const data = (destType === 'project') ? projectsData : warehousesData;
+    const nameField = (destType === 'project') ? 'project_name' : 'name';
+    const placeholder = (destType === 'project') ? 'Project' : 'Warehouse';
+
+    populateDropdown(destSelect, destType, data, nameField, placeholder);
+    calculateDistanceMulti();
 }
 
-function initializeDestinationToggles() {
+// ---------- DISTANCE CALCULATION FUNCTIONS ----------
+function calculateDistance() {
     if (isUser) return;
-    document.querySelectorAll('input[name="destination_type_single_modal"]').forEach(r => r.addEventListener('change', toggleDestinationSelectSingle));
-    document.querySelectorAll('input[name="destination_type_multi_modal"]').forEach(r => r.addEventListener('change', toggleDestinationSelectMulti));
+    const destSelect = document.getElementById('destination_id');
+    const distanceDisplay = document.getElementById('distanceDisplay');
+    const milesInput = document.getElementById('miles');
+
+    if (!destSelect || !distanceDisplay) return;
+
+    const result = determineOriginFromSelectedPallets();
+    if (!result.success) {
+        distanceDisplay.innerHTML = '';
+        milesInput.value = '';
+        return;
+    }
+
+    const originAddress = result.origin.address;
+    const destAddress = getAddressFromSelection(destSelect, 'destination');
+
+    if (!originAddress || !destAddress) {
+        distanceDisplay.innerHTML = '';
+        milesInput.value = '';
+        return;
+    }
+
+    distanceDisplay.innerHTML = '<span style="color: #666;">Calculating distance...</span>';
+
+    calculateDistanceFromAddresses(originAddress, destAddress, function(distance, error) {
+        if (error) {
+            if (error.includes('cannot be the same')) {
+                distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Same location</span>';
+            } else {
+                distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error</span>';
+            }
+            milesInput.value = '';
+        } else {
+            distanceDisplay.innerHTML = `${distance} miles`;
+            milesInput.value = distance;
+        }
+    });
 }
 
-// Confirm Shipment Buttons (define functions globally)
+function calculateDistanceMulti() {
+    if (isUser) return;
+    const destSelect = document.getElementById('destination_id_multi');
+    const distanceDisplay = document.getElementById('distanceDisplayMulti');
+    const milesInput = document.getElementById('miles_multi');
+
+    if (!destSelect || !distanceDisplay) return;
+
+    const result = determineOriginFromSelectedPallets();
+    if (!result.success) {
+        distanceDisplay.innerHTML = '';
+        milesInput.value = '';
+        return;
+    }
+
+    const originAddress = result.origin.address;
+    const destAddress = getAddressFromSelection(destSelect, 'destination');
+
+    if (!originAddress || !destAddress) {
+        distanceDisplay.innerHTML = '';
+        milesInput.value = '';
+        return;
+    }
+
+    distanceDisplay.innerHTML = '<span style="color: #666;">Calculating distance...</span>';
+
+    calculateDistanceFromAddresses(originAddress, destAddress, function(distance, error) {
+        if (error) {
+            if (error.includes('cannot be the same')) {
+                distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Same location</span>';
+            } else {
+                distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error</span>';
+            }
+            milesInput.value = '';
+        } else {
+            distanceDisplay.innerHTML = `${distance} miles`;
+            milesInput.value = distance;
+        }
+    });
+}
+
+// ---------- FORM SUBMISSION FUNCTIONS ----------
 function setOrCreateHidden(form, fieldName, fieldValue) {
+    if (isUser) return;
     if (!form) return;
-    let el = form.querySelector(`input[type="hidden"][name="${fieldName}"]`);
+    let el = form.querySelector(`input[name="${fieldName}"]`);
     if (!el) {
         el = document.createElement('input');
-        el.type = 'hidden'; el.name = fieldName; form.appendChild(el);
+        el.type = 'hidden';
+        el.name = fieldName;
+        form.appendChild(el);
     }
     el.value = fieldValue;
 }
@@ -1683,85 +2102,158 @@ function initializeShipmentButtons() {
     const confirmMultiShipmentBtn = document.getElementById('confirmMultiShipmentBtn');
     const mainShipForm = document.getElementById('shipPalletsForm');
 
-    if (confirmShipmentBtn && mainShipForm) {
+    if (confirmShipmentBtn) {
         confirmShipmentBtn.addEventListener('click', function() {
-            setOrCreateHidden(mainShipForm, 'shipment_mode', 'single');
-            setOrCreateHidden(mainShipForm, 'pallets_per_truck', '1');
+            if (!mainShipForm) return;
 
-            const assignType = document.querySelector('input[name="destination_type_single_modal"]:checked').value;
-            const targetId = document.getElementById('destination_id_single').value;
+            // Single shipment mode
+            let shipmentModeInput = mainShipForm.querySelector('input[name="shipment_mode"]');
+            if (!shipmentModeInput) {
+                shipmentModeInput = document.createElement('input');
+                shipmentModeInput.type = 'hidden';
+                shipmentModeInput.name = 'shipment_mode';
+                mainShipForm.appendChild(shipmentModeInput);
+            }
+            shipmentModeInput.value = 'single';
+
+            // Pallets per truck (not used in single, so set to 1)
+            let pTruckInput = mainShipForm.querySelector('input[name="pallets_per_truck"]');
+            if (!pTruckInput) {
+                pTruckInput = document.createElement('input');
+                pTruckInput.type = 'hidden';
+                pTruckInput.name = 'pallets_per_truck';
+                mainShipForm.appendChild(pTruckInput);
+            }
+            pTruckInput.value = '1';
+
+            // Validate origin can be determined
+            const originResult = determineOriginFromSelectedPallets();
+            if (!originResult.success) {
+                alert('Error: ' + originResult.message);
+                return;
+            }
+
+            // Get single form values
+            const originType = document.getElementById('origin_type').value;
+            const originId = document.getElementById('origin_id').value;
+            const destinationType = document.querySelector('input[name="destination_type"]:checked').value;
+            const destinationId = document.getElementById('destination_id').value;
             const bol = document.getElementById('bol_number_single_modal').value;
             const departure = document.getElementById('departure_date_single_modal').value;
             const arrival = document.getElementById('est_arrival_date_single_modal').value;
-                        const freightCost = document.getElementById('freight_cost_single').value;
-                const accessorialCost = document.getElementById('accessorial_cost_single').value;
-                const customerCost = document.getElementById('customer_cost_single').value;
-                const miles = document.getElementById('miles_single').value;
+            const freightCost = document.getElementById('freight_cost_single').value;
+            const customerCost = document.getElementById('customer_cost_single').value;
+            const miles = document.getElementById('miles').value;
 
-            if (!targetId) { alert('Please select a destination.'); return; }
-            if (!departure) { alert('Departure date is required.'); return; }
-            if (!arrival) { alert('Estimated arrival date is required.'); return; }
+            if (!originId) {
+                alert('Please select pallets to determine origin location.');
+                return;
+            }
+            if (!destinationId) {
+                alert('Please select a destination location.');
+                return;
+            }
 
-            setOrCreateHidden(mainShipForm, 'destination_type', assignType);
-            setOrCreateHidden(mainShipForm, 'destination_id', targetId);
+            // Check if origin and destination are the same
+            if (originType === destinationType && originId === destinationId) {
+                alert('Origin and destination cannot be the same location.');
+                return;
+            }
+
+            // Populate hidden inputs
+            setOrCreateHidden(mainShipForm, 'origin_type', originType);
+            setOrCreateHidden(mainShipForm, 'origin_id', originId);
+            setOrCreateHidden(mainShipForm, 'destination_type', destinationType);
+            setOrCreateHidden(mainShipForm, 'destination_id', destinationId);
             setOrCreateHidden(mainShipForm, 'bol_number', bol);
             setOrCreateHidden(mainShipForm, 'departure_date', departure);
             setOrCreateHidden(mainShipForm, 'est_arrival_date', arrival);
             setOrCreateHidden(mainShipForm, 'freight_cost', freightCost);
-            setOrCreateHidden(mainShipForm, 'accessorial_cost', accessorialCost);
+            setOrCreateHidden(mainShipForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
             setOrCreateHidden(mainShipForm, 'customer_cost', customerCost);
             setOrCreateHidden(mainShipForm, 'miles', miles);
+
             mainShipForm.submit();
         });
     }
 
-    if (confirmMultiShipmentBtn && mainShipForm) {
+    if (confirmMultiShipmentBtn) {
         confirmMultiShipmentBtn.addEventListener('click', function() {
-            setOrCreateHidden(mainShipForm, 'shipment_mode', 'multi');
-            
-            const palletsPerTruckVal = document.getElementById('palletsPerTruck_modal').value;
-            if (!palletsPerTruckVal || parseInt(palletsPerTruckVal) < 1) {
-                alert('Pallets per truck must be at least 1.'); return;
-            }
-            setOrCreateHidden(mainShipForm, 'pallets_per_truck', palletsPerTruckVal);
+            if (!mainShipForm) return;
 
-            const assignType = document.querySelector('input[name="destination_type_multi_modal"]:checked').value;
-            const targetId = document.getElementById('destination_id_multi').value;
+            // Multi shipment mode
+            let shipmentModeInput = mainShipForm.querySelector('input[name="shipment_mode"]');
+            if (!shipmentModeInput) {
+                shipmentModeInput = document.createElement('input');
+                shipmentModeInput.type = 'hidden';
+                shipmentModeInput.name = 'shipment_mode';
+                mainShipForm.appendChild(shipmentModeInput);
+            }
+            shipmentModeInput.value = 'multi';
+
+            // Pallets per truck
+            let perTruckInput = mainShipForm.querySelector('input[name="pallets_per_truck"]');
+            if (!perTruckInput) {
+                perTruckInput = document.createElement('input');
+                perTruckInput.type = 'hidden';
+                perTruckInput.name = 'pallets_per_truck';
+                mainShipForm.appendChild(perTruckInput);
+            }
+            perTruckInput.value = document.getElementById('palletsPerTruck_modal').value || '1';
+
+            // Validate origin can be determined
+            const originResult = determineOriginFromSelectedPallets();
+            if (!originResult.success) {
+                alert('Error: ' + originResult.message);
+                return;
+            }
+
+            // Get multi form values
+            const originType = document.getElementById('origin_type_multi').value;
+            const originId = document.getElementById('origin_id_multi').value;
+            const destinationType = document.querySelector('input[name="destination_type_multi"]:checked').value;
+            const destinationId = document.getElementById('destination_id_multi').value;
             const bol = document.getElementById('bol_number_multi_modal').value;
             const departure = document.getElementById('departure_date_multi_modal').value;
             const arrival = document.getElementById('est_arrival_date_multi_modal').value;
             const freightCost = document.getElementById('freight_cost_multi').value;
-            const accessorialCost = document.getElementById('accessorial_cost_multi').value;
             const customerCost = document.getElementById('customer_cost_multi').value;
             const miles = document.getElementById('miles_multi').value;
 
-            if (!targetId) { alert('Please select a destination.'); return; }
-            if (!departure) { alert('Departure date is required.'); return; }
-            if (!arrival) { alert('Estimated arrival date is required.'); return; }
-            
-            setOrCreateHidden(mainShipForm, 'destination_type', assignType);
-            setOrCreateHidden(mainShipForm, 'destination_id', targetId);
+            if (!originId) {
+                alert('Please select pallets to determine origin location.');
+                return;
+            }
+            if (!destinationId) {
+                alert('Please select a destination location.');
+                return;
+            }
+
+            // Check if origin and destination are the same
+            if (originType === destinationType && originId === destinationId) {
+                alert('Origin and destination cannot be the same location.');
+                return;
+            }
+
+            // Populate hidden inputs
+            setOrCreateHidden(mainShipForm, 'origin_type', originType);
+            setOrCreateHidden(mainShipForm, 'origin_id', originId);
+            setOrCreateHidden(mainShipForm, 'destination_type', destinationType);
+            setOrCreateHidden(mainShipForm, 'destination_id', destinationId);
             setOrCreateHidden(mainShipForm, 'bol_number', bol);
             setOrCreateHidden(mainShipForm, 'departure_date', departure);
             setOrCreateHidden(mainShipForm, 'est_arrival_date', arrival);
             setOrCreateHidden(mainShipForm, 'freight_cost', freightCost);
-            setOrCreateHidden(mainShipForm, 'accessorial_cost', accessorialCost);
+            setOrCreateHidden(mainShipForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
             setOrCreateHidden(mainShipForm, 'customer_cost', customerCost);
             setOrCreateHidden(mainShipForm, 'miles', miles);
+
             mainShipForm.submit();
         });
     }
-
-    // Multi-Shipment Summary
-    const palletsPerTruckInput = document.getElementById('palletsPerTruck_modal'); // Corrected ID
-    const multiShipSummary = document.getElementById('multiShipSummary');
-
-    if (palletsPerTruckInput) {
-        palletsPerTruckInput.addEventListener('input', updateMultiShipSummary);
-    }
 }
 
-// Multi-Shipment Summary function (define globally)
+// ---------- MULTI-SHIPMENT SUMMARY ----------
 function updateMultiShipSummary() {
     if (isUser) return;
     const palletsPerTruckInput = document.getElementById('palletsPerTruck_modal');
@@ -1769,13 +2261,43 @@ function updateMultiShipSummary() {
     
     if (!palletsPerTruckInput || !multiShipSummary) return;
     const selected = document.querySelectorAll('#palletsTable .pallet-checkbox:checked').length;
-    const perTruck = parseInt(palletsPerTruckInput.value, 10) || 1; 
-    if (selected > 0 && perTruck > 0) {
-        const numDeliveries = Math.ceil(selected / perTruck);
-        multiShipSummary.textContent = 
-            `${numDeliveries} deliver${numDeliveries === 1 ? 'y' : 'ies'} will be created (${perTruck} pallet${perTruck === 1 ? '' : 's'} per truck).`;
+    const perTruck = parseInt(palletsPerTruckInput.value, 10) || 1;
+    const numDeliveries = Math.ceil(selected / perTruck);
+    multiShipSummary.textContent = selected > 0
+        ? (numDeliveries + ' deliveries will be created (' + perTruck + ' pallets per truck)')
+        : '';
+}
+
+// ---------- INITIALIZE FUNCTIONS ----------
+function initializeDestinationToggles() {
+    if (isUser) return;
+    // Default load the destination dropdowns
+    toggleDestinationSelectSingle();
+    toggleDestinationSelectMulti();
+}
+
+function initializeModalHandlers() {
+    if (isUser) return;
+    
+    // Initialize Google Maps when DOM is ready
+    if (window.google) {
+        initializeGoogleMaps();
     } else {
-        multiShipSummary.textContent = 'Select pallets and specify pallets per truck.';
+        // Wait for Google Maps to load
+        window.addEventListener('load', initializeGoogleMaps);
+    }
+    
+    // Initialize destination toggles
+    initializeDestinationToggles();
+    
+    // Initialize origin display
+    updateOriginDisplay();
+    
+    // Multi-shipment summary
+    const palletsPerTruckInput = document.getElementById('palletsPerTruck_modal');
+    if (palletsPerTruckInput) {
+        palletsPerTruckInput.addEventListener('input', updateMultiShipSummary);
+        updateMultiShipSummary();
     }
 }
 </script>

@@ -748,7 +748,7 @@ $conn->close();
             padding: 30px 30px 20px 30px;
             border: 1px solid #888;
             width: 100%;
-            max-width: 500px;
+            max-width: 600px;
             border-radius: 8px;
             position: relative;
             box-shadow: 0 4px 16px rgba(0,0,0,0.15);
@@ -791,6 +791,7 @@ $conn->close();
         }
         .shipment-details-modal-content input[type="text"],
         .shipment-details-modal-content input[type="date"],
+        .shipment-details-modal-content input[type="number"],
         .shipment-details-modal-content select {
             width: 100%;
             padding: 8px;
@@ -809,9 +810,47 @@ $conn->close();
             margin-right: 5px;
             vertical-align: middle;
         }
-        #destinationSelectContainer {
-            margin-top: 10px;
+        
+        /* Origin-Destination Layout Styling */
+        .origin-destination-section {
+            margin: 20px 0;
         }
+        
+        .location-container {
+            align-items: flex-start;
+        }
+        
+        .origin-section, .destination-section {
+            min-width: 0; /* Allow flex items to shrink */
+        }
+        
+        .distance-separator {
+            min-width: 80px;
+            text-align: center;
+        }
+        
+        .destination-radio-group {
+            flex-wrap: wrap;
+        }
+        
+        @media (max-width: 768px) {
+            .location-container {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .distance-separator {
+                flex-direction: row;
+                justify-content: center;
+                margin-top: 0;
+            }
+            
+            .distance-separator > div:first-child {
+                transform: rotate(90deg);
+                margin-right: 10px;
+            }
+        }
+
         .tabs {
             display: flex;
             justify-content: center;
@@ -1350,33 +1389,39 @@ $conn->close();
                     
                     <!-- Origin and Destination Section -->
                     <div class="origin-destination-section">
-                        <div class="form-row">
-                            <div>
-                                <label style="margin-bottom: 10px; display:block;">Origin:</label>
-                                <div id="originDisplay" style="padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; margin-top: 5px;">
+                        <div class="location-container" style="display: flex; align-items: flex-start; gap: 20px;">
+                            <div class="origin-section" style="flex: 1;">
+                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Origin:</label>
+                                <div id="originDisplay" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
                                     <strong id="originLocationText">Select pallets to see origin</strong>
                                 </div>
                                 <input type="hidden" id="origin_type" name="origin_type" value="">
                                 <input type="hidden" id="origin_id" name="origin_id" value="">
                             </div>
-                            <div>
-                                <label style="margin-bottom: 10px; display:block;">Destination:</label>
-                                <label class="radio-label">
-                                    <input type="radio" name="destination_type" value="project" checked onchange="toggleDestinationSelectSingle()"> Project
-                                </label>
-                                <label class="radio-label">
-                                    <input type="radio" name="destination_type" value="warehouse" onchange="toggleDestinationSelectSingle()"> Warehouse
-                                </label>
+                            
+                            <div class="distance-separator" style="display: flex; flex-direction: column; justify-content: center; align-items: center; margin-top: 35px;">
+                                <div style="font-size: 1.8em; color: #488C9A; margin-bottom: 5px;">→</div>
+                                <div id="distanceDisplay" style="text-align: center; font-weight: bold; color: #488C9A; white-space: nowrap; font-size: 0.85em;">
+                                    <!-- Distance will be calculated and displayed here -->
+                                </div>
+                            </div>
+                            
+                            <div class="destination-section" style="flex: 1;">
+                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Destination:</label>
+                                <div class="destination-radio-group" style="display: flex; gap: 15px; margin-bottom: 10px;">
+                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                        <input type="radio" name="destination_type" value="project" checked onchange="toggleDestinationSelectSingle()" style="margin-right: 5px;"> Project
+                                    </label>
+                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                        <input type="radio" name="destination_type" value="warehouse" onchange="toggleDestinationSelectSingle()" style="margin-right: 5px;"> Warehouse
+                                    </label>
+                                </div>
                                 <div id="destinationSelectContainer">
-                                    <label for="destination_id" id="destinationLabel">Project:</label>
-                                    <select name="destination_id" id="destination_id" required onchange="calculateDistance()">
+                                    <select name="destination_id" id="destination_id" required onchange="calculateDistance()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                                         <!-- Filled by JS -->
                                     </select>
                                 </div>
                             </div>
-                        </div>
-                        <div id="distanceDisplay" style="text-align: center; margin: 15px 0; font-weight: bold; color: #488C9A;">
-                            <!-- Distance will be calculated and displayed here -->
                         </div>
                         <input type="hidden" id="miles" name="miles" value="">
                     </div>
@@ -1417,33 +1462,39 @@ $conn->close();
                     
                     <!-- Origin and Destination Section -->
                     <div class="origin-destination-section">
-                        <div class="form-row">
-                            <div>
-                                <label style="margin-bottom: 10px; display:block;">Origin:</label>
-                                <div id="originDisplayMulti" style="padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; margin-top: 5px;">
+                        <div class="location-container" style="display: flex; align-items: flex-start; gap: 20px;">
+                            <div class="origin-section" style="flex: 1;">
+                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Origin:</label>
+                                <div id="originDisplayMulti" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
                                     <strong id="originLocationTextMulti">Select pallets to see origin</strong>
                                 </div>
                                 <input type="hidden" id="origin_type_multi" name="origin_type_multi" value="">
                                 <input type="hidden" id="origin_id_multi" name="origin_id_multi" value="">
                             </div>
-                            <div>
-                                <label style="margin-bottom: 10px; display:block;">Destination:</label>
-                                <label class="radio-label">
-                                    <input type="radio" name="destination_type_multi" value="project" checked onchange="toggleDestinationSelectMulti()"> Project
-                                </label>
-                                <label class="radio-label">
-                                    <input type="radio" name="destination_type_multi" value="warehouse" onchange="toggleDestinationSelectMulti()"> Warehouse
-                                </label>
+                            
+                            <div class="distance-separator" style="display: flex; flex-direction: column; justify-content: center; align-items: center; margin-top: 35px;">
+                                <div style="font-size: 1.8em; color: #488C9A; margin-bottom: 5px;">→</div>
+                                <div id="distanceDisplayMulti" style="text-align: center; font-weight: bold; color: #488C9A; white-space: nowrap; font-size: 0.85em;">
+                                    <!-- Distance will be calculated and displayed here -->
+                                </div>
+                            </div>
+                            
+                            <div class="destination-section" style="flex: 1;">
+                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Destination:</label>
+                                <div class="destination-radio-group" style="display: flex; gap: 15px; margin-bottom: 10px;">
+                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                        <input type="radio" name="destination_type_multi" value="project" checked onchange="toggleDestinationSelectMulti()" style="margin-right: 5px;"> Project
+                                    </label>
+                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                        <input type="radio" name="destination_type_multi" value="warehouse" onchange="toggleDestinationSelectMulti()" style="margin-right: 5px;"> Warehouse
+                                    </label>
+                                </div>
                                 <div id="destinationSelectContainerMulti">
-                                    <label for="destination_id_multi" id="destinationLabelMulti">Project:</label>
-                                    <select name="destination_id_multi" id="destination_id_multi" required onchange="calculateDistanceMulti()">
+                                    <select name="destination_id_multi" id="destination_id_multi" required onchange="calculateDistanceMulti()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                                         <!-- Filled by JS -->
                                     </select>
                                 </div>
                             </div>
-                        </div>
-                        <div id="distanceDisplayMulti" style="text-align: center; margin: 15px 0; font-weight: bold; color: #488C9A;">
-                            <!-- Distance will be calculated and displayed here -->
                         </div>
                         <input type="hidden" id="miles_multi" name="miles_multi" value="">
                     </div>
@@ -1787,12 +1838,9 @@ if (openShipModalBtn) { // Button only exists for admins
         });
     }
 
-    function populateDropdown(selectElement, labelElement, type, dataSource, nameField, placeholderPrefix) {
-        if (!selectElement || !labelElement) return;
+    function populateDropdown(selectElement, type, dataSource, nameField, placeholderPrefix) {
+        if (!selectElement) return;
         
-        labelElement.textContent = type === 'project' ? 'Project:' : 
-                                  type === 'warehouse' ? 'Warehouse:' : 
-                                  'Manufacturer:';
         selectElement.innerHTML = '';
 
         if (!dataSource || dataSource.length === 0) {
@@ -1976,27 +2024,25 @@ if (openShipModalBtn) { // Button only exists for admins
     // ----------------- DESTINATION SELECTION FUNCTIONS -----------------
     function toggleDestinationSelectSingle() {
         const destType = document.querySelector('input[name="destination_type"]:checked').value;
-        const destLabel = document.getElementById('destinationLabel');
         const destSelect = document.getElementById('destination_id');
         
         const data = (destType === 'project') ? projectsData : warehousesData;
         const nameField = (destType === 'project') ? 'project_name' : 'name';
         const placeholder = (destType === 'project') ? 'Project' : 'Warehouse';
 
-        populateDropdown(destSelect, destLabel, destType, data, nameField, placeholder);
+        populateDropdown(destSelect, destType, data, nameField, placeholder);
         calculateDistance();
     }
 
     function toggleDestinationSelectMulti() {
         const destType = document.querySelector('input[name="destination_type_multi"]:checked').value;
-        const destLabel = document.getElementById('destinationLabelMulti');
         const destSelect = document.getElementById('destination_id_multi');
         
         const data = (destType === 'project') ? projectsData : warehousesData;
         const nameField = (destType === 'project') ? 'project_name' : 'name';
         const placeholder = (destType === 'project') ? 'Project' : 'Warehouse';
 
-        populateDropdown(destSelect, destLabel, destType, data, nameField, placeholder);
+        populateDropdown(destSelect, destType, data, nameField, placeholder);
         calculateDistanceMulti();
     }
 
@@ -2029,13 +2075,13 @@ if (openShipModalBtn) { // Button only exists for admins
         calculateDistanceFromAddresses(originAddress, destAddress, function(distance, error) {
             if (error) {
                 if (error.includes('cannot be the same')) {
-                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Warning: Origin and destination cannot be the same location</span>';
+                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Same location</span>';
                 } else {
-                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error calculating distance</span>';
+                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error</span>';
                 }
                 milesInput.value = '';
             } else {
-                distanceDisplay.innerHTML = `Distance: <strong>${distance} miles</strong>`;
+                distanceDisplay.innerHTML = `${distance} miles`;
                 milesInput.value = distance;
             }
         });
@@ -2069,13 +2115,13 @@ if (openShipModalBtn) { // Button only exists for admins
         calculateDistanceFromAddresses(originAddress, destAddress, function(distance, error) {
             if (error) {
                 if (error.includes('cannot be the same')) {
-                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Warning: Origin and destination cannot be the same location</span>';
+                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Same location</span>';
                 } else {
-                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error calculating distance</span>';
+                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error</span>';
                 }
                 milesInput.value = '';
             } else {
-                distanceDisplay.innerHTML = `Distance: <strong>${distance} miles</strong>`;
+                distanceDisplay.innerHTML = `${distance} miles`;
                 milesInput.value = distance;
             }
         });
