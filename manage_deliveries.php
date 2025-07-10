@@ -22,6 +22,9 @@ $ref_date      = isset($_GET['ref_date']) ? $_GET['ref_date'] : date('Y-m-d');
 $status_filter = isset($_GET['status_filter']) ? $_GET['status_filter'] : '';
 $delivery_type = isset($_GET['delivery_type']) ? $_GET['delivery_type'] : 'all';
 
+// Handle delivery_id parameter for highlighting specific delivery
+$highlight_delivery_id = isset($_GET['delivery_id']) ? intval($_GET['delivery_id']) : null;
+
 // Database connection
 require_once '../config.php';
 $conn = getDBConnection();
@@ -182,10 +185,8 @@ if (!$is_global_admin) { // User role is 'admin'
          $_SESSION['messages'][] = "<p class='error-message'>Error: Admin user is not associated with an account.</p>";
         // Consider adding exit() here if needed
     }
-    // If admin and filter is 'all', reset filter to prevent access issues (or choose a default)
-    if ($filter_project_id === 'all') {
-        $filter_project_id = 'unassigned'; // Default admin view to unassigned if 'all' was somehow selected
-    }
+    // Allow admins to see all their account deliveries by default
+    // No need to force 'unassigned' - admins can see 'all' their account deliveries
 }
 // --- END NEW --- 
 
@@ -1338,6 +1339,17 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                 display: none !important;
             }
         }
+        /* Highlighted delivery row for specific delivery_id links */
+        .highlighted-delivery {
+            background-color: #fffacd !important;
+            border: 2px solid #488C9A !important;
+            animation: highlight-pulse 2s ease-in-out;
+        }
+        @keyframes highlight-pulse {
+            0% { background-color: #e8f4f8; }
+            50% { background-color: #fffacd; }
+            100% { background-color: #fffacd; }
+        }
         /* Modal styling for Bulk Edit */
         #bulkEditModal {
             display: none; /* Hidden by default */
@@ -1778,7 +1790,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                             $associatedPallets = 'Error fetching pallets'; // Or some other indicator
                         }
                         ?>
-                        <tr>
+                        <tr <?php if ($highlight_delivery_id && $delivery['id'] == $highlight_delivery_id): ?>class="highlighted-delivery"<?php endif; ?>>
                             <td>
                                 <input type="checkbox" name="selected_deliveries[]" value="<?php echo $delivery['id']; ?>" onclick="updateBulkActionButtons()">
                             </td>
