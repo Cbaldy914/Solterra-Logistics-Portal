@@ -1550,6 +1550,13 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
     <div class="breadcrumb" style="margin: 10px 20px;">
         <a href="<?php echo $is_global_admin ? 'admin_dashboard.php' : 'dashboard.php'; ?>" style="color: #488C9A; text-decoration: none;">Dashboard</a>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <?php 
+        // Check if we're viewing deliveries for a specific project (coming from project overview)
+        if (is_numeric($filter_project_id) && $filter_project_id > 0): 
+        ?>
+            <a href="project_overview.php?project_id=<?php echo $filter_project_id; ?>" style="color: #488C9A; text-decoration: none;"><?php echo htmlspecialchars($project_name); ?></a>
+            <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <?php endif; ?>
         <span>Manage Deliveries</span>
     </div>
 

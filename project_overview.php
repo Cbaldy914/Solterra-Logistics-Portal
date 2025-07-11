@@ -711,6 +711,51 @@ $budgetLineChartData = [
 $budgetLineChartDataJSON=json_encode($budgetLineChartData);
 $dateLabelsForBudget=json_encode($all_dates_cost);
 
+// For Admin Warehousing functionality - check if project has pallets in multiple warehouses
+$warehouses_with_inventory = [];
+$stmt_warehouses = $conn->prepare("
+    SELECT DISTINCT 
+        w.id, 
+        w.name,
+        w.address, 
+        w.image_url,
+        COUNT(ip.id) as pallets_in_warehouse,
+        SUM(ip.quantity) as modules_in_warehouse,
+        COUNT(DISTINCT d_transit.id) as pallets_in_transit_to_wh,
+        SUM(CASE WHEN d_transit.status_of_delivery LIKE 'In Transit%' THEN d_transit.quantity ELSE 0 END) as modules_in_transit_to_wh
+    FROM warehouses w
+    LEFT JOIN inventory_pallets ip ON w.id = ip.current_warehouse_id 
+        AND ip.status = 'In Warehouse' 
+        AND (ip.assigned_project_id = ? OR ip.current_project_id = ?)
+    LEFT JOIN deliveries d_transit ON w.id = d_transit.warehouse_id 
+        AND d_transit.project_id = ? 
+        AND d_transit.status_of_delivery LIKE 'In Transit%' 
+        AND d_transit.warehouse_arrival_date IS NULL
+    WHERE 
+        EXISTS (
+            SELECT 1 FROM inventory_pallets ip_check
+            WHERE ip_check.current_warehouse_id = w.id 
+                AND ip_check.status = 'In Warehouse'
+                AND (ip_check.assigned_project_id = ? OR ip_check.current_project_id = ?)
+        ) 
+        OR EXISTS (
+            SELECT 1 FROM deliveries d_check
+            WHERE d_check.warehouse_id = w.id 
+                AND d_check.project_id = ? 
+                AND d_check.status_of_delivery LIKE 'In Transit%'
+                AND d_check.warehouse_arrival_date IS NULL
+        )
+    GROUP BY w.id, w.name, w.address, w.image_url
+    ORDER BY w.name ASC
+");
+$stmt_warehouses->bind_param("iiiiii", $project_id, $project_id, $project_id, $project_id, $project_id, $project_id);
+$stmt_warehouses->execute();
+$result_warehouses = $stmt_warehouses->get_result();
+while ($wh = $result_warehouses->fetch_assoc()) {
+    $warehouses_with_inventory[] = $wh;
+}
+$stmt_warehouses->close();
+
 $conn->close();
 
 // Determine the correct link for the "Deliveries" button
@@ -976,6 +1021,34 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     .project-info button {
         margin: 10px 0;
     }
+    
+    /* Mobile responsive for view toggle */
+    .view-toggle-header {
+        width: calc(100% - 40px);
+        justify-content: center;
+        margin: 15px 20px;
+    }
+    
+    .toggle-view-btn {
+        flex: 1;
+        text-align: center;
+    }
+    
+    .button-group {
+        flex-direction: column;
+        gap: 15px;
+        width: 100%;
+    }
+    
+    .button-group button,
+    .button-group .dropdown {
+        width: 100%;
+    }
+    
+    .button-group button {
+        padding: 12px 20px;
+        font-size: 1em;
+    }
     .project-name-mobile {
         display: block;
         text-align: center;
@@ -1039,6 +1112,170 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         margin: 15px 0;
         padding: 0 10px;
     }
+}
+
+/* Warehouse Selection Modal */
+.warehouse-selection-modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+}
+
+.warehouse-selection-modal .modal-content {
+    background-color: white;
+    margin: 5% auto;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 800px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+    animation: modalSlideIn 0.3s ease;
+}
+
+.warehouse-selection-modal .modal-header {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: white;
+    padding: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.warehouse-selection-modal .modal-header h3 {
+    margin: 0;
+    font-size: 1.3em;
+    color: white;
+}
+
+.warehouse-selection-modal .close-modal {
+    font-size: 24px;
+    font-weight: bold;
+    cursor: pointer;
+    line-height: 1;
+    transition: opacity 0.3s ease;
+}
+
+.warehouse-selection-modal .close-modal:hover {
+    opacity: 0.7;
+}
+
+.warehouse-selection-modal .modal-body {
+    padding: 20px;
+}
+
+.warehouse-selection-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.warehouse-selection-card {
+    border: 2px solid #e9ecef;
+    border-radius: 8px;
+    padding: 20px;
+    background: #f8f9fa;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.warehouse-selection-card:hover {
+    border-color: #488C9A;
+    background: #ffffff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.15);
+}
+
+.warehouse-selection-card h4 {
+    margin: 0 0 10px 0;
+    color: #293E4C;
+    font-size: 1.1em;
+}
+
+.warehouse-selection-card p {
+    margin: 5px 0;
+    color: #555;
+    font-size: 0.9em;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-50px) scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@media (max-width: 768px) {
+    .warehouse-selection-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .warehouse-selection-modal .modal-content {
+        width: 95%;
+        margin: 10% auto;
+    }
+    
+    .warehouse-selection-modal .modal-header {
+        padding: 15px;
+    }
+    
+    .warehouse-selection-modal .modal-body {
+        padding: 15px;
+    }
+}
+
+/* View Toggle Styling */
+.view-toggle-header {
+    display: flex;
+    gap: 2px;
+    background: #ffffff;
+    padding: 3px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e9ecef;
+    width: fit-content;
+    margin: 20px auto 20px auto;
+}
+
+.toggle-view-btn {
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: #6c757d;
+    cursor: pointer;
+    font-size: 0.85em;
+    font-weight: 500;
+    border-radius: 4px;
+    transition: all 0.3s ease;
+    min-width: 80px;
+}
+
+.toggle-view-btn.active {
+    background: linear-gradient(135deg, #293E4C 0%, #243642 100%);
+    color: #fff;
+    box-shadow: 0 2px 6px rgba(41, 62, 76, 0.3);
+}
+
+.toggle-view-btn:not(.active):hover {
+    background: #f8f9fa;
+    color: #495057;
+}
+
+.button-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
 }
 
 /* Dropdown Styling */
@@ -1148,6 +1385,14 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         <span><?php echo htmlspecialchars($project['project_name']); ?></span>
     </div>
 
+    <!-- View Toggle (only visible to admins) -->
+    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+        <div class="view-toggle-header">
+            <button id="admin-view-btn" class="toggle-view-btn active" onclick="switchView('admin')">Admin View</button>
+            <button id="customer-view-btn" class="toggle-view-btn" onclick="switchView('customer')">Customer View</button>
+        </div>
+    <?php endif; ?>
+
     <div class="project-overview-container">
         <!-- Mobile Project Name -->
         <h1 class="project-name-mobile"><?php echo htmlspecialchars($project['project_name']); ?></h1>
@@ -1161,20 +1406,38 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
             <h1 class="project-name-desktop"><?php echo htmlspecialchars($project['project_name']); ?></h1>
             <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
             <p><strong>Project Size:</strong> <?php echo number_format($project_size_mw, 2); ?> MWs</p>
-            <!-- Deliveries dropdown with options for Delivery Schedule and Module Movements -->
-            <div class="dropdown">
-                <button class="dropdown-btn" onclick="toggleDropdown()">
-                    Deliveries <span class="dropdown-arrow">▼</span>
-                </button>
-                <div class="dropdown-content" id="deliveriesDropdown">
-                    <a href="<?php echo $deliveriesLink; ?>">📋 Delivery Schedule</a>
-                    <a href="module_movements.php?project_id=<?php echo $project_id; ?>">📍 Module Movements</a>
+            
+            <!-- Admin View Buttons -->
+            <div id="admin-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: block;"' : 'style="display: none;"'; ?>>
+                <div class="dropdown">
+                    <button class="dropdown-btn" onclick="toggleModulesDropdown()">
+                        Modules <span class="dropdown-arrow">▼</span>
+                    </button>
+                    <div class="dropdown-content" id="modulesDropdown">
+                        <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Module Overview</a>
+                        <a href="manage_pallets.php?project_id=<?php echo $project_id; ?>">Manage Pallets</a>
+                    </div>
                 </div>
+                <button onclick="window.location.href='manage_deliveries.php?project_id=<?php echo $project_id; ?>'">Deliveries</button>
+                <button onclick="handleAdminWarehousing()">Warehousing</button>
             </div>
-            <button onclick="window.location.href='warehouse_info?project_id=<?php echo $project_id; ?>'">Warehousing</button>
-            <button onclick="window.location.href='project_cost_details?project_id=<?php echo $project_id; ?>'">Costs</button>
-            <button onclick="window.location.href='project_documents?project_id=<?php echo $project_id; ?>'">Documents</button>
-            <button onclick="window.location.href='project_sustainability_details?project_id=<?php echo $project_id; ?>'">Sustainability</button>
+            
+            <!-- Customer View Buttons -->
+            <div id="customer-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: none;"' : 'style="display: block;"'; ?>>
+                <div class="dropdown">
+                    <button class="dropdown-btn" onclick="toggleDropdown()">
+                        Deliveries <span class="dropdown-arrow">▼</span>
+                    </button>
+                    <div class="dropdown-content" id="deliveriesDropdown">
+                        <a href="<?php echo $deliveriesLink; ?>">📋 Delivery Schedule</a>
+                        <a href="module_movements.php?project_id=<?php echo $project_id; ?>">📍 Module Movements</a>
+                    </div>
+                </div>
+                <button onclick="window.location.href='warehouse_info?project_id=<?php echo $project_id; ?>'">Warehousing</button>
+                <button onclick="window.location.href='project_cost_details?project_id=<?php echo $project_id; ?>'">Costs</button>
+                <button onclick="window.location.href='project_documents?project_id=<?php echo $project_id; ?>'">Documents</button>
+                <button onclick="window.location.href='project_sustainability_details?project_id=<?php echo $project_id; ?>'">Sustainability</button>
+            </div>
         </div>
     </div>
 
@@ -1593,10 +1856,96 @@ function initializeFinancialCharts(){
     });
 }
 
+// View Toggle functionality
+function switchView(view) {
+    const adminButtons = document.getElementById('admin-buttons');
+    const customerButtons = document.getElementById('customer-buttons');
+    const adminBtn = document.getElementById('admin-view-btn');
+    const customerBtn = document.getElementById('customer-view-btn');
+    
+    if (view === 'admin') {
+        adminButtons.style.display = 'block';
+        customerButtons.style.display = 'none';
+        adminBtn.classList.add('active');
+        customerBtn.classList.remove('active');
+    } else {
+        adminButtons.style.display = 'none';
+        customerButtons.style.display = 'block';
+        adminBtn.classList.remove('active');
+        customerBtn.classList.add('active');
+    }
+}
+
+// Admin warehousing functionality
+const warehousesWithInventory = <?php echo json_encode($warehouses_with_inventory); ?>;
+function handleAdminWarehousing() {
+    const projectId = <?php echo $project_id; ?>;
+    
+    if (warehousesWithInventory.length === 0) {
+        alert('No inventory found for this project in any warehouse.');
+        return;
+    } else if (warehousesWithInventory.length === 1) {
+        // Single warehouse - go directly to manage_warehouse_inventory
+        window.location.href = 'manage_warehouse_inventory.php?warehouse_id=' + warehousesWithInventory[0].id + '&project_id=' + projectId;
+    } else {
+        // Multiple warehouses - show warehouse selection page
+        showWarehouseSelectionModal();
+    }
+}
+
+function showWarehouseSelectionModal() {
+    const modal = document.createElement('div');
+    modal.className = 'warehouse-selection-modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Select Warehouse to Manage</h3>
+                <span class="close-modal" onclick="closeWarehouseModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>This project has inventory in multiple warehouses. Select a warehouse to manage:</p>
+                <div class="warehouse-selection-grid">
+                    ${warehousesWithInventory.map(wh => `
+                        <div class="warehouse-selection-card" onclick="goToWarehouseManagement(${wh.id})">
+                            <h4>${wh.name}</h4>
+                            <p><strong>Address:</strong> ${wh.address || 'N/A'}</p>
+                            <p><strong>Pallets Stored:</strong> ${wh.pallets_in_warehouse || 0}</p>
+                            <p><strong>Modules Stored:</strong> ${wh.modules_in_warehouse || 0}</p>
+                            <p><strong>Pallets In Transit:</strong> ${wh.pallets_in_transit_to_wh || 0}</p>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.style.display = 'block';
+}
+
+function closeWarehouseModal() {
+    const modal = document.querySelector('.warehouse-selection-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+function goToWarehouseManagement(warehouseId) {
+    const projectId = <?php echo $project_id; ?>;
+    window.location.href = 'manage_warehouse_inventory.php?warehouse_id=' + warehouseId + '&project_id=' + projectId;
+}
+
 // Dropdown functionality
 function toggleDropdown() {
     var dropdown = document.getElementById("deliveriesDropdown");
-    var dropdownBtn = document.querySelector(".dropdown-btn");
+    var dropdownBtn = document.querySelector("#customer-buttons .dropdown-btn");
+    
+    dropdown.classList.toggle("show");
+    dropdownBtn.classList.toggle("active");
+}
+
+function toggleModulesDropdown() {
+    var dropdown = document.getElementById("modulesDropdown");
+    var dropdownBtn = document.querySelector("#admin-buttons .dropdown-btn");
     
     dropdown.classList.toggle("show");
     dropdownBtn.classList.toggle("active");
@@ -1618,6 +1967,11 @@ window.onclick = function(event) {
         for (var i = 0; i < dropdownBtns.length; i++) {
             dropdownBtns[i].classList.remove('active');
         }
+    }
+    
+    // Close warehouse modal if clicking outside
+    if (event.target.classList.contains('warehouse-selection-modal')) {
+        closeWarehouseModal();
     }
 }
 </script>
