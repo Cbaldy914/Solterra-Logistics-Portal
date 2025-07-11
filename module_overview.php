@@ -21,9 +21,15 @@ $google_maps_api_key = getGoogleMapsApiKey();
 $role     = $_SESSION['role'];
 $user_id  = $_SESSION['user_id'];
 $batch_id = isset($_GET['batch_id']) ? intval($_GET['batch_id']) : 0;
+$project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
 
-if ($batch_id <= 0) {
-    die("Invalid Batch ID provided.");
+// Determine view mode: single batch or project view
+if ($project_id > 0) {
+    $view_mode = 'project';
+} elseif ($batch_id > 0) {
+    $view_mode = 'batch';
+} else {
+    die("Either Batch ID or Project ID must be provided.");
 }
 
 // Handle bulk pallet generation by modules per pallet
@@ -127,7 +133,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
     
     // Store message in session and redirect to prevent form resubmission
     $_SESSION['module_overview_message'] = $deleteMessage;
-    header("Location: module_overview?batch_id=" . $batch_id);
+    
+    // Construct appropriate redirect URL based on view mode
+    if ($view_mode === 'project' && $project_id > 0) {
+        header("Location: module_overview.php?project_id=" . $project_id);
+    } else {
+        header("Location: module_overview.php?batch_id=" . $batch_id);
+    }
     exit();
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets') {
     $shipMessage = '';
@@ -135,30 +147,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
     $conn = getDBConnection();
     $conn->begin_transaction();
     try {
-        // --- NEW: Fetch current batch's vendor_name and project_id directly --- 
-        $current_batch_info_stmt = $conn->prepare("SELECT vendor_name, project_id FROM modules WHERE id = ? LIMIT 1");
-        if (!$current_batch_info_stmt) {
+        // Get selected pallet IDs first
+        $palletIds = $_POST['selected_pallets'] ?? [];
+        if (empty($palletIds)) {
+            throw new Exception('No pallets selected to ship.');
+        }
+
+        // --- Determine batch info from selected pallets ---
+        $placeholders_for_batch = implode(',', array_fill(0, count($palletIds), '?'));
+        $types_for_batch = str_repeat('i', count($palletIds));
+        
+        $batch_info_stmt = $conn->prepare("
+            SELECT DISTINCT m.vendor_name, m.project_id 
+            FROM inventory_pallets ip
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            WHERE ip.id IN ($placeholders_for_batch)
+            LIMIT 1
+        ");
+        if (!$batch_info_stmt) {
             throw new Exception("Failed to prepare batch info query: " . $conn->error);
         }
-        $current_batch_info_stmt->bind_param("i", $batch_id); // $batch_id is from $_GET
-        $current_batch_info_stmt->execute();
-        $current_batch_info_result = $current_batch_info_stmt->get_result();
-        if ($current_batch_info_row = $current_batch_info_result->fetch_assoc()) {
-            $current_batch_vendor_name = $current_batch_info_row['vendor_name'];
-            $source_project_id_for_delivery = $current_batch_info_row['project_id']; // This can be NULL
+        $batch_info_stmt->bind_param($types_for_batch, ...$palletIds);
+        $batch_info_stmt->execute();
+        $batch_info_result = $batch_info_stmt->get_result();
+        
+        if ($batch_info_row = $batch_info_result->fetch_assoc()) {
+            $current_batch_vendor_name = $batch_info_row['vendor_name'] ?? 'Unknown Vendor';
+            $source_project_id_for_delivery = $batch_info_row['project_id']; // This can be NULL
         } else {
-            $current_batch_info_stmt->close();
-            throw new Exception("Module batch with ID {$batch_id} not found.");
+            $batch_info_stmt->close();
+            throw new Exception("Could not find batch information for selected pallets.");
         }
-        $current_batch_info_stmt->close();
-        // --- END NEW --- 
+        $batch_info_stmt->close();
+        // --- END batch info determination --- 
 
         $destinationType = $_POST['destination_type'] ?? 'project';
         $destinationId   = isset($_POST['destination_id']) ? intval($_POST['destination_id']) : 0;
         $bolNumber       = trim($_POST['bol_number'] ?? '');
         $departureDate   = $_POST['departure_date'] ?? null;
         $estArrivalDate  = $_POST['est_arrival_date'] ?? null;
-        $palletIds       = $_POST['selected_pallets'] ?? [];
+        // Note: $palletIds already retrieved above for batch info determination
         $shipmentMode    = $_POST['shipment_mode'] ?? 'single';
         $palletsPerTruck = (isset($_POST['pallets_per_truck']) && is_numeric($_POST['pallets_per_truck']))
                            ? intval($_POST['pallets_per_truck'])
@@ -169,10 +198,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         $accessorialCost = isset($_POST['accessorial_cost']) && $_POST['accessorial_cost'] !== '' ? (float)$_POST['accessorial_cost'] : 0.0;
         $customerCost = isset($_POST['customer_cost']) && $_POST['customer_cost'] !== '' ? (float)$_POST['customer_cost'] : 0.0;
         $miles = isset($_POST['miles']) && $_POST['miles'] !== '' ? (float)$_POST['miles'] : null;
-
-        if (empty($palletIds)) {
-            throw new Exception('No pallets selected to ship.');
-        }
         if ($destinationId <= 0) {
             throw new Exception('No destination selected.');
         }
@@ -299,6 +324,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         $conn->rollback();
         $shipMessage = "Error creating transfer delivery: " . $e->getMessage();
     }
+    
+    // Store message in session and redirect to prevent form resubmission
+    $_SESSION['module_overview_ship_message'] = $shipMessage;
+    
+    // Construct appropriate redirect URL based on view mode
+    if ($view_mode === 'project' && $project_id > 0) {
+        header("Location: module_overview.php?project_id=" . $project_id);
+    } else {
+        header("Location: module_overview.php?batch_id=" . $batch_id);
+    }
+    exit();
 }
 
 // Helper to insert a pallet row and assign its identifier
@@ -380,23 +416,70 @@ $account_id_for_admin = null;
 $errorMessage = '';
 
 try {
-    // Fetch main batch data and account name
-    $stmtBatch = $conn->prepare("
-        SELECT um.*, c.name as account_name, p.project_name
-        FROM modules um 
-        JOIN customer_accounts c ON um.account_id = c.id
-        LEFT JOIN projects p ON um.project_id = p.id
-        WHERE um.id = ?
-    ");
-    if (!$stmtBatch) throw new Exception("Prepare batch fetch failed: " . $conn->error);
-    $stmtBatch->bind_param("i", $batch_id);
-    $stmtBatch->execute();
-    $resultBatch = $stmtBatch->get_result();
-    if ($resultBatch->num_rows === 0) {
-        throw new Exception("Module batch not found.");
+    // Initialize variables
+    $batch_data = null;
+    $project_data = null;
+    $module_batches = [];
+    
+    if ($view_mode === 'batch') {
+        // Fetch single batch data
+        $stmtBatch = $conn->prepare("
+            SELECT um.*, c.name as account_name, p.project_name
+            FROM modules um 
+            JOIN customer_accounts c ON um.account_id = c.id
+            LEFT JOIN projects p ON um.project_id = p.id
+            WHERE um.id = ?
+        ");
+        if (!$stmtBatch) throw new Exception("Prepare batch fetch failed: " . $conn->error);
+        $stmtBatch->bind_param("i", $batch_id);
+        $stmtBatch->execute();
+        $resultBatch = $stmtBatch->get_result();
+        if ($resultBatch->num_rows === 0) {
+            throw new Exception("Module batch not found.");
+        }
+        $batch_data = $resultBatch->fetch_assoc();
+        $stmtBatch->close();
+        
+        $module_batches[] = $batch_data; // Single batch in array for consistent processing
+        
+    } elseif ($view_mode === 'project') {
+        // Fetch project data and all its module batches
+        $stmtProject = $conn->prepare("SELECT * FROM projects WHERE id = ?");
+        if (!$stmtProject) throw new Exception("Prepare project fetch failed: " . $conn->error);
+        $stmtProject->bind_param("i", $project_id);
+        $stmtProject->execute();
+        $resultProject = $stmtProject->get_result();
+        if ($resultProject->num_rows === 0) {
+            throw new Exception("Project not found.");
+        }
+        $project_data = $resultProject->fetch_assoc();
+        $stmtProject->close();
+        
+        // Fetch all module batches for this project
+        $stmtBatches = $conn->prepare("
+            SELECT um.*, c.name as account_name, p.project_name
+            FROM modules um 
+            JOIN customer_accounts c ON um.account_id = c.id
+            LEFT JOIN projects p ON um.project_id = p.id
+            WHERE um.project_id = ?
+            ORDER BY um.vendor_name, um.created_at
+        ");
+        if (!$stmtBatches) throw new Exception("Prepare project batches fetch failed: " . $conn->error);
+        $stmtBatches->bind_param("i", $project_id);
+        $stmtBatches->execute();
+        $resultBatches = $stmtBatches->get_result();
+        while ($batch = $resultBatches->fetch_assoc()) {
+            $module_batches[] = $batch;
+        }
+        $stmtBatches->close();
+        
+        if (empty($module_batches)) {
+            throw new Exception("No module batches found for this project.");
+        }
+        
+        // Set batch_data to the first batch for compatibility with existing code
+        $batch_data = $module_batches[0];
     }
-    $batch_data = $resultBatch->fetch_assoc();
-    $stmtBatch->close();
 
     // Access Control for Admin role
     if ($role === 'admin') {
@@ -415,27 +498,40 @@ try {
     }
 
     // Fetch batch items and aggregate ordered quantity by wattage
-    $stmtItems = $conn->prepare("SELECT id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id = ? ORDER BY wattage ASC");
-    if (!$stmtItems) throw new Exception("Prepare items fetch failed: " . $conn->error);
-    $stmtItems->bind_param("i", $batch_id);
-    $stmtItems->execute();
-    $resultItems = $stmtItems->get_result();
     $item_ids = []; // Keep track of item IDs to fetch pallets
-    while ($item = $resultItems->fetch_assoc()) {
-        $item_ids[] = $item['id'];
-        $wattage = $item['wattage'];
-        if (!isset($wattage_summary[$wattage])) {
-            $wattage_summary[$wattage] = [
-                'item_id' => $item['id'], // Assumes one item row per wattage
-                'ordered_quantity' => 0,
-                'palletized_quantity' => 0,
-                'remaining_quantity' => 0
-            ];
-        }
-        $wattage_summary[$wattage]['ordered_quantity'] += $item['quantity'];
-        $batch_items[] = $item; // Still store raw items if needed later
+    
+    // Collect batch IDs for fetching items
+    $batch_ids = [];
+    foreach ($module_batches as $batch) {
+        $batch_ids[] = $batch['id'];
     }
-    $stmtItems->close();
+    
+    if (!empty($batch_ids)) {
+        $placeholders_batches = implode(',', array_fill(0, count($batch_ids), '?'));
+        $types_batches = str_repeat('i', count($batch_ids));
+        
+        $stmtItems = $conn->prepare("SELECT id, unassigned_module_id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id IN ($placeholders_batches) ORDER BY wattage ASC");
+        if (!$stmtItems) throw new Exception("Prepare items fetch failed: " . $conn->error);
+        $stmtItems->bind_param($types_batches, ...$batch_ids);
+        $stmtItems->execute();
+        $resultItems = $stmtItems->get_result();
+        
+        while ($item = $resultItems->fetch_assoc()) {
+            $item_ids[] = $item['id'];
+            $wattage = $item['wattage'];
+            if (!isset($wattage_summary[$wattage])) {
+                $wattage_summary[$wattage] = [
+                    'item_id' => $item['id'], // For single batch mode compatibility
+                    'ordered_quantity' => 0,
+                    'palletized_quantity' => 0,
+                    'remaining_quantity' => 0
+                ];
+            }
+            $wattage_summary[$wattage]['ordered_quantity'] += $item['quantity'];
+            $batch_items[] = $item; // Still store raw items if needed later
+        }
+        $stmtItems->close();
+    }
 
     // Fetch associated pallets and aggregate palletized quantity by wattage
     if (!empty($item_ids)) {
@@ -1021,9 +1117,15 @@ $conn->close();
     <div class="breadcrumb">
         <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard' : 'dashboard'; ?>">Dashboard</a>
         <span class="separator">&raquo;</span>
-        <a href="modules">Modules</a>
-        <span class="separator">&raquo;</span>
-        <span>Batch: <?php echo $batch_data ? htmlspecialchars($batch_data['vendor_name']) : 'Module Batch'; ?></span>
+        <?php if ($view_mode === 'project'): ?>
+            <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
+            <span class="separator">&raquo;</span>
+            <span>Modules for <?php echo htmlspecialchars($project_data['project_name']); ?></span>
+        <?php else: ?>
+            <a href="modules">Modules</a>
+            <span class="separator">&raquo;</span>
+            <span>Batch: <?php echo $batch_data ? htmlspecialchars($batch_data['vendor_name']) : 'Module Batch'; ?></span>
+        <?php endif; ?>
     </div>
 
     <?php if (!empty($errorMessage)): ?>
@@ -1035,44 +1137,94 @@ $conn->close();
             <div class="success-message" style="margin-bottom: 20px;"><strong><?php echo htmlspecialchars($successMessage); ?></strong></div>
         <?php endif; ?>
         
-        <?php if (!empty($shipMessage)): ?>
+        <?php 
+        // Check for session messages (for shipment and delete operations after redirect)
+        $sessionShipMessage = $_SESSION['module_overview_ship_message'] ?? '';
+        $sessionDeleteMessage = $_SESSION['module_overview_message'] ?? '';
+        
+        // Clear session messages after retrieving them
+        if (!empty($sessionShipMessage)) {
+            unset($_SESSION['module_overview_ship_message']);
+        }
+        if (!empty($sessionDeleteMessage)) {
+            unset($_SESSION['module_overview_message']);
+        }
+        
+        // Display ship message (either from session or local variable)
+        $displayShipMessage = !empty($sessionShipMessage) ? $sessionShipMessage : (!empty($shipMessage) ? $shipMessage : '');
+        if (!empty($displayShipMessage)): ?>
             <?php 
-            $messageClass = (strpos(strtolower($shipMessage), 'error') !== false) ? 'error-message' : 'success-message';
+            $messageClass = (strpos(strtolower($displayShipMessage), 'error') !== false) ? 'error-message' : 'success-message';
             ?>
             <div class="<?php echo $messageClass; ?>" style="margin-bottom: 20px;"><strong><?php 
                 // Check if the message contains HTML (specifically a link) and display accordingly
-                if (strpos($shipMessage, '<a href=') !== false) {
-                    echo $shipMessage; // Don't escape if it contains HTML links
+                if (strpos($displayShipMessage, '<a href=') !== false) {
+                    echo $displayShipMessage; // Don't escape if it contains HTML links
                 } else {
-                    echo htmlspecialchars($shipMessage); // Escape for safety if no HTML
+                    echo htmlspecialchars($displayShipMessage); // Escape for safety if no HTML
                 }
             ?></strong></div>
         <?php endif; ?>
         
-        <?php if (!empty($deleteMessage)): ?>
+        <?php 
+        // Display delete message (either from session or local variable) 
+        $displayDeleteMessage = !empty($sessionDeleteMessage) ? $sessionDeleteMessage : (!empty($deleteMessage) ? $deleteMessage : '');
+        if (!empty($displayDeleteMessage)): ?>
             <?php 
-            $messageClass = (strpos(strtolower($deleteMessage), 'error') !== false) ? 'error-message' : 'success-message';
+            $messageClass = (strpos(strtolower($displayDeleteMessage), 'error') !== false) ? 'error-message' : 'success-message';
             ?>
-            <div class="<?php echo $messageClass; ?>" style="margin-bottom: 20px;"><strong><?php echo htmlspecialchars($deleteMessage); ?></strong></div>
+            <div class="<?php echo $messageClass; ?>" style="margin-bottom: 20px;"><strong><?php echo htmlspecialchars($displayDeleteMessage); ?></strong></div>
         <?php endif; ?>
         
         <div class="overview-header">
-            <h1>Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?></h1>
-            <p><strong>Account:</strong> <?php echo htmlspecialchars($batch_data['account_name']); ?></p>
-            <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($batch_data['initial_location']); ?></p>
-            <p><strong>Assigned Project:</strong> 
-                <?php 
-                if (!empty($batch_data['project_id']) && !empty($batch_data['project_name'])) {
-                    echo htmlspecialchars($batch_data['project_name']); 
-                } else {
-                    echo "<em>Unassigned</em>";
-                }
-                ?>
-            </p>
-            <p><strong>Batch ID:</strong> <?php echo $batch_data['id']; ?></p>
-            <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch_data['created_at'])); ?></p>
-            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-            <button class="edit-button" onclick="window.location.href='edit_module?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
+            <?php if ($view_mode === 'project'): ?>
+                <h1>Modules for <?php echo htmlspecialchars($project_data['project_name']); ?></h1>
+                <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project_data['project_address']); ?></p>
+                <p><strong>Number of Module Batches:</strong> <?php echo count($module_batches); ?></p>
+                
+                <?php if (count($module_batches) > 1): ?>
+                    <div style="margin-top: 15px; padding: 15px; background-color: #f8f9fa; border-radius: 8px;">
+                        <h3 style="margin-top: 0; color: #293E4C;">Module Batch Details:</h3>
+                        <?php foreach ($module_batches as $batch): ?>
+                            <div style="margin-bottom: 10px; padding: 10px; background-color: white; border-left: 4px solid #488C9A; border-radius: 4px;">
+                                <strong>Batch:</strong> <?php echo htmlspecialchars($batch['vendor_name']); ?> 
+                                <span style="color: #666;">(ID: <?php echo $batch['id']; ?>)</span><br>
+                                <strong>Initial Location:</strong> <?php echo htmlspecialchars($batch['initial_location']); ?><br>
+                                <strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch['created_at'])); ?>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                    <br><a href="edit_module?batch_id=<?php echo $batch['id']; ?>" style="color: #488C9A; text-decoration: none;">Edit Batch</a>
+                                <?php endif; ?>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
+                    <p><strong>Batch:</strong> <?php echo htmlspecialchars($module_batches[0]['vendor_name']); ?></p>
+                    <p><strong>Account:</strong> <?php echo htmlspecialchars($module_batches[0]['account_name']); ?></p>
+                    <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($module_batches[0]['initial_location']); ?></p>
+                    <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($module_batches[0]['created_at'])); ?></p>
+                    <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                    <button class="edit-button" onclick="window.location.href='edit_module?batch_id=<?php echo $module_batches[0]['id']; ?>'">Edit Batch Details</button>
+                    <?php endif; ?>
+                <?php endif; ?>
+                
+            <?php else: ?>
+                <h1>Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?></h1>
+                <p><strong>Account:</strong> <?php echo htmlspecialchars($batch_data['account_name']); ?></p>
+                <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($batch_data['initial_location']); ?></p>
+                <p><strong>Assigned Project:</strong> 
+                    <?php 
+                    if (!empty($batch_data['project_id']) && !empty($batch_data['project_name'])) {
+                        echo htmlspecialchars($batch_data['project_name']); 
+                    } else {
+                        echo "<em>Unassigned</em>";
+                    }
+                    ?>
+                </p>
+                <p><strong>Batch ID:</strong> <?php echo $batch_data['id']; ?></p>
+                <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch_data['created_at'])); ?></p>
+                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                <button class="edit-button" onclick="window.location.href='edit_module?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
+                <?php endif; ?>
             <?php endif; ?>
         </div>
 
