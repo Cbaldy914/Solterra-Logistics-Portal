@@ -1756,6 +1756,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                     <th>Freight Cost</th>
                     <th>Accessorial Costs</th>
                     <th>Customer Cost</th>
+                    <th>Scheduled</th>
                     <th>Associated Pallets</th>
                     <th>Actions</th>
                 </tr>
@@ -1842,6 +1843,23 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                             <td>$<?php echo number_format($delivery['accessorial_costs'], 2); ?></td>
                             <td>$<?php echo number_format($delivery['customer_cost'], 2); ?></td>
                             <td>
+                                <?php if ($delivery['scheduled'] == 1): ?>
+                                    <?php if (!empty($delivery['project_id']) && $delivery['status_of_delivery'] === 'In Transit to Project'): ?>
+                                        <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>" 
+                                           style="color: #488C9A; text-decoration: underline;">View Appointment</a>
+                                    <?php else: ?>
+                                        <span style="color: #28a745;">Scheduled</span>
+                                    <?php endif; ?>
+                                <?php else: ?>
+                                    <?php if (!empty($delivery['project_id']) && $delivery['status_of_delivery'] === 'In Transit to Project'): ?>
+                                        <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>" 
+                                           style="color: #fbb040; text-decoration: underline;">Schedule Delivery</a>
+                                    <?php else: ?>
+                                        <span style="color: #666;">N/A</span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            </td>
+                            <td>
                                 <?php if ($stmtPallets && $palletCount > 0): ?>
                                     <button type="button" class="action-buttons" 
                                             onclick="showPalletModal(this)" 
@@ -1870,7 +1888,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                     ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="<?php echo ($filter_project_id === 'all' || $filter_project_id === 'unassigned') ? '17' : '16'; ?>">No delivery entries found.</td>
+                        <td colspan="<?php echo ($filter_project_id === 'all' || $filter_project_id === 'unassigned') ? '18' : '17'; ?>">No delivery entries found.</td>
                     </tr>
                 <?php endif; ?>
             </table>

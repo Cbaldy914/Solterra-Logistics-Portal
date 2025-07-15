@@ -141,200 +141,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         header("Location: module_overview.php?batch_id=" . $batch_id);
     }
     exit();
-} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_pallets') {
-    $shipMessage = '';
-    $createdDeliveryIds = [];
-    $conn = getDBConnection();
-    $conn->begin_transaction();
-    try {
-        // Get selected pallet IDs first
-        $palletIds = $_POST['selected_pallets'] ?? [];
-        if (empty($palletIds)) {
-            throw new Exception('No pallets selected to ship.');
-        }
-
-        // --- Determine batch info from selected pallets ---
-        $placeholders_for_batch = implode(',', array_fill(0, count($palletIds), '?'));
-        $types_for_batch = str_repeat('i', count($palletIds));
-        
-        $batch_info_stmt = $conn->prepare("
-            SELECT DISTINCT m.vendor_name, m.project_id 
-            FROM inventory_pallets ip
-            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
-            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-            WHERE ip.id IN ($placeholders_for_batch)
-            LIMIT 1
-        ");
-        if (!$batch_info_stmt) {
-            throw new Exception("Failed to prepare batch info query: " . $conn->error);
-        }
-        $batch_info_stmt->bind_param($types_for_batch, ...$palletIds);
-        $batch_info_stmt->execute();
-        $batch_info_result = $batch_info_stmt->get_result();
-        
-        if ($batch_info_row = $batch_info_result->fetch_assoc()) {
-            $current_batch_vendor_name = $batch_info_row['vendor_name'] ?? 'Unknown Vendor';
-            $source_project_id_for_delivery = $batch_info_row['project_id']; // This can be NULL
-        } else {
-            $batch_info_stmt->close();
-            throw new Exception("Could not find batch information for selected pallets.");
-        }
-        $batch_info_stmt->close();
-        // --- END batch info determination --- 
-
-        $destinationType = $_POST['destination_type'] ?? 'project';
-        $destinationId   = isset($_POST['destination_id']) ? intval($_POST['destination_id']) : 0;
-        $bolNumber       = trim($_POST['bol_number'] ?? '');
-        $departureDate   = $_POST['departure_date'] ?? null;
-        $estArrivalDate  = $_POST['est_arrival_date'] ?? null;
-        // Note: $palletIds already retrieved above for batch info determination
-        $shipmentMode    = $_POST['shipment_mode'] ?? 'single';
-        $palletsPerTruck = (isset($_POST['pallets_per_truck']) && is_numeric($_POST['pallets_per_truck']))
-                           ? intval($_POST['pallets_per_truck'])
-                           : 1;
-        
-        // Cost and logistics fields
-        $freightCost = isset($_POST['freight_cost']) && $_POST['freight_cost'] !== '' ? (float)$_POST['freight_cost'] : 0.0;
-        $accessorialCost = isset($_POST['accessorial_cost']) && $_POST['accessorial_cost'] !== '' ? (float)$_POST['accessorial_cost'] : 0.0;
-        $customerCost = isset($_POST['customer_cost']) && $_POST['customer_cost'] !== '' ? (float)$_POST['customer_cost'] : 0.0;
-        $miles = isset($_POST['miles']) && $_POST['miles'] !== '' ? (float)$_POST['miles'] : null;
-        if ($destinationId <= 0) {
-            throw new Exception('No destination selected.');
-        }
-        if (empty($departureDate)) {
-            throw new Exception('Departure date is required.');
-        }
-        if (empty($estArrivalDate)) {
-            throw new Exception('Estimated arrival date is required.');
-        }
-
-        // Fetch supplier/vendor_name for this batch - NOW USING $current_batch_vendor_name
-        $vendor_name = $current_batch_vendor_name ?? 'Unknown Vendor';
-        // Get the project_id from the module batch itself - NOW USING $source_project_id_for_delivery
-        // This was the main issue: $batch_data was not populated at this stage of POST handling.
-
-        // Fetch details for selected pallets
-        $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
-        $types        = str_repeat('i', count($palletIds));
-        $stmtFetchPallets = $conn->prepare("SELECT id, wattage, quantity FROM inventory_pallets WHERE id IN ($placeholders)");
-        if (!$stmtFetchPallets) throw new Exception("Failed to prepare pallet fetch: " . $conn->error);
-        $stmtFetchPallets->bind_param($types, ...$palletIds);
-        $stmtFetchPallets->execute();
-        $resultPallets = $stmtFetchPallets->get_result();
-        $allPallets = [];
-        while ($pallet = $resultPallets->fetch_assoc()) {
-            $allPallets[] = $pallet;
-        }
-        $stmtFetchPallets->close();
-
-        // Split into groups if multi-shipment
-        $palletGroups = [];
-        if ($shipmentMode === 'multi' && $palletsPerTruck > 0) {
-            for ($i = 0; $i < count($allPallets); $i += $palletsPerTruck) {
-                $palletGroups[] = array_slice($allPallets, $i, $palletsPerTruck);
-            }
-        } else {
-            $palletGroups[] = $allPallets;
-        }
-
-        // Prepare statements for delivery and pallet updates
-        $sqlDelivery = "";
-        $deliveryTypes = "";
-        $deliveryParams = [];
-        if ($destinationType === 'project') {
-            $sqlDelivery = "INSERT INTO deliveries (project_id, supplier, origin_type, origin_id, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, 'manufacturer', NULL, ?, ?, ?, ?, 'In Transit to Project', ?, ?, ?, ?)";
-            $deliveryTypes = "ississdddd";
-        } else {
-            $sqlDelivery = "INSERT INTO deliveries (project_id, warehouse_id, supplier, origin_type, origin_id, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, 'manufacturer', NULL, ?, ?, ?, ?, 'In Transit to Warehouse', ?, ?, ?, ?)";
-            $deliveryTypes = "iississdddd";
-        }
-        $stmtDelivery = $conn->prepare($sqlDelivery);
-        if (!$stmtDelivery) throw new Exception("Failed to prepare delivery insert: " . $conn->error);
-
-        $stmtLink = $conn->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
-        if (!$stmtLink) throw new Exception("Failed to prepare pallet link insert: " . $conn->error);
-
-        $sqlUp = "UPDATE inventory_pallets SET status = ?, current_project_id = ?, current_warehouse_id = ?, arrival_date = ? WHERE id = ?";
-        $stmtUp = $conn->prepare($sqlUp);
-        if (!$stmtUp) throw new Exception("Failed to prepare pallet update: " . $conn->error);
-
-        foreach ($palletGroups as $group) {
-            // Group by wattage for each delivery
-            $groupByWattage = [];
-            foreach ($group as $pallet) {
-                $w = $pallet['wattage'];
-                if (!isset($groupByWattage[$w])) $groupByWattage[$w] = [];
-                $groupByWattage[$w][] = $pallet;
-            }
-            foreach ($groupByWattage as $wattage => $palletsForWatt) {
-                $groupQty = array_sum(array_column($palletsForWatt, 'quantity'));
-                if ($destinationType === 'project') {
-                    $deliveryParams = [$destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate, $freightCost, $accessorialCost, $customerCost, $miles];
-                } else {
-                    error_log("Attempting to insert delivery to warehouse. Project ID for delivery: " . print_r($source_project_id_for_delivery, true)); 
-                    $deliveryParams = [$source_project_id_for_delivery, $destinationId, $vendor_name, $wattage, $groupQty, $bolNumber, $estArrivalDate, $freightCost, $accessorialCost, $customerCost, $miles];
-                }
-                $stmtDelivery->bind_param($deliveryTypes, ...$deliveryParams);
-                if (!$stmtDelivery->execute()) {
-                    throw new Exception("Failed to insert delivery for {$wattage}W: " . $stmtDelivery->error);
-                }
-                $deliveryId = $conn->insert_id;
-                $createdDeliveryIds[] = $deliveryId;
-                foreach ($palletsForWatt as $pallet) {
-                    $stmtLink->bind_param("ii", $deliveryId, $pallet['id']);
-                    if (!$stmtLink->execute()) {
-                        throw new Exception("Failed to link pallet ID {$pallet['id']} to delivery {$deliveryId}: " . $stmtLink->error);
-                    }
-                    // Update pallet status/location
-                    $status = ($destinationType === 'project') ? 'In Transit to Project' : 'In Transit to Warehouse';
-                    $projectId = ($destinationType === 'project') ? $destinationId : null;
-                    $warehouseId = ($destinationType === 'warehouse') ? $destinationId : null;
-                    $stmtUp->bind_param("siisi", $status, $projectId, $warehouseId, $estArrivalDate, $pallet['id']);
-                    if (!$stmtUp->execute()) {
-                        throw new Exception("Failed to update pallet ID {$pallet['id']}: " . $stmtUp->error);
-                    }
-                }
-            }
-        }
-        $stmtDelivery->close();
-        $stmtLink->close();
-        $stmtUp->close();
-        $conn->commit();
-        
-        $totalDeliveries = count($createdDeliveryIds);
-        $totalPallets = count($palletIds);
-        
-        // Enhanced success message with warehouse handling
-        if ($destinationType === 'warehouse') {
-            // Get warehouse name for the message
-            $warehouseName = 'the selected warehouse';
-            if (!empty($all_warehouses)) {
-                foreach ($all_warehouses as $warehouse) {
-                    if ($warehouse['id'] == $destinationId) {
-                        $warehouseName = $warehouse['name'];
-                        break;
-                    }
-                }
-            }
-            $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets. Pallets are now in transit to {$warehouseName}. To receive pallets at the warehouse, <a href='manage_warehouse_inventory?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline; font-weight: 600;'>click here</a>.";
-        } else {
-        $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
-        }
-    } catch (Exception $e) {
-        $conn->rollback();
-        $shipMessage = "Error creating transfer delivery: " . $e->getMessage();
-    }
-    
-    // Store message in session and redirect to prevent form resubmission
-    $_SESSION['module_overview_ship_message'] = $shipMessage;
-    
-    // Construct appropriate redirect URL based on view mode
-    if ($view_mode === 'project' && $project_id > 0) {
-        header("Location: module_overview.php?project_id=" . $project_id);
-    } else {
-        header("Location: module_overview.php?batch_id=" . $batch_id);
-    }
-    exit();
 }
 
 // Helper to insert a pallet row and assign its identifier
@@ -1109,6 +915,47 @@ $conn->close();
             background-color: #ccc;
             cursor: not-allowed;
         }
+        
+        /* Filter dropdown styles */
+        .filter-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .filter-toggle-btn {
+            background-color: #488C9A;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px 4px 0 0;
+            cursor: pointer;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .filter-toggle-btn:hover {
+            background-color: #3A6E7F;
+        }
+        .filter-arrow {
+            transition: transform 0.3s ease;
+        }
+        .filter-toggle-btn.active .filter-arrow {
+            transform: rotate(180deg);
+        }
+        .filter-content {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            min-width: 600px;
+            z-index: 1000;
+            background-color: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        .filters-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
     </style>
 </head>
 <body>
@@ -1323,68 +1170,56 @@ $conn->close();
             <?php endif; ?>
         </div>
 
-        <!-- ====== SHIP PALLETS FORM CONDITIONALLY SHOWN ====== -->
-        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-        <form method="POST" id="shipPalletsForm">
-            <input type="hidden" name="action" value="ship_pallets">
-            
-            <div class="pallets-section">
-                <h2 class="section-title">Select Inventory Pallets to Include in Shipment</h2>
-                <div class="pallet-table-actions" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <div style="display: flex; gap: 20px; align-items: center;">
-                    <label>Filter Table:
-                        <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()">
-                    </label>
-                    <label for="wattageFilter">Wattage:</label>
-                    <select id="wattageFilter" onchange="filterPallets()">
-                        <option value="">All</option>
-                        <?php
-                        $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
-                        sort($wattages);
-                        foreach ($wattages as $w) {
-                            echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
-                        }
-                        ?>
-                    </select>
-                    </div>
-                    <div style="text-align: center;">
-                        <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
-                    </div>
-                    <div>
-                        <?php
-                        // Check if any wattages are over-palletized to show delete button
-                        $hasOverPalletized = false;
-                        if (!empty($wattage_summary)) {
-                            foreach ($wattage_summary as $wattage => $data) {
-                                if ($data['remaining_quantity'] < 0) {
-                                    $hasOverPalletized = true;
-                                    break;
-                                }
-                            }
-                        }
-                        ?>
-                        <button type="button" id="openShipModalBtn" class="action-button" disabled>
-                        Create Delivery for Selected Pallets
+        <!-- ====== PALLET INFORMATION SECTION ====== -->
+        <?php if (!empty($pallets)): ?>
+            <div class="pallets-section" style="margin-top: 30px;">
+                <h2 class="section-title">Associated Pallets</h2>
+                <!-- Filters Dropdown -->
+                <div class="filters-container" style="margin-bottom: 15px;">
+                    <div class="filter-dropdown">
+                        <button type="button" class="filter-toggle-btn" onclick="toggleFilters()">
+                            <span>Filters</span> <span class="filter-arrow">▼</span>
                         </button>
-                        <button type="button" id="deletePalletsBtn" class="action-button" disabled style="background-color: #dc3545; margin-left: 10px;">
-                        Delete
-                        </button>
+                        <div class="filter-content" id="filterContent" style="display: none;">
+                            <div style="display: flex; flex-direction: column; gap: 15px; padding: 15px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 0 0 4px 4px;">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <label>Search:</label>
+                                    <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()" style="flex: 1;">
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <label for="wattageFilter">Wattage:</label>
+                                    <select id="wattageFilter" onchange="filterPallets()" style="flex: 1;">
+                                        <option value="">All</option>
+                                        <?php
+                                        $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
+                                        sort($wattages);
+                                        foreach ($wattages as $w) {
+                                            echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
+                                        }
+                                        ?>
+                                    </select>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <label for="statusFilter">Status:</label>
+                                    <select id="statusFilter" onchange="filterPallets()" style="flex: 1;">
+                                        <option value="">All</option>
+                                        <?php
+                                        $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
+                                        sort($statuses);
+                                        foreach ($statuses as $s) {
+                                            echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>';
+                                        }
+                                        ?>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                
-                <!-- Additional filter row for Status -->
-                <div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px; padding-left: 0;">
-                    <label for="statusFilter">Status:</label>
-                    <select id="statusFilter" onchange="filterPallets()" style="margin-left: 10px;">
-                        <option value="">All</option>
-                        <?php
-                        $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
-                        sort($statuses);
-                        foreach ($statuses as $s) {
-                            echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>';
-                        }
-                        ?>
-                    </select>
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                            <a href="create_shipment.php<?php echo ($view_mode === 'project' && $project_id) ? '?project_id=' . $project_id : ''; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 8px 16px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">Create Shipment</a>
+                        <?php endif; ?>
+                    </div>
                 </div>
                 
                 <div class="pagination-container">
@@ -1393,7 +1228,7 @@ $conn->close();
                     </div>
                     <div class="pagination-controls">
                         <label for="itemsPerPage">Show:</label>
-                        <input type="number" id="itemsPerPage" value="100" min="1" max="500" style="width: 80px;">
+                        <input type="number" id="itemsPerPage" value="100" min="1" max="300" style="width: 80px;">
                         <label>pallets per page</label>
                         <button type="button" id="prevPage" disabled>Previous</button>
                         <span id="pageInfo">Page 1 of 1</span>
@@ -1401,114 +1236,7 @@ $conn->close();
                     </div>
                 </div>
                 
-                <?php if (!empty($pallets)): ?>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th><input type="checkbox" id="selectAllPallets" onclick="toggleAllPalletCheckboxes(this.checked)"></th>
-                                <th>Identifier</th>
-                                <th>Wattage</th>
-                                <th>Quantity</th>
-                                <th>Status</th>
-                                <th>Deliveries</th>
-                                <th>Pallet Details</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($pallets as $pallet): ?>
-                                <tr>
-                                    <td><input type="checkbox" name="selected_pallets[]" value="<?php echo $pallet['id']; ?>" class="pallet-checkbox"></td>
-                                    <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
-                                    <td><?php echo $pallet['wattage']; ?>W</td>
-                                    <td><?php echo number_format($pallet['quantity']); ?></td>
-                                    <td>
-                                        <?php 
-                                        $status = htmlspecialchars($pallet['status']);
-                                        if ($status === 'In Transit to Warehouse' && $pallet['current_warehouse_id']) {
-                                            echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
-                                        } elseif ($status === 'In Warehouse' && $pallet['current_warehouse_id']) {
-                                            echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
-                                        } else {
-                                            echo $status;
-                                        }
-                                        ?>
-                                    </td>
-                                    <td>
-                                        <?php 
-                                        $deliveryInfo = $pallet['delivery_info'] ?? '';
-                                        if (empty($deliveryInfo)) {
-                                            echo 'No deliveries';
-                                        } else {
-                                            $deliveries = explode('|', $deliveryInfo);
-                                            if (count($deliveries) == 1) {
-                                                $parts = explode(':', $deliveries[0]);
-                                                $deliveryId = $parts[0];
-                                                $bolNumber = $parts[1];
-                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
-                                            } else {
-                                                echo '<div class="delivery-dropdown">';
-                                                echo '<button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (' . count($deliveries) . ')</button>';
-                                                echo '<div class="delivery-list" style="display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 3px; z-index: 1000; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">';
-                                                foreach ($deliveries as $delivery) {
-                                                    $parts = explode(':', $delivery);
-                                                    $deliveryId = $parts[0];
-                                                    $bolNumber = $parts[1];
-                                                    echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
-                                                }
-                                                echo '</div>';
-                                                echo '</div>';
-                                            }
-                                        }
-                                        ?>
-                                    </td>
-                                    <td>
-                                        <a href="pallet_details.php?pallet_id=<?php echo $pallet['id']; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                <?php else: ?>
-                    <p>No pallets created or recorded for this batch yet.</p>
-                <?php endif; ?>
-            </div>
-        </form>
-        <?php else: // For 'user' role, show a simplified, read-only pallet list if pallets exist ?>
-            <?php if (!empty($pallets)): ?>
-            <div class="pallets-section" style="margin-top: 30px;">
-                <h2 class="section-title">Associated Pallets</h2>
-                 <div class="pallet-table-actions" style="display: flex; justify-content: flex-start; gap: 20px; align-items: center; margin-bottom: 10px;">
-                    <label>Filter Table:
-                        <input type="text" id="palletSearchUser" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPalletsUserView()">
-                    </label>
-                    <label for="wattageFilterUser">Wattage:</label>
-                    <select id="wattageFilterUser" onchange="filterPalletsUserView()">
-                        <option value="">All</option>
-                        <?php
-                        $user_view_wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
-                        sort($user_view_wattages);
-                        foreach ($user_view_wattages as $w_user) {
-                            echo '<option value="' . htmlspecialchars($w_user) . '">' . htmlspecialchars($w_user) . 'W</option>';
-                        }
-                        ?>
-                    </select>
-                </div>
-                
-                <!-- Additional filter row for Status -->
-                <div style="display: flex; justify-content: flex-start; align-items: center; margin-bottom: 10px; padding-left: 0;">
-                    <label for="statusFilterUser">Status:</label>
-                    <select id="statusFilterUser" onchange="filterPalletsUserView()" style="margin-left: 10px;">
-                        <option value="">All</option>
-                        <?php
-                        $user_view_statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
-                        sort($user_view_statuses);
-                        foreach ($user_view_statuses as $s_user) {
-                            echo '<option value="' . htmlspecialchars($s_user) . '">' . htmlspecialchars($s_user) . '</option>';
-                        }
-                        ?>
-                    </select>
-                </div>
-                <table id="userPalletsTable">
+                <table>
                     <thead>
                         <tr>
                             <th>Identifier</th>
@@ -1573,10 +1301,9 @@ $conn->close();
                     </tbody>
                 </table>
             </div>
-            <?php elseif (isset($_SESSION['role']) && $_SESSION['role'] === 'user'): // Only show this message to users if no pallets ?>
-                 <p style="margin-top:20px;">No pallets have been created or recorded for this batch yet.</p>
-            <?php endif; // End user role check for no pallets message ?>
-        <?php endif; // End role check for entire ship pallets section ?>
+        <?php else: ?>
+            <p style="margin-top:20px;">No pallets have been created or recorded for this batch yet.</p>
+        <?php endif; ?>
 
     <?php else: ?>
          <p>Batch data could not be loaded.</p>
@@ -1593,243 +1320,24 @@ $conn->close();
     </div>
 </div>
 
-<!-- Modal for Shipment Details -->
-<div id="shipModal" class="modal">
-    <div class="modal-content">
-        <span class="close-modal-btn">&times;</span>
-        <div class="shipment-details-modal-content">
-            <h2 class="section-title" style="margin-top:0; text-align:center;">Create Delivery</h2>
-            <div class="tabs">
-                <button type="button" class="modal-tab active" id="singleTabBtn">Single Shipment</button>
-                <button type="button" class="modal-tab" id="multiTabBtn">Multiple Shipments</button>
-            </div>
-            <!-- SINGLE SHIPMENT SECTION -->
-            <div id="singleShipmentSection">
-                <form id="singleShipmentForm" onsubmit="return false;">
-                    <label for="bol_number">BOL Number (Optional):</label>
-                    <input type="text" id="bol_number" name="bol_number">
-                    <div class="form-row">
-                        <div>
-                            <label for="departure_date">Departure Date:</label>
-                            <input type="date" id="departure_date" name="departure_date" required>
-                        </div>
-                        <div>
-                            <label for="est_arrival_date">Est. Arrival Date:</label>
-                            <input type="date" id="est_arrival_date" name="est_arrival_date" required>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div>
-                            <label for="freight_cost">Freight Cost ($):</label>
-                            <input type="number" id="freight_cost" name="freight_cost" step="0.01" min="0">
-                        </div>
-                        <div>
-                            <label for="customer_cost">Customer Cost ($):</label>
-                            <input type="number" id="customer_cost" name="customer_cost" step="0.01" min="0">
-                        </div>
-                    </div>
-                    
-                    <!-- Origin and Destination Section -->
-                    <div class="origin-destination-section">
-                        <div class="location-container" style="display: flex; align-items: flex-start; gap: 20px;">
-                            <div class="origin-section" style="flex: 1;">
-                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Origin:</label>
-                                <div id="originDisplay" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
-                                    <strong id="originLocationText">Select pallets to see origin</strong>
-                                </div>
-                                <input type="hidden" id="origin_type" name="origin_type" value="">
-                                <input type="hidden" id="origin_id" name="origin_id" value="">
-                            </div>
-                            
-                            <div class="distance-separator" style="display: flex; flex-direction: column; justify-content: center; align-items: center; margin-top: 35px;">
-                                <div style="font-size: 1.8em; color: #488C9A; margin-bottom: 5px;">→</div>
-                                <div id="distanceDisplay" style="text-align: center; font-weight: bold; color: #488C9A; white-space: nowrap; font-size: 0.85em;">
-                                    <!-- Distance will be calculated and displayed here -->
-                                </div>
-                            </div>
-                            
-                            <div class="destination-section" style="flex: 1;">
-                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Destination:</label>
-                                <div class="destination-radio-group" style="display: flex; gap: 15px; margin-bottom: 10px;">
-                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
-                                        <input type="radio" name="destination_type" value="project" checked onchange="toggleDestinationSelectSingle()" style="margin-right: 5px;"> Project
-                                    </label>
-                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
-                                        <input type="radio" name="destination_type" value="warehouse" onchange="toggleDestinationSelectSingle()" style="margin-right: 5px;"> Warehouse
-                                    </label>
-                                </div>
-                                <div id="destinationSelectContainer">
-                                    <select name="destination_id" id="destination_id" required onchange="calculateDistance()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                                        <!-- Filled by JS -->
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                        <input type="hidden" id="miles" name="miles" value="">
-                    </div>
-                    
-                    <button type="button" id="confirmShipmentBtn" class="action-button" style="margin-top:15px;">
-                        Create Delivery
-                    </button>
-                </form>
-            </div>
-            <!-- MULTIPLE SHIPMENTS SECTION -->
-            <div id="multiShipmentSection" style="display:none;">
-                <form id="multiShipmentForm" onsubmit="return false;">
-                    <label for="palletsPerTruck">Pallets per Truck:</label>
-                    <input type="number" id="palletsPerTruck" min="1" value="1" style="width:100px;">
-                    <div id="multiShipSummary" style="margin-top:10px; color:#488C9A;"></div>
-                    <label for="bol_number_multi">BOL Number (Optional):</label>
-                    <input type="text" id="bol_number_multi" name="bol_number_multi">
-                    <div class="form-row">
-                        <div>
-                            <label for="departure_date_multi">Departure Date:</label>
-                            <input type="date" id="departure_date_multi" name="departure_date_multi" required>
-                        </div>
-                        <div>
-                            <label for="est_arrival_date_multi">Est. Arrival Date:</label>
-                            <input type="date" id="est_arrival_date_multi" name="est_arrival_date_multi" required>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div>
-                            <label for="freight_cost_multi">Freight Cost ($):</label>
-                            <input type="number" id="freight_cost_multi" name="freight_cost_multi" step="0.01" min="0">
-                        </div>
-                        <div>
-                            <label for="customer_cost_multi">Customer Cost ($):</label>
-                            <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
-                        </div>
-                    </div>
-                    
-                    <!-- Origin and Destination Section -->
-                    <div class="origin-destination-section">
-                        <div class="location-container" style="display: flex; align-items: flex-start; gap: 20px;">
-                            <div class="origin-section" style="flex: 1;">
-                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Origin:</label>
-                                <div id="originDisplayMulti" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
-                                    <strong id="originLocationTextMulti">Select pallets to see origin</strong>
-                                </div>
-                                <input type="hidden" id="origin_type_multi" name="origin_type_multi" value="">
-                                <input type="hidden" id="origin_id_multi" name="origin_id_multi" value="">
-                            </div>
-                            
-                            <div class="distance-separator" style="display: flex; flex-direction: column; justify-content: center; align-items: center; margin-top: 35px;">
-                                <div style="font-size: 1.8em; color: #488C9A; margin-bottom: 5px;">→</div>
-                                <div id="distanceDisplayMulti" style="text-align: center; font-weight: bold; color: #488C9A; white-space: nowrap; font-size: 0.85em;">
-                                    <!-- Distance will be calculated and displayed here -->
-                                </div>
-                            </div>
-                            
-                            <div class="destination-section" style="flex: 1;">
-                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Destination:</label>
-                                <div class="destination-radio-group" style="display: flex; gap: 15px; margin-bottom: 10px;">
-                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
-                                        <input type="radio" name="destination_type_multi" value="project" checked onchange="toggleDestinationSelectMulti()" style="margin-right: 5px;"> Project
-                                    </label>
-                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
-                                        <input type="radio" name="destination_type_multi" value="warehouse" onchange="toggleDestinationSelectMulti()" style="margin-right: 5px;"> Warehouse
-                                    </label>
-                                </div>
-                                <div id="destinationSelectContainerMulti">
-                                    <select name="destination_id_multi" id="destination_id_multi" required onchange="calculateDistanceMulti()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                                        <!-- Filled by JS -->
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                        <input type="hidden" id="miles_multi" name="miles_multi" value="">
-                    </div>
-                    
-                    <button type="button" id="confirmMultiShipmentBtn" class="action-button" style="margin-top:15px;">
-                        Create Deliveries
-                    </button>
-                </form>
-            </div>
-        </div>
-    </div>
-</div>
 
-<!-- Embed PHP data as JS variables for populating dropdowns -->
-<script>
-    const projectsData = <?php echo json_encode($account_projects); ?>;
-    const warehousesData = <?php echo json_encode($all_warehouses); ?>;
-    const manufacturersData = <?php echo json_encode($all_manufacturers); ?>;
-    const palletsData = <?php echo json_encode($pallets); ?>;
-    const batchVendorName = <?php echo json_encode($batch_data['vendor_name'] ?? ''); ?>;
-</script>
 
-<!-- Load the Google Maps JavaScript API with Places library -->
-<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
+
 
 <script>
-// ----------------- PALLET TABLE CHECKBOXES -----------------
-function toggleAllPalletCheckboxes(isChecked) {
-    document.querySelectorAll('.pallets-section table tbody tr').forEach(function(row) {
-        if (row.style.display !== 'none') {
-            const checkbox = row.querySelector('.pallet-checkbox');
-            if (checkbox) checkbox.checked = isChecked;
-        }
-    });
-    updateOpenShipModalButtonState();
-    updateSelectedCount();
-    updateOriginDisplay();
-}
-
-function updateOpenShipModalButtonState() {
-    const openBtn = document.getElementById('openShipModalBtn');
-    const deleteBtn = document.getElementById('deletePalletsBtn');
-    const checked = document.querySelectorAll('.pallet-checkbox:checked').length;
-    if (openBtn) {
-        openBtn.disabled = (checked === 0);
-    }
-    if (deleteBtn) {
-        deleteBtn.disabled = (checked === 0);
-    }
-}
-
-function updateSelectedCount() {
-    let count = document.querySelectorAll('.pallet-checkbox:checked').length;
-    const countEl = document.getElementById('selectedCount');
-    if (countEl) {
-        countEl.textContent = count + ' pallet' + (count === 1 ? '' : 's') + ' selected';
-    }
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-    const selectAll = document.getElementById('selectAllPallets');
-    const palletCheckboxes = document.querySelectorAll('.pallet-checkbox');
-    if (selectAll) {
-        selectAll.addEventListener('change', function() {
-            toggleAllPalletCheckboxes(this.checked);
-        });
-    }
-    palletCheckboxes.forEach(function(checkbox) {
-        checkbox.addEventListener('change', function() {
-            updateOpenShipModalButtonState();
-            updateSelectedCount();
-            updateOriginDisplay();
-            updateMultiShipSummary();
-        });
-    });
-    // Initial state
-    updateOpenShipModalButtonState();
-    updateSelectedCount();
-    
-    // Initialize pagination
-    initializePagination();
-});
-
-// ----------------- PAGINATION -----------------
+// ----------------- PAGINATION FOR PALLETS -----------------
 let currentPage = 1;
 let itemsPerPage = 100;
 let allPalletRows = [];
 
-function initializePagination() {
-    const table = document.querySelector('.pallets-section table tbody');
+function initializePalletPagination() {
+    const table = document.querySelector('.pallets-section table');
     if (!table) return;
     
-    allPalletRows = Array.from(table.querySelectorAll('tr'));
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    
+    allPalletRows = Array.from(tbody.querySelectorAll('tr'));
     
     const itemsPerPageInput = document.getElementById('itemsPerPage');
     const prevButton = document.getElementById('prevPage');
@@ -1837,10 +1345,10 @@ function initializePagination() {
     
     if (itemsPerPageInput) {
         itemsPerPageInput.addEventListener('change', function() {
-            itemsPerPage = Math.min(Math.max(1, parseInt(this.value) || 100), 500);
+            itemsPerPage = Math.min(Math.max(1, parseInt(this.value) || 100), 300);
             this.value = itemsPerPage;
             currentPage = 1;
-            updatePagination();
+            updatePalletPagination();
         });
     }
     
@@ -1848,66 +1356,67 @@ function initializePagination() {
         prevButton.addEventListener('click', function() {
             if (currentPage > 1) {
                 currentPage--;
-                updatePagination();
+                updatePalletPagination();
             }
         });
     }
     
     if (nextButton) {
         nextButton.addEventListener('click', function() {
-            const maxPages = Math.ceil(getFilteredRows().length / itemsPerPage);
+            const maxPages = Math.ceil(getFilteredPalletRows().length / itemsPerPage);
             if (currentPage < maxPages) {
                 currentPage++;
-                updatePagination();
+                updatePalletPagination();
             }
         });
     }
     
-    updatePagination();
+    updatePalletPagination();
 }
 
-function getFilteredRows() {
+function getFilteredPalletRows() {
+    const filter = document.getElementById('palletSearch')?.value.toLowerCase() || '';
+    const wattageFilter = document.getElementById('wattageFilter')?.value || '';
+    const statusFilter = document.getElementById('statusFilter')?.value || '';
+    
     return allPalletRows.filter(row => {
-        // Check if row matches current filters (not just display style)
         if (!row || !row.cells) return false;
-        
-        const filter = document.getElementById('palletSearch')?.value.toLowerCase() || '';
-        const wattageFilter = document.getElementById('wattageFilter')?.value || '';
-        const statusFilter = document.getElementById('statusFilter')?.value || '';
         
         // Get cell contents
         let textContent = '';
-        for (let i = 1; i < row.cells.length; i++) { // Skip checkbox column
+        for (let i = 0; i < row.cells.length; i++) {
             textContent += (row.cells[i].textContent || row.cells[i].innerText || '').toLowerCase() + ' ';
         }
         
+        let showRow = true;
+        
         // Check search filter
         if (filter && !textContent.includes(filter)) {
-            return false;
+            showRow = false;
         }
         
-        // Check wattage filter (assuming wattage is in column 2, index 2)
-        if (wattageFilter && row.cells[2]) {
-            const cellWattage = (row.cells[2].textContent || row.cells[2].innerText || '').replace('W','').trim();
+        // Check wattage filter (wattage is in column 1, index 1)
+        if (showRow && wattageFilter && row.cells[1]) {
+            const cellWattage = (row.cells[1].textContent || row.cells[1].innerText || '').replace('W','').trim();
             if (cellWattage !== wattageFilter) {
-                return false;
+                showRow = false;
             }
         }
         
-        // Check status filter (assuming status is in column 4, index 4)
-        if (statusFilter && row.cells[4]) {
-            const cellStatus = (row.cells[4].textContent || row.cells[4].innerText || '').trim();
+        // Check status filter (status is in column 3, index 3)
+        if (showRow && statusFilter && row.cells[3]) {
+            const cellStatus = (row.cells[3].textContent || row.cells[3].innerText || '').trim();
             if (cellStatus !== statusFilter) {
-                return false;
+                showRow = false;
             }
         }
         
-        return true;
+        return showRow;
     });
 }
 
-function updatePagination() {
-    const filteredRows = getFilteredRows();
+function updatePalletPagination() {
+    const filteredRows = getFilteredPalletRows();
     const totalItems = filteredRows.length;
     const maxPages = Math.ceil(totalItems / itemsPerPage);
     const startIndex = (currentPage - 1) * itemsPerPage;
@@ -1946,16 +1455,13 @@ function updatePagination() {
     if (nextButton) {
         nextButton.disabled = currentPage >= maxPages || totalItems === 0;
     }
-    
-    // Update selection counts after pagination
-    updateSelectedCount();
 }
 
-// ----------------- PALLET FILTER (ADMIN VIEW) -----------------
+// ----------------- SIMPLE PALLET FILTER -----------------
 function filterPallets() {
     // Reset to page 1 when filter changes
     currentPage = 1;
-    updatePagination();
+    updatePalletPagination();
 }
 
 // ----------------- PALLETIZATION LOADING SPINNER -----------------
@@ -1980,681 +1486,23 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Hide loading modal if page loads (in case of refresh/back button)
     hideLoadingModal();
+    
+    // Initialize pagination for pallets
+    initializePalletPagination();
 });
 
-// ----------------- MODAL LOGIC (ONLY FOR ADMINS) -----------------
-const shipModal = document.getElementById('shipModal');
-const openShipModalBtn = document.getElementById('openShipModalBtn');
-
-if (openShipModalBtn) { // Button only exists for admins
-    const closeShipModalBtn = shipModal.querySelector('.close-modal-btn');
-
-    function openShipModal() {
-        shipModal.style.display = 'block';
-    }
-    function closeShipModal() {
-        shipModal.style.display = 'none';
-    }
-
-    openShipModalBtn.addEventListener('click', openShipModal);
-    if (closeShipModalBtn) {
-        closeShipModalBtn.addEventListener('click', closeShipModal);
-    }
-    window.addEventListener('click', function(e) {
-        if (e.target === shipModal) {
-            closeShipModal();
-        }
-    });
-
-    // ----------------- TAB SWITCHING (SINGLE vs MULTI) (ADMIN ONLY) -----------------
-    const singleTabBtn = document.getElementById('singleTabBtn');
-    const multiTabBtn = document.getElementById('multiTabBtn');
-    const singleSection = document.getElementById('singleShipmentSection');
-    const multiSection = document.getElementById('multiShipmentSection');
-
-    if (singleTabBtn && multiTabBtn && singleSection && multiSection) {
-        singleTabBtn.addEventListener('click', () => {
-            singleTabBtn.classList.add('active');
-            multiTabBtn.classList.remove('active');
-            singleSection.style.display = '';
-            multiSection.style.display = 'none';
-            singleTabBtn.style.background = '#f39c12';
-            singleTabBtn.style.color = '#000';
-            multiTabBtn.style.background = '#293E4C';
-            multiTabBtn.style.color = '#fff';
-        });
-        multiTabBtn.addEventListener('click', () => {
-            singleTabBtn.classList.remove('active');
-            multiTabBtn.classList.add('active');
-            singleSection.style.display = 'none';
-            multiSection.style.display = '';
-            multiTabBtn.style.background = '#f39c12';
-            multiTabBtn.style.color = '#000';
-            singleTabBtn.style.background = '#293E4C';
-            singleTabBtn.style.color = '#fff';
-        });
-        // Init default tab look
-        singleTabBtn.style.background = '#f39c12';
-        singleTabBtn.style.color = '#000';
-    }
-
-    // ----------------- DISTANCE CALCULATION WITH GOOGLE MAPS -----------------
-    let directionsService;
-    let initialized = false;
-
-    function initializeGoogleMaps() {
-        if (initialized || !window.google) return;
-        directionsService = new google.maps.DirectionsService();
-        initialized = true;
-    }
-
-    function calculateDistanceFromAddresses(originAddress, destinationAddress, callback) {
-        if (!initialized) {
-            initializeGoogleMaps();
-        }
-        
-        if (!directionsService || !originAddress || !destinationAddress) {
-            callback(null, 'Missing address information');
-            return;
-        }
-
-        if (originAddress.toLowerCase() === destinationAddress.toLowerCase()) {
-            callback(null, 'Origin and destination cannot be the same');
-            return;
-        }
-
-        const request = {
-            origin: originAddress,
-            destination: destinationAddress,
-            travelMode: 'DRIVING'
-        };
-
-        directionsService.route(request, function(result, status) {
-            if (status === 'OK') {
-                const distanceInMeters = result.routes[0].legs[0].distance.value;
-                const distanceInMiles = (distanceInMeters / 1609.34).toFixed(2);
-                callback(distanceInMiles, null);
-            } else {
-                callback(null, 'Could not calculate distance');
-            }
-        });
-    }
-
-    function populateDropdown(selectElement, type, dataSource, nameField, placeholderPrefix) {
-        if (!selectElement) return;
-        
-        selectElement.innerHTML = '';
-
-        if (!dataSource || dataSource.length === 0) {
-            selectElement.innerHTML = `<option value="">No ${placeholderPrefix.toLowerCase()} found</option>`;
-            selectElement.disabled = true;
-        } else {
-            selectElement.disabled = false;
-            selectElement.innerHTML = `<option value="">-- Select ${placeholderPrefix} --</option>`;
-            dataSource.forEach(function(item) {
-                const opt = document.createElement('option');
-                opt.value = item.id;
-                opt.textContent = item[nameField];
-                opt.setAttribute('data-address', item.full_address || '');
-                selectElement.appendChild(opt);
-            });
-        }
-    }
-
-    function getAddressFromSelection(selectElement, type) {
-        if (!selectElement || !selectElement.value) return '';
-        const selectedOption = selectElement.options[selectElement.selectedIndex];
-        return selectedOption ? selectedOption.getAttribute('data-address') : '';
-    }
-
-    // ----------------- ORIGIN DETERMINATION FUNCTIONS -----------------
-    function determineOriginFromSelectedPallets() {
-        const selectedPallets = getSelectedPallets();
-        
-        if (selectedPallets.length === 0) {
-            return {
-                success: false,
-                message: 'No pallets selected'
-            };
-        }
-
-        // Group pallets by their origin
-        const origins = {};
-        
-        selectedPallets.forEach(pallet => {
-            let originKey;
-            if (pallet.status === 'At Manufacturer') {
-                originKey = `manufacturer_${batchVendorName}`;
-            } else if (pallet.status === 'In Warehouse' && pallet.current_warehouse_id) {
-                originKey = `warehouse_${pallet.current_warehouse_id}`;
-            } else if (pallet.status === 'Delivered to Project' && pallet.current_project_id) {
-                originKey = `project_${pallet.current_project_id}`;
-            } else {
-                originKey = 'unknown';
-            }
-            
-            if (!origins[originKey]) {
-                origins[originKey] = [];
-            }
-            origins[originKey].push(pallet);
-        });
-
-        const originKeys = Object.keys(origins);
-        
-        if (originKeys.length > 1) {
-            return {
-                success: false,
-                message: 'Selected pallets must all have the same origin location'
-            };
-        }
-        
-        if (originKeys.length === 0 || originKeys[0] === 'unknown') {
-            return {
-                success: false,
-                message: 'Cannot determine origin for selected pallets'
-            };
-        }
-
-        const originKey = originKeys[0];
-        const firstPallet = origins[originKey][0];
-        
-        // Determine origin details
-        let originInfo = {};
-        
-        if (firstPallet.status === 'At Manufacturer') {
-            // Find manufacturer by vendor name
-            const manufacturer = manufacturersData.find(m => m.name === batchVendorName);
-            if (manufacturer) {
-                originInfo = {
-                    type: 'manufacturer',
-                    id: manufacturer.id,
-                    name: manufacturer.name,
-                    address: manufacturer.full_address,
-                    displayText: `Manufacturer: ${manufacturer.name}`
-                };
-            } else {
-                return {
-                    success: false,
-                    message: `Manufacturer "${batchVendorName}" not found in system`
-                };
-            }
-        } else if (firstPallet.status === 'In Warehouse') {
-            originInfo = {
-                type: 'warehouse',
-                id: firstPallet.current_warehouse_id,
-                name: firstPallet.warehouse_name,
-                address: firstPallet.warehouse_full_address,
-                displayText: `Warehouse: ${firstPallet.warehouse_name}`
-            };
-        } else if (firstPallet.status === 'Delivered to Project') {
-            originInfo = {
-                type: 'project',
-                id: firstPallet.current_project_id,
-                name: firstPallet.project_name,
-                address: firstPallet.project_full_address,
-                displayText: `Project: ${firstPallet.project_name}`
-            };
-        }
-
-        return {
-            success: true,
-            origin: originInfo
-        };
-    }
-
-    function getSelectedPallets() {
-        const selectedCheckboxes = document.querySelectorAll('.pallet-checkbox:checked');
-        const selectedPallets = [];
-        
-        selectedCheckboxes.forEach(checkbox => {
-            const palletId = parseInt(checkbox.value);
-            const pallet = palletsData.find(p => p.id === palletId);
-            if (pallet) {
-                selectedPallets.push(pallet);
-            }
-        });
-        
-        return selectedPallets;
-    }
-
-    function updateOriginDisplay() {
-        const result = determineOriginFromSelectedPallets();
-        
-        // Update single shipment display
-        const originText = document.getElementById('originLocationText');
-        const originType = document.getElementById('origin_type');
-        const originId = document.getElementById('origin_id');
-        
-        // Update multi shipment display
-        const originTextMulti = document.getElementById('originLocationTextMulti');
-        const originTypeMulti = document.getElementById('origin_type_multi');
-        const originIdMulti = document.getElementById('origin_id_multi');
-        
-        if (result.success) {
-            const displayText = result.origin.displayText;
-            
-            if (originText) originText.textContent = displayText;
-            if (originTextMulti) originTextMulti.textContent = displayText;
-            
-            if (originType) originType.value = result.origin.type;
-            if (originId) originId.value = result.origin.id;
-            if (originTypeMulti) originTypeMulti.value = result.origin.type;
-            if (originIdMulti) originIdMulti.value = result.origin.id;
-            
-            // Calculate distance
-            calculateDistance();
-            calculateDistanceMulti();
-        } else {
-            const errorText = result.message;
-            
-            if (originText) originText.textContent = errorText;
-            if (originTextMulti) originTextMulti.textContent = errorText;
-            
-            if (originType) originType.value = '';
-            if (originId) originId.value = '';
-            if (originTypeMulti) originTypeMulti.value = '';
-            if (originIdMulti) originIdMulti.value = '';
-            
-            // Clear distance display
-            const distanceDisplay = document.getElementById('distanceDisplay');
-            const distanceDisplayMulti = document.getElementById('distanceDisplayMulti');
-            if (distanceDisplay) distanceDisplay.innerHTML = '';
-            if (distanceDisplayMulti) distanceDisplayMulti.innerHTML = '';
-        }
-    }
-
-    // ----------------- DESTINATION SELECTION FUNCTIONS -----------------
-    function toggleDestinationSelectSingle() {
-        const destType = document.querySelector('input[name="destination_type"]:checked').value;
-        const destSelect = document.getElementById('destination_id');
-        
-        const data = (destType === 'project') ? projectsData : warehousesData;
-        const nameField = (destType === 'project') ? 'project_name' : 'name';
-        const placeholder = (destType === 'project') ? 'Project' : 'Warehouse';
-
-        populateDropdown(destSelect, destType, data, nameField, placeholder);
-        calculateDistance();
-    }
-
-    function toggleDestinationSelectMulti() {
-        const destType = document.querySelector('input[name="destination_type_multi"]:checked').value;
-        const destSelect = document.getElementById('destination_id_multi');
-        
-        const data = (destType === 'project') ? projectsData : warehousesData;
-        const nameField = (destType === 'project') ? 'project_name' : 'name';
-        const placeholder = (destType === 'project') ? 'Project' : 'Warehouse';
-
-        populateDropdown(destSelect, destType, data, nameField, placeholder);
-        calculateDistanceMulti();
-    }
-
-    // ----------------- DISTANCE CALCULATION FUNCTIONS -----------------
-    function calculateDistance() {
-        const destSelect = document.getElementById('destination_id');
-        const distanceDisplay = document.getElementById('distanceDisplay');
-        const milesInput = document.getElementById('miles');
-
-        if (!destSelect || !distanceDisplay) return;
-
-        const result = determineOriginFromSelectedPallets();
-        if (!result.success) {
-            distanceDisplay.innerHTML = '';
-            milesInput.value = '';
-            return;
-        }
-
-        const originAddress = result.origin.address;
-        const destAddress = getAddressFromSelection(destSelect, 'destination');
-
-        if (!originAddress || !destAddress) {
-            distanceDisplay.innerHTML = '';
-            milesInput.value = '';
-            return;
-        }
-
-        distanceDisplay.innerHTML = '<span style="color: #666;">Calculating distance...</span>';
-
-        calculateDistanceFromAddresses(originAddress, destAddress, function(distance, error) {
-            if (error) {
-                if (error.includes('cannot be the same')) {
-                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Same location</span>';
-                } else {
-                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error</span>';
-                }
-                milesInput.value = '';
-            } else {
-                distanceDisplay.innerHTML = `${distance} miles`;
-                milesInput.value = distance;
-            }
-        });
-    }
-
-    function calculateDistanceMulti() {
-        const destSelect = document.getElementById('destination_id_multi');
-        const distanceDisplay = document.getElementById('distanceDisplayMulti');
-        const milesInput = document.getElementById('miles_multi');
-
-        if (!destSelect || !distanceDisplay) return;
-
-        const result = determineOriginFromSelectedPallets();
-        if (!result.success) {
-            distanceDisplay.innerHTML = '';
-            milesInput.value = '';
-            return;
-        }
-
-        const originAddress = result.origin.address;
-        const destAddress = getAddressFromSelection(destSelect, 'destination');
-
-        if (!originAddress || !destAddress) {
-            distanceDisplay.innerHTML = '';
-            milesInput.value = '';
-            return;
-        }
-
-        distanceDisplay.innerHTML = '<span style="color: #666;">Calculating distance...</span>';
-
-        calculateDistanceFromAddresses(originAddress, destAddress, function(distance, error) {
-            if (error) {
-                if (error.includes('cannot be the same')) {
-                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Same location</span>';
-                } else {
-                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error</span>';
-                }
-                milesInput.value = '';
-            } else {
-                distanceDisplay.innerHTML = `${distance} miles`;
-                milesInput.value = distance;
-            }
-        });
-    }
-
-    // ----------------- CONFIRM BUTTONS (SINGLE & MULTI - ADMIN ONLY) -----------------
-    const confirmShipmentBtn = document.getElementById('confirmShipmentBtn');
-    const confirmMultiShipmentBtn = document.getElementById('confirmMultiShipmentBtn');
-
-    if (confirmShipmentBtn) {
-        confirmShipmentBtn.addEventListener('click', function() {
-            const mainForm = document.getElementById('shipPalletsForm');
-            if (!mainForm) return;
-
-            // Single shipment mode
-            let shipmentModeInput = mainForm.querySelector('input[name="shipment_mode"]');
-            if (!shipmentModeInput) {
-                shipmentModeInput = document.createElement('input');
-                shipmentModeInput.type = 'hidden';
-                shipmentModeInput.name = 'shipment_mode';
-                mainForm.appendChild(shipmentModeInput);
-            }
-            shipmentModeInput.value = 'single';
-
-            // Pallets per truck (not used in single, so set blank or 1)
-            let pTruckInput = mainForm.querySelector('input[name="pallets_per_truck"]');
-            if (!pTruckInput) {
-                pTruckInput = document.createElement('input');
-                pTruckInput.type = 'hidden';
-                pTruckInput.name = 'pallets_per_truck';
-                mainForm.appendChild(pTruckInput);
-            }
-            pTruckInput.value = '1';
-
-            // Validate origin can be determined
-            const originResult = determineOriginFromSelectedPallets();
-            if (!originResult.success) {
-                alert('Error: ' + originResult.message);
-                return;
-            }
-
-            // Get single form values
-            const originType = document.getElementById('origin_type').value;
-            const originId = document.getElementById('origin_id').value;
-            const destinationType = document.querySelector('input[name="destination_type"]:checked').value;
-            const destinationId = document.getElementById('destination_id').value;
-            const bol = document.getElementById('bol_number').value;
-            const departure = document.getElementById('departure_date').value;
-            const arrival = document.getElementById('est_arrival_date').value;
-            const freightCost = document.getElementById('freight_cost').value;
-            const customerCost = document.getElementById('customer_cost').value;
-            const miles = document.getElementById('miles').value;
-
-            if (!originId) {
-                alert('Please select pallets to determine origin location.');
-                return;
-            }
-            if (!destinationId) {
-                alert('Please select a destination location.');
-                return;
-            }
-
-            // Check if origin and destination are the same
-            if (originType === destinationType && originId === destinationId) {
-                alert('Origin and destination cannot be the same location.');
-                return;
-            }
-
-            // Populate hidden inputs
-            setOrCreateHidden(mainForm, 'origin_type', originType);
-            setOrCreateHidden(mainForm, 'origin_id', originId);
-            setOrCreateHidden(mainForm, 'destination_type', destinationType);
-            setOrCreateHidden(mainForm, 'destination_id', destinationId);
-            setOrCreateHidden(mainForm, 'bol_number', bol);
-            setOrCreateHidden(mainForm, 'departure_date', departure);
-            setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
-            setOrCreateHidden(mainForm, 'freight_cost', freightCost);
-            setOrCreateHidden(mainForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
-            setOrCreateHidden(mainForm, 'customer_cost', customerCost);
-            setOrCreateHidden(mainForm, 'miles', miles);
-
-            mainForm.submit();
-        });
-    }
-
-    if (confirmMultiShipmentBtn) {
-        confirmMultiShipmentBtn.addEventListener('click', function() {
-            const mainForm = document.getElementById('shipPalletsForm');
-            if (!mainForm) return;
-
-            // Multi shipment mode
-            let shipmentModeInput = mainForm.querySelector('input[name="shipment_mode"]');
-            if (!shipmentModeInput) {
-                shipmentModeInput = document.createElement('input');
-                shipmentModeInput.type = 'hidden';
-                shipmentModeInput.name = 'shipment_mode';
-                mainForm.appendChild(shipmentModeInput);
-            }
-            shipmentModeInput.value = 'multi';
-
-            // Pallets per truck
-            let perTruckInput = mainForm.querySelector('input[name="pallets_per_truck"]');
-            if (!perTruckInput) {
-                perTruckInput = document.createElement('input');
-                perTruckInput.type = 'hidden';
-                perTruckInput.name = 'pallets_per_truck';
-                mainForm.appendChild(perTruckInput);
-            }
-            perTruckInput.value = document.getElementById('palletsPerTruck').value || '1';
-
-            // Validate origin can be determined
-            const originResult = determineOriginFromSelectedPallets();
-            if (!originResult.success) {
-                alert('Error: ' + originResult.message);
-                return;
-            }
-
-            // Get multi form values
-            const originType = document.getElementById('origin_type_multi').value;
-            const originId = document.getElementById('origin_id_multi').value;
-            const destinationType = document.querySelector('input[name="destination_type_multi"]:checked').value;
-            const destinationId = document.getElementById('destination_id_multi').value;
-            const bol = document.getElementById('bol_number_multi').value;
-            const departure = document.getElementById('departure_date_multi').value;
-            const arrival = document.getElementById('est_arrival_date_multi').value;
-            const freightCost = document.getElementById('freight_cost_multi').value;
-            const customerCost = document.getElementById('customer_cost_multi').value;
-            const miles = document.getElementById('miles_multi').value;
-
-            if (!originId) {
-                alert('Please select pallets to determine origin location.');
-                return;
-            }
-            if (!destinationId) {
-                alert('Please select a destination location.');
-                return;
-            }
-
-            // Check if origin and destination are the same
-            if (originType === destinationType && originId === destinationId) {
-                alert('Origin and destination cannot be the same location.');
-                return;
-            }
-
-            // Populate hidden inputs
-            setOrCreateHidden(mainForm, 'origin_type', originType);
-            setOrCreateHidden(mainForm, 'origin_id', originId);
-            setOrCreateHidden(mainForm, 'destination_type', destinationType);
-            setOrCreateHidden(mainForm, 'destination_id', destinationId);
-            setOrCreateHidden(mainForm, 'bol_number', bol);
-            setOrCreateHidden(mainForm, 'departure_date', departure);
-            setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
-            setOrCreateHidden(mainForm, 'freight_cost', freightCost);
-            setOrCreateHidden(mainForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
-            setOrCreateHidden(mainForm, 'customer_cost', customerCost);
-            setOrCreateHidden(mainForm, 'miles', miles);
-
-            mainForm.submit();
-        });
-    }
-
-    function setOrCreateHidden(form, fieldName, fieldValue) {
-        let el = form.querySelector(`input[name="${fieldName}"]`);
-        if (!el) {
-            el = document.createElement('input');
-            el.type = 'hidden';
-            el.name = fieldName;
-            form.appendChild(el);
-        }
-        el.value = fieldValue;
-    }
-
-    // ----------------- MULTI-SHIPMENT SUMMARY (ADMIN ONLY) -----------------
-    const palletsPerTruckInput = document.getElementById('palletsPerTruck');
-    const multiShipSummary = document.getElementById('multiShipSummary');
-
-    function updateMultiShipSummary() {
-        if (!palletsPerTruckInput || !multiShipSummary) return; // Ensure elements exist
-        const selected = document.querySelectorAll('.pallet-checkbox:checked').length;
-        const perTruck = parseInt(palletsPerTruckInput.value, 10) || 1;
-        const numDeliveries = Math.ceil(selected / perTruck);
-        multiShipSummary.textContent = selected > 0
-            ? (numDeliveries + ' deliveries will be created (' + perTruck + ' pallets per truck)')
-            : '';
-    }
-
-    if (palletsPerTruckInput && multiShipSummary) {
-        palletsPerTruckInput.addEventListener('input', updateMultiShipSummary);
-        updateMultiShipSummary();
-    }
-
-    // ----------------- DELETE PALLETS FUNCTIONALITY (ADMIN ONLY) -----------------
-    const deletePalletsBtn = document.getElementById('deletePalletsBtn');
-    if (deletePalletsBtn) {
-        deletePalletsBtn.addEventListener('click', function() {
-            const checkedPallets = document.querySelectorAll('.pallet-checkbox:checked');
-            if (checkedPallets.length === 0) {
-                alert('Please select pallets to delete.');
-                return;
-            }
-            
-            const confirmation = confirm(`Are you sure you want to delete ${checkedPallets.length} selected pallet(s)? This action cannot be undone.`);
-            if (!confirmation) return;
-            
-            // Create a form and submit it
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.style.display = 'none';
-            
-            const actionInput = document.createElement('input');
-            actionInput.type = 'hidden';
-            actionInput.name = 'action';
-            actionInput.value = 'delete_pallets';
-            form.appendChild(actionInput);
-            
-            checkedPallets.forEach(function(checkbox) {
-                const hiddenInput = document.createElement('input');
-                hiddenInput.type = 'hidden';
-                hiddenInput.name = 'selected_pallets[]';
-                hiddenInput.value = checkbox.value;
-                form.appendChild(hiddenInput);
-            });
-            
-            document.body.appendChild(form);
-            form.submit();
-        });
-    }
-
-    // ----------------- INITIALIZE DEFAULT DROPDOWNS (ADMIN ONLY) -----------------
-    document.addEventListener('DOMContentLoaded', () => {
-        // Initialize Google Maps when DOM is ready
-        if (window.google) {
-            initializeGoogleMaps();
-        } else {
-            // Wait for Google Maps to load
-            window.addEventListener('load', initializeGoogleMaps);
-        }
-        
-        // Default load the destination dropdowns
-        toggleDestinationSelectSingle();
-        toggleDestinationSelectMulti();
-        
-        // Initialize origin display
-        updateOriginDisplay();
-    });
-} // End of admin-only JavaScript block
-
-// ----------------- USER VIEW PALLET FILTER -----------------
-function filterPalletsUserView() {
-    const table = document.getElementById('userPalletsTable');
-    if (!table) return;
+// ----------------- FILTER DROPDOWN FUNCTIONALITY -----------------
+function toggleFilters() {
+    const filterContent = document.getElementById('filterContent');
+    const toggleBtn = document.querySelector('.filter-toggle-btn');
     
-    const filter = document.getElementById('palletSearchUser')?.value.toLowerCase() || '';
-    const wattageFilter = document.getElementById('wattageFilterUser')?.value || '';
-    const statusFilter = document.getElementById('statusFilterUser')?.value || '';
-    const rows = table.querySelectorAll('tbody tr');
-    
-    rows.forEach(function(row) {
-        if (!row || !row.cells) return;
-        
-        // Get cell contents (no checkbox column in user view)
-        let textContent = '';
-        for (let i = 0; i < row.cells.length; i++) {
-            textContent += (row.cells[i].textContent || row.cells[i].innerText || '').toLowerCase() + ' ';
-        }
-        
-        let showRow = true;
-        
-        // Check search filter
-        if (filter && !textContent.includes(filter)) {
-            showRow = false;
-        }
-        
-        // Check wattage filter (wattage is in column 1, index 1)
-        if (showRow && wattageFilter && row.cells[1]) {
-            const cellWattage = (row.cells[1].textContent || row.cells[1].innerText || '').replace('W','').trim();
-            if (cellWattage !== wattageFilter) {
-                showRow = false;
-            }
-        }
-        
-        // Check status filter (status is in column 3, index 3)
-        if (showRow && statusFilter && row.cells[3]) {
-            const cellStatus = (row.cells[3].textContent || row.cells[3].innerText || '').trim();
-            if (cellStatus !== statusFilter) {
-                showRow = false;
-            }
-        }
-        
-        row.style.display = showRow ? '' : 'none';
-    });
+    if (filterContent.style.display === 'none' || filterContent.style.display === '') {
+        filterContent.style.display = 'block';
+        toggleBtn.classList.add('active');
+    } else {
+        filterContent.style.display = 'none';
+        toggleBtn.classList.remove('active');
+    }
 }
 
 // ----------------- DELIVERY DROPDOWN FUNCTIONALITY -----------------
@@ -2673,10 +1521,21 @@ function toggleDeliveryDropdown(button) {
 
 // Close dropdowns when clicking outside
 document.addEventListener('click', function(event) {
+    // Close delivery dropdowns
     if (!event.target.closest('.delivery-dropdown')) {
         document.querySelectorAll('.delivery-list').forEach(function(list) {
             list.style.display = 'none';
         });
+    }
+    
+    // Close filter dropdown
+    if (!event.target.closest('.filter-dropdown')) {
+        const filterContent = document.getElementById('filterContent');
+        const toggleBtn = document.querySelector('.filter-toggle-btn');
+        if (filterContent && toggleBtn) {
+            filterContent.style.display = 'none';
+            toggleBtn.classList.remove('active');
+        }
     }
 });
 </script>
