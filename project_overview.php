@@ -1418,17 +1418,26 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         <a href="manage_pallets.php?project_id=<?php echo $project_id; ?>">Manage Pallets</a>
                     </div>
                 </div>
-                <button onclick="window.location.href='manage_deliveries.php?project_id=<?php echo $project_id; ?>'">Deliveries</button>
+                <div class="dropdown">
+                    <button class="dropdown-btn" onclick="toggleAdminDeliveriesDropdown()">
+                        Deliveries <span class="dropdown-arrow">▼</span>
+                    </button>
+                    <div class="dropdown-content" id="adminDeliveriesDropdown">
+                        <a href="create_shipment.php?project_id=<?php echo $project_id; ?>">Create Shipments</a>
+                        <a href="manage_deliveries.php?project_id=<?php echo $project_id; ?>">Manage Deliveries</a>
+                        <a href="scheduling.php?project_id=<?php echo $project_id; ?>">Scheduling</a>
+                    </div>
+                </div>
                 <button onclick="handleAdminWarehousing()">Warehousing</button>
             </div>
             
             <!-- Customer View Buttons -->
             <div id="customer-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: none;"' : 'style="display: block;"'; ?>>
                 <div class="dropdown">
-                    <button class="dropdown-btn" onclick="toggleDropdown()">
+                    <button class="dropdown-btn" onclick="toggleCustomerDeliveriesDropdown()">
                         Deliveries <span class="dropdown-arrow">▼</span>
                     </button>
-                    <div class="dropdown-content" id="deliveriesDropdown">
+                    <div class="dropdown-content" id="customerDeliveriesDropdown">
                         <a href="<?php echo $deliveriesLink; ?>">📋 Delivery Schedule</a>
                         <a href="module_movements.php?project_id=<?php echo $project_id; ?>">📍 Module Movements</a>
                     </div>
@@ -1935,8 +1944,8 @@ function goToWarehouseManagement(warehouseId) {
 }
 
 // Dropdown functionality
-function toggleDropdown() {
-    var dropdown = document.getElementById("deliveriesDropdown");
+function toggleCustomerDeliveriesDropdown() {
+    var dropdown = document.getElementById("customerDeliveriesDropdown");
     var dropdownBtn = document.querySelector("#customer-buttons .dropdown-btn");
     
     dropdown.classList.toggle("show");
@@ -1945,7 +1954,15 @@ function toggleDropdown() {
 
 function toggleModulesDropdown() {
     var dropdown = document.getElementById("modulesDropdown");
-    var dropdownBtn = document.querySelector("#admin-buttons .dropdown-btn");
+    var dropdownBtn = document.querySelector("#admin-buttons .dropdown:first-child .dropdown-btn");
+    
+    dropdown.classList.toggle("show");
+    dropdownBtn.classList.toggle("active");
+}
+
+function toggleAdminDeliveriesDropdown() {
+    var dropdown = document.getElementById("adminDeliveriesDropdown");
+    var dropdownBtn = document.querySelector("#admin-buttons .dropdown:last-child .dropdown-btn");
     
     dropdown.classList.toggle("show");
     dropdownBtn.classList.toggle("active");

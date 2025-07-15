@@ -19625,3 +19625,27 @@ COMMIT;
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+-- Add delivery_id column to site_scheduling table to link appointments with deliveries
+ALTER TABLE site_scheduling ADD COLUMN delivery_id INT NULL;
+
+-- Add foreign key constraint to ensure data integrity
+ALTER TABLE site_scheduling ADD FOREIGN KEY (delivery_id) REFERENCES deliveries(id) ON DELETE SET NULL;
+
+-- Create index on delivery_id for better performance
+CREATE INDEX idx_site_scheduling_delivery_id ON site_scheduling(delivery_id);
+
+-- Optional: Update any existing appointments that might match deliveries by BOL number
+-- (This is commented out as it requires careful manual review)
+-- UPDATE site_scheduling ss 
+-- SET delivery_id = (
+--     SELECT d.id 
+--     FROM deliveries d 
+--     WHERE d.bol_number = ss.bol_number 
+--     AND d.project_id = (
+--         SELECT s.project_id 
+--         FROM sites s 
+--         WHERE s.id = ss.site_id
+--     )
+--     LIMIT 1
+-- )
+-- WHERE ss.delivery_id IS NULL AND ss.bol_number IS NOT NULL AND ss.bol_number != 'CLOSED SLOT'; 

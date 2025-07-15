@@ -175,6 +175,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $project_id = $stmt->insert_id;
         $stmt->close();
 
+        // Create corresponding site record for scheduling integration
+        $site_stmt = $conn->prepare("
+            INSERT INTO sites (
+                project_id,
+                project_name,
+                timezone,
+                appointment_duration
+            ) VALUES (?, ?, 'America/New_York', 30)
+        ");
+        if (!$site_stmt) {
+            throw new Exception("Error preparing site insert: " . $conn->error);
+        }
+        $site_stmt->bind_param("is", $project_id, $project_name);
+        if (!$site_stmt->execute()) {
+            throw new Exception("Error creating site record: " . $site_stmt->error);
+        }
+        $site_id = $site_stmt->insert_id;
+        $site_stmt->close();
+
+        // Set default operating hours (Monday-Friday 8AM-5PM)
+        $hours_stmt = $conn->prepare("
+            INSERT INTO site_operating_hours (site_id, day_of_week, start_time, end_time) 
+            VALUES (?, ?, ?, ?)
+        ");
+        if (!$hours_stmt) {
+            throw new Exception("Error preparing operating hours insert: " . $conn->error);
+        }
+        
+        // Add Mon-Fri 8AM-5PM
+        $start_time = "08:00:00";
+        $end_time = "17:00:00";
+        for ($day = 1; $day <= 5; $day++) {
+            $hours_stmt->bind_param("iiss", $site_id, $day, $start_time, $end_time);
+            if (!$hours_stmt->execute()) {
+                throw new Exception("Error setting operating hours for day {$day}: " . $hours_stmt->error);
+            }
+        }
+        $hours_stmt->close();
+
         // If wattage and quantities are provided, create a module batch for them
         if (isset($_POST['wattages'], $_POST['quantities'])) {
             $wattages   = $_POST['wattages'];
