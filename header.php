@@ -149,7 +149,6 @@ if (isset($_SESSION['role'])) {
                         <a href="modules">Manage Modules</a>
                         <a href="module_movements">Module Movements</a>
                         <a href="manage_pallets">Manage Pallets</a>
-                        <a href="manage_deliveries">Manage Deliveries</a>
                         <a href="link_pallet_deliveries">Link Pallets to Deliveries</a>
 
                     </div>
@@ -175,7 +174,15 @@ if (isset($_SESSION['role'])) {
                     </div>
                 </li>
 
-                <li><a href="freight_estimate">Freight</a></li>
+                <li class="dropdown">
+                    <a href="#" class="dropbtn">Shipments</a>
+                    <div class="dropdown-content">
+                        <a href="create_shipment">Create Shipment</a>
+                        <a href="manage_deliveries">Manage Deliveries</a>
+                        <a href= "freight_estimate">Freight Estimate</a>
+                    </div>
+                </li>
+
                 <li><a href="documents">Documents</a></li>
                 <li class="dropdown profile-dropdown">
                 <!-- Avatar or icon that opens the dropdown -->
