@@ -14,7 +14,7 @@ require_once '../config.php';
 // Check the action to determine what type of receiving we're doing
 $action = $_POST['action'] ?? '';
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !in_array($action, ['receive_pallets', 'receive_truckload'])) {
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !in_array($action, ['receive_pallets', 'receive_truckload', 'receive_multiple_truckloads'])) {
     $_SESSION['move_pallet_message'] = "Error: Invalid request method or action.";
     header("Location: manage_warehouses.php");
     exit();
@@ -190,6 +190,190 @@ if ($action === 'receive_truckload') {
             unlink($pod_path);
         }
         $_SESSION['move_pallet_message'] = "Error receiving truckload: " . $e->getMessage();
+    }
+    
+} elseif ($action === 'receive_multiple_truckloads') {
+    // Handle bulk truckload receiving
+    $delivery_ids = isset($_POST['delivery_ids']) && is_array($_POST['delivery_ids']) ? $_POST['delivery_ids'] : [];
+    $actual_arrival_date = $_POST['actual_arrival_date'] ?? '';
+    $bol_number_override = $_POST['bol_number_override'] ?? '';
+    
+    if (empty($delivery_ids)) {
+        $_SESSION['move_pallet_message'] = "Error: No truckloads selected for receiving.";
+        header("Location: " . $redirect_url);
+        exit();
+    }
+    
+    if (empty($actual_arrival_date)) {
+        $_SESSION['move_pallet_message'] = "Error: Actual arrival date is required.";
+        header("Location: " . $redirect_url);
+        exit();
+    }
+    
+    $conn->begin_transaction();
+    
+    try {
+        // Handle POD file upload if provided
+        $pod_path = null;
+        if (isset($_FILES['pod_file']) && $_FILES['pod_file']['error'] === UPLOAD_ERR_OK) {
+            $original_name = $_FILES['pod_file']['name'];
+            $file_extension = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
+            $allowed_extensions = ['pdf', 'jpg', 'jpeg', 'png'];
+            
+            if (!in_array($file_extension, $allowed_extensions)) {
+                throw new Exception("Invalid file type for POD. Only PDF, JPG, PNG allowed.");
+            }
+            
+            if ($_FILES['pod_file']['size'] > 5 * 1024 * 1024) { // 5MB limit
+                throw new Exception("POD file exceeds 5MB limit.");
+            }
+            
+            // Use warehouse-based structure for bulk receives
+            $upload_dir = "warehouse_documents/pods/";
+            
+            if (!is_dir($upload_dir)) {
+                if (!mkdir($upload_dir, 0755, true)) {
+                    throw new Exception("Failed to create upload directory.");
+                }
+            }
+            
+            // Create filename using bulk delivery pattern
+            $original_filename = pathinfo($original_name, PATHINFO_FILENAME);
+            $sanitized = preg_replace('/[^A-Za-z0-9_-]/', '_', $original_filename);
+            $sanitized = substr($sanitized, 0, 100);
+            
+            $timestamp = date('YmdHis');
+            $final_filename = 'bulk_' . $timestamp . '_' . $sanitized . '.' . $file_extension;
+            $pod_path = $upload_dir . $final_filename;
+            
+            if (!move_uploaded_file($_FILES['pod_file']['tmp_name'], $pod_path)) {
+                throw new Exception("Failed to upload POD file.");
+            }
+        }
+        
+        $total_pallets_updated = 0;
+        $successful_deliveries = [];
+        $errors = [];
+        
+        foreach ($delivery_ids as $delivery_id) {
+            $delivery_id = intval($delivery_id);
+            if ($delivery_id <= 0) {
+                $errors[] = "Invalid delivery ID: $delivery_id";
+                continue;
+            }
+            
+            try {
+                // Get all pallets for this delivery
+                $stmt_get_pallets = $conn->prepare("
+                    SELECT ip.id 
+                    FROM inventory_pallets ip
+                    JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+                    WHERE dp.delivery_id = ? AND ip.status = 'In Transit to Warehouse'
+                ");
+                if (!$stmt_get_pallets) {
+                    throw new Exception("Failed to prepare pallet query for delivery $delivery_id: " . $conn->error);
+                }
+                
+                $stmt_get_pallets->bind_param("i", $delivery_id);
+                $stmt_get_pallets->execute();
+                $result = $stmt_get_pallets->get_result();
+                
+                $pallet_ids = [];
+                while ($row = $result->fetch_assoc()) {
+                    $pallet_ids[] = $row['id'];
+                }
+                $stmt_get_pallets->close();
+                
+                if (empty($pallet_ids)) {
+                    $errors[] = "No pallets found for delivery $delivery_id or pallets already received";
+                    continue;
+                }
+                
+                // Update all pallets in this truckload
+                $stmt_update_pallets = $conn->prepare("
+                    UPDATE inventory_pallets 
+                    SET status = 'In Warehouse', current_warehouse_id = ?, arrival_date = ? 
+                    WHERE id = ?
+                ");
+                if (!$stmt_update_pallets) {
+                    throw new Exception("Failed to prepare pallet update for delivery $delivery_id: " . $conn->error);
+                }
+                
+                $delivery_pallet_count = 0;
+                foreach ($pallet_ids as $pallet_id) {
+                    $stmt_update_pallets->bind_param("isi", $receiving_warehouse_id, $actual_arrival_date, $pallet_id);
+                    if ($stmt_update_pallets->execute()) {
+                        $delivery_pallet_count++;
+                        $total_pallets_updated++;
+                    } else {
+                        error_log("Failed to update pallet ID $pallet_id in delivery $delivery_id: " . $stmt_update_pallets->error);
+                    }
+                }
+                $stmt_update_pallets->close();
+                
+                // Get existing BOL number if no override provided
+                $bol_to_use = $bol_number_override;
+                if (empty($bol_to_use)) {
+                    $stmt_get_bol = $conn->prepare("SELECT bol_number FROM deliveries WHERE id = ?");
+                    if ($stmt_get_bol) {
+                        $stmt_get_bol->bind_param("i", $delivery_id);
+                        $stmt_get_bol->execute();
+                        $stmt_get_bol->bind_result($existing_bol);
+                        if ($stmt_get_bol->fetch()) {
+                            $bol_to_use = $existing_bol;
+                        }
+                        $stmt_get_bol->close();
+                    }
+                }
+                
+                // Update delivery record
+                $stmt_update_delivery = $conn->prepare("
+                    UPDATE deliveries 
+                    SET status_of_delivery = 'Delivered to Warehouse', 
+                        warehouse_arrival_date = ?,
+                        bol_number = ?,
+                        proof_of_delivery = ?
+                    WHERE id = ?
+                ");
+                if (!$stmt_update_delivery) {
+                    throw new Exception("Failed to prepare delivery update for delivery $delivery_id: " . $conn->error);
+                }
+                
+                $stmt_update_delivery->bind_param("sssi", $actual_arrival_date, $bol_to_use, $pod_path, $delivery_id);
+                if (!$stmt_update_delivery->execute()) {
+                    throw new Exception("Failed to update delivery $delivery_id: " . $stmt_update_delivery->error);
+                }
+                $stmt_update_delivery->close();
+                
+                $successful_deliveries[] = "Delivery $delivery_id ($delivery_pallet_count pallets)";
+                
+            } catch (Exception $e) {
+                $errors[] = "Delivery $delivery_id: " . $e->getMessage();
+            }
+        }
+        
+        if (!empty($successful_deliveries)) {
+            $conn->commit();
+            $success_message = "Successfully received " . count($successful_deliveries) . " truckload(s) with $total_pallets_updated total pallets. ";
+            $success_message .= "Deliveries: " . implode(", ", $successful_deliveries) . ". ";
+            $success_message .= "Arrival date: $actual_arrival_date.";
+            
+            if (!empty($errors)) {
+                $success_message .= " Errors: " . implode(", ", $errors);
+            }
+            
+            $_SESSION['move_pallet_message'] = $success_message;
+        } else {
+            throw new Exception("No deliveries were successfully processed. Errors: " . implode(", ", $errors));
+        }
+        
+    } catch (Exception $e) {
+        $conn->rollback();
+        // Clean up uploaded file if it exists and there was an error
+        if ($pod_path && file_exists($pod_path)) {
+            unlink($pod_path);
+        }
+        $_SESSION['move_pallet_message'] = "Error receiving multiple truckloads: " . $e->getMessage();
     }
     
 } else {
