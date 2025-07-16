@@ -884,19 +884,21 @@ $sql = "
                    GROUP_CONCAT(DISTINCT m.vendor_name ORDER BY m.vendor_name SEPARATOR ', '),
                    d.supplier
                )
-           END AS manufacturer_name
+           END AS manufacturer_name,
+           ss.id AS appointment_id
     FROM deliveries d
     LEFT JOIN projects p ON d.project_id = p.id
     LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
     LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
     LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
     LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    LEFT JOIN site_scheduling ss ON d.id = ss.delivery_id
     WHERE 1=1
     $projectConditionSQL
     $dateCondition
     $statusCondition
     $deliveryTypeCondition
-    GROUP BY d.id, p.project_name
+    GROUP BY d.id, p.project_name, ss.id
     ORDER BY $filterColumn DESC
 ";
 $stmt = $conn->prepare($sql);
@@ -1148,19 +1150,21 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                IFNULL(d.freight_cost, ?) AS freight_cost_with_default,
                d.accessorial_costs,
                d.customer_cost,
-               d.created_at
+               d.created_at,
+               ss.id AS appointment_id
         FROM deliveries d
         LEFT JOIN projects p ON d.project_id = p.id
         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
         LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
         LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
         LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+        LEFT JOIN site_scheduling ss ON d.id = ss.delivery_id
         WHERE 1=1
         $export_project_condition
         $export_date_condition
         $export_status_condition
         $export_delivery_type_condition
-        GROUP BY d.id, p.project_name
+        GROUP BY d.id, p.project_name, ss.id
         ORDER BY $filterColumn DESC
     ";
     
@@ -1197,7 +1201,8 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             'Freight Cost',
             'Accessorial Costs',
             'Customer Cost',
-            'Created At'
+            'Created At',
+            'Appointment ID'
         ];
         fputcsv($output, $csv_headers);
         
@@ -1218,7 +1223,8 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                 number_format($row['freight_cost_with_default'], 2),
                 number_format($row['accessorial_costs'], 2),
                 number_format($row['customer_cost'], 2),
-                $row['created_at']
+                $row['created_at'],
+                $row['appointment_id']
             ];
             fputcsv($output, $csv_row);
         }
@@ -1329,6 +1335,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             flex-direction: column;
             gap: 10px;
             align-items: flex-start;
+            margin-right: 15px;
         }
         .table-responsive {
             width: 100%;
@@ -1540,6 +1547,173 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         #palletList table {
             /* Add any specific table styling here if needed, e.g., for borders within the scrollable area */
         }
+        
+        /* Filters Dropdown Styling */
+        .filters-dropdown-container {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .filters-dropdown-btn {
+            background-color: #488C9A;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background-color 0.3s ease;
+        }
+        
+        .filters-dropdown-btn:hover {
+            background-color: #3A6E7F;
+        }
+        
+        .filters-dropdown-content {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            min-width: 300px;
+            max-width: 350px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .filters-dropdown-header {
+            padding: 12px 16px;
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #ddd;
+            font-weight: 600;
+            color: #293E4C;
+        }
+        
+        .filter-item {
+            padding: 10px 16px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .filter-item:last-child {
+            border-bottom: none;
+        }
+        
+        .filter-item label {
+            display: block;
+            font-weight: 500;
+            color: #555;
+            margin-bottom: 5px;
+        }
+        
+        .filter-item input, .filter-item select {
+            width: 100%;
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+        
+        .filter-item input:focus, .filter-item select:focus {
+            border-color: #488C9A;
+            outline: none;
+            box-shadow: 0 0 3px rgba(72, 140, 154, 0.3);
+        }
+
+        /* Column Chooser Styling */
+        .column-chooser-container {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .column-chooser-btn {
+            background-color: #488C9A;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background-color 0.3s ease;
+        }
+        
+        .column-chooser-btn:hover {
+            background-color: #3A6E7F;
+        }
+        
+        .column-chooser-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            min-width: 250px;
+            max-width: 300px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .column-chooser-header {
+            padding: 12px 16px;
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #ddd;
+            font-weight: 600;
+            color: #293E4C;
+        }
+        
+        .column-chooser-options {
+            padding: 8px 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .column-option {
+            display: flex;
+            align-items: center;
+            padding: 6px 16px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        
+        .column-option:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .column-option input[type="checkbox"] {
+            margin-right: 8px;
+            cursor: pointer;
+        }
+        
+        .column-chooser-footer {
+            padding: 8px 16px;
+            border-top: 1px solid #ddd;
+            background-color: #f8f9fa;
+        }
+        
+        .reset-columns-btn {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.8em;
+            transition: background-color 0.3s ease;
+        }
+        
+        .reset-columns-btn:hover {
+            background-color: #5a6268;
+        }
+        
+        /* Hidden column styling */
+        .column-hidden {
+            display: none !important;
+        }
 
     </style>
 </head>
@@ -1685,46 +1859,150 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                 </button>
             <?php endif; ?>
         </div>
-        <!-- Right: Search and Status Filter -->
+        <!-- Right: Filters Dropdown and Column Chooser -->
         <div class="right-filters">
-            <div style="display: flex; gap: 10px;" class="mobile-hide">
-                <label for="searchInput" style="align-self: center;">Search in Table:</label>
-                <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
-            </div>
-            <form method="get" action="" style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
-                <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
-                <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
-                <input type="hidden" name="delivery_type" value="<?php echo htmlspecialchars($delivery_type ?? ''); ?>">
-                
-                <div style="display: flex; align-items: center; gap: 5px;">
-                    <label for="filter_project_id" style="align-self: center;">Project:</label>
-                    <select name="filter_project_id" id="filter_project_id" onchange="this.form.submit()">
-                        <?php if ($is_global_admin): // Only show "All Projects" for global admin ?>
-                        <option value="all" <?php if($filter_project_id === 'all') echo 'selected'; ?>>All Projects</option>
-                        <?php endif; ?>
-                        <option value="unassigned" <?php if($filter_project_id === 'unassigned') echo 'selected'; ?>>Unassigned Deliveries</option>
-                        <?php foreach ($all_projects_for_filter as $proj_filter_item): ?>
-                            <option value="<?php echo $proj_filter_item['id']; ?>" <?php if (is_numeric($filter_project_id) && $filter_project_id == $proj_filter_item['id']) echo 'selected'; ?>>
-                                <?php echo htmlspecialchars($proj_filter_item['project_name']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <!-- Filters Dropdown -->
+                <div class="filters-dropdown-container">
+                    <button type="button" id="filtersDropdownBtn" class="filters-dropdown-btn" onclick="toggleFiltersDropdown()">
+                        🔽 Filters
+                    </button>
+                    <div id="filtersDropdown" class="filters-dropdown-content" style="display: none;">
+                        <div class="filters-dropdown-header">Filter Options:</div>
+                        
+                        <!-- Search Input -->
+                        <div class="filter-item">
+                            <label for="searchInput">Search in Table:</label>
+                            <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
+                        </div>
+                        
+                        <!-- Filter Form -->
+                        <form method="get" action="" id="filterForm">
+                            <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
+                            <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
+                            <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
+                            <input type="hidden" name="delivery_type" value="<?php echo htmlspecialchars($delivery_type ?? ''); ?>">
+                            
+                            <div class="filter-item">
+                                <label for="filter_project_id">Project:</label>
+                                <select name="filter_project_id" id="filter_project_id" onchange="this.form.submit()">
+                                    <?php if ($is_global_admin): // Only show "All Projects" for global admin ?>
+                                    <option value="all" <?php if($filter_project_id === 'all') echo 'selected'; ?>>All Projects</option>
+                                    <?php endif; ?>
+                                    <option value="unassigned" <?php if($filter_project_id === 'unassigned') echo 'selected'; ?>>Unassigned Deliveries</option>
+                                    <?php foreach ($all_projects_for_filter as $proj_filter_item): ?>
+                                        <option value="<?php echo $proj_filter_item['id']; ?>" <?php if (is_numeric($filter_project_id) && $filter_project_id == $proj_filter_item['id']) echo 'selected'; ?>>
+                                            <?php echo htmlspecialchars($proj_filter_item['project_name']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="filter-item">
+                                <label for="status_filter">Status:</label>
+                                <select name="status_filter" id="status_filter" onchange="this.form.submit()">
+                                    <option value="">All</option>
+                                    <option value="Pending" <?php if($status_filter === 'Pending') echo 'selected'; ?>>Pending</option>
+                                    <option value="In Transit to Warehouse" <?php if($status_filter === 'In Transit to Warehouse') echo 'selected'; ?>>In Transit to Warehouse</option>
+                                    <option value="Delivered to Warehouse" <?php if($status_filter === 'Delivered to Warehouse') echo 'selected'; ?>>Delivered to Warehouse</option>
+                                    <option value="In Transit to Project" <?php if($status_filter === 'In Transit to Project') echo 'selected'; ?>>In Transit to Project</option>
+                                    <option value="Delivered to Project" <?php if($status_filter === 'Delivered to Project') echo 'selected'; ?>>Delivered to Project</option>
+                                    <option value="Canceled" <?php if($status_filter === 'Canceled') echo 'selected'; ?>>Canceled</option>
+                                </select>
+                            </div>
+                        </form>
+                    </div>
                 </div>
 
-                <div style="display: flex; align-items: center; gap: 5px;">
-                    <label for="status_filter" style="align-self: center;">Status:</label>
-                    <select name="status_filter" id="status_filter" onchange="this.form.submit()">
-                        <option value="">All</option>
-                        <option value="Pending" <?php if($status_filter === 'Pending') echo 'selected'; ?>>Pending</option>
-                        <option value="In Transit to Warehouse" <?php if($status_filter === 'In Transit to Warehouse') echo 'selected'; ?>>In Transit to Warehouse</option>
-                        <option value="Delivered to Warehouse" <?php if($status_filter === 'Delivered to Warehouse') echo 'selected'; ?>>Delivered to Warehouse</option>
-                        <option value="In Transit to Project" <?php if($status_filter === 'In Transit to Project') echo 'selected'; ?>>In Transit to Project</option>
-                        <option value="Delivered to Project" <?php if($status_filter === 'Delivered to Project') echo 'selected'; ?>>Delivered to Project</option>
-                        <option value="Canceled" <?php if($status_filter === 'Canceled') echo 'selected'; ?>>Canceled</option>
-                    </select>
+                <!-- Column Chooser -->
+                <div class="column-chooser-container">
+                    <button type="button" id="columnChooserBtn" class="column-chooser-btn" onclick="toggleColumnChooser()">
+                        📋 Choose Columns
+                    </button>
+                    <div id="columnChooserDropdown" class="column-chooser-dropdown" style="display: none;">
+                        <div class="column-chooser-header">Select Columns to Show:</div>
+                        <div class="column-chooser-options">
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="select-column" checked>
+                                Select
+                            </label>
+                            <?php if ($filter_project_id === 'all' || $filter_project_id === 'unassigned'): ?>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="project-column" checked>
+                                Project
+                            </label>
+                            <?php endif; ?>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="manufacturer-column" checked>
+                                Manufacturer
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="wattage-column" checked>
+                                Wattage
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="status-column" checked>
+                                Status of Delivery
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="quantity-column" checked>
+                                Quantity
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="bol-column" checked>
+                                BOL Number
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="anticipated-column" checked>
+                                Anticipated Delivery Date
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="warehouse-arrival-column" checked>
+                                Warehouse Arrival Date
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="actual-column" checked>
+                                Actual Delivery Date
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="pod-column" checked>
+                                Proof of Delivery
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="miles-column" checked>
+                                Miles
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="freight-column" checked>
+                                Freight Cost
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="accessorial-column" checked>
+                                Accessorial Costs
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="customer-column" checked>
+                                Customer Cost
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="scheduled-column" checked>
+                                Scheduled
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="pallets-column" checked>
+                                Associated Pallets
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="actions-column" checked>
+                                Actions
+                            </label>
+                        </div>
+                        <div class="column-chooser-footer">
+                            <button type="button" onclick="resetColumns()" class="reset-columns-btn">Reset to Default</button>
+                        </div>
+                    </div>
                 </div>
-            </form>
+            </div>
         </div>
     </div>
 
@@ -1737,28 +2015,29 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         <input type="hidden" name="delivery_type" value="<?php echo htmlspecialchars($delivery_type ?? ''); ?>">
 
         <div class="table-responsive">
+
             <table class="deliveries-table" id="deliveriesTable">
                 <tr>
-                    <th><input type="checkbox" id="select-all"></th>
+                    <th class="select-column"><input type="checkbox" id="select-all"></th>
                     <?php if ($filter_project_id === 'all' || $filter_project_id === 'unassigned'): ?>
-                        <th>Project</th>
+                        <th class="project-column">Project</th>
                     <?php endif; ?>
-                    <th>Manufacturer</th>
-                    <th>Wattage</th>
-                    <th>Status of Delivery</th>
-                    <th>Quantity</th>
-                    <th>BOL Number</th>
-                    <th>Anticipated Delivery Date</th>
-                    <th>Warehouse Arrival Date</th>
-                    <th>Actual Delivery Date</th>
-                    <th>Proof of Delivery</th>
-                    <th>Miles</th>
-                    <th>Freight Cost</th>
-                    <th>Accessorial Costs</th>
-                    <th>Customer Cost</th>
-                    <th>Scheduled</th>
-                    <th>Associated Pallets</th>
-                    <th>Actions</th>
+                    <th class="manufacturer-column">Manufacturer</th>
+                    <th class="wattage-column">Wattage</th>
+                    <th class="status-column">Status of Delivery</th>
+                    <th class="quantity-column">Quantity</th>
+                    <th class="bol-column">BOL Number</th>
+                    <th class="anticipated-column">Anticipated Delivery Date</th>
+                    <th class="warehouse-arrival-column">Warehouse Arrival Date</th>
+                    <th class="actual-column">Actual Delivery Date</th>
+                    <th class="pod-column">Proof of Delivery</th>
+                    <th class="miles-column">Miles</th>
+                    <th class="freight-column">Freight Cost</th>
+                    <th class="accessorial-column">Accessorial Costs</th>
+                    <th class="customer-column">Customer Cost</th>
+                    <th class="scheduled-column">Scheduled</th>
+                    <th class="pallets-column">Associated Pallets</th>
+                    <th class="actions-column">Actions</th>
                 </tr>
                 <?php if ($deliveries_result && $deliveries_result->num_rows > 0): ?>
                     <?php 
@@ -1799,11 +2078,11 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                         }
                         ?>
                         <tr <?php if ($highlight_delivery_id && $delivery['id'] == $highlight_delivery_id): ?>class="highlighted-delivery"<?php endif; ?>>
-                            <td>
+                            <td class="select-column">
                                 <input type="checkbox" name="selected_deliveries[]" value="<?php echo $delivery['id']; ?>" onclick="updateBulkActionButtons()">
                             </td>
                             <?php if ($filter_project_id === 'all' || $filter_project_id === 'unassigned'): ?>
-                                <td>
+                                <td class="project-column">
                                     <?php 
                                     if (!empty($delivery['project_id'])) {
                                         // Display project name from the join, or fetch if necessary (though join is better)
@@ -1814,20 +2093,20 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                     ?>
                                 </td>
                             <?php endif; ?>
-                            <td>
+                            <td class="manufacturer-column">
                                 <?php 
                                 // Display only manufacturer name from modules, fallback to supplier field
                                 echo htmlspecialchars($delivery['manufacturer_name']); 
                                 ?>
                             </td>
-                            <td><?php echo htmlspecialchars($delivery['wattage']); ?></td>
-                            <td><?php echo htmlspecialchars($delivery['status_of_delivery']); ?></td>
-                            <td><?php echo htmlspecialchars($delivery['quantity']); ?></td>
-                            <td><?php echo htmlspecialchars($delivery['bol_number']); ?></td>
-                            <td><?php echo htmlspecialchars($delivery['anticipated_delivery_date']); ?></td>
-                            <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date']); ?></td>
-                            <td><?php echo htmlspecialchars($delivery['actual_delivery_date']); ?></td>
-                            <td>
+                            <td class="wattage-column"><?php echo htmlspecialchars($delivery['wattage']); ?></td>
+                            <td class="status-column"><?php echo htmlspecialchars($delivery['status_of_delivery']); ?></td>
+                            <td class="quantity-column"><?php echo htmlspecialchars($delivery['quantity']); ?></td>
+                            <td class="bol-column"><?php echo htmlspecialchars($delivery['bol_number']); ?></td>
+                            <td class="anticipated-column"><?php echo htmlspecialchars($delivery['anticipated_delivery_date']); ?></td>
+                            <td class="warehouse-arrival-column"><?php echo htmlspecialchars($delivery['warehouse_arrival_date']); ?></td>
+                            <td class="actual-column"><?php echo htmlspecialchars($delivery['actual_delivery_date']); ?></td>
+                            <td class="pod-column">
                                 <?php if (!empty($delivery['proof_of_delivery'])): ?>
                                     <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">View POD</a>
                                 <?php else: ?>
@@ -1838,14 +2117,14 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                     <?php endif; ?>
                                 <?php endif; ?>
                             </td>
-                            <td><?php echo htmlspecialchars($delivery['miles']); ?></td>
-                            <td>$<?php echo number_format($delivery['freight_cost_with_default'], 2); ?></td>
-                            <td>$<?php echo number_format($delivery['accessorial_costs'], 2); ?></td>
-                            <td>$<?php echo number_format($delivery['customer_cost'], 2); ?></td>
-                            <td>
+                            <td class="miles-column"><?php echo htmlspecialchars($delivery['miles']); ?></td>
+                            <td class="freight-column">$<?php echo number_format($delivery['freight_cost_with_default'], 2); ?></td>
+                            <td class="accessorial-column">$<?php echo number_format($delivery['accessorial_costs'], 2); ?></td>
+                            <td class="customer-column">$<?php echo number_format($delivery['customer_cost'], 2); ?></td>
+                            <td class="scheduled-column">
                                 <?php if ($delivery['scheduled'] == 1): ?>
-                                    <?php if (!empty($delivery['project_id']) && $delivery['status_of_delivery'] === 'In Transit to Project'): ?>
-                                        <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>" 
+                                    <?php if (!empty($delivery['project_id']) && !empty($delivery['appointment_id'])): ?>
+                                        <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>&appointment_id=<?php echo $delivery['appointment_id']; ?>&auto_edit=1" 
                                            style="color: #488C9A; text-decoration: underline;">View Appointment</a>
                                     <?php else: ?>
                                         <span style="color: #28a745;">Scheduled</span>
@@ -1859,7 +2138,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                     <?php endif; ?>
                                 <?php endif; ?>
                             </td>
-                            <td>
+                            <td class="pallets-column">
                                 <?php if ($stmtPallets && $palletCount > 0): ?>
                                     <button type="button" class="action-buttons" 
                                             onclick="showPalletModal(this)" 
@@ -1871,7 +2150,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                     Error
                                 <?php endif; ?>
                             </td>
-                            <td>
+                            <td class="actions-column">
                                 <a href="edit_delivery?delivery_id=<?php echo $delivery['id']; ?><?php echo (is_numeric($filter_project_id)) ? '&project_id=' . $filter_project_id : ((!empty($delivery['project_id'])) ? '&project_id=' . $delivery['project_id'] : ''); ?>">
                                     Edit
                                 </a>
@@ -1887,7 +2166,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                     }
                     ?>
                 <?php else: ?>
-                    <tr>
+                    <tr id="no-entries-row">
                         <td colspan="<?php echo ($filter_project_id === 'all' || $filter_project_id === 'unassigned') ? '18' : '17'; ?>">No delivery entries found.</td>
                     </tr>
                 <?php endif; ?>
@@ -2214,6 +2493,114 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         // Trigger download
         window.location.href = exportUrl;
     }
+
+    // Filters Dropdown Functions
+    function toggleFiltersDropdown() {
+        var dropdown = document.getElementById('filtersDropdown');
+        dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+        
+        // Close column chooser if open
+        document.getElementById('columnChooserDropdown').style.display = 'none';
+    }
+
+    // Column Chooser Functions
+    function toggleColumnChooser() {
+        var dropdown = document.getElementById('columnChooserDropdown');
+        dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+        
+        // Close filters dropdown if open
+        document.getElementById('filtersDropdown').style.display = 'none';
+    }
+
+    function toggleColumn(columnClass, isVisible) {
+        var elements = document.querySelectorAll('.' + columnClass);
+        elements.forEach(function(element) {
+            if (isVisible) {
+                element.classList.remove('column-hidden');
+            } else {
+                element.classList.add('column-hidden');
+            }
+        });
+        
+        // Update the no-entries row colspan if it exists
+        updateNoEntriesColspan();
+    }
+
+    function updateNoEntriesColspan() {
+        var noEntriesRow = document.getElementById('no-entries-row');
+        if (noEntriesRow) {
+            var visibleColumns = document.querySelectorAll('th:not(.column-hidden)').length;
+            noEntriesRow.querySelector('td').setAttribute('colspan', visibleColumns);
+        }
+    }
+
+    function resetColumns() {
+        // Reset all checkboxes to checked
+        var checkboxes = document.querySelectorAll('.column-toggle');
+        checkboxes.forEach(function(checkbox) {
+            checkbox.checked = true;
+            toggleColumn(checkbox.getAttribute('data-column'), true);
+        });
+        
+        // Save to localStorage
+        saveColumnPreferences();
+    }
+
+    function saveColumnPreferences() {
+        var preferences = {};
+        var checkboxes = document.querySelectorAll('.column-toggle');
+        checkboxes.forEach(function(checkbox) {
+            preferences[checkbox.getAttribute('data-column')] = checkbox.checked;
+        });
+        localStorage.setItem('deliveriesColumnPreferences', JSON.stringify(preferences));
+    }
+
+    function loadColumnPreferences() {
+        var saved = localStorage.getItem('deliveriesColumnPreferences');
+        if (saved) {
+            var preferences = JSON.parse(saved);
+            var checkboxes = document.querySelectorAll('.column-toggle');
+            checkboxes.forEach(function(checkbox) {
+                var columnClass = checkbox.getAttribute('data-column');
+                if (preferences.hasOwnProperty(columnClass)) {
+                    checkbox.checked = preferences[columnClass];
+                    toggleColumn(columnClass, preferences[columnClass]);
+                }
+            });
+        }
+    }
+
+    // Initialize column chooser functionality
+    document.addEventListener('DOMContentLoaded', function() {
+        // Load saved preferences
+        loadColumnPreferences();
+        
+        // Add event listeners to column toggles
+        var checkboxes = document.querySelectorAll('.column-toggle');
+        checkboxes.forEach(function(checkbox) {
+            checkbox.addEventListener('change', function() {
+                var columnClass = this.getAttribute('data-column');
+                toggleColumn(columnClass, this.checked);
+                saveColumnPreferences();
+            });
+        });
+        
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', function(event) {
+            var columnContainer = document.querySelector('.column-chooser-container');
+            var columnDropdown = document.getElementById('columnChooserDropdown');
+            var filtersContainer = document.querySelector('.filters-dropdown-container');
+            var filtersDropdown = document.getElementById('filtersDropdown');
+            
+            if (columnContainer && !columnContainer.contains(event.target)) {
+                columnDropdown.style.display = 'none';
+            }
+            
+            if (filtersContainer && !filtersContainer.contains(event.target)) {
+                filtersDropdown.style.display = 'none';
+            }
+        });
+    });
 
 </script>
 </body>
