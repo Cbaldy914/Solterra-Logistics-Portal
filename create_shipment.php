@@ -1046,7 +1046,7 @@ if (!empty($sessionMessage)) {
             <div id="multiShipmentSection" style="display:none;">
                 <form id="multiShipmentForm" onsubmit="return false;">
                     <label for="palletsPerTruck">Pallets per Truck:</label>
-                    <input type="number" id="palletsPerTruck" min="1" max="12" value="1" style="width:100px;">
+                    <input type="number" id="palletsPerTruck" min="1" max="12" value="1" style="width:100px;" data-user-edited="false">
                     <div id="multiShipSummary" style="margin-top:10px; color:#488C9A;"></div>
                     
                     <!-- Dynamic BOL Number Fields -->
@@ -1189,6 +1189,16 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize pagination
     initializePagination();
+    
+    // Load persisted filters
+    loadPersistedFilters();
+    
+    // Add event listeners to save filters on change
+    document.getElementById('palletSearch')?.addEventListener('input', saveFilters);
+    document.getElementById('projectFilter')?.addEventListener('change', saveFilters);
+    document.getElementById('wattageFilter')?.addEventListener('change', saveFilters);
+    document.getElementById('statusFilter')?.addEventListener('change', saveFilters);
+    document.getElementById('itemsPerPage')?.addEventListener('change', saveFilters);
 });
 
 // ----------------- PAGINATION -----------------
@@ -1853,7 +1863,8 @@ if (confirmMultiShipmentBtn) {
             perTruckInput.name = 'pallets_per_truck';
             mainForm.appendChild(perTruckInput);
         }
-        perTruckInput.value = document.getElementById('palletsPerTruck').value || '1';
+        const palletsPerTruckValue = parseInt(document.getElementById('palletsPerTruck').value, 10);
+        perTruckInput.value = (palletsPerTruckValue && palletsPerTruckValue > 0) ? palletsPerTruckValue : '1';
 
         // Validate origin can be determined
         const originResult = determineOriginFromSelectedPallets();
@@ -1945,16 +1956,23 @@ function updateMultiShipSummary() {
     if (!palletsPerTruckInput || !multiShipSummary) return;
     const selected = document.querySelectorAll('.pallet-checkbox:checked').length;
     
+    // Reset user edited flag if no pallets are selected
+    if (selected === 0) {
+        palletsPerTruckInput.dataset.userEdited = 'false';
+        palletsPerTruckInput.value = '1';
+    }
+    
     // Auto-set default to all pallets for single truck, but only if field hasn't been manually edited
-    if (selected > 0 && (palletsPerTruckInput.value == "1" || palletsPerTruckInput.value == "") && !palletsPerTruckInput.dataset.userEdited) {
+    if (selected > 0 && (palletsPerTruckInput.value == "1" || palletsPerTruckInput.value == "") && palletsPerTruckInput.dataset.userEdited !== 'true') {
         palletsPerTruckInput.value = selected;
     }
     
-    const perTruck = parseInt(palletsPerTruckInput.value, 10) || 1;
-    const numDeliveries = Math.min(Math.ceil(selected / perTruck), 12); // Max 12 trucks
+    const perTruck = parseInt(palletsPerTruckInput.value, 10);
+    const validPerTruck = (perTruck && perTruck > 0) ? perTruck : 1;
+    const numDeliveries = selected > 0 ? Math.min(Math.ceil(selected / validPerTruck), 12) : 0; // Max 12 trucks
     
     multiShipSummary.textContent = selected > 0
-        ? (numDeliveries + ' deliveries will be created (' + perTruck + ' pallets per truck)')
+        ? (numDeliveries + ' deliveries will be created (' + validPerTruck + ' pallets per truck)')
         : '';
     
     // Update BOL fields
@@ -2074,6 +2092,38 @@ document.addEventListener('DOMContentLoaded', () => {
         filterPallets();
     }
 });
+
+// Add functions for persistence
+function saveFilters() {
+    localStorage.setItem('createShipment_palletSearch', document.getElementById('palletSearch')?.value || '');
+    localStorage.setItem('createShipment_projectFilter', document.getElementById('projectFilter')?.value || '');
+    localStorage.setItem('createShipment_wattageFilter', document.getElementById('wattageFilter')?.value || '');
+    localStorage.setItem('createShipment_statusFilter', document.getElementById('statusFilter')?.value || '');
+    localStorage.setItem('createShipment_itemsPerPage', document.getElementById('itemsPerPage')?.value || '100');
+    localStorage.setItem('createShipment_currentPage', currentPage);
+}
+
+function loadPersistedFilters() {
+    const search = localStorage.getItem('createShipment_palletSearch');
+    const project = localStorage.getItem('createShipment_projectFilter');
+    const wattage = localStorage.getItem('createShipment_wattageFilter');
+    const status = localStorage.getItem('createShipment_statusFilter');
+    const perPage = localStorage.getItem('createShipment_itemsPerPage');
+    const page = localStorage.getItem('createShipment_currentPage');
+    
+    if (search) document.getElementById('palletSearch').value = search;
+    if (project) document.getElementById('projectFilter').value = project;
+    if (wattage) document.getElementById('wattageFilter').value = wattage;
+    if (status) document.getElementById('statusFilter').value = status;
+    if (perPage) {
+        document.getElementById('itemsPerPage').value = perPage;
+        itemsPerPage = parseInt(perPage);
+    }
+    if (page) currentPage = parseInt(page);
+    
+    // Apply filters after loading
+    filterPallets();
+}
 </script>
 </body>
 </html> 

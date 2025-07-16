@@ -749,6 +749,19 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                 ?>
                             </select>
                         </div>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <label for="statusFilter">Status:</label>
+                            <select id="statusFilter" onchange="filterTable()" style="flex: 1;">
+                                <option value="">All</option>
+                                <?php
+                                $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
+                                sort($statuses);
+                                foreach ($statuses as $s) {
+                                    echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>';
+                                }
+                                ?>
+                            </select>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1008,6 +1021,7 @@ function getFilteredRows() {
         const input = document.getElementById("filterInput")?.value.toUpperCase() || '';
         const projectFilterValue = document.getElementById("projectFilter")?.value || '';
         const wattageFilterValue = document.getElementById("wattageFilter")?.value || '';
+        const statusFilterValue = document.getElementById("statusFilter")?.value || '';
         
         // Adjust column indices based on user role (users don't have checkbox column)
         const projectColumnIndex = isUser ? 0 : 1;
@@ -1051,7 +1065,18 @@ function getFilteredRows() {
             }
         }
         
-        return matchesProject && matchesWattage && matchesSearch;
+        // Check status filter (Status is in column 5 for users, 6 for admins)
+        const statusColumnIndex = isUser ? 5 : 6;
+        const statusCell = row.cells[statusColumnIndex];
+        let matchesStatus = false;
+        if (statusFilterValue === "") {
+            matchesStatus = true;
+        } else {
+            const cellStatus = statusCell ? (statusCell.textContent || statusCell.innerText).trim() : '';
+            matchesStatus = cellStatus === statusFilterValue;
+        }
+        
+        return matchesProject && matchesWattage && matchesSearch && matchesStatus;
     });
 }
 

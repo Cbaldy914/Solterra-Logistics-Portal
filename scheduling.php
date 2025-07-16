@@ -872,6 +872,8 @@ if ($action) {
 $view = $_GET['view'] ?? 'day';
 $current_date = $_GET['date'] ?? date('Y-m-d');
 $delivery_id = $_GET['delivery_id'] ?? 0;
+$appointment_id = $_GET['appointment_id'] ?? 0;
+$auto_edit = $_GET['auto_edit'] ?? 0;
 
 // Pass operating hours to JS
 $operating_hours_js = json_encode($days_oh);
@@ -1657,6 +1659,26 @@ include('header.php');
              box-shadow: 0 0 0 2px rgba(72, 140, 154, 0.2);
          }
          
+         /* Notes field styling to prevent overflow */
+         .pallet-damage-table input[type="text"] {
+             width: 100%;
+             max-width: 140px;
+             min-width: 100px;
+             padding: 6px 8px;
+             font-size: 0.9rem;
+             border: 1px solid #ddd;
+             border-radius: 6px;
+             word-wrap: break-word;
+             overflow-wrap: break-word;
+             box-sizing: border-box;
+         }
+         
+         .pallet-damage-table input[type="text"]:focus {
+             border-color: #488C9A;
+             outline: none;
+             box-shadow: 0 0 0 2px rgba(72, 140, 154, 0.2);
+         }
+         
          /* File Upload Styling */
          .file-upload-container {
              position: relative;
@@ -1664,20 +1686,48 @@ include('header.php');
          }
          
          .file-upload-button {
-             display: inline-block;
-             padding: 12px 20px;
+             display: inline-flex;
+             align-items: center;
+             justify-content: center;
+             gap: 8px;
+             padding: 14px 24px;
              background: linear-gradient(135deg, #488C9A, #3a6e7f);
              color: white;
-             border-radius: 8px;
+             border-radius: 12px;
              cursor: pointer;
-             transition: all 0.3s ease;
+             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
              border: none;
-             font-weight: 500;
+             font-weight: 600;
+             font-size: 0.95rem;
+             box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+             position: relative;
+             overflow: hidden;
+             width: fit-content;
+         }
+         
+         .file-upload-button::before {
+             content: '';
+             position: absolute;
+             top: 0;
+             left: -100%;
+             width: 100%;
+             height: 100%;
+             background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+             transition: left 0.5s;
+         }
+         
+         .file-upload-button:hover::before {
+             left: 100%;
          }
          
          .file-upload-button:hover {
              background: linear-gradient(135deg, #3a6e7f, #293E4C);
-             transform: translateY(-1px);
+             transform: translateY(-2px);
+             box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
+         }
+         
+         .file-upload-button:active {
+             transform: translateY(0);
          }
          
          .file-upload-button input[type="file"] {
@@ -1686,6 +1736,8 @@ include('header.php');
              width: 100%;
              height: 100%;
              cursor: pointer;
+             top: 0;
+             left: 0;
          }
          
          /* Scrollbar Styling */
@@ -1811,6 +1863,15 @@ include('header.php');
                             <input type="text" name="bol_number" id="edit_bol_number" readonly>
                         </div>
 
+                        <div class="form-group" id="deliveryInfoEditGroup" style="display: none;">
+                            <label>Delivery Information</label>
+                            <div style="padding:10px; background:#f8f9fa; border:1px solid #ddd; border-radius:4px;">
+                                <div>Supplier: <span id="editDeliverySupplier">-</span></div>
+                                <div>Wattage: <span id="editDeliveryWattage">-</span>W</div>
+                                <div>Quantity: <span id="editDeliveryQuantity">-</span></div>
+                            </div>
+                        </div>
+
                         <div class="form-group">
                             <label>Reference Numbers</label>
                             <input type="text" name="reference_numbers" id="edit_reference_numbers">
@@ -1892,6 +1953,8 @@ include('header.php');
         const csrfToken = '<?php echo $csrf_token; ?>';
         const operatingHours = <?php echo $operating_hours_js; ?>;
         const deliveryId = <?php echo $delivery_id; ?>;
+        const appointmentId = <?php echo $appointment_id; ?>;
+        const autoEdit = <?php echo $auto_edit; ?>;
         const appointmentDuration = <?php echo $appointment_duration; ?>;
         const siteTimezone = '<?php echo $site_timezone; ?>';
         
@@ -1908,6 +1971,14 @@ include('header.php');
             // If delivery_id is provided, pre-load delivery data
             if (deliveryId > 0) {
                 loadDeliveryDataForScheduling(deliveryId);
+            }
+            
+            // If appointment_id and auto_edit are provided, automatically open the edit modal
+            if (appointmentId > 0 && autoEdit == 1) {
+                // Wait a moment for the appointments to load, then open the edit modal
+                setTimeout(function() {
+                    openEditModal(appointmentId);
+                }, 1000);
             }
             
             // Setup form submission
@@ -2606,7 +2677,7 @@ include('header.php');
                             <input type="text" 
                                    name="pallet_notes[${pallet.id}]" 
                                    placeholder="Damage details..."
-                                   style="width: 140px; max-width: 140px; padding: 6px 8px; font-size: 0.9rem;">
+                                   class="notes-input">
                         </td>
                     </tr>
                 `;
@@ -2726,6 +2797,31 @@ include('header.php');
                         document.getElementById('edit_bol_number').value = appointment.bol_number || '';
                         document.getElementById('edit_reference_numbers').value = appointment.reference_numbers || '';
                         document.getElementById('edit_description').value = appointment.description || '';
+                        
+                        // Show delivery information if available
+                        if (appointment.supplier || appointment.delivery_quantity || appointment.wattage) {
+                            document.getElementById('editDeliverySupplier').textContent = appointment.supplier || 'Unknown';
+                            
+                            // Parse wattage from JSON if it exists, otherwise use delivery wattage
+                            let wattageDisplay = 'Unknown';
+                            if (appointment.wattage) {
+                                try {
+                                    const wattageData = JSON.parse(appointment.wattage);
+                                    if (Array.isArray(wattageData) && wattageData.length > 0) {
+                                        // Just show the wattage values, not the quantities
+                                        wattageDisplay = wattageData.map(w => `${w.watt}`).join(', ');
+                                    }
+                                } catch (e) {
+                                    // If parsing fails, try to use as direct value
+                                    wattageDisplay = appointment.wattage;
+                                }
+                            }
+                            document.getElementById('editDeliveryWattage').innerHTML = wattageDisplay;
+                            document.getElementById('editDeliveryQuantity').textContent = appointment.delivery_quantity || 'Unknown';
+                            document.getElementById('deliveryInfoEditGroup').style.display = 'block';
+                        } else {
+                            document.getElementById('deliveryInfoEditGroup').style.display = 'none';
+                        }
                         
                         // Format datetime for input fields
                         if (appointment.arrival_time) {

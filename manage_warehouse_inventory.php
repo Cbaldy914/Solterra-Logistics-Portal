@@ -51,12 +51,14 @@ try {
             ip.arrival_date,
             m.vendor_name AS origin_vendor,
             d_received.id AS received_delivery_id,
-            d_received.bol_number AS received_bol
+            d_received.bol_number AS received_bol,
+            p_assigned.project_name AS assigned_project
         FROM inventory_pallets ip
         LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
         LEFT JOIN modules m ON umi.unassigned_module_id = m.id
         LEFT JOIN delivery_pallets dp_received ON ip.id = dp_received.inventory_pallet_id
         LEFT JOIN deliveries d_received ON dp_received.delivery_id = d_received.id AND d_received.warehouse_id = ?
+        LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
         WHERE ip.current_warehouse_id = ? AND ip.status = 'In Warehouse'
         ORDER BY ip.arrival_date DESC, ip.id DESC
     ");
@@ -71,6 +73,7 @@ try {
 
     while ($pallet = $resultP_Stored->fetch_assoc()) {
         $pallets_in_storage[] = $pallet;
+        $pallet['assigned_project'] = $pallet['assigned_project'] ?? 'N/A';
         $total_pallets++;
     }
     $stmtP_Stored->close();
@@ -85,12 +88,14 @@ try {
             m.vendor_name AS origin_vendor,
             d.bol_number AS delivery_bol,
             d.anticipated_delivery_date AS est_arrival_date,
-            d.id AS delivery_id 
+            d.id AS delivery_id,
+            p.project_name AS source_project
         FROM inventory_pallets ip
         JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
         JOIN deliveries d ON dp.delivery_id = d.id
         LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
         LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+        LEFT JOIN projects p ON d.project_id = p.id
         WHERE ip.status = 'In Transit to Warehouse' AND d.warehouse_id = ?
         ORDER BY d.anticipated_delivery_date ASC, ip.id DESC
     ");
@@ -100,62 +105,9 @@ try {
     $resultP_Transit = $stmtP_Transit->get_result();
     while ($pallet = $resultP_Transit->fetch_assoc()) {
         $pallets_in_transit[] = $pallet;
+        $pallet['source_project'] = $pallet['source_project'] ?? 'N/A';
     }
     $stmtP_Transit->close();
-
-    // NEW: Fetch Stored Inventory by Truckload (group by delivery_id)
-    $stored_truckloads = [];
-    $stmtStoredTruckloads = $conn->prepare("
-        SELECT 
-            d.id AS delivery_id,
-            d.bol_number,
-            d.supplier AS origin_vendor,
-            d.warehouse_arrival_date AS received_date,
-            d.proof_of_delivery,
-            COUNT(ip.id) AS total_pallets,
-            SUM(ip.quantity) AS total_modules,
-            GROUP_CONCAT(DISTINCT ip.wattage ORDER BY ip.wattage SEPARATOR ', ') AS wattages
-        FROM deliveries d
-        JOIN delivery_pallets dp ON d.id = dp.delivery_id
-        JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
-        WHERE d.warehouse_id = ? 
-        AND ip.current_warehouse_id = ? 
-        AND ip.status = 'In Warehouse'
-        AND d.status_of_delivery = 'Delivered to Warehouse'
-        GROUP BY d.id, d.bol_number, d.supplier, d.warehouse_arrival_date, d.proof_of_delivery
-        ORDER BY d.warehouse_arrival_date DESC
-    ");
-    if ($stmtStoredTruckloads) {
-        $stmtStoredTruckloads->bind_param("ii", $warehouse_id, $warehouse_id);
-        $stmtStoredTruckloads->execute();
-        $resultStoredTruckloads = $stmtStoredTruckloads->get_result();
-        while ($truckload = $resultStoredTruckloads->fetch_assoc()) {
-            // Create wattage breakdown manually
-            $wattages = explode(', ', $truckload['wattages']);
-            $wattage_details = [];
-            foreach ($wattages as $wattage) {
-                // Get count and quantity for this specific wattage and delivery
-                $stmtWattageDetail = $conn->prepare("
-                    SELECT COUNT(ip.id) as pallet_count, SUM(ip.quantity) as module_count
-                    FROM inventory_pallets ip
-                    JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
-                    WHERE dp.delivery_id = ? AND ip.wattage = ? AND ip.status = 'In Warehouse'
-                ");
-                if ($stmtWattageDetail) {
-                    $stmtWattageDetail->bind_param("ii", $truckload['delivery_id'], $wattage);
-                    $stmtWattageDetail->execute();
-                    $stmtWattageDetail->bind_result($pallet_count, $module_count);
-                    if ($stmtWattageDetail->fetch()) {
-                        $wattage_details[] = "{$wattage}W: {$pallet_count} pallets ({$module_count} modules)";
-                    }
-                    $stmtWattageDetail->close();
-                }
-            }
-            $truckload['wattage_breakdown'] = implode(' • ', $wattage_details);
-            $stored_truckloads[] = $truckload;
-        }
-        $stmtStoredTruckloads->close();
-    }
 
     // NEW: Fetch Inbound Transit by Truckload (group by delivery_id)
     $transit_truckloads = [];
@@ -167,10 +119,12 @@ try {
             d.anticipated_delivery_date AS est_arrival_date,
             COUNT(ip.id) AS total_pallets,
             SUM(ip.quantity) AS total_modules,
-            GROUP_CONCAT(DISTINCT ip.wattage ORDER BY ip.wattage SEPARATOR ', ') AS wattages
+            GROUP_CONCAT(DISTINCT ip.wattage ORDER BY ip.wattage SEPARATOR ', ') AS wattages,
+            GROUP_CONCAT(DISTINCT p.project_name SEPARATOR ', ') AS projects
         FROM deliveries d
         JOIN delivery_pallets dp ON d.id = dp.delivery_id
         JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+        LEFT JOIN projects p ON d.project_id = p.id
         WHERE d.warehouse_id = ? 
         AND ip.status = 'In Transit to Warehouse'
         GROUP BY d.id, d.bol_number, d.supplier, d.anticipated_delivery_date
@@ -204,6 +158,7 @@ try {
             }
             $truckload['wattage_breakdown'] = implode(' • ', $wattage_details);
             $transit_truckloads[] = $truckload;
+            $truckload['projects'] = $truckload['projects'] ?? 'N/A';
         }
         $stmtTransitTruckloads->close();
     }
@@ -219,13 +174,15 @@ try {
             d.quantity AS total_modules,
             d.warehouse_arrival_date,
             d.proof_of_delivery,
-            COUNT(dp.inventory_pallet_id) AS pallet_count
+            COUNT(dp.inventory_pallet_id) AS pallet_count,
+            p.project_name AS source_project
         FROM deliveries d
         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+        LEFT JOIN projects p ON d.project_id = p.id
         WHERE d.warehouse_id = ? 
         AND d.status_of_delivery = 'Delivered to Warehouse'
         AND d.warehouse_arrival_date IS NOT NULL
-        GROUP BY d.id, d.bol_number, d.supplier, d.wattage, d.quantity, d.warehouse_arrival_date, d.proof_of_delivery
+        GROUP BY d.id, d.bol_number, d.supplier, d.wattage, d.quantity, d.warehouse_arrival_date, d.proof_of_delivery, p.project_name
         ORDER BY d.warehouse_arrival_date DESC
     ");
     if ($stmtInboundHistory) {
@@ -234,6 +191,7 @@ try {
         $resultInboundHistory = $stmtInboundHistory->get_result();
         while ($delivery = $resultInboundHistory->fetch_assoc()) {
             $inbound_history[] = $delivery;
+            $delivery['source_project'] = $delivery['source_project'] ?? 'N/A';
         }
         $stmtInboundHistory->close();
     }
@@ -254,6 +212,7 @@ try {
                 WHEN d.warehouse_id IS NOT NULL AND d.warehouse_id != ? THEN CONCAT('Warehouse: ', w.name)
                 ELSE 'Unknown Destination'
             END AS destination,
+            p.project_name AS destination_project,
             d.status_of_delivery,
             COUNT(DISTINCT dp.inventory_pallet_id) AS pallet_count
         FROM deliveries d
@@ -264,7 +223,7 @@ try {
         WHERE d.supplier = (SELECT name FROM warehouses WHERE id = ?)
         AND d.left_warehouse_date IS NOT NULL
         AND (d.status_of_delivery LIKE 'In Transit%' OR d.status_of_delivery LIKE 'Delivered%')
-        GROUP BY d.id, d.bol_number, d.supplier, d.wattage, d.quantity, d.left_warehouse_date, d.anticipated_delivery_date, destination, d.status_of_delivery
+        GROUP BY d.id, d.bol_number, d.supplier, d.wattage, d.quantity, d.left_warehouse_date, d.anticipated_delivery_date, destination, p.project_name, d.status_of_delivery
         ORDER BY d.left_warehouse_date DESC
     ");
     if ($stmtOutboundHistory) {
@@ -273,6 +232,7 @@ try {
         $resultOutboundHistory = $stmtOutboundHistory->get_result();
         while ($delivery = $resultOutboundHistory->fetch_assoc()) {
             $outbound_history[] = $delivery;
+            $delivery['destination_project'] = $delivery['destination_project'] ?? 'N/A';
         }
         $stmtOutboundHistory->close();
     }
@@ -699,129 +659,74 @@ $conn->close();
 
         <!-- TAB CONTENT: STORED INVENTORY -->
         <div id="storedInventoryContent" class="tab-content active">
-            <div class="sub-tabs-container">
-                <button class="sub-tab-button active" onclick="showStoredSubView('byTruckload')">By Truckload (<?php echo count($stored_truckloads); ?>)</button>
-                <button class="sub-tab-button" onclick="showStoredSubView('byPallet')">By Pallet (<?php echo count($pallets_in_storage); ?>)</button>
-            </div>
-
-            <!-- Stored Inventory - By Pallet -->
-            <div id="storedByPalletView" class="sub-tab-content">
-                <h2>Stored Inventory - Individual Pallets</h2>
-                <div class="table-controls-header">
-                    <div class="filter-controls">
-                        <label>Search:</label>
-                        <input type="text" id="storedSearch" placeholder="Filter by Identifier, Vendor...">
-                        <label>Wattage:</label>
-                        <select id="storedWattageFilter">
-                            <option value="">All</option>
-                            <?php
-                            $storedWattages = [];
-                            foreach ($pallets_in_storage as $p) {
-                                $storedWattages[] = $p['wattage'];
-                            }
-                            $storedWattages = array_unique($storedWattages);
-                            sort($storedWattages);
-                            foreach ($storedWattages as $w) {
-                                echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
-                            }
-                            ?>
-                        </select>
-                    </div>
+            <h2>Stored Inventory</h2>
+            <div class="table-controls-header">
+                <div class="filter-controls">
+                    <label>Search:</label>
+                    <input type="text" id="storedSearch" placeholder="Filter by Identifier, Vendor...">
+                    <label>Wattage:</label>
+                    <select id="storedWattageFilter">
+                        <option value="">All</option>
+                        <?php
+                        $storedWattages = [];
+                        foreach ($pallets_in_storage as $p) {
+                            $storedWattages[] = $p['wattage'];
+                        }
+                        $storedWattages = array_unique($storedWattages);
+                        sort($storedWattages);
+                        foreach ($storedWattages as $w) {
+                            echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
+                        }
+                        ?>
+                    </select>
                 </div>
-
-                <div class="table-responsive">
-                    <table id="storedTable">
-                        <thead>
-                            <tr>
-                                <th>Identifier</th>
-                                <th>Origin Vendor</th>
-                                <th>Wattage</th>
-                                <th>Quantity</th>
-                                <th>Arrival Date</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (!empty($pallets_in_storage)): ?>
-                                <?php foreach ($pallets_in_storage as $pallet): ?>
-                                    <tr>
-                                        <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
-                                        <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
-                                        <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
-                                        <td><?php echo number_format($pallet['quantity']); ?></td>
-                                        <td>
-                                            <?php 
-                                            if (!empty($pallet['arrival_date']) && $pallet['arrival_date'] !== 'N/A') {
-                                                try {
-                                                    $date = new DateTime($pallet['arrival_date']);
-                                                    echo $date->format('m-d-Y');
-                                                } catch (Exception $e) {
-                                                    echo htmlspecialchars($pallet['arrival_date']);
-                                                }
-                                            } else {
-                                                echo 'N/A';
-                                            }
-                                            ?>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            <?php else: ?>
-                                <tr><td colspan="5">No pallets currently stored in this warehouse.</td></tr>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
+                <div class="page-actions">
+                    <a href="create_shipment.php?source_type=warehouse&source_id=<?php echo $warehouse_id; ?>&status=In%20Warehouse" class="action-button">Create Shipment</a>
                 </div>
             </div>
 
-            <!-- Stored Inventory - By Truckload -->
-            <div id="storedByTruckloadView" class="sub-tab-content active">
-                <h2>Stored Inventory - By Truckload</h2>
-                <div class="table-responsive">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>BOL Number</th>
-                                <th>Origin Vendor</th>
-                                <th>Received Date</th>
-                                <th>Total Pallets</th>
-                                <th>Total Modules</th>
-                                <th>Wattage Breakdown</th>
-                                <th>POD</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (!empty($stored_truckloads)): ?>
-                                <?php foreach ($stored_truckloads as $truckload): ?>
-                                    <tr>
-                                        <td><?php echo htmlspecialchars($truckload['bol_number'] ?? 'N/A'); ?></td>
-                                        <td><?php echo htmlspecialchars($truckload['origin_vendor'] ?? 'N/A'); ?></td>
-                                        <td><?php echo htmlspecialchars($truckload['received_date'] ?? 'N/A'); ?></td>
-                                        <td><?php echo number_format($truckload['total_pallets']); ?></td>
-                                        <td><?php echo number_format($truckload['total_modules']); ?></td>
-                                        <td style="font-size: 0.9em;"><?php echo htmlspecialchars($truckload['wattage_breakdown'] ?? 'N/A'); ?></td>
-                                        <td>
-                                            <?php 
-                                            if (!empty($truckload['proof_of_delivery'])) {
-                                                echo '<a href="view_pod.php?delivery_id=' . $truckload['delivery_id'] . '" target="_blank" style="color: #488C9A;">View POD</a>';
-                                            } else {
-                                                echo '<button class="action-button" style="padding: 2px 6px; font-size: 0.8em;" onclick="uploadPOD(' . $truckload['delivery_id'] . ')">Upload POD</button>';
+            <div class="table-responsive">
+                <table id="storedTable">
+                    <thead>
+                        <tr>
+                            <th>Identifier</th>
+                            <th>Project</th>
+                            <th>Origin Vendor</th>
+                            <th>Wattage</th>
+                            <th>Quantity</th>
+                            <th>Arrival Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (!empty($pallets_in_storage)): ?>
+                            <?php foreach ($pallets_in_storage as $pallet): ?>
+                                <tr>
+                                    <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
+                                    <td><?php echo htmlspecialchars($pallet['assigned_project']); ?></td>
+                                    <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
+                                    <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
+                                    <td><?php echo number_format($pallet['quantity']); ?></td>
+                                    <td>
+                                        <?php 
+                                        if (!empty($pallet['arrival_date']) && $pallet['arrival_date'] !== 'N/A') {
+                                            try {
+                                                $date = new DateTime($pallet['arrival_date']);
+                                                echo $date->format('m-d-Y');
+                                            } catch (Exception $e) {
+                                                echo htmlspecialchars($pallet['arrival_date']);
                                             }
-                                            ?>
-                                        </td>
-                                        <td>
-                                            <button class="action-button" style="padding: 3px 8px; font-size: 0.9em;" 
-                                                    onclick="moveTruckload(<?php echo $truckload['delivery_id']; ?>)">
-                                                Move Truckload
-                                            </button>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                                                            <?php else: ?>
-                                    <tr><td colspan="8">No stored truckloads found in this warehouse.</td></tr>
-                                <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
+                                        } else {
+                                            echo 'N/A';
+                                        }
+                                        ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr><td colspan="6">No pallets currently stored in this warehouse.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -862,6 +767,7 @@ $conn->close();
                         <thead>
                             <tr>
                                 <th>Identifier</th>
+                                <th>Project</th>
                                 <th>Origin Vendor</th>
                                 <th>Wattage</th>
                                 <th>Quantity</th>
@@ -874,6 +780,7 @@ $conn->close();
                                 <?php foreach ($pallets_in_transit as $pallet): ?>
                                     <tr>
                                         <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($pallet['source_project']); ?></td>
                                         <td><?php echo htmlspecialchars($pallet['origin_vendor'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($pallet['wattage']); ?>W</td>
                                         <td><?php echo number_format($pallet['quantity']); ?></td>
@@ -882,7 +789,7 @@ $conn->close();
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="6">No pallets currently in transit to this warehouse.</td></tr>
+                                <tr><td colspan="7">No pallets currently in transit to this warehouse.</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
@@ -897,14 +804,15 @@ $conn->close();
                         <!-- Optional filters can be added here -->
                     </div>
                     <div class="page-actions">
-                        <button id="receiveTruckloadBtn" class="action-button" disabled>Receive Selected Truckload</button>
+                        <button id="receiveTruckloadBtn" class="action-button" disabled>Receive Selected Truckloads</button>
                     </div>
                 </div>
                 <div class="table-responsive">
                     <table id="transitTruckloadTable">
                         <thead>
                             <tr>
-                                <th><input type="radio" name="selected_truckload" value="" disabled></th>
+                                <th><input type="checkbox" id="selectAllTruckloads" onchange="toggleAllTruckloads()"> Select All</th>
+                                <th>Project</th>
                                 <th>BOL Number</th>
                                 <th>Origin Vendor</th>
                                 <th>Est. Arrival Date</th>
@@ -918,12 +826,13 @@ $conn->close();
                                 <?php foreach ($transit_truckloads as $truckload): ?>
                                     <tr>
                                         <td>
-                                            <input type="radio" 
-                                                   name="selected_truckload" 
+                                            <input type="checkbox" 
+                                                   name="selected_truckloads" 
                                                    value="<?php echo $truckload['delivery_id']; ?>"
-                                                   class="truckload-radio"
+                                                   class="truckload-checkbox"
                                                    onchange="updateReceiveTruckloadButton()">
                                         </td>
+                                        <td><?php echo htmlspecialchars($truckload['projects']); ?></td>
                                         <td><?php echo htmlspecialchars($truckload['bol_number'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($truckload['origin_vendor'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($truckload['est_arrival_date'] ?? 'N/A'); ?></td>
@@ -933,7 +842,7 @@ $conn->close();
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="7">No truckloads currently in transit to this warehouse.</td></tr>
+                                <tr><td colspan="8">No truckloads currently in transit to this warehouse.</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
@@ -956,6 +865,7 @@ $conn->close();
                         <thead>
                             <tr>
                                 <th>BOL Number</th>
+                                <th>Project</th>
                                 <th>Supplier</th>
                                 <th>Wattage</th>
                                 <th>Modules (Pallets)</th>
@@ -969,6 +879,7 @@ $conn->close();
                                 <?php foreach ($inbound_history as $delivery): ?>
                                     <tr>
                                         <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($delivery['source_project']); ?></td>
                                         <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
                                         <td><?php echo number_format($delivery['total_modules'] ?? 0) . ' (' . number_format($delivery['pallet_count'] ?? 0) . ')'; ?></td>
@@ -987,7 +898,7 @@ $conn->close();
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="7">No inbound deliveries recorded for this warehouse.</td></tr>
+                                <tr><td colspan="8">No inbound deliveries recorded for this warehouse.</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
@@ -1002,6 +913,7 @@ $conn->close();
                         <thead>
                             <tr>
                                 <th>BOL Number</th>
+                                <th>Project</th>
                                 <th>Supplier</th>
                                 <th>Destination</th>
                                 <th>Wattage</th>
@@ -1015,6 +927,7 @@ $conn->close();
                                 <?php foreach ($outbound_history as $delivery): ?>
                                     <tr>
                                         <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
+                                        <td><?php echo htmlspecialchars($delivery['destination_project']); ?></td>
                                         <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($delivery['destination'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
@@ -1024,7 +937,7 @@ $conn->close();
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="7">No outbound deliveries recorded from this warehouse.</td></tr>
+                                <tr><td colspan="9">No outbound deliveries recorded from this warehouse.</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
@@ -1092,8 +1005,8 @@ $conn->close();
 <div id="receiveTruckloadFormContainer" style="display: none;">
     <div class="modal-form-row">
         <div>
-            <label for="receive_truckload_bol">BOL Number:</label>
-            <input type="text" id="receive_truckload_bol" name="receive_truckload_bol">
+            <label for="receive_truckload_bol">BOL Number (if different):</label>
+            <input type="text" id="receive_truckload_bol" name="receive_truckload_bol" placeholder="Leave blank to use existing BOL numbers">
         </div>
         <div>
             <label for="actual_truckload_arrival_date">Actual Arrival Date:</label>
@@ -1108,7 +1021,7 @@ $conn->close();
         </div>
     </div>
     <div style="margin-top: 20px; text-align: center;">
-        <button type="button" id="confirmReceiveTruckloadBtn" class="action-button">Receive Entire Truckload</button>
+        <button type="button" id="confirmReceiveTruckloadBtn" class="action-button">Receive Selected Truckloads</button>
     </div>
 </div>
 
@@ -1138,7 +1051,7 @@ $conn->close();
 <div id="receiveTruckloadModal" class="modal">
     <div class="modal-content">
         <span class="close-receive-truckload-modal">&times;</span>
-        <div class="modal-header">Receive Truckload</div>
+        <div class="modal-header">Receive Truckloads</div>
         <!-- #receiveTruckloadFormContainer is moved here dynamically -->
     </div>
 </div>
@@ -1166,27 +1079,6 @@ function showMainTab(tabName) {
     
     document.getElementById(contentId).classList.add('active');
     document.getElementById(buttonId).classList.add('active');
-}
-
-function showStoredSubView(view) {
-    // Hide all stored sub-tab contents
-    document.querySelectorAll('#storedInventoryContent .sub-tab-content').forEach(content => {
-        content.classList.remove('active');
-    });
-    
-    // Remove active from all stored sub-tab buttons
-    document.querySelectorAll('#storedInventoryContent .sub-tab-button').forEach(button => {
-        button.classList.remove('active');
-    });
-    
-    // Show selected view
-    if (view === 'byTruckload') {
-        document.getElementById('storedByTruckloadView').classList.add('active');
-        document.querySelector('#storedInventoryContent .sub-tab-button:first-child').classList.add('active');
-    } else {
-        document.getElementById('storedByPalletView').classList.add('active');
-        document.querySelector('#storedInventoryContent .sub-tab-button:last-child').classList.add('active');
-    }
 }
 
 function showTransitSubView(view) {
@@ -1232,14 +1124,43 @@ function showHistorySubView(view) {
 }
 
 // ========== CHECKBOX MANAGEMENT ==========
-// Removed individual pallet move/receive functionality
+function toggleAllTruckloads() {
+    const selectAllCheckbox = document.getElementById('selectAllTruckloads');
+    const truckloadCheckboxes = document.querySelectorAll('.truckload-checkbox');
+    
+    truckloadCheckboxes.forEach(checkbox => {
+        checkbox.checked = selectAllCheckbox.checked;
+    });
+    
+    updateReceiveTruckloadButton();
+}
 
 function updateReceiveTruckloadButton() {
     const receiveBtn = document.getElementById('receiveTruckloadBtn');
     if (!receiveBtn) return;
-    const selected = document.querySelector('input[name="selected_truckload"]:checked');
-    receiveBtn.disabled = !selected;
-    if (!selected) closeReceiveTruckloadModal();
+    
+    const selectedCheckboxes = document.querySelectorAll('.truckload-checkbox:checked');
+    const hasSelections = selectedCheckboxes.length > 0;
+    
+    receiveBtn.disabled = !hasSelections;
+    
+    // Update button text based on selection count
+    if (hasSelections) {
+        receiveBtn.textContent = selectedCheckboxes.length === 1 ? 
+            'Receive Selected Truckload' : 
+            `Receive Selected Truckloads (${selectedCheckboxes.length})`;
+    } else {
+        receiveBtn.textContent = 'Receive Selected Truckloads';
+        closeReceiveTruckloadModal();
+    }
+    
+    // Update select all checkbox state
+    const selectAllCheckbox = document.getElementById('selectAllTruckloads');
+    const allCheckboxes = document.querySelectorAll('.truckload-checkbox');
+    if (allCheckboxes.length > 0) {
+        selectAllCheckbox.checked = selectedCheckboxes.length === allCheckboxes.length;
+        selectAllCheckbox.indeterminate = selectedCheckboxes.length > 0 && selectedCheckboxes.length < allCheckboxes.length;
+    }
 }
 
 // ========== FILTER FUNCTIONS ==========
@@ -1251,11 +1172,11 @@ function filterStoredTable() {
     rows.forEach(row => {
         let show = true;
         let rowText = '';
-        for (let i = 1; i < row.cells.length; i++) {
+        for (let i = 0; i < row.cells.length; i++) {
             rowText += row.cells[i].textContent.toLowerCase() + ' ';
         }
         if (textFilter && !rowText.includes(textFilter)) show = false;
-        let wattageText = row.cells[3]?.textContent.replace('W','').trim() || '';
+        let wattageText = row.cells[2]?.textContent.replace('W','').trim() || '';
         if (wattageFilter && wattageText !== wattageFilter) show = false;
 
         row.style.display = show ? '' : 'none';
@@ -1270,11 +1191,11 @@ function filterTransitTable() {
     rows.forEach(row => {
         let show = true;
         let rowText = '';
-        for (let i = 1; i < row.cells.length; i++) {
+        for (let i = 0; i < row.cells.length; i++) {
             rowText += row.cells[i].textContent.toLowerCase() + ' ';
         }
         if (textFilter && !rowText.includes(textFilter)) show = false;
-        let wattageText = row.cells[3]?.textContent.replace('W','').trim() || '';
+        let wattageText = row.cells[2]?.textContent.replace('W','').trim() || '';
         if (wattageFilter && wattageText !== wattageFilter) show = false;
 
         row.style.display = show ? '' : 'none';
@@ -1294,21 +1215,16 @@ const moveOriginalParent = moveFormContainer?.parentNode;
 const receiveOriginalParent = receiveFormContainer?.parentNode;
 const receiveTruckloadOriginalParent = receiveTruckloadFormContainer?.parentNode;
 
-// Removed old modal functions for individual pallet operations
-
 function openReceiveTruckloadModal() {
     const btn = document.getElementById('receiveTruckloadBtn');
     if (btn?.disabled) return;
     
-    const selected = document.querySelector('input[name="selected_truckload"]:checked');
-    if (!selected) return;
+    const selectedCheckboxes = document.querySelectorAll('.truckload-checkbox:checked');
+    if (selectedCheckboxes.length === 0) return;
     
-    // Get BOL from selected truckload row
-    const row = selected.closest('tr');
-    const bolText = row.cells[1].textContent.trim(); // BOL is in second column
-    
+    // Clear previous BOL value and let user decide if they want to override
     const bolField = document.getElementById('receive_truckload_bol');
-    bolField.value = bolText !== 'N/A' ? bolText : '';
+    bolField.value = '';
     
     // Set today's date
     const arrivalDateField = document.getElementById('actual_truckload_arrival_date');
@@ -1335,13 +1251,6 @@ function closeReceiveTruckloadModal() {
     }
 }
 
-// Removed old utility functions for individual pallet operations
-
-function moveTruckload(deliveryId) {
-    // Redirect to move truckload page
-    window.location.href = 'move_truckload.php?delivery_id=' + deliveryId + '&warehouse_id=<?php echo $warehouse_id; ?>';
-}
-
 function uploadPOD(deliveryId) {
     // Navigate to the existing upload_pod.php page
     window.location.href = 'upload_pod.php?delivery_id=' + deliveryId;
@@ -1353,8 +1262,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('storedInventoryTab')?.addEventListener('click', () => showMainTab('storedInventory'));
     document.getElementById('inboundTransitTab')?.addEventListener('click', () => showMainTab('inboundTransit'));
     document.getElementById('truckloadHistoryTab')?.addEventListener('click', () => showMainTab('truckloadHistory'));
-
-    // Individual pallet functionality removed
 
     // Filter event listeners
     document.getElementById('storedSearch')?.addEventListener('keyup', filterStoredTable);
@@ -1374,19 +1281,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Form submission handlers
-
     document.getElementById('confirmReceiveTruckloadBtn')?.addEventListener('click', () => {
-        const selected = document.querySelector('input[name="selected_truckload"]:checked');
-        if (!selected) {
-            alert('Please select a truckload to receive.');
+        const selectedCheckboxes = document.querySelectorAll('.truckload-checkbox:checked');
+        if (selectedCheckboxes.length === 0) {
+            alert('Please select at least one truckload to receive.');
             return;
         }
 
-        // Create form to handle truckload receiving with file upload
+        // Create form to handle multiple truckload receiving with file upload
         const form = document.createElement('form');
         form.method = 'POST';
-        form.action = 'handle_pallet_arrival.php'; // Updated to use the unified handler
-        form.enctype = 'multipart/form-data'; // Required for file upload
+        form.action = 'handle_pallet_arrival.php';
+        form.enctype = 'multipart/form-data';
 
         const warehouseInput = document.createElement('input');
         warehouseInput.type = 'hidden';
@@ -1394,15 +1300,18 @@ document.addEventListener('DOMContentLoaded', () => {
         warehouseInput.value = '<?php echo $warehouse_id; ?>';
         form.appendChild(warehouseInput);
 
-        const deliveryInput = document.createElement('input');
-        deliveryInput.type = 'hidden';
-        deliveryInput.name = 'delivery_id';
-        deliveryInput.value = selected.value;
-        form.appendChild(deliveryInput);
+        // Add delivery IDs as array
+        selectedCheckboxes.forEach((checkbox, index) => {
+            const deliveryInput = document.createElement('input');
+            deliveryInput.type = 'hidden';
+            deliveryInput.name = `delivery_ids[${index}]`;
+            deliveryInput.value = checkbox.value;
+            form.appendChild(deliveryInput);
+        });
 
         const bolInput = document.createElement('input');
         bolInput.type = 'hidden';
-        bolInput.name = 'bol_number';
+        bolInput.name = 'bol_number_override';
         bolInput.value = document.getElementById('receive_truckload_bol').value;
         form.appendChild(bolInput);
 
@@ -1415,7 +1324,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const actionInput = document.createElement('input');
         actionInput.type = 'hidden';
         actionInput.name = 'action';
-        actionInput.value = 'receive_truckload';
+        actionInput.value = 'receive_multiple_truckloads';
         form.appendChild(actionInput);
 
         // Handle file upload if a file is selected
@@ -1429,8 +1338,6 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.appendChild(form);
         form.submit();
     });
-
-    // Removed destination type listeners
 
     // Initial states
     updateReceiveTruckloadButton();
