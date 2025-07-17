@@ -616,13 +616,15 @@ $conn->close();
 
                 // Determine project status
                 $status_class = 'status-on-track';
-                $status_text = 'On Track';
-                if ($project['module_delivery_completion'] >= 100) {
-                    $status_class = 'status-completed';
-                    $status_text = 'Completed';
-                } elseif ($project['module_delivery_completion'] < 50) {
-                    $status_class = 'status-behind';
-                    $status_text = 'In Progress';
+                $status_text = 'Active';
+                if ($total_order_quantity > 0) {
+                    if ($total_delivered > 0 && $total_delivered < $total_order_quantity) {
+                        $status_class = 'status-behind';
+                        $status_text = 'In Progress';
+                    } elseif ($total_delivered >= $total_order_quantity) {
+                        $status_class = 'status-completed';
+                        $status_text = 'Completed';
+                    }
                 }
             ?>
                 <div class="project-item" onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">
