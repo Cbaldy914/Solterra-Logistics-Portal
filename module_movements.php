@@ -183,6 +183,14 @@ try {
                 COALESCE(w.city, '') as delivery_wh_city,
                 COALESCE(w.state, '') as delivery_wh_state,
                 COALESCE(w.zip_code, '') as delivery_wh_zip,
+
+                -- Origin warehouse info (where delivery originated if from a warehouse)
+                w_origin.id as origin_warehouse_id,
+                COALESCE(w_origin.name, '') as origin_warehouse_name,
+                COALESCE(w_origin.street_address, '') as origin_wh_street,
+                COALESCE(w_origin.city, '') as origin_wh_city,
+                COALESCE(w_origin.state, '') as origin_wh_state,
+                COALESCE(w_origin.zip_code, '') as origin_wh_zip,
                 
                 -- Project info
                 p.project_name,
@@ -231,6 +239,7 @@ try {
             -- Link to warehouses
             LEFT JOIN warehouses w ON d.warehouse_id = w.id
             LEFT JOIN warehouses w2 ON ip.current_warehouse_id = w2.id
+            LEFT JOIN warehouses w_origin ON (d.origin_type = 'warehouse' AND d.origin_id = w_origin.id)
             
             WHERE p.id = ?
             GROUP BY 
@@ -238,6 +247,7 @@ try {
                 mfg.name, mfg.street_address, mfg.city, mfg.state, mfg.zip_code,
                 w2.id, w2.name, w2.street_address, w2.city, w2.state, w2.zip_code,
                 w.id, w.name, w.street_address, w.city, w.state, w.zip_code,
+                w_origin.id, w_origin.name, w_origin.street_address, w_origin.city, w_origin.state, w_origin.zip_code,
                 p.project_name, p.street_address, p.city, p.state, p.zip_code,
                 d.origin_type, d.origin_id
             ORDER BY ip.status ASC, m.vendor_name ASC
@@ -968,6 +978,22 @@ function processMovementData() {
             location.total_modules += movement.total_quantity;
         }
 
+        // Add origin warehouse location even if no pallets currently there
+        if (movement.origin_type === 'warehouse' && movement.origin_warehouse_id && movement.origin_warehouse_name) {
+            const whOrigKey = 'wh_' + movement.origin_warehouse_id;
+            if (!locations.has(whOrigKey)) {
+                locations.set(whOrigKey, {
+                    type: 'warehouse',
+                    name: movement.origin_warehouse_name,
+                    address: buildAddress(movement.origin_wh_street, movement.origin_wh_city, movement.origin_wh_state, movement.origin_wh_zip),
+                    pallets: [],
+                    total_pallets: 0,
+                    total_modules: 0,
+                    marker: null
+                });
+            }
+        }
+
         // Add project location with pallets DELIVERED to project
         if (movement.status === 'Delivered to Project') {
             const projectKey = 'proj_' + projectData.id;
@@ -1309,8 +1335,14 @@ function createRouteLines(locations) {
         } else if (movement.delivery_warehouse_id && movement.delivery_warehouse_name) {
             warehouseKey = 'wh_' + movement.delivery_warehouse_id;
         }
+
+        // Origin warehouse for deliveries leaving a warehouse
+        let originWarehouseKey = null;
+        if (movement.origin_type === 'warehouse' && movement.origin_warehouse_id && movement.origin_warehouse_name) {
+            originWarehouseKey = 'wh_' + movement.origin_warehouse_id;
+        }
         
-        // Create manufacturer → warehouse route (for aggregated groups that are currently in warehouse or were delivered to project via warehouse)
+        // Create manufacturer → warehouse route (for pallets that either reside in a warehouse or were delivered to project via that warehouse)
         if (warehouseKey && (movement.status === 'In Warehouse' || movement.status === 'Delivered to Project')) {
             const route1Key = `${manufacturerKey}_to_${warehouseKey}`;
             if (!routes.has(route1Key)) {
@@ -1329,13 +1361,34 @@ function createRouteLines(locations) {
             route.modules += parseInt(movement.total_quantity);
             route.pallet_count += parseInt(movement.pallet_count);
         }
+
+        // Create manufacturer → origin warehouse route for pallets delivered to project (to preserve historical path)
+        if (!warehouseKey && originWarehouseKey && movement.status === 'Delivered to Project') {
+            const routeOrigKey = `${manufacturerKey}_to_${originWarehouseKey}`;
+            if (!routes.has(routeOrigKey)) {
+                routes.set(routeOrigKey, {
+                    from: manufacturerKey,
+                    to: originWarehouseKey,
+                    pallets: [],
+                    modules: 0,
+                    pallet_count: 0,
+                    color: '#488C9A',
+                    type: 'manufacturer_to_warehouse'
+                });
+            }
+            const route = routes.get(routeOrigKey);
+            route.pallets.push(movement);
+            route.modules += parseInt(movement.total_quantity);
+            route.pallet_count += parseInt(movement.pallet_count);
+        }
         
         // Create warehouse → project route (for aggregated groups delivered to project)
-        if (warehouseKey && movement.status === 'Delivered to Project') {
-            const route2Key = `${warehouseKey}_to_${projectKey}`;
+        if ((warehouseKey || originWarehouseKey) && movement.status === 'Delivered to Project') {
+            const whKeyForRoute = warehouseKey || originWarehouseKey;
+            const route2Key = `${whKeyForRoute}_to_${projectKey}`;
             if (!routes.has(route2Key)) {
                 routes.set(route2Key, {
-                    from: warehouseKey,
+                    from: whKeyForRoute,
                     to: projectKey,
                     pallets: [],
                     modules: 0,
