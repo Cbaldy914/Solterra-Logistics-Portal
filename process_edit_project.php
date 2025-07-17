@@ -163,7 +163,7 @@ if (isset($_POST['new_wattages']) && isset($_POST['new_total_orders'])) {
 // Close the database connection
 $conn->close();
 
-// Redirect back to the edit project page or admin dashboard
-header("Location: admin_dashboard");
+// Redirect back to the unified dashboard
+header("Location: dashboard");
 exit();
 ?>

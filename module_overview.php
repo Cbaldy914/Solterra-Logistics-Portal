@@ -962,7 +962,7 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <div class="breadcrumb">
-        <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard' : 'dashboard'; ?>">Dashboard</a>
+        <a href="dashboard">Dashboard</a>
         <span class="separator">&raquo;</span>
         <?php if ($view_mode === 'project'): ?>
             <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>

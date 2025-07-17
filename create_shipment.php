@@ -852,7 +852,7 @@ if (!empty($sessionMessage)) {
 <?php include 'header.php'; ?>
 <main>
     <div class="breadcrumb">
-        <a href="<?php echo ($role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <a href="dashboard.php">Dashboard</a>
         <span class="separator">&raquo;</span>
         <?php if ($project_id_from_url > 0 && !empty($project_name_for_breadcrumb)): ?>
             <a href="project_overview.php?project_id=<?php echo $project_id_from_url; ?>"><?php echo htmlspecialchars($project_name_for_breadcrumb); ?></a>

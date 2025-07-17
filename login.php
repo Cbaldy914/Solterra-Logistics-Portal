@@ -75,12 +75,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $_SESSION['username'] = $username;
             $_SESSION['role'] = $role;
 
-            // 3) Redirect based on the role
-            if ($role === 'global_admin') {
-                header("Location: admin_dashboard");
-            } else {
-                header("Location: dashboard");
-            }
+            // 3) Redirect all users to the unified dashboard
+            header("Location: dashboard");
             exit();
 
         } else {
