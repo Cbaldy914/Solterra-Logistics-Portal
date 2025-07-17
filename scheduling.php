@@ -2040,7 +2040,7 @@ include('header.php');
         }
         
         function prev() {
-            let dt = new Date(currentDate);
+            let dt = parseLocalDate(currentDate);
             if (currentView === 'day') {
                 dt.setDate(dt.getDate() - 1);
             } else if (currentView === 'week') {
@@ -2048,12 +2048,12 @@ include('header.php');
             } else {
                 dt.setMonth(dt.getMonth() - 1);
             }
-            currentDate = dt.toISOString().split('T')[0];
+            currentDate = formatDateKey(dt);
             loadAppointments(currentView, currentDate);
         }
-        
+
         function next() {
-            let dt = new Date(currentDate);
+            let dt = parseLocalDate(currentDate);
             if (currentView === 'day') {
                 dt.setDate(dt.getDate() + 1);
             } else if (currentView === 'week') {
@@ -2061,7 +2061,7 @@ include('header.php');
             } else {
                 dt.setMonth(dt.getMonth() + 1);
             }
-            currentDate = dt.toISOString().split('T')[0];
+            currentDate = formatDateKey(dt);
             loadAppointments(currentView, currentDate);
         }
         
@@ -2096,7 +2096,7 @@ include('header.php');
         }
         
         function renderDayView(date, appointments) {
-            const dayOfWeek = new Date(date).getDay();
+            const dayOfWeek = parseLocalDate(date).getDay();
             const dayHours = operatingHours[dayOfWeek];
             
             if (!dayHours || dayHours.length === 0) {
@@ -2129,7 +2129,7 @@ include('header.php');
             const current = new Date(startTime);
             while (current < endTime) {
                 const timeStr = current.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-                const slotKey = current.toISOString().substring(0, 19);
+                const slotKey = formatLocalISO(current);
                 
                 html += '<tr>';
                 html += `<td class="time-col">${timeStr}</td>`;
@@ -2138,7 +2138,7 @@ include('header.php');
                     if (appointmentMap[slotKey]) {
                         html += renderAppointmentCell(appointmentMap[slotKey]);
                     } else {
-                        const slotTime = current.toISOString().substring(0, 19).replace('T', ' ');
+                        const slotTime = formatLocalDateTime(current);
                         html += `<td><div class="appointment-slot" onclick="openAddModal('${slotTime}')">+</div></td>`;
                     }
                 } else {
@@ -2154,15 +2154,15 @@ include('header.php');
         }
         
         function renderWeekView(date, appointments) {
-            const startOfWeek = new Date(date);
+            const startOfWeek = parseLocalDate(date);
             const dayOfWeek = startOfWeek.getDay();
             startOfWeek.setDate(startOfWeek.getDate() - dayOfWeek);
             
             // Update title
             const endOfWeek = new Date(startOfWeek);
             endOfWeek.setDate(endOfWeek.getDate() + 6);
-            document.getElementById('currentTitle').textContent = 
-                `${formatDate(startOfWeek.toISOString().split('T')[0])} - ${formatDate(endOfWeek.toISOString().split('T')[0])}`;
+            document.getElementById('currentTitle').textContent =
+                `${formatDate(formatDateKey(startOfWeek))} - ${formatDate(formatDateKey(endOfWeek))}`;
             
             let html = '<div class="week-scroll-wrapper"><table class="week-grid">';
             
@@ -2172,7 +2172,7 @@ include('header.php');
             for (let i = 0; i < 7; i++) {
                 const currentDay = new Date(startOfWeek);
                 currentDay.setDate(startOfWeek.getDate() + i);
-                const dayStr = currentDay.toISOString().split('T')[0];
+                const dayStr = formatDateKey(currentDay);
                 html += `<th class="day-header">${days[i]}<br>${currentDay.getDate()}</th>`;
             }
             html += '</tr></thead><tbody>';
@@ -2214,19 +2214,19 @@ include('header.php');
                 for (let i = 0; i < 7; i++) {
                     const currentDay = new Date(startOfWeek);
                     currentDay.setDate(startOfWeek.getDate() + i);
-                    const dayStr = currentDay.toISOString().split('T')[0];
+                const dayStr = formatDateKey(currentDay);
                     const dayOfWeek = currentDay.getDay();
                     const dayHours = operatingHours[dayOfWeek];
                     
                     const slotDateTime = new Date(dayStr + 'T' + startTime.toTimeString().substring(0, 8));
-                    const slotKey = slotDateTime.toISOString().substring(0, 19);
+                    const slotKey = formatLocalISO(slotDateTime);
                     
                     if (dayHours && dayHours.length > 0 && isTimeSlotOpen(slotDateTime, dayHours)) {
                         const appointment = appointmentsByDay[dayStr] && appointmentsByDay[dayStr][slotKey];
                         if (appointment) {
                             html += renderAppointmentCell(appointment);
                         } else {
-                            const slotTime = slotDateTime.toISOString().substring(0, 19).replace('T', ' ');
+                            const slotTime = formatLocalDateTime(slotDateTime);
                             html += `<td><div class="appointment-slot" onclick="openAddModal('${slotTime}')">+</div></td>`;
                         }
                     } else {
@@ -2243,7 +2243,7 @@ include('header.php');
         }
         
         function renderMonthView(date, appointments) {
-            const month = new Date(date);
+            const month = parseLocalDate(date);
             const year = month.getFullYear();
             const monthIndex = month.getMonth();
             
@@ -2289,7 +2289,7 @@ include('header.php');
                 
                 // Generate one week
                 for (let day = 0; day < 7; day++) {
-                    const dateStr = currentDate.toISOString().split('T')[0];
+                    const dateStr = formatDateKey(currentDate);
                     const dayNumber = currentDate.getDate();
                     const isCurrentMonth = currentDate.getMonth() === monthIndex;
                     const dayOfWeek = currentDate.getDay();
@@ -2392,8 +2392,31 @@ include('header.php');
             return `<td><div class="${classes.join(' ')}" onclick="openEditModal(${appointment.id})">${displayText}</div></td>`;
         }
         
+        function parseLocalDate(str) {
+            if (str.includes('T') || str.includes(' ')) {
+                return new Date(str.replace(' ', 'T'));
+            }
+            return new Date(str + 'T00:00:00');
+        }
+
+        function pad(n) {
+            return String(n).padStart(2, '0');
+        }
+
+        function formatDateKey(date) {
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+        }
+
+        function formatLocalISO(date) {
+            return `${formatDateKey(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+        }
+
+        function formatLocalDateTime(date) {
+            return formatLocalISO(date).replace('T', ' ');
+        }
+
         function formatDate(dateStr) {
-            const date = new Date(dateStr);
+            const date = parseLocalDate(dateStr);
             return date.toLocaleDateString('en-US', {
                 weekday: 'long',
                 year: 'numeric',
@@ -2403,7 +2426,7 @@ include('header.php');
         }
 
         function formatDateTime(dateStr) {
-            const date = new Date(dateStr);
+            const date = parseLocalDate(dateStr);
             return date.toLocaleString('en-US', {
                 year: 'numeric',
                 month: 'long',
