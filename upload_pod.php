@@ -124,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } elseif ($warehouse_id) {
                     header("Location: manage_warehouse_inventory?warehouse_id=$warehouse_id");
                 } else {
-                    header("Location: admin_dashboard");
+                    header("Location: dashboard");
                 }
                 exit();
             } else {

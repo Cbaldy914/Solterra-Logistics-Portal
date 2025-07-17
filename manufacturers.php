@@ -11,8 +11,8 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 require_once '../config.php';
 $conn = getDBConnection();
 
-// Determine dashboard link based on user role
-$dashboard_link = ($_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php';
+// Unified dashboard link
+$dashboard_link = 'dashboard.php';
 
 $manufacturers = [];
 $errorMessage = '';

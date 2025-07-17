@@ -23,21 +23,31 @@ if (!$conn) {
 
 // 1) Determine which account(s) the user belongs to
 $user_id = $_SESSION['user_id'];
-$sqlAccts = "
-    SELECT account_id
-    FROM customer_account_users
-    WHERE user_id = ?
-";
-$stmtAccts = $conn->prepare($sqlAccts);
-$stmtAccts->bind_param("i", $user_id);
-$stmtAccts->execute();
-$resultAccts = $stmtAccts->get_result();
-
 $accountIds = [];
-while ($row = $resultAccts->fetch_assoc()) {
-    $accountIds[] = (int)$row['account_id'];
+
+if ($role === 'global_admin') {
+    // Global admins can view all accounts
+    $resultAccts = $conn->query("SELECT id FROM customer_accounts");
+    if ($resultAccts) {
+        while ($row = $resultAccts->fetch_assoc()) {
+            $accountIds[] = (int)$row['id'];
+        }
+    }
+} else {
+    $sqlAccts = "
+        SELECT account_id
+        FROM customer_account_users
+        WHERE user_id = ?
+    ";
+    $stmtAccts = $conn->prepare($sqlAccts);
+    $stmtAccts->bind_param("i", $user_id);
+    $stmtAccts->execute();
+    $resultAccts = $stmtAccts->get_result();
+    while ($row = $resultAccts->fetch_assoc()) {
+        $accountIds[] = (int)$row['account_id'];
+    }
+    $stmtAccts->close();
 }
-$stmtAccts->close();
 
 // 2) Calculate unassigned modules
 $unassigned_modules_count = 0;
