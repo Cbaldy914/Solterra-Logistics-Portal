@@ -18,8 +18,8 @@ if (!$conn) {
 // Get Google Maps API key from config
 $google_maps_api_key = getGoogleMapsApiKey();
 
-// Determine dashboard link based on user role
-$dashboard_link = ($_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php';
+// Unified dashboard link
+$dashboard_link = 'dashboard.php';
 
 // Prepare variables to hold user messages:
 $successMessage = "";

@@ -31,14 +31,13 @@ if (isset($_SESSION['role'])) {
 <header>
     <div class="header_logo">
         <?php if ($role === 'global_admin'): ?>
-            <!-- Link to a "global admin" dashboard (you might use the same as admin_dashboard if you prefer) -->
-            <a href="admin_dashboard">
+            <a href="dashboard">
                 <img src="pictures/header_logo.png" alt="Solterra Solutions Logo">
             </a>
 
         <?php elseif ($role === 'admin'): ?>
             <!-- Local admin dashboard link -->
-            <a href="admin_dashboard">
+            <a href="dashboard">
                 <img src="pictures/header_logo.png" alt="Solterra Solutions Logo">
             </a>
 
@@ -62,7 +61,7 @@ if (isset($_SESSION['role'])) {
                 <li class="dropdown">
                     <a href="#" class="dropbtn">Projects</a>
                     <div class="dropdown-content">
-                        <a href="admin_dashboard">Dashboard</a>
+                        <a href="dashboard">Dashboard</a>
                         <a href="add_project">Add Project</a>
                         <a href="manage_projects">Manage Projects</a>
                         <a href="module_cost_analysis">Module Cost Analysis</a>
