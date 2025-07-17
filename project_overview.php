@@ -761,6 +761,74 @@ while ($wh = $result_warehouses->fetch_assoc()) {
 }
 $stmt_warehouses->close();
 
+// --- Shipping Status Breakdown ---
+$status_totals = [
+    'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
+    'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
+    'In Warehouse' => ['pallets' => 0, 'modules' => 0],
+    'In Transit to Project' => ['pallets' => 0, 'modules' => 0]
+];
+$detailed_breakdown = [];
+
+$stmt_status = $conn->prepare(
+    "SELECT ip.status, ip.wattage, ip.quantity, ip.current_warehouse_id, w.name AS warehouse_name,
+            ip.current_project_id, p.project_name
+       FROM inventory_pallets ip
+       LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+       LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+       LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+       LEFT JOIN projects p ON ip.current_project_id = p.id
+       WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)"
+);
+$stmt_status->bind_param('iii', $project_id, $project_id, $project_id);
+$stmt_status->execute();
+$res_status = $stmt_status->get_result();
+while ($row = $res_status->fetch_assoc()) {
+    $status  = $row['status'];
+    $wattage = (int)$row['wattage'];
+    $qty     = (int)$row['quantity'];
+    $wh_id   = $row['current_warehouse_id'];
+    $wh_name = $row['warehouse_name'];
+    $proj_id = $row['current_project_id'];
+    $proj_name = $row['project_name'];
+
+    if (!isset($status_totals[$status])) {
+        $status_totals[$status] = ['pallets' => 0, 'modules' => 0];
+    }
+    $status_totals[$status]['pallets'] += 1;
+    $status_totals[$status]['modules'] += $qty;
+
+    if ($status === 'In Warehouse' && $wh_name) {
+        $key = 'In Warehouse - ' . $wh_name;
+    } elseif ($status === 'In Transit to Warehouse' && $wh_name) {
+        $key = 'In Transit to Warehouse - ' . $wh_name;
+    } elseif ($status === 'In Transit to Project' && $proj_name) {
+        $key = 'In Transit to Project - ' . $proj_name;
+    } elseif ($status === 'At Manufacturer') {
+        $key = 'At Manufacturer';
+    } else {
+        $key = $status;
+    }
+
+    if (!isset($detailed_breakdown[$key])) {
+        $detailed_breakdown[$key] = [
+            'pallet_count' => 0,
+            'total_modules' => 0,
+            'wattage_breakdown' => [],
+            'warehouse_id' => $wh_id,
+            'project_id' => $proj_id
+        ];
+    }
+    $detailed_breakdown[$key]['pallet_count']++;
+    $detailed_breakdown[$key]['total_modules'] += $qty;
+    if (!isset($detailed_breakdown[$key]['wattage_breakdown'][$wattage])) {
+        $detailed_breakdown[$key]['wattage_breakdown'][$wattage] = ['pallets' => 0, 'modules' => 0];
+    }
+    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['pallets']++;
+    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['modules'] += $qty;
+}
+$stmt_status->close();
+
 $conn->close();
 
 // Determine the correct link for the "Deliveries" button
@@ -817,6 +885,77 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 .toggle-buttons button:not(.active):hover {
     background: #f8f9fa;
     color: #495057;
+}
+#financial-info {
+    display: none;
+}
+/* Timeline Styles */
+.timeline {
+    display: flex;
+    justify-content: space-between;
+    list-style: none;
+    padding: 0;
+    margin: 40px auto;
+    position: relative;
+    max-width: 800px;
+}
+.timeline::before {
+    content: '';
+    position: absolute;
+    top: 15px;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: #e0e0e0;
+    z-index: 0;
+}
+.timeline-item {
+    flex: 1;
+    text-align: center;
+    position: relative;
+}
+.timeline-item .circle {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #fff;
+    border: 3px solid #e0e0e0;
+    margin: 0 auto 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    color: #6c757d;
+    position: relative;
+    z-index: 1;
+}
+.timeline-item.completed .circle {
+    background: #488C9A;
+    border-color: #488C9A;
+    color: #fff;
+}
+.timeline-item .label {
+    font-weight: 600;
+    color: #293E4C;
+}
+.shipping-statuses {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 10px;
+}
+.shipping-box {
+    background: #f8f9fa;
+    border: 2px solid #488C9A;
+    border-radius: 8px;
+    padding: 10px;
+    cursor: pointer;
+    min-width: 150px;
+    transition: transform 0.2s;
+}
+.shipping-box:hover {
+    transform: scale(1.05);
 }
 #financial-info {
     display: none;
@@ -1454,194 +1593,71 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     </div>
 
     <div class="toggle-buttons">
-        <button id="delivery-info-btn" class="active" onclick="showView('delivery-info')">Delivery View</button>
-        <button id="financial-info-btn" onclick="showView('financial-info')">Financial View</button>
+        <button id="progress-info-btn" class="active" onclick="showView('progress-info')">Project Progress</button>
+        <button id="site-info-btn" onclick="showView('site-info')">Site Information</button>
+        <button id="module-info-btn" onclick="showView('module-info')">Module Information</button>
     </div>
 
-    <!-- Delivery Info -->
-    <div id="delivery-info">
-        <form method="GET" id="filter-form">
-            <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-            <label>
-                <input type="radio" name="view_mode" value="mw"
-                       <?php if($view_mode=='mw') echo 'checked';?>
-                       onchange="this.form.submit();"> MWs
-            </label>
-            <label>
-                <input type="radio" name="view_mode" value="modules"
-                       <?php if($view_mode=='modules') echo 'checked';?>
-                       onchange="this.form.submit();"> Number of Modules
-            </label>
-        </form>
-        <div class="tables-and-charts">
-            <div class="left-side">
-                <h2>Next 5 Weeks of Deliveries</h2>
-                <div class="table-responsive">
-                    <table id="table1">
-                        <thead>
-                            <tr>
-                                <th>Project</th>
-                                <th>Module Type</th>
-                                <th>Total Order</th>
-                                <th>Delivered</th>
-                                <?php foreach($weeks as $wk): ?>
-                                    <th><?php echo $wk['end']->format('n/j'); ?></th>
-                                <?php endforeach; ?>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr onclick="toggleSubRows('delivery-row')">
-                                <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                <td><?php echo htmlspecialchars($module_type_combined);?></td>
-                                <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
-                                <?php foreach($anticipated_quantities_combined as $qq): ?>
-                                    <td><?php echo number_format($qq,($view_mode=='mw')?2:0);?></td>
-                                <?php endforeach;?>
-                            </tr>
-                            <?php foreach($sub_rows as $lbl=>$sr): ?>
-                                <tr class="delivery-row" style="display:none;">
-                                    <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                    <td><?php echo htmlspecialchars($sr['wattage_label']);?></td>
-                                    <td><?php echo number_format($sr['total_order'],($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($sr['delivered'],($view_mode=='mw')?2:0);?></td>
-                                    <?php foreach($sr['anticipated_quantities'] as $val): ?>
-                                        <td><?php echo number_format($val,($view_mode=='mw')?2:0);?></td>
-                                    <?php endforeach;?>
-                                </tr>
-                            <?php endforeach;?>
-                        </tbody>
-                    </table>
+    <!-- Project Progress -->
+    <div id="progress-info">
+        <ul class="timeline">
+            <li class="timeline-item completed">
+                <div class="circle">1</div>
+                <span class="label">Project Created</span>
+            </li>
+            <li class="timeline-item<?php echo ($total_raw_modules>0)?' completed':''; ?>">
+                <div class="circle">2</div>
+                <span class="label"><a href="modules.php?project_id=<?php echo $project_id; ?>">Add Modules</a></span>
+            </li>
+            <li class="timeline-item<?php echo ($pending_combined==0 && $total_order_combined>0)?' completed':''; ?>">
+                <div class="circle">3</div>
+                <span class="label"><a href="module_overview.php?project_id=<?php echo $project_id; ?>">Palletize Modules</a></span>
+            </li>
+            <li class="timeline-item">
+                <div class="circle">4</div>
+                <span class="label">Shipping</span>
+                <div class="shipping-statuses">
+                    <div class="shipping-box" onclick="showShippingBreakdown('At Manufacturer')">
+                        At Manufacturer<br><?php echo $status_totals['At Manufacturer']['pallets'] ?? 0; ?> pallets
+                    </div>
+                    <?php if(($status_totals['In Transit to Warehouse']['pallets'] ?? 0) > 0): ?>
+                    <div class="shipping-box" onclick="showShippingBreakdown('In Transit to Warehouse')">
+                        In Transit to Warehouse<br><?php echo $status_totals['In Transit to Warehouse']['pallets']; ?> pallets
+                    </div>
+                    <?php endif; ?>
+                    <?php if(($status_totals['In Warehouse']['pallets'] ?? 0) > 0): ?>
+                    <div class="shipping-box" onclick="showShippingBreakdown('In Warehouse')">
+                        In Warehouse<br><?php echo $status_totals['In Warehouse']['pallets']; ?> pallets
+                    </div>
+                    <?php endif; ?>
+                    <?php if(($status_totals['In Transit to Project']['pallets'] ?? 0) > 0): ?>
+                    <div class="shipping-box" onclick="showShippingBreakdown('In Transit to Project')">
+                        In Transit to Project<br><?php echo $status_totals['In Transit to Project']['pallets']; ?> pallets
+                    </div>
+                    <?php endif; ?>
                 </div>
-                <h2>Anticipated vs Actual Deliveries</h2>
-                <canvas id="lineChart"></canvas>
-            </div>
-
-            <div class="right-side">
-                <h2>Module Delivery Status</h2>
-                <div class="table-responsive">
-                    <table id="table2">
-                        <thead>
-                            <tr>
-                                <th>Project</th>
-                                <th>Module Type</th>
-                                <th>Total Order</th>
-                                <th>Delivered to Project</th>
-                                <th>In Warehouse</th>
-                                <th>Pending</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr onclick="toggleSubRows('status-row')">
-                                <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                <td><?php echo htmlspecialchars($module_type_combined);?></td>
-                                <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
-                                <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
-                                <td><?php echo number_format($pending_combined,($view_mode=='mw')?2:0);?></td>
-                            </tr>
-                            <?php foreach($sub_rows_status as $lbl=>$srs): ?>
-                                <tr class="status-row" style="display:none;">
-                                    <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                    <td><?php echo htmlspecialchars($srs['wattage_label']);?></td>
-                                    <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($srs['in_warehouse'],($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($srs['pending'],($view_mode=='mw')?2:0);?></td>
-                                </tr>
-                            <?php endforeach;?>
-                        </tbody>
-                    </table>
-                </div>
-                <h2>Delivery Overview</h2>
-                <div class="chart-container">
-                    <canvas id="pieChart"></canvas>
-                </div>
-            </div>
-        </div>
+            </li>
+            <li class="timeline-item<?php echo ($delivered_combined >= $total_order_combined && $total_order_combined>0)?' completed':''; ?>">
+                <div class="circle">5</div>
+                <span class="label">Project Completed</span>
+            </li>
+        </ul>
     </div>
 
-    <!-- Financial Info -->
-    <div id="financial-info">
-        <div class="tables-and-charts">
-            <div class="left-side">
-                <h2>Invoices and Cashflow Forecast</h2>
-                <div class="table-responsive">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Project</th>
-                                <th>Open Invoices</th>
-                                <th>Total Costs</th>
-                                <?php foreach($weeks_financial as $wf): ?>
-                                    <th><?php echo $wf['end']->format('n/j'); ?></th>
-                                <?php endforeach;?>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                <td>
-                                    <a href="invoices.php?project_id=<?php echo $project_id; ?>">
-                                        $<?php echo number_format($open_invoices_total,2);?>
-                                    </a>
-                                </td>
-                                <td>$<?php echo number_format($total_logistics_cost,2);?></td>
-                                <?php foreach($weeks_financial as $ix=>$wf){
-                                    $val = $anticipated_deliveries_financial[$ix] ?? 0;
-                                    echo "<td>$".number_format($val,2)."</td>";
-                                } ?>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <h2>Forecasted vs Actual Cost</h2>
-                <canvas id="budgetLineChart"></canvas>
-            </div>
+    <!-- Site Information -->
+    <div id="site-info" style="display:none;"></div>
 
-            <div class="right-side">
-                <h2>Cost per Unit</h2>
-                <div class="table-responsive">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Project</th>
-                                <th>Module Type</th>
-                                <th>Total Costs</th>
-                                <th>Price Per Pallet</th>
-                                <th>Price Per Module</th>
-                                <th>Price Per Watt</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <!-- Combined row -->
-                            <tr onclick="toggleSubRows('cost-row')">
-                                <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                <td><?php echo htmlspecialchars($combined_label);?></td>
-                                <td>$<?php echo number_format($combined_total_costs,2);?></td>
-                                <td>$<?php echo number_format($combined_ppp,2);?></td>
-                                <td>$<?php echo number_format($combined_ppm,2);?></td>
-                                <td>$<?php echo number_format($combined_ppw,4);?></td>
-                            </tr>
-                            <!-- Detailed rows -->
-                            <?php foreach($cost_data as $key=>$cd): ?>
-                                <tr class="cost-row" style="display:none;">
-                                    <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                    <td><?php echo htmlspecialchars($cd['module_type']);?></td>
-                                    <td>$<?php echo number_format($cd['total_costs'],2);?></td>
-                                    <td>$<?php echo number_format($cd['price_per_pallet'],2);?></td>
-                                    <td>$<?php echo number_format($cd['price_per_module'],2);?></td>
-                                    <td>$<?php echo number_format($cd['price_per_watt'],4);?></td>
-                                </tr>
-                            <?php endforeach;?>
-                        </tbody>
-                    </table>
-                </div>
-                <h2>Cost Breakdown</h2>
-                <div class="chart-container">
-                    <canvas id="costPieChart"></canvas>
-                </div>
+    <!-- Module Information -->
+    <div id="module-info" style="display:none;"></div>
+
+    <!-- Shipping Breakdown Modal -->
+    <div id="shippingModal" class="warehouse-selection-modal" style="display:none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="shippingModalTitle"></h3>
+                <span class="close-modal" onclick="closeShippingModal()">&times;</span>
             </div>
+            <div class="modal-body" id="shippingModalContent"></div>
         </div>
     </div>
 </main>
@@ -1650,8 +1666,9 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 // Delivery View line chart
 var dateLabels = <?php echo $dateLabelsJSON; ?>;
 var lineData   = <?php echo $lineChartDataJSON; ?>;
-var ctxLine    = document.getElementById('lineChart').getContext('2d');
-
+var ctxLineEl  = document.getElementById('lineChart');
+if(ctxLineEl){
+var ctxLine    = ctxLineEl.getContext('2d');
 var lineChart = new Chart(ctxLine, {
     type: 'line',
     data: {
@@ -1701,11 +1718,14 @@ var lineChart = new Chart(ctxLine, {
         }
     }
 });
+}
 
 // Delivery Overview pie
 var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages));?>;
 var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages));?>;
-var ctxPie         = document.getElementById('pieChart').getContext('2d');
+var ctxPieEl       = document.getElementById('pieChart');
+if(ctxPieEl){
+var ctxPie         = ctxPieEl.getContext('2d');
 var pieChart = new Chart(ctxPie,{
     type:'pie',
     data:{
@@ -1733,22 +1753,18 @@ var pieChart = new Chart(ctxPie,{
         }
     }
 });
+}
 
 function showView(viewId) {
-    document.getElementById('delivery-info').style.display='none';
-    document.getElementById('financial-info').style.display='none';
-
-    document.getElementById('delivery-info-btn').classList.remove('active');
-    document.getElementById('financial-info-btn').classList.remove('active');
-
-    if(viewId==='delivery-info'){
-        document.getElementById('delivery-info').style.display='block';
-        document.getElementById('delivery-info-btn').classList.add('active');
-    } else {
-        document.getElementById('financial-info').style.display='block';
-        document.getElementById('financial-info-btn').classList.add('active');
-        initializeFinancialCharts();
-    }
+    ['progress-info','site-info','module-info'].forEach(function(id){
+        var sec = document.getElementById(id);
+        var btn = document.getElementById(id+'-btn');
+        if(sec) sec.style.display = (id===viewId)?'block':'none';
+        if(btn){
+            if(id===viewId) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
+    });
 }
 
 function toggleSubRows(cls){
@@ -1905,6 +1921,55 @@ function handleAdminWarehousing() {
     }
 }
 
+// Shipping Breakdown modal
+const shippingBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
+function showShippingBreakdown(type){
+    const modal = document.getElementById('shippingModal');
+    const title = document.getElementById('shippingModalTitle');
+    const content = document.getElementById('shippingModalContent');
+    title.textContent = type + ' - Detailed Breakdown';
+    content.innerHTML = generateShippingContent(type);
+    modal.style.display = 'block';
+}
+function closeShippingModal(){
+    const modal = document.getElementById('shippingModal');
+    if(modal) modal.style.display = 'none';
+}
+function generateShippingContent(filter){
+    let html='<div style="max-height:400px;overflow-y:auto;">';
+    let has=false;
+    for(const key in shippingBreakdown){
+        if(key.includes(filter)){
+            has=true;
+            const data=shippingBreakdown[key];
+            html+=`<div style="margin-bottom:20px;padding:15px;background:#f8f9fa;border-radius:8px;border-left:4px solid #488C9A;">`+
+                 `<h4 style="margin-top:0;">${key}</h4>`+
+                 `<p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>`;
+            if(data.wattage_breakdown && Object.keys(data.wattage_breakdown).length>0){
+                html+='<p><strong>Wattage Breakdown:</strong></p><ul>';
+                for(const w in data.wattage_breakdown){
+                    const d=data.wattage_breakdown[w];
+                    html+=`<li>${w}W: ${d.pallets} pallets (${d.modules.toLocaleString()} modules)</li>`;
+                }
+                html+='</ul>';
+            }
+            if(filter==='In Transit to Warehouse' && data.warehouse_id){
+                html+=`<a href="manage_warehouse_inventory.php?warehouse_id=${data.warehouse_id}&project_id=<?php echo $project_id; ?>" class="modal-action" style="display:inline-block;margin-top:8px;background:#488C9A;color:#fff;padding:6px 10px;border-radius:4px;text-decoration:none;">Receive into Warehouse</a>`;
+            }
+            html+='</div>';
+        }
+    }
+    if(!has){html+='<p style="text-align:center;color:#666;font-style:italic;">No data.</p>';}
+    if(filter==='At Manufacturer'){
+        html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status=manufacturer" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
+    }else if(filter==='In Warehouse'){
+        html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status=warehouse" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
+    }else if(filter==='In Transit to Project'){
+        html+=`<div style="text-align:center;margin-top:15px;"><a href="scheduling.php?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Schedule Deliveries</a></div>`;
+    }
+    html+='</div>';
+    return html;
+}
 function showWarehouseSelectionModal() {
     const modal = document.createElement('div');
     modal.className = 'warehouse-selection-modal';
@@ -1992,6 +2057,9 @@ window.onclick = function(event) {
     // Close warehouse modal if clicking outside
     if (event.target.classList.contains('warehouse-selection-modal')) {
         closeWarehouseModal();
+    }
+    if (event.target.id === 'shippingModal') {
+        closeShippingModal();
     }
 }
 </script>
