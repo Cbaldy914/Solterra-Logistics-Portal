@@ -466,7 +466,9 @@ if ($action) {
         $stmt = $conn->prepare(
             "SELECT id, bol_number, wattage, quantity, supplier
              FROM deliveries
-             WHERE project_id = ? AND status_of_delivery = 'In Transit to Project'
+             WHERE project_id = ?
+               AND status_of_delivery = 'In Transit to Project'
+               AND IFNULL(scheduled, 0) = 0
              ORDER BY bol_number"
         );
         $stmt->bind_param("i", $project_id);
