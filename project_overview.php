@@ -727,28 +727,33 @@ $stmt_warehouses = $conn->prepare("
     LEFT JOIN inventory_pallets ip ON w.id = ip.current_warehouse_id 
         AND ip.status = 'In Warehouse' 
         AND (ip.assigned_project_id = ? OR ip.current_project_id = ?)
-    LEFT JOIN deliveries d_transit ON w.id = d_transit.warehouse_id 
-        AND d_transit.project_id = ? 
-        AND d_transit.status_of_delivery LIKE 'In Transit%' 
+    LEFT JOIN deliveries d_transit ON w.id = d_transit.warehouse_id
+        AND d_transit.project_id = ?
+        AND d_transit.status_of_delivery LIKE 'In Transit%'
         AND d_transit.warehouse_arrival_date IS NULL
-    WHERE 
+    WHERE
         EXISTS (
             SELECT 1 FROM inventory_pallets ip_check
-            WHERE ip_check.current_warehouse_id = w.id 
+            WHERE ip_check.current_warehouse_id = w.id
                 AND ip_check.status = 'In Warehouse'
                 AND (ip_check.assigned_project_id = ? OR ip_check.current_project_id = ?)
-        ) 
+        )
         OR EXISTS (
             SELECT 1 FROM deliveries d_check
-            WHERE d_check.warehouse_id = w.id 
-                AND d_check.project_id = ? 
+            WHERE d_check.warehouse_id = w.id
+                AND d_check.project_id = ?
                 AND d_check.status_of_delivery LIKE 'In Transit%'
                 AND d_check.warehouse_arrival_date IS NULL
+        )
+        OR EXISTS (
+            SELECT 1 FROM deliveries d_hist
+            WHERE d_hist.warehouse_id = w.id
+                AND d_hist.project_id = ?
         )
     GROUP BY w.id, w.name, w.address, w.image_url
     ORDER BY w.name ASC
 ");
-$stmt_warehouses->bind_param("iiiiii", $project_id, $project_id, $project_id, $project_id, $project_id, $project_id);
+$stmt_warehouses->bind_param("iiiiiii", $project_id, $project_id, $project_id, $project_id, $project_id, $project_id, $project_id);
 $stmt_warehouses->execute();
 $result_warehouses = $stmt_warehouses->get_result();
 while ($wh = $result_warehouses->fetch_assoc()) {
