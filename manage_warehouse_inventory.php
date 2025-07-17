@@ -582,7 +582,7 @@ $conn->close();
 <main>
     <!-- Add breadcrumb navigation -->
     <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
         <?php 
         $from_project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;

@@ -644,11 +644,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 <main>
     <!-- Add breadcrumb navigation -->
     <div class="breadcrumb" style="margin: 10px 20px;">
-        <?php if ($is_global_admin): ?>
-            <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <?php else: ?>
-            <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <?php endif; ?>
+        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
         <?php 
         $from_project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
@@ -900,11 +896,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         </div>
 
         <div class="back-link" style="margin-top: 20px;">
-            <?php if ($is_global_admin): ?>
-                <a href="admin_dashboard.php" class="action-button">&larr; Back to Admin Dashboard</a>
-            <?php else: ?>
-                <a href="dashboard.php" class="action-button">&larr; Back to Dashboard</a>
-            <?php endif; ?>
+            <a href="dashboard.php" class="action-button">&larr; Back to Dashboard</a>
         </div>
     </form> <!-- End shipPalletsForm -->
 </main>

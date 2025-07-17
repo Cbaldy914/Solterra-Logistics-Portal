@@ -1786,7 +1786,7 @@ include('header.php');
     <main>
         <!-- Breadcrumb -->
         <div class="breadcrumb" style="display: flex; margin-bottom: 20px; margin-top: 10px;">
-            <a href="<?php echo ($role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+            <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
             <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
             <a href="project_overview.php?project_id=<?php echo $project_id; ?>" style="color: #488C9A; text-decoration: none;"><?php echo htmlspecialchars($project_name); ?></a>
             <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
