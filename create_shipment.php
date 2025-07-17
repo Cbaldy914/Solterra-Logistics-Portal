@@ -82,6 +82,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
 
         $destinationType = $_POST['destination_type'] ?? 'project';
         $destinationId   = isset($_POST['destination_id']) ? intval($_POST['destination_id']) : 0;
+        $originType      = $_POST['origin_type'] ?? 'manufacturer';
+        $originId        = isset($_POST['origin_id']) && $_POST['origin_id'] !== '' ? intval($_POST['origin_id']) : null;
         $bolNumber       = trim($_POST['bol_number'] ?? '');
         $bolNumbers      = isset($_POST['bol_numbers']) ? json_decode($_POST['bol_numbers'], true) : [];
         $departureDate   = $_POST['departure_date'] ?? null;
@@ -110,6 +112,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         // Fetch supplier/vendor_name for this batch
         $vendor_name = $current_batch_vendor_name ?? 'Unknown Vendor';
 
+        // Determine supplier name based on origin
+        $supplier_name = $vendor_name;
+        if ($originType === 'warehouse' && $originId) {
+            $whStmt = $conn->prepare("SELECT name FROM warehouses WHERE id = ?");
+            if ($whStmt) {
+                $whStmt->bind_param("i", $originId);
+                $whStmt->execute();
+                $whStmt->bind_result($whName);
+                if ($whStmt->fetch()) {
+                    $supplier_name = $whName;
+                }
+                $whStmt->close();
+            }
+        }
+
         // Fetch details for selected pallets
         $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
         $types        = str_repeat('i', count($palletIds));
@@ -134,20 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             $palletGroups[] = $allPallets;
         }
 
-        // Prepare statements for delivery and pallet updates
-        $sqlDelivery = "";
-        $deliveryTypes = "";
-        $deliveryParams = [];
-        if ($destinationType === 'project') {
-            $sqlDelivery = "INSERT INTO deliveries (project_id, supplier, origin_type, origin_id, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, 'manufacturer', NULL, ?, ?, ?, ?, 'In Transit to Project', ?, ?, ?, ?)";
-            $deliveryTypes = "ississdddd";
-        } else {
-            $sqlDelivery = "INSERT INTO deliveries (project_id, warehouse_id, supplier, origin_type, origin_id, wattage, quantity, bol_number, anticipated_delivery_date, status_of_delivery, freight_cost, accessorial_costs, customer_cost, miles) VALUES (?, ?, ?, 'manufacturer', NULL, ?, ?, ?, ?, 'In Transit to Warehouse', ?, ?, ?, ?)";
-            $deliveryTypes = "iississdddd";
-        }
-        $stmtDelivery = $conn->prepare($sqlDelivery);
-        if (!$stmtDelivery) throw new Exception("Failed to prepare delivery insert: " . $conn->error);
-
+        // Dynamic delivery insert to properly record origin details
         $stmtLink = $conn->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
         if (!$stmtLink) throw new Exception("Failed to prepare pallet link insert: " . $conn->error);
 
@@ -158,11 +162,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         $groupIndex = 0;
         foreach ($palletGroups as $group) {
             // Determine which BOL number to use
-            $currentBolNumber = $bolNumber; // Default for single shipments
+            $currentBolNumber = $bolNumber;
             if ($shipmentMode === 'multi' && !empty($bolNumbers)) {
                 $currentBolNumber = $bolNumbers[$groupIndex] ?? $bolNumber;
             }
-            
+
             // Group by wattage for each delivery
             $groupByWattage = [];
             foreach ($group as $pallet) {
@@ -170,37 +174,109 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                 if (!isset($groupByWattage[$w])) $groupByWattage[$w] = [];
                 $groupByWattage[$w][] = $pallet;
             }
+
             foreach ($groupByWattage as $wattage => $palletsForWatt) {
                 $groupQty = array_sum(array_column($palletsForWatt, 'quantity'));
-                if ($destinationType === 'project') {
-                    $deliveryParams = [$destinationId, $vendor_name, $wattage, $groupQty, $currentBolNumber, $estArrivalDate, $freightCost, $accessorialCost, $customerCost, $miles];
-                } else {
-                    $deliveryParams = [$source_project_id_for_delivery, $destinationId, $vendor_name, $wattage, $groupQty, $currentBolNumber, $estArrivalDate, $freightCost, $accessorialCost, $customerCost, $miles];
+
+                $deliveryColumns = [
+                    'supplier',
+                    'origin_type',
+                    'origin_id',
+                    'wattage',
+                    'quantity',
+                    'bol_number'
+                ];
+                $deliveryParams = [
+                    $supplier_name,
+                    $originType,
+                    $originId,
+                    $wattage,
+                    $groupQty,
+                    $currentBolNumber
+                ];
+                $deliveryTypes = 'ssiisi';
+
+                if ($originType === 'warehouse') {
+                    $deliveryColumns[] = 'left_warehouse_date';
+                    $deliveryParams[] = $departureDate;
+                    $deliveryTypes .= 's';
                 }
+
+                $deliveryColumns[] = 'anticipated_delivery_date';
+                $deliveryParams[] = $estArrivalDate;
+                $deliveryTypes .= 's';
+
+                $statusOfDelivery = ($destinationType === 'project') ? 'In Transit to Project' : 'In Transit to Warehouse';
+                $deliveryColumns[] = 'status_of_delivery';
+                $deliveryParams[] = $statusOfDelivery;
+                $deliveryTypes .= 's';
+
+                $deliveryColumns[] = 'freight_cost';
+                $deliveryParams[] = $freightCost;
+                $deliveryTypes .= 'd';
+
+                $deliveryColumns[] = 'accessorial_costs';
+                $deliveryParams[] = $accessorialCost;
+                $deliveryTypes .= 'd';
+
+                $deliveryColumns[] = 'customer_cost';
+                $deliveryParams[] = $customerCost;
+                $deliveryTypes .= 'd';
+
+                $deliveryColumns[] = 'miles';
+                $deliveryParams[] = $miles;
+                $deliveryTypes .= 'd';
+
+                if ($destinationType === 'project') {
+                    $deliveryColumns[] = 'project_id';
+                    $deliveryParams[] = $destinationId;
+                    $deliveryTypes .= 'i';
+                    if ($originType === 'warehouse') {
+                        $deliveryColumns[] = 'warehouse_id';
+                        $deliveryParams[] = $originId;
+                        $deliveryTypes .= 'i';
+                    }
+                } else { // Destination is another warehouse
+                    $deliveryColumns[] = 'project_id';
+                    $deliveryParams[] = $source_project_id_for_delivery;
+                    $deliveryTypes .= 'i';
+
+                    $deliveryColumns[] = 'warehouse_id';
+                    $deliveryParams[] = $destinationId;
+                    $deliveryTypes .= 'i';
+                }
+
+                $placeholders = implode(',', array_fill(0, count($deliveryParams), '?'));
+                $sqlDeliveryInsert = 'INSERT INTO deliveries (' . implode(',', $deliveryColumns) . ') VALUES (' . $placeholders . ')';
+                $stmtDelivery = $conn->prepare($sqlDeliveryInsert);
+                if (!$stmtDelivery) throw new Exception('Failed to prepare delivery insert: ' . $conn->error);
+
                 $stmtDelivery->bind_param($deliveryTypes, ...$deliveryParams);
                 if (!$stmtDelivery->execute()) {
-                    throw new Exception("Failed to insert delivery for {$wattage}W: " . $stmtDelivery->error);
+                    throw new Exception('Failed to insert delivery for ' . $wattage . 'W: ' . $stmtDelivery->error);
                 }
+
                 $deliveryId = $conn->insert_id;
                 $createdDeliveryIds[] = $deliveryId;
+
                 foreach ($palletsForWatt as $pallet) {
-                    $stmtLink->bind_param("ii", $deliveryId, $pallet['id']);
+                    $stmtLink->bind_param('ii', $deliveryId, $pallet['id']);
                     if (!$stmtLink->execute()) {
-                        throw new Exception("Failed to link pallet ID {$pallet['id']} to delivery {$deliveryId}: " . $stmtLink->error);
+                        throw new Exception('Failed to link pallet ID ' . $pallet['id'] . ' to delivery ' . $deliveryId . ': ' . $stmtLink->error);
                     }
-                    // Update pallet status/location
+
                     $status = ($destinationType === 'project') ? 'In Transit to Project' : 'In Transit to Warehouse';
                     $projectId = ($destinationType === 'project') ? $destinationId : null;
                     $warehouseId = ($destinationType === 'warehouse') ? $destinationId : null;
-                    $stmtUp->bind_param("siisi", $status, $projectId, $warehouseId, $estArrivalDate, $pallet['id']);
+                    $stmtUp->bind_param('siisi', $status, $projectId, $warehouseId, $estArrivalDate, $pallet['id']);
                     if (!$stmtUp->execute()) {
-                        throw new Exception("Failed to update pallet ID {$pallet['id']}: " . $stmtUp->error);
+                        throw new Exception('Failed to update pallet ID ' . $pallet['id'] . ': ' . $stmtUp->error);
                     }
                 }
             }
-            $groupIndex++; // Move to next BOL number for next truck
+            $groupIndex++;
         }
-        $stmtDelivery->close();
+
         $stmtLink->close();
         $stmtUp->close();
         $conn->commit();
