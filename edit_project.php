@@ -114,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $conn->close();
     // Redirect or show success
-    header("Location: admin_dashboard");
+    header("Location: dashboard");
     exit();
 
 } else {
@@ -393,7 +393,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <button type="submit" class="btn-submit">Update Project</button>
         </form>
         <br>
-        <a href="admin_dashboard">Back to Admin Dashboard</a>
+        <a href="dashboard">Back to Dashboard</a>
     </main>
 
     <!-- Load the Google Maps JavaScript API with Places library -->

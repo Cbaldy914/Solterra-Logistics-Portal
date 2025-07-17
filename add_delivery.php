@@ -227,7 +227,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
              $redirect_url = "project_overview.php?id=" . $targetId;
         } else {
             // If added to warehouse, maybe go to warehouse list or dashboard
-             $redirect_url = "admin_dashboard.php"; // Placeholder
+             $redirect_url = "dashboard.php";
         }
         header("Location: " . $redirect_url);
         exit();
@@ -324,7 +324,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
 <main>
     <!-- Breadcrumb Navigation -->
     <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="admin_dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
         <a href="manage_deliveries.php" style="color: #488C9A; text-decoration: none;">Manage Deliveries</a>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>

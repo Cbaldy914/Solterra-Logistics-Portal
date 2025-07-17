@@ -385,7 +385,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <?php include 'header.php'; ?>
 <main>
 <div class="breadcrumb">
-    <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+    <a href="dashboard.php">Dashboard</a>
     <span class="separator">&raquo;</span>
     <span>Warehouse Quote Request</span>
 </div>
