@@ -224,9 +224,15 @@ try {
                 )
             )
             
-            -- LEFT JOIN to deliveries
-            LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
-            LEFT JOIN deliveries d ON dp.delivery_id = d.id
+            -- Join to the most recent delivery for each pallet to avoid
+            -- duplicate rows when pallets have multiple deliveries
+            LEFT JOIN (
+                SELECT dp.inventory_pallet_id, MAX(dp.delivery_id) AS latest_delivery_id
+                FROM delivery_pallets dp
+                JOIN deliveries d2 ON dp.delivery_id = d2.id
+                GROUP BY dp.inventory_pallet_id
+            ) dp_latest ON dp_latest.inventory_pallet_id = ip.id
+            LEFT JOIN deliveries d ON dp_latest.latest_delivery_id = d.id
             
             -- Link to project
             INNER JOIN projects p ON (
