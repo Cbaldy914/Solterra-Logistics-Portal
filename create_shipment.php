@@ -217,7 +217,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             
             // Provide single scheduling link for the project
             if ($destinationId > 0) {
-                $shipMessage .= " <a href='scheduling.php?project_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>Schedule Delivery</a>";
+                $dateParam = urlencode($estArrivalDate);
+                $shipMessage .= " <a href='scheduling.php?project_id={$destinationId}&date={$dateParam}' style='color: #488C9A; text-decoration: underline;'>Schedule Delivery</a>";
             }
         }
     } catch (Exception $e) {
