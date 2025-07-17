@@ -1380,9 +1380,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 <?php include 'header.php'; ?>
 <main>
     <?php
-    $backLink = ($role === 'global_admin')
-        ? 'admin_dashboard.php'
-        : 'dashboard.php';
+    $backLink = 'dashboard.php';
     ?>
     <div class="breadcrumb" style="margin: 10px 20px;">
         <a href="<?php echo $backLink; ?>">Dashboard</a>

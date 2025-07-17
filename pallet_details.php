@@ -226,7 +226,7 @@ $conn->close();
 // Set up breadcrumbs
 $breadcrumbs = [];
 if ($role === 'admin' || $role === 'global_admin') {
-    $breadcrumbs[] = ['href' => 'admin_dashboard.php', 'text' => 'Dashboard'];
+    $breadcrumbs[] = ['href' => 'dashboard.php', 'text' => 'Dashboard'];
     $breadcrumbs[] = ['href' => 'manage_pallets.php', 'text' => 'Manage Pallets'];
 } else {
     $breadcrumbs[] = ['href' => 'dashboard.php', 'text' => 'Dashboard'];

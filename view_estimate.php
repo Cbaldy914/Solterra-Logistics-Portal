@@ -496,7 +496,7 @@ if($in_fee_w3!=0 || $out_fee_w3!=0 || $sto_fee_w3!=0 || !empty($pallets_entering
 <main>
     <!-- Page Header -->
     <div class="breadcrumb">
-        <a href="<?php echo isset($_SESSION['role']) && ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <a href="dashboard.php">Dashboard</a>
         <span class="separator">&raquo;</span>
         <a href="cost_estimate_calculator.php">Cost Estimate Calculator</a>
         <span class="separator">&raquo;</span>
