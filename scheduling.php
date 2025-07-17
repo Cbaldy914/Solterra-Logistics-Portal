@@ -2483,27 +2483,33 @@ include('header.php');
                 .then(data => {
                     if (data.success) {
                         const appointment = data.appointment;
-                        
+
+                        const aptDate = appointment.start_time.split(' ')[0];
+                        if (currentDate !== aptDate) {
+                            currentDate = aptDate;
+                            loadAppointments(currentView, currentDate);
+                        }
+
                         // Populate form fields
                         document.getElementById('edit_appointment_id').value = appointment.id;
                         document.getElementById('edit_bol_number').value = appointment.bol_number || '';
                         document.getElementById('edit_reference_numbers').value = appointment.reference_numbers || '';
                         document.getElementById('edit_description').value = appointment.description || '';
                         document.getElementById('editDateTimeDisplay').textContent = formatDateTime(appointment.start_time);
-                        
+
                         // Format datetime for input fields
                         if (appointment.arrival_time) {
                             document.getElementById('edit_arrival_time').value = appointment.arrival_time.replace(' ', 'T').substring(0, 16);
                         } else {
                             document.getElementById('edit_arrival_time').value = '';
                         }
-                        
+
                         if (appointment.departure_time) {
                             document.getElementById('edit_departure_time').value = appointment.departure_time.replace(' ', 'T').substring(0, 16);
                         } else {
                             document.getElementById('edit_departure_time').value = '';
                         }
-                        
+
                         // Show modal
                         document.getElementById('editAppointmentModal').style.display = 'flex';
                     } else {
@@ -2900,14 +2906,20 @@ include('header.php');
         function openEditModal(appointmentId) {
             // Reset tabs to first tab
             showTab('details');
-            
+
             // Fetch appointment details
             fetch(`scheduling.php?action=get_appointment&appointment_id=${appointmentId}&project_id=${projectId}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
                         const appointment = data.appointment;
-                        
+
+                        const aptDate = appointment.start_time.split(' ')[0];
+                        if (currentDate !== aptDate) {
+                            currentDate = aptDate;
+                            loadAppointments(currentView, currentDate);
+                        }
+
                         // Populate form fields
                         document.getElementById('edit_appointment_id').value = appointment.id;
                         document.getElementById('edit_bol_number').value = appointment.bol_number || '';
