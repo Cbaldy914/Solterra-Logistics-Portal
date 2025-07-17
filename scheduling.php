@@ -461,6 +461,27 @@ if ($action) {
         }
     }
 
+    // List available deliveries for dropdown
+    if ($action === 'list_deliveries') {
+        $stmt = $conn->prepare(
+            "SELECT id, bol_number, wattage, quantity, supplier
+             FROM deliveries
+             WHERE project_id = ?
+               AND status_of_delivery = 'In Transit to Project'
+               AND IFNULL(scheduled, 0) = 0
+             ORDER BY bol_number"
+        );
+        $stmt->bind_param("i", $project_id);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $deliveries = [];
+        while ($row = $res->fetch_assoc()) {
+            $deliveries[] = $row;
+        }
+        $stmt->close();
+        json_response(['success' => true, 'deliveries' => $deliveries]);
+    }
+
     // Add appointment (linked to delivery)
     if ($action === 'add_appointment') {
         $delivery_id = isset($_POST['delivery_id']) ? intval($_POST['delivery_id']) : 0;
@@ -1806,10 +1827,20 @@ include('header.php');
                     <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
                     <input type="hidden" name="start_datetime" id="add_start_datetime">
                     <input type="hidden" name="delivery_id" id="add_delivery_id">
-                    
+
+                    <div class="form-group" id="bolSelectGroup" style="display:none;">
+                        <label for="bol_select">BOL Number</label>
+                        <select id="bol_select"></select>
+                    </div>
+
                     <div class="form-group" id="timeSelectionGroup" style="display: none;">
                         <label for="appointment_time">Select Time:</label>
                         <input type="time" id="appointment_time" name="appointment_time" value="08:00">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Delivery Date &amp; Time:</label>
+                        <div id="selectedDateTimeDisplay"></div>
                     </div>
 
                     <div class="form-group" id="deliveryInfoGroup">
@@ -1861,6 +1892,11 @@ include('header.php');
                         <div class="form-group">
                             <label>BOL Number</label>
                             <input type="text" name="bol_number" id="edit_bol_number" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Delivery Date &amp; Time</label>
+                            <div id="editDateTimeDisplay"></div>
                         </div>
 
                         <div class="form-group" id="deliveryInfoEditGroup" style="display: none;">
@@ -2004,7 +2040,7 @@ include('header.php');
         }
         
         function prev() {
-            let dt = new Date(currentDate);
+            let dt = parseLocalDate(currentDate);
             if (currentView === 'day') {
                 dt.setDate(dt.getDate() - 1);
             } else if (currentView === 'week') {
@@ -2012,12 +2048,12 @@ include('header.php');
             } else {
                 dt.setMonth(dt.getMonth() - 1);
             }
-            currentDate = dt.toISOString().split('T')[0];
+            currentDate = formatDateKey(dt);
             loadAppointments(currentView, currentDate);
         }
-        
+
         function next() {
-            let dt = new Date(currentDate);
+            let dt = parseLocalDate(currentDate);
             if (currentView === 'day') {
                 dt.setDate(dt.getDate() + 1);
             } else if (currentView === 'week') {
@@ -2025,7 +2061,7 @@ include('header.php');
             } else {
                 dt.setMonth(dt.getMonth() + 1);
             }
-            currentDate = dt.toISOString().split('T')[0];
+            currentDate = formatDateKey(dt);
             loadAppointments(currentView, currentDate);
         }
         
@@ -2060,7 +2096,7 @@ include('header.php');
         }
         
         function renderDayView(date, appointments) {
-            const dayOfWeek = new Date(date).getDay();
+            const dayOfWeek = parseLocalDate(date).getDay();
             const dayHours = operatingHours[dayOfWeek];
             
             if (!dayHours || dayHours.length === 0) {
@@ -2093,7 +2129,7 @@ include('header.php');
             const current = new Date(startTime);
             while (current < endTime) {
                 const timeStr = current.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-                const slotKey = current.toISOString().substring(0, 19);
+                const slotKey = formatLocalISO(current);
                 
                 html += '<tr>';
                 html += `<td class="time-col">${timeStr}</td>`;
@@ -2102,7 +2138,7 @@ include('header.php');
                     if (appointmentMap[slotKey]) {
                         html += renderAppointmentCell(appointmentMap[slotKey]);
                     } else {
-                        const slotTime = current.toISOString().substring(0, 19).replace('T', ' ');
+                        const slotTime = formatLocalDateTime(current);
                         html += `<td><div class="appointment-slot" onclick="openAddModal('${slotTime}')">+</div></td>`;
                     }
                 } else {
@@ -2118,15 +2154,15 @@ include('header.php');
         }
         
         function renderWeekView(date, appointments) {
-            const startOfWeek = new Date(date);
+            const startOfWeek = parseLocalDate(date);
             const dayOfWeek = startOfWeek.getDay();
             startOfWeek.setDate(startOfWeek.getDate() - dayOfWeek);
             
             // Update title
             const endOfWeek = new Date(startOfWeek);
             endOfWeek.setDate(endOfWeek.getDate() + 6);
-            document.getElementById('currentTitle').textContent = 
-                `${formatDate(startOfWeek.toISOString().split('T')[0])} - ${formatDate(endOfWeek.toISOString().split('T')[0])}`;
+            document.getElementById('currentTitle').textContent =
+                `${formatDate(formatDateKey(startOfWeek))} - ${formatDate(formatDateKey(endOfWeek))}`;
             
             let html = '<div class="week-scroll-wrapper"><table class="week-grid">';
             
@@ -2136,7 +2172,7 @@ include('header.php');
             for (let i = 0; i < 7; i++) {
                 const currentDay = new Date(startOfWeek);
                 currentDay.setDate(startOfWeek.getDate() + i);
-                const dayStr = currentDay.toISOString().split('T')[0];
+                const dayStr = formatDateKey(currentDay);
                 html += `<th class="day-header">${days[i]}<br>${currentDay.getDate()}</th>`;
             }
             html += '</tr></thead><tbody>';
@@ -2178,19 +2214,19 @@ include('header.php');
                 for (let i = 0; i < 7; i++) {
                     const currentDay = new Date(startOfWeek);
                     currentDay.setDate(startOfWeek.getDate() + i);
-                    const dayStr = currentDay.toISOString().split('T')[0];
+                const dayStr = formatDateKey(currentDay);
                     const dayOfWeek = currentDay.getDay();
                     const dayHours = operatingHours[dayOfWeek];
                     
                     const slotDateTime = new Date(dayStr + 'T' + startTime.toTimeString().substring(0, 8));
-                    const slotKey = slotDateTime.toISOString().substring(0, 19);
+                    const slotKey = formatLocalISO(slotDateTime);
                     
                     if (dayHours && dayHours.length > 0 && isTimeSlotOpen(slotDateTime, dayHours)) {
                         const appointment = appointmentsByDay[dayStr] && appointmentsByDay[dayStr][slotKey];
                         if (appointment) {
                             html += renderAppointmentCell(appointment);
                         } else {
-                            const slotTime = slotDateTime.toISOString().substring(0, 19).replace('T', ' ');
+                            const slotTime = formatLocalDateTime(slotDateTime);
                             html += `<td><div class="appointment-slot" onclick="openAddModal('${slotTime}')">+</div></td>`;
                         }
                     } else {
@@ -2207,7 +2243,7 @@ include('header.php');
         }
         
         function renderMonthView(date, appointments) {
-            const month = new Date(date);
+            const month = parseLocalDate(date);
             const year = month.getFullYear();
             const monthIndex = month.getMonth();
             
@@ -2253,7 +2289,7 @@ include('header.php');
                 
                 // Generate one week
                 for (let day = 0; day < 7; day++) {
-                    const dateStr = currentDate.toISOString().split('T')[0];
+                    const dateStr = formatDateKey(currentDate);
                     const dayNumber = currentDate.getDate();
                     const isCurrentMonth = currentDate.getMonth() === monthIndex;
                     const dayOfWeek = currentDate.getDay();
@@ -2356,39 +2392,83 @@ include('header.php');
             return `<td><div class="${classes.join(' ')}" onclick="openEditModal(${appointment.id})">${displayText}</div></td>`;
         }
         
+        function parseLocalDate(str) {
+            if (str.includes('T') || str.includes(' ')) {
+                return new Date(str.replace(' ', 'T'));
+            }
+            return new Date(str + 'T00:00:00');
+        }
+
+        function pad(n) {
+            return String(n).padStart(2, '0');
+        }
+
+        function formatDateKey(date) {
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+        }
+
+        function formatLocalISO(date) {
+            return `${formatDateKey(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+        }
+
+        function formatLocalDateTime(date) {
+            return formatLocalISO(date).replace('T', ' ');
+        }
+
         function formatDate(dateStr) {
-            const date = new Date(dateStr);
-            return date.toLocaleDateString('en-US', { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric' 
+            const date = parseLocalDate(dateStr);
+            return date.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+        }
+
+        function formatDateTime(dateStr) {
+            const date = parseLocalDate(dateStr);
+            return date.toLocaleString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
             });
         }
         
         function openAddModal(datetime) {
             // Check if this is coming from month view (time is just date with start time)
             const isMonthView = currentView === 'month';
-            
+
             if (isMonthView) {
                 // For month view, show time selection
                 const datePart = datetime.split(' ')[0]; // Get just the date part
                 document.getElementById('add_start_datetime').value = datePart;
                 document.getElementById('timeSelectionGroup').style.display = 'block';
+                document.getElementById('selectedDateTimeDisplay').textContent = formatDate(datePart);
+                const timeInput = document.getElementById('appointment_time');
+                timeInput.onchange = function() {
+                    const combined = datePart + ' ' + this.value;
+                    document.getElementById('selectedDateTimeDisplay').textContent = formatDateTime(combined);
+                };
             } else {
                 // For day/week view, use the exact datetime
                 document.getElementById('add_start_datetime').value = datetime;
                 document.getElementById('timeSelectionGroup').style.display = 'none';
+                document.getElementById('selectedDateTimeDisplay').textContent = formatDateTime(datetime);
             }
-            
+
             // Show/hide delivery selection based on whether we have a delivery_id
             if (deliveryId > 0) {
                 document.getElementById('add_delivery_id').value = deliveryId;
                 document.getElementById('deliveryInfoGroup').style.display = 'block';
+                document.getElementById('bolSelectGroup').style.display = 'none';
             } else {
                 document.getElementById('deliveryInfoGroup').style.display = 'none';
+                document.getElementById('bolSelectGroup').style.display = 'block';
+                loadAvailableDeliveries();
             }
-            
+
             document.getElementById('addAppointmentModal').style.display = 'flex';
         }
         
@@ -2403,26 +2483,33 @@ include('header.php');
                 .then(data => {
                     if (data.success) {
                         const appointment = data.appointment;
-                        
+
+                        const aptDate = appointment.start_time.split(' ')[0];
+                        if (currentDate !== aptDate) {
+                            currentDate = aptDate;
+                            loadAppointments(currentView, currentDate);
+                        }
+
                         // Populate form fields
                         document.getElementById('edit_appointment_id').value = appointment.id;
                         document.getElementById('edit_bol_number').value = appointment.bol_number || '';
                         document.getElementById('edit_reference_numbers').value = appointment.reference_numbers || '';
                         document.getElementById('edit_description').value = appointment.description || '';
-                        
+                        document.getElementById('editDateTimeDisplay').textContent = formatDateTime(appointment.start_time);
+
                         // Format datetime for input fields
                         if (appointment.arrival_time) {
                             document.getElementById('edit_arrival_time').value = appointment.arrival_time.replace(' ', 'T').substring(0, 16);
                         } else {
                             document.getElementById('edit_arrival_time').value = '';
                         }
-                        
+
                         if (appointment.departure_time) {
                             document.getElementById('edit_departure_time').value = appointment.departure_time.replace(' ', 'T').substring(0, 16);
                         } else {
                             document.getElementById('edit_departure_time').value = '';
                         }
-                        
+
                         // Show modal
                         document.getElementById('editAppointmentModal').style.display = 'flex';
                     } else {
@@ -2454,6 +2541,41 @@ include('header.php');
                 .catch(error => {
                     console.error('Error loading delivery data:', error);
                 });
+        }
+
+        function loadAvailableDeliveries() {
+            fetch(`scheduling.php?action=list_deliveries&project_id=${projectId}`)
+                .then(response => response.json())
+                .then(data => {
+                    const select = document.getElementById('bol_select');
+                    select.innerHTML = '<option value="">Select BOL</option>';
+                    if (data.success) {
+                        data.deliveries.forEach(del => {
+                            const opt = document.createElement('option');
+                            opt.value = del.id;
+                            opt.textContent = del.bol_number;
+                            opt.dataset.supplier = del.supplier;
+                            opt.dataset.wattage = del.wattage;
+                            opt.dataset.quantity = del.quantity;
+                            select.appendChild(opt);
+                        });
+                    }
+                })
+                .catch(err => console.error('Error loading deliveries', err));
+
+            document.getElementById('bol_select').addEventListener('change', function() {
+                const selected = this.options[this.selectedIndex];
+                document.getElementById('add_delivery_id').value = this.value;
+                if (this.value) {
+                    document.getElementById('deliveryBOL').textContent = selected.textContent;
+                    document.getElementById('deliverySupplier').textContent = selected.dataset.supplier || '-';
+                    document.getElementById('deliveryWattage').textContent = selected.dataset.wattage || '0';
+                    document.getElementById('deliveryQuantity').textContent = selected.dataset.quantity || '0';
+                    document.getElementById('deliveryInfoGroup').style.display = 'block';
+                } else {
+                    document.getElementById('deliveryInfoGroup').style.display = 'none';
+                }
+            });
         }
         
         function submitAppointment() {
@@ -2784,19 +2906,27 @@ include('header.php');
         function openEditModal(appointmentId) {
             // Reset tabs to first tab
             showTab('details');
-            
+
             // Fetch appointment details
             fetch(`scheduling.php?action=get_appointment&appointment_id=${appointmentId}&project_id=${projectId}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
                         const appointment = data.appointment;
-                        
+
+                        const aptDate = appointment.start_time.split(' ')[0];
+                        if (currentDate !== aptDate) {
+                            currentDate = aptDate;
+                            loadAppointments(currentView, currentDate);
+                        }
+
                         // Populate form fields
                         document.getElementById('edit_appointment_id').value = appointment.id;
                         document.getElementById('edit_bol_number').value = appointment.bol_number || '';
                         document.getElementById('edit_reference_numbers').value = appointment.reference_numbers || '';
                         document.getElementById('edit_description').value = appointment.description || '';
+
+                        document.getElementById('editDateTimeDisplay').textContent = formatDateTime(appointment.start_time);
                         
                         // Show delivery information if available
                         if (appointment.supplier || appointment.delivery_quantity || appointment.wattage) {
