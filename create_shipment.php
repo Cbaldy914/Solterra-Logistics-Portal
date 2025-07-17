@@ -215,18 +215,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             // Project delivery - offer scheduling
             $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
             
-            // Add scheduling links if deliveries were created for a project
+            // Provide single scheduling link for the project
             if ($destinationId > 0) {
-                $schedulingLinks = [];
-                foreach ($createdDeliveryIds as $deliveryId) {
-                    $schedulingLinks[] = "<a href='scheduling.php?project_id={$destinationId}&delivery_id={$deliveryId}' style='color: #488C9A; text-decoration: underline;'>Schedule Delivery #{$deliveryId}</a>";
-                }
-                
-                if (count($schedulingLinks) === 1) {
-                    $shipMessage .= " " . $schedulingLinks[0];
-                } else {
-                    $shipMessage .= "<br><strong>Schedule Deliveries:</strong><br>" . implode("<br>", $schedulingLinks);
-                }
+                $shipMessage .= " <a href='scheduling.php?project_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>Schedule Delivery</a>";
             }
         }
     } catch (Exception $e) {
