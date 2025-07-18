@@ -89,6 +89,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         $departureDate   = $_POST['departure_date'] ?? null;
         $estArrivalDate  = $_POST['est_arrival_date'] ?? null;
         $shipmentMode    = $_POST['shipment_mode'] ?? 'single';
+        
+        // Debug: Log BOL information for troubleshooting
+        error_log("Create Shipment Debug - BOL Number: " . $bolNumber);
+        error_log("Create Shipment Debug - BOL Numbers Array: " . json_encode($bolNumbers));
+        error_log("Create Shipment Debug - Shipment Mode: " . $shipmentMode);
         $palletsPerTruck = (isset($_POST['pallets_per_truck']) && is_numeric($_POST['pallets_per_truck']))
                            ? intval($_POST['pallets_per_truck'])
                            : 1;
@@ -166,6 +171,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             if ($shipmentMode === 'multi' && !empty($bolNumbers)) {
                 $currentBolNumber = $bolNumbers[$groupIndex] ?? $bolNumber;
             }
+            
+            // Ensure we have a BOL number - fallback to generic if empty
+            if (empty($currentBolNumber)) {
+                $currentBolNumber = 'BOL-' . date('Ymd-His') . '-' . ($groupIndex + 1);
+            }
+            
+            // Debug: Log current BOL number being used
+            error_log("Create Shipment Debug - Using BOL Number for Group " . ($groupIndex + 1) . ": " . $currentBolNumber);
 
             // Group by wattage for each delivery
             $groupByWattage = [];
@@ -194,7 +207,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     $groupQty,
                     $currentBolNumber
                 ];
-                $deliveryTypes = 'ssiisi';
+                $deliveryTypes = 'ssiiss'; // supplier, origin_type, origin_id, wattage, quantity, bol_number
 
                 if ($originType === 'warehouse') {
                     $deliveryColumns[] = 'left_warehouse_date';
@@ -245,6 +258,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     $deliveryParams[] = $destinationId;
                     $deliveryTypes .= 'i';
                 }
+                
+                // Debug: Log the exact values being inserted
+                error_log("Create Shipment Debug - About to insert delivery:");
+                error_log("  - Supplier: " . $supplier_name);
+                error_log("  - Wattage: " . $wattage);
+                error_log("  - Quantity: " . $groupQty);
+                error_log("  - BOL Number: '" . $currentBolNumber . "'");
+                error_log("  - Columns: " . implode(', ', $deliveryColumns));
+                error_log("  - Types: " . $deliveryTypes . " (length: " . strlen($deliveryTypes) . ")");
+                error_log("  - Params count: " . count($deliveryParams));
 
                 $placeholders = implode(',', array_fill(0, count($deliveryParams), '?'));
                 $sqlDeliveryInsert = 'INSERT INTO deliveries (' . implode(',', $deliveryColumns) . ') VALUES (' . $placeholders . ')';
@@ -258,6 +281,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
 
                 $deliveryId = $conn->insert_id;
                 $createdDeliveryIds[] = $deliveryId;
+                
+                // Debug: Confirm the delivery was inserted and verify BOL number
+                error_log("Create Shipment Debug - Delivery inserted successfully:");
+                error_log("  - Delivery ID: " . $deliveryId);
+                
+                // Query the database to confirm what was actually saved
+                $verifyStmt = $conn->prepare("SELECT bol_number FROM deliveries WHERE id = ?");
+                if ($verifyStmt) {
+                    $verifyStmt->bind_param("i", $deliveryId);
+                    $verifyStmt->execute();
+                    $verifyStmt->bind_result($savedBolNumber);
+                    if ($verifyStmt->fetch()) {
+                        error_log("  - BOL Number saved in DB: '" . $savedBolNumber . "'");
+                    }
+                    $verifyStmt->close();
+                }
 
                 foreach ($palletsForWatt as $pallet) {
                     $stmtLink->bind_param('ii', $deliveryId, $pallet['id']);
@@ -412,13 +451,26 @@ try {
     // Get project name for breadcrumbs if project_id provided
     $project_name_for_breadcrumb = '';
     if ($project_id_from_url > 0) {
-        $stmtProjectName = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
-        if ($stmtProjectName) {
-            $stmtProjectName->bind_param("i", $project_id_from_url);
-            $stmtProjectName->execute();
-            $stmtProjectName->bind_result($project_name_for_breadcrumb);
-            $stmtProjectName->fetch();
-            $stmtProjectName->close();
+        if ($is_global_admin) {
+            // Global admin can see all projects
+            $stmtProjectName = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
+            if ($stmtProjectName) {
+                $stmtProjectName->bind_param("i", $project_id_from_url);
+                $stmtProjectName->execute();
+                $stmtProjectName->bind_result($project_name_for_breadcrumb);
+                $stmtProjectName->fetch();
+                $stmtProjectName->close();
+            }
+        } else if ($account_id_for_admin) {
+            // Regular admin can only see projects from their account
+            $stmtProjectName = $conn->prepare("SELECT project_name FROM projects WHERE id = ? AND account_id = ?");
+            if ($stmtProjectName) {
+                $stmtProjectName->bind_param("ii", $project_id_from_url, $account_id_for_admin);
+                $stmtProjectName->execute();
+                $stmtProjectName->bind_result($project_name_for_breadcrumb);
+                $stmtProjectName->fetch();
+                $stmtProjectName->close();
+            }
         }
     }
 
@@ -854,10 +906,8 @@ if (!empty($sessionMessage)) {
     <div class="breadcrumb">
         <a href="dashboard.php">Dashboard</a>
         <span class="separator">&raquo;</span>
-        <?php if ($project_id_from_url > 0 && !empty($project_name_for_breadcrumb)): ?>
-            <a href="project_overview.php?project_id=<?php echo $project_id_from_url; ?>"><?php echo htmlspecialchars($project_name_for_breadcrumb); ?></a>
-            <span class="separator">&raquo;</span>
-        <?php endif; ?>
+        <a href="project_overview.php">Project Overview</a>
+        <span class="separator">&raquo;</span>
         <span>Create Shipment</span>
     </div>
 
@@ -2000,6 +2050,9 @@ if (confirmMultiShipmentBtn) {
         
         // Add all BOL numbers as a JSON array
         setOrCreateHidden(mainForm, 'bol_numbers', JSON.stringify(bolNumbers));
+        
+        // Also set the first BOL as fallback for bol_number field
+        setOrCreateHidden(mainForm, 'bol_number', bolNumbers.length > 0 ? bolNumbers[0] : '');
 
         mainForm.submit();
     });
