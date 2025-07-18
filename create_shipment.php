@@ -90,10 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         $estArrivalDate  = $_POST['est_arrival_date'] ?? null;
         $shipmentMode    = $_POST['shipment_mode'] ?? 'single';
         
-        // Debug: Log BOL information for troubleshooting
-        error_log("Create Shipment Debug - BOL Number: " . $bolNumber);
-        error_log("Create Shipment Debug - BOL Numbers Array: " . json_encode($bolNumbers));
-        error_log("Create Shipment Debug - Shipment Mode: " . $shipmentMode);
+
         $palletsPerTruck = (isset($_POST['pallets_per_truck']) && is_numeric($_POST['pallets_per_truck']))
                            ? intval($_POST['pallets_per_truck'])
                            : 1;
@@ -177,8 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                 $currentBolNumber = 'BOL-' . date('Ymd-His') . '-' . ($groupIndex + 1);
             }
             
-            // Debug: Log current BOL number being used
-            error_log("Create Shipment Debug - Using BOL Number for Group " . ($groupIndex + 1) . ": " . $currentBolNumber);
+
 
             // Group by wattage for each delivery
             $groupByWattage = [];
@@ -259,15 +255,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     $deliveryTypes .= 'i';
                 }
                 
-                // Debug: Log the exact values being inserted
-                error_log("Create Shipment Debug - About to insert delivery:");
-                error_log("  - Supplier: " . $supplier_name);
-                error_log("  - Wattage: " . $wattage);
-                error_log("  - Quantity: " . $groupQty);
-                error_log("  - BOL Number: '" . $currentBolNumber . "'");
-                error_log("  - Columns: " . implode(', ', $deliveryColumns));
-                error_log("  - Types: " . $deliveryTypes . " (length: " . strlen($deliveryTypes) . ")");
-                error_log("  - Params count: " . count($deliveryParams));
+
 
                 $placeholders = implode(',', array_fill(0, count($deliveryParams), '?'));
                 $sqlDeliveryInsert = 'INSERT INTO deliveries (' . implode(',', $deliveryColumns) . ') VALUES (' . $placeholders . ')';
@@ -281,22 +269,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
 
                 $deliveryId = $conn->insert_id;
                 $createdDeliveryIds[] = $deliveryId;
-                
-                // Debug: Confirm the delivery was inserted and verify BOL number
-                error_log("Create Shipment Debug - Delivery inserted successfully:");
-                error_log("  - Delivery ID: " . $deliveryId);
-                
-                // Query the database to confirm what was actually saved
-                $verifyStmt = $conn->prepare("SELECT bol_number FROM deliveries WHERE id = ?");
-                if ($verifyStmt) {
-                    $verifyStmt->bind_param("i", $deliveryId);
-                    $verifyStmt->execute();
-                    $verifyStmt->bind_result($savedBolNumber);
-                    if ($verifyStmt->fetch()) {
-                        error_log("  - BOL Number saved in DB: '" . $savedBolNumber . "'");
-                    }
-                    $verifyStmt->close();
-                }
 
                 foreach ($palletsForWatt as $pallet) {
                     $stmtLink->bind_param('ii', $deliveryId, $pallet['id']);
@@ -343,7 +315,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
     
     // Store message in session and redirect to prevent form resubmission
     $_SESSION['create_shipment_message'] = $shipMessage;
-    header("Location: create_shipment.php");
+    // Preserve project_id in redirect for breadcrumb navigation
+    $redirect_url = "create_shipment.php";
+    if ($project_id_from_url > 0) {
+        $redirect_url .= "?project_id=" . $project_id_from_url;
+    }
+    header("Location: " . $redirect_url);
     exit();
 }
 
@@ -906,7 +883,11 @@ if (!empty($sessionMessage)) {
     <div class="breadcrumb">
         <a href="dashboard.php">Dashboard</a>
         <span class="separator">&raquo;</span>
-        <a href="project_overview.php">Project Overview</a>
+        <?php if ($project_id_from_url > 0): ?>
+            <a href="project_overview.php?project_id=<?php echo $project_id_from_url; ?>">Project Overview</a>
+        <?php else: ?>
+            <a href="project_overview.php">Project Overview</a>
+        <?php endif; ?>
         <span class="separator">&raquo;</span>
         <span>Create Shipment</span>
     </div>
