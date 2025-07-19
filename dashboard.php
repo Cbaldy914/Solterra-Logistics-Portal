@@ -23,21 +23,31 @@ if (!$conn) {
 
 // 1) Determine which account(s) the user belongs to
 $user_id = $_SESSION['user_id'];
-$sqlAccts = "
-    SELECT account_id
-    FROM customer_account_users
-    WHERE user_id = ?
-";
-$stmtAccts = $conn->prepare($sqlAccts);
-$stmtAccts->bind_param("i", $user_id);
-$stmtAccts->execute();
-$resultAccts = $stmtAccts->get_result();
-
 $accountIds = [];
-while ($row = $resultAccts->fetch_assoc()) {
-    $accountIds[] = (int)$row['account_id'];
+
+if ($role === 'global_admin') {
+    // Global admins can view all accounts
+    $resultAccts = $conn->query("SELECT id FROM customer_accounts");
+    if ($resultAccts) {
+        while ($row = $resultAccts->fetch_assoc()) {
+            $accountIds[] = (int)$row['id'];
+        }
+    }
+} else {
+    $sqlAccts = "
+        SELECT account_id
+        FROM customer_account_users
+        WHERE user_id = ?
+    ";
+    $stmtAccts = $conn->prepare($sqlAccts);
+    $stmtAccts->bind_param("i", $user_id);
+    $stmtAccts->execute();
+    $resultAccts = $stmtAccts->get_result();
+    while ($row = $resultAccts->fetch_assoc()) {
+        $accountIds[] = (int)$row['account_id'];
+    }
+    $stmtAccts->close();
 }
-$stmtAccts->close();
 
 // 2) Calculate unassigned modules
 $unassigned_modules_count = 0;
@@ -606,13 +616,15 @@ $conn->close();
 
                 // Determine project status
                 $status_class = 'status-on-track';
-                $status_text = 'On Track';
-                if ($project['module_delivery_completion'] >= 100) {
-                    $status_class = 'status-completed';
-                    $status_text = 'Completed';
-                } elseif ($project['module_delivery_completion'] < 50) {
-                    $status_class = 'status-behind';
-                    $status_text = 'In Progress';
+                $status_text = 'Active';
+                if ($total_order_quantity > 0) {
+                    if ($total_delivered > 0 && $total_delivered < $total_order_quantity) {
+                        $status_class = 'status-behind';
+                        $status_text = 'In Progress';
+                    } elseif ($total_delivered >= $total_order_quantity) {
+                        $status_class = 'status-completed';
+                        $status_text = 'Completed';
+                    }
                 }
             ?>
                 <div class="project-item" onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">

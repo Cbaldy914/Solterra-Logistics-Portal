@@ -272,7 +272,7 @@ $conn->close();
     <?php include 'header.php'; ?>
     <main class="container">
         <div class="breadcrumb">
-            <a href="admin_dashboard.php">Dashboard</a>
+            <a href="dashboard.php">Dashboard</a>
             <span class="separator">&raquo;</span>
             <span>Manage Users</span>
         </div>
