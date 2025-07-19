@@ -32,7 +32,7 @@ if ($role === 'site_user') {
 
 if ($stmt->execute()) {
     echo "New user added successfully.";
-    echo "<br><a href='admin_dashboard'>Back to Admin Dashboard</a>";
+    echo "<br><a href='dashboard'>Back to Dashboard</a>";
 } else {
     echo "Error: " . $stmt->error;
 }

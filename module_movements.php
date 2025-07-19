@@ -649,7 +649,7 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <div class="breadcrumb">
-        <a href="<?php echo ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php'; ?>">Dashboard</a>
+        <a href="dashboard.php">Dashboard</a>
         <span class="separator">&raquo;</span>
         <?php if (!empty($breadcrumb_text)): ?>
             <a href="<?php echo $breadcrumb_link; ?>"><?php echo htmlspecialchars($breadcrumb_text); ?></a>

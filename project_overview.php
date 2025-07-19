@@ -225,10 +225,15 @@ $stmt->execute();
 $delivered_result = $stmt->get_result();
 
 $delivery_totals = [];
+$delivered_raw_total = 0; // Raw module count for timeline calculations
 while ($row = $delivered_result->fetch_assoc()) {
     $w   = (float)$row['wattage'];
     $lbl = $w . 'W';
-    $q_calc = calculateQuantity((int)$row['total_quantity'], $w, $view_mode);
+    $raw_qty = (int)$row['total_quantity'];
+    $q_calc = calculateQuantity($raw_qty, $w, $view_mode);
+
+    // Track raw delivered total for timeline
+    $delivered_raw_total += $raw_qty;
 
     if (!isset($delivery_totals[$lbl])) {
         $delivery_totals[$lbl] = [
@@ -727,28 +732,33 @@ $stmt_warehouses = $conn->prepare("
     LEFT JOIN inventory_pallets ip ON w.id = ip.current_warehouse_id 
         AND ip.status = 'In Warehouse' 
         AND (ip.assigned_project_id = ? OR ip.current_project_id = ?)
-    LEFT JOIN deliveries d_transit ON w.id = d_transit.warehouse_id 
-        AND d_transit.project_id = ? 
-        AND d_transit.status_of_delivery LIKE 'In Transit%' 
+    LEFT JOIN deliveries d_transit ON w.id = d_transit.warehouse_id
+        AND d_transit.project_id = ?
+        AND d_transit.status_of_delivery LIKE 'In Transit%'
         AND d_transit.warehouse_arrival_date IS NULL
-    WHERE 
+    WHERE
         EXISTS (
             SELECT 1 FROM inventory_pallets ip_check
-            WHERE ip_check.current_warehouse_id = w.id 
+            WHERE ip_check.current_warehouse_id = w.id
                 AND ip_check.status = 'In Warehouse'
                 AND (ip_check.assigned_project_id = ? OR ip_check.current_project_id = ?)
-        ) 
+        )
         OR EXISTS (
             SELECT 1 FROM deliveries d_check
-            WHERE d_check.warehouse_id = w.id 
-                AND d_check.project_id = ? 
+            WHERE d_check.warehouse_id = w.id
+                AND d_check.project_id = ?
                 AND d_check.status_of_delivery LIKE 'In Transit%'
                 AND d_check.warehouse_arrival_date IS NULL
+        )
+        OR EXISTS (
+            SELECT 1 FROM deliveries d_hist
+            WHERE d_hist.warehouse_id = w.id
+                AND d_hist.project_id = ?
         )
     GROUP BY w.id, w.name, w.address, w.image_url
     ORDER BY w.name ASC
 ");
-$stmt_warehouses->bind_param("iiiiii", $project_id, $project_id, $project_id, $project_id, $project_id, $project_id);
+$stmt_warehouses->bind_param("iiiiiii", $project_id, $project_id, $project_id, $project_id, $project_id, $project_id, $project_id);
 $stmt_warehouses->execute();
 $result_warehouses = $stmt_warehouses->get_result();
 while ($wh = $result_warehouses->fetch_assoc()) {
@@ -756,6 +766,182 @@ while ($wh = $result_warehouses->fetch_assoc()) {
 }
 $stmt_warehouses->close();
 
+// --- Shipping Status Breakdown ---
+$status_totals = [
+    'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
+    'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
+    'In Warehouse' => ['pallets' => 0, 'modules' => 0],
+    'In Transit to Project' => ['pallets' => 0, 'modules' => 0]
+];
+$detailed_breakdown = [];
+
+$stmt_status = $conn->prepare(
+    "SELECT ip.status, ip.wattage, ip.quantity, ip.current_warehouse_id, w.name AS warehouse_name,
+            ip.current_project_id, p.project_name
+       FROM inventory_pallets ip
+       LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+       LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+       LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+       LEFT JOIN projects p ON ip.current_project_id = p.id
+       WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)"
+);
+$stmt_status->bind_param('iii', $project_id, $project_id, $project_id);
+$stmt_status->execute();
+$res_status = $stmt_status->get_result();
+while ($row = $res_status->fetch_assoc()) {
+    $status  = $row['status'];
+    $wattage = (int)$row['wattage'];
+    $qty     = (int)$row['quantity'];
+    $wh_id   = $row['current_warehouse_id'];
+    $wh_name = $row['warehouse_name'];
+    $proj_id = $row['current_project_id'];
+    $proj_name = $row['project_name'];
+
+    if (!isset($status_totals[$status])) {
+        $status_totals[$status] = ['pallets' => 0, 'modules' => 0];
+    }
+    $status_totals[$status]['pallets'] += 1;
+    $status_totals[$status]['modules'] += $qty;
+
+    if ($status === 'In Warehouse' && $wh_name) {
+        $key = 'In Warehouse - ' . $wh_name;
+    } elseif ($status === 'In Transit to Warehouse' && $wh_name) {
+        $key = 'In Transit to Warehouse - ' . $wh_name;
+    } elseif ($status === 'In Transit to Project' && $proj_name) {
+        $key = 'In Transit to Project - ' . $proj_name;
+    } elseif ($status === 'At Manufacturer') {
+        $key = 'At Manufacturer';
+    } else {
+        $key = $status;
+    }
+
+    if (!isset($detailed_breakdown[$key])) {
+        $detailed_breakdown[$key] = [
+            'pallet_count' => 0,
+            'total_modules' => 0,
+            'wattage_breakdown' => [],
+            'warehouse_id' => $wh_id,
+            'project_id' => $proj_id
+        ];
+    }
+    $detailed_breakdown[$key]['pallet_count']++;
+    $detailed_breakdown[$key]['total_modules'] += $qty;
+    if (!isset($detailed_breakdown[$key]['wattage_breakdown'][$wattage])) {
+        $detailed_breakdown[$key]['wattage_breakdown'][$wattage] = ['pallets' => 0, 'modules' => 0];
+    }
+    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['pallets']++;
+    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['modules'] += $qty;
+}
+$stmt_status->close();
+
+// Move all remaining database queries here before HTML output
+// Better calculation for palletized modules - count actual pallets in inventory_pallets
+$stmt_palletized = $conn->prepare("
+    SELECT COUNT(*) as palletized_count
+    FROM inventory_pallets ip
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
+");
+$stmt_palletized->bind_param("iii", $project_id, $project_id, $project_id);
+$stmt_palletized->execute();
+$stmt_palletized->bind_result($actual_palletized_count);
+$stmt_palletized->fetch();
+$stmt_palletized->close();
+
+// Calculate total expected pallets (modules / 30)
+$expected_pallets = ceil($total_raw_modules / 30);
+
+// Get delivered modules breakdown for JavaScript
+$delivered_by_wattage = [];
+$stmt_delivered = $conn->prepare("
+    SELECT wattage, SUM(quantity) AS total_quantity
+    FROM deliveries
+    WHERE project_id=? AND status_of_delivery = 'Delivered to Project'
+    GROUP BY wattage
+");
+$stmt_delivered->bind_param("i", $project_id);
+$stmt_delivered->execute();
+$delivered_result = $stmt_delivered->get_result();
+while ($row = $delivered_result->fetch_assoc()) {
+    $delivered_by_wattage[] = [
+        'wattage' => (float)$row['wattage'],
+        'modules' => (int)$row['total_quantity']
+    ];
+}
+$stmt_delivered->close();
+
+// Determine current step logic
+$step1_completed = true; // Project always created
+$step2_completed = $total_raw_modules > 0;
+$step3_completed = $actual_palletized_count >= $expected_pallets && $total_raw_modules > 0;
+$step4_completed = ($status_totals['At Manufacturer']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['In Transit to Warehouse']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['In Warehouse']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['In Transit to Project']['pallets'] ?? 0) == 0;
+$step5_completed = $delivered_raw_total >= $total_raw_modules && $total_raw_modules > 0;
+
+// Determine current step (the next step that needs to be completed)
+$current_step = 1;
+if ($step1_completed && !$step2_completed) $current_step = 2;
+elseif ($step2_completed && !$step3_completed) $current_step = 3;
+elseif ($step3_completed && !$step4_completed) $current_step = 4;
+elseif ($step4_completed && !$step5_completed) $current_step = 5;
+elseif ($step5_completed) $current_step = 6; // All completed
+
+// Calculate progress percentage for timeline - only go to current step, not beyond
+$progress_percentage = 0;
+if ($current_step >= 2 && $step1_completed) $progress_percentage = 20;
+if ($current_step >= 3 && $step2_completed) $progress_percentage = 40;
+if ($current_step >= 4 && $step3_completed) $progress_percentage = 60;
+if ($current_step >= 5 && $step4_completed) $progress_percentage = 80;
+if ($step5_completed) $progress_percentage = 100;
+
+// Fetch module batches for this project with wattage information
+$module_batches = [];
+$stmt_modules = $conn->prepare("
+    SELECT m.*, c.name as account_name
+    FROM modules m 
+    JOIN customer_accounts c ON m.account_id = c.id
+    WHERE m.project_id = ?
+    ORDER BY m.vendor_name, m.created_at
+");
+$stmt_modules->bind_param("i", $project_id);
+$stmt_modules->execute();
+$modules_result = $stmt_modules->get_result();
+while ($module = $modules_result->fetch_assoc()) {
+    // Get wattage information for this module batch
+    $stmt_wattages = $conn->prepare("
+        SELECT wattage, quantity 
+        FROM unassigned_module_items 
+        WHERE unassigned_module_id = ? 
+        ORDER BY wattage ASC
+    ");
+    $stmt_wattages->bind_param("i", $module['id']);
+    $stmt_wattages->execute();
+    $wattages_result = $stmt_wattages->get_result();
+    
+    $module['wattages'] = [];
+    while ($wattage_row = $wattages_result->fetch_assoc()) {
+        $module['wattages'][] = $wattage_row;
+    }
+    $stmt_wattages->close();
+    
+    $module_batches[] = $module;
+}
+$stmt_modules->close();
+
+// Fetch manufacturers for modal dropdown
+$manufacturers = [];
+$stmt_manufacturers = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
+$stmt_manufacturers->execute();
+$manufacturers_result = $stmt_manufacturers->get_result();
+while ($manufacturer = $manufacturers_result->fetch_assoc()) {
+    $manufacturers[] = $manufacturer;
+}
+$stmt_manufacturers->close();
+
+// Close database connection
 $conn->close();
 
 // Determine the correct link for the "Deliveries" button
@@ -786,6 +972,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     display: flex;
     gap: 4px;
     border: 1px solid #e9ecef;
+    position: relative;
 }
 
 .toggle-buttons button {
@@ -813,6 +1000,306 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     background: #f8f9fa;
     color: #495057;
 }
+
+/* Enhanced visual connection between tabs and content */
+.toggle-buttons::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 20px;
+    height: 4px;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    border-radius: 0 0 4px 4px;
+    opacity: 0.7;
+}
+
+<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+/* Enhanced Timeline Styles - Jony Ive Inspired */
+.timeline-container {
+    background: linear-gradient(135deg, #fafbfc 0%, #f1f3f4 100%);
+    border-radius: 20px;
+    padding: 40px 30px;
+    margin: 0 auto 40px auto;
+    box-shadow: 
+        0 20px 40px rgba(0, 0, 0, 0.12),
+        0 8px 16px rgba(0, 0, 0, 0.08),
+        0 2px 4px rgba(0, 0, 0, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.03);
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    position: relative;
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+}
+
+.timeline-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    border-radius: 20px 20px 0 0;
+}
+
+/* Add connecting element from tabs to container */
+.admin-content-wrapper {
+    position: relative;
+}
+
+.admin-content-wrapper::before {
+    content: '';
+    position: absolute;
+    top: -15px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2px;
+    height: 15px;
+    background: linear-gradient(to bottom, rgba(72, 140, 154, 0.3), rgba(72, 140, 154, 0.8));
+    border-radius: 1px;
+    z-index: 1;
+}
+
+.timeline {
+    display: flex;
+    justify-content: space-between;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    position: relative;
+}
+
+.timeline::before {
+    content: '';
+    position: absolute;
+    top: 35px;
+    left: 10%;
+    right: 10%;
+    height: 6px;
+    background: #e9ecef;
+    border-radius: 3px;
+    z-index: 0;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.timeline::after {
+    content: '';
+    position: absolute;
+    top: 35px;
+    left: 10%;
+    width: var(--progress-width, 0%);
+    max-width: 80%;
+    height: 6px;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    border-radius: 3px;
+    z-index: 1;
+    transition: width 1s ease-in-out;
+    box-shadow: 0 2px 8px rgba(72, 140, 154, 0.3);
+}
+
+.timeline-item {
+    flex: 1;
+    text-align: center;
+    position: relative;
+    padding: 0 15px;
+}
+
+.timeline-item .circle {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    border: 4px solid #dee2e6;
+    margin: 0 auto 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 24px;
+    color: #adb5bd;
+    position: relative;
+    z-index: 2;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+}
+
+.timeline-item.completed .circle {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    border-color: #488C9A;
+    color: #ffffff;
+    transform: scale(1.1);
+    box-shadow: 0 12px 35px rgba(72, 140, 154, 0.4);
+}
+
+.timeline-item.current .circle {
+    background: linear-gradient(135deg, #ffc107 0%, #ffb300 100%);
+    border-color: #ffc107;
+    color: #ffffff;
+    transform: scale(1.05);
+    box-shadow: 0 10px 30px rgba(255, 193, 7, 0.4);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 10px 30px rgba(255, 193, 7, 0.4); }
+    50% { box-shadow: 0 10px 30px rgba(255, 193, 7, 0.6), 0 0 0 10px rgba(255, 193, 7, 0.1); }
+    100% { box-shadow: 0 10px 30px rgba(255, 193, 7, 0.4); }
+}
+
+.timeline-item .circle.clickable {
+    cursor: pointer;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.timeline-item .circle.clickable:hover {
+    transform: scale(1.1);
+    box-shadow: 0 12px 35px rgba(72, 140, 154, 0.4);
+}
+
+.timeline-item.completed .circle.clickable:hover {
+    transform: scale(1.15);
+    box-shadow: 0 15px 40px rgba(72, 140, 154, 0.5);
+}
+
+.timeline-item.current .circle.clickable:hover {
+    transform: scale(1.1);
+    box-shadow: 0 12px 35px rgba(255, 193, 7, 0.5);
+}
+
+.timeline-item .label {
+    font-weight: 600;
+    color: #293E4C;
+    font-size: 16px;
+    margin-bottom: 8px;
+    transition: color 0.3s ease;
+}
+
+.timeline-item .label a {
+    color: inherit;
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.timeline-item .label a:hover {
+    color: #488C9A;
+}
+
+.timeline-item.completed .label {
+    color: #488C9A;
+    font-weight: 700;
+}
+
+.timeline-item .description {
+    font-size: 12px;
+    color: #6c757d;
+    font-weight: 400;
+    margin-top: 5px;
+}
+
+/* Enhanced Shipping Statuses */
+.shipping-statuses {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 15px;
+    margin-top: 25px;
+    max-width: 800px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.shipping-box {
+    background: linear-gradient(135deg, #fafbfc 0%, #f1f3f4 100%);
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    border-radius: 12px;
+    padding: 20px 15px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 
+        0 8px 16px rgba(0,0,0,0.08),
+        0 2px 4px rgba(0,0,0,0.04),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.shipping-box::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s ease;
+}
+
+.shipping-box:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 25px rgba(72, 140, 154, 0.15);
+    border-color: #488C9A;
+}
+
+.shipping-box:hover::before {
+    transform: scaleX(1);
+}
+
+.shipping-box .status-label {
+    font-weight: 600;
+    color: #293E4C;
+    font-size: 14px;
+    margin-bottom: 8px;
+    line-height: 1.3;
+}
+
+.shipping-box .status-count {
+    font-size: 24px;
+    font-weight: 700;
+    color: #488C9A;
+    margin-bottom: 2px;
+}
+
+.shipping-box .status-unit {
+    font-size: 11px;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Shipping Status Connection Line */
+.shipping-statuses {
+    position: relative;
+}
+
+.shipping-statuses::before {
+    content: '';
+    position: absolute;
+    top: -15px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2px;
+    height: 15px;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    border-radius: 1px;
+}
+
+.shipping-statuses::after {
+    content: '';
+    position: absolute;
+    top: -15px;
+    left: 20%;
+    right: 20%;
+    height: 2px;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    border-radius: 1px;
+}
+<?php endif; ?>
+
 #financial-info {
     display: none;
 }
@@ -969,6 +1456,88 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         min-width: auto;
     }
     
+    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+    /* Timeline Mobile Responsiveness */
+    .timeline-container {
+        margin: 0 15px 20px 15px;
+        padding: 30px 20px;
+        box-shadow: 
+            0 16px 32px rgba(0, 0, 0, 0.10),
+            0 6px 12px rgba(0, 0, 0, 0.06),
+            0 2px 4px rgba(0, 0, 0, 0.04),
+            inset 0 1px 0 rgba(255, 255, 255, 0.9),
+            inset 0 -1px 0 rgba(0, 0, 0, 0.02);
+    }
+    
+    .timeline {
+        flex-direction: column;
+        max-width: 100%;
+        margin: 0;
+        align-items: center;
+    }
+    
+    .timeline::before {
+        width: 6px;
+        height: 80%;
+        top: 10%;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+    }
+    
+    .timeline::after {
+        width: 6px !important;
+        max-width: none !important;
+        height: calc(var(--progress-width, 0%) * 0.8);
+        top: 10%;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+    }
+    
+    .timeline-item {
+        width: 100%;
+        max-width: 400px;
+        margin-bottom: 40px;
+        padding: 0;
+    }
+    
+    .timeline-item .circle {
+        width: 60px;
+        height: 60px;
+        font-size: 20px;
+        margin-bottom: 15px;
+    }
+    
+    .timeline-item .label {
+        font-size: 18px;
+        margin-bottom: 5px;
+    }
+    
+    .timeline-item .description {
+        font-size: 14px;
+        margin-bottom: 15px;
+    }
+    
+    .shipping-statuses {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px;
+        margin-top: 20px;
+    }
+    
+    .shipping-box {
+        padding: 15px 10px;
+    }
+    
+    .shipping-box .status-label {
+        font-size: 12px;
+    }
+    
+    .shipping-box .status-count {
+        font-size: 20px;
+    }
+    <?php endif; ?>
+    
     /* Better table responsiveness */
     .table-responsive {
         overflow-x: auto;
@@ -1063,6 +1632,59 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         margin-top: 20px;
         margin-left: 20px;
     }
+    
+    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+    /* Enhanced mobile timeline for smallest screens */
+    .timeline-container {
+        margin: 15px 10px;
+        padding: 25px 15px;
+        box-shadow: 
+            0 12px 24px rgba(0, 0, 0, 0.08),
+            0 4px 8px rgba(0, 0, 0, 0.04),
+            inset 0 1px 0 rgba(255, 255, 255, 0.9),
+            inset 0 -1px 0 rgba(0, 0, 0, 0.02);
+    }
+    
+    .timeline {
+        margin: 0;
+    }
+    
+    .timeline-item {
+        margin-bottom: 30px;
+        max-width: 350px;
+    }
+    
+    .timeline-item .circle {
+        width: 50px;
+        height: 50px;
+        font-size: 18px;
+    }
+    
+    .timeline-item .label {
+        font-size: 16px;
+    }
+    
+    .timeline-item .description {
+        font-size: 12px;
+    }
+    
+    .shipping-statuses {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+    
+    .shipping-box {
+        padding: 12px 8px;
+    }
+    
+    .shipping-box .status-label {
+        font-size: 11px;
+    }
+    
+    .shipping-box .status-count {
+        font-size: 18px;
+    }
+    <?php endif; ?>
     
     /* Enhanced mobile layout for tables and charts */
     .tables-and-charts {
@@ -1369,15 +1991,519 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         font-size: 0.9em;
     }
 }
+
+/* Info Container Styles */
+.info-container {
+    background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+    border-radius: 20px;
+    padding: 30px;
+    margin: 20px;
+    box-shadow: 
+        0 12px 24px rgba(0, 0, 0, 0.08),
+        0 4px 8px rgba(0, 0, 0, 0.04),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.info-container h2 {
+    margin-top: 0;
+    margin-bottom: 25px;
+    color: #293E4C;
+    font-size: 1.8em;
+    font-weight: 700;
+    border-bottom: 3px solid #488C9A;
+    padding-bottom: 10px;
+    background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.info-container .header-with-button {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+}
+
+.info-container .header-with-button h2 {
+    margin: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 25px;
+    margin-bottom: 20px;
+}
+
+.info-section {
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid rgba(72, 140, 154, 0.1);
+    transition: all 0.3s ease;
+}
+
+.info-section:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 16px rgba(72, 140, 154, 0.1);
+}
+
+.info-section h3, .info-section h4 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #488C9A;
+    font-size: 1.2em;
+    font-weight: 600;
+    border-bottom: 2px solid #e9ecef;
+    padding-bottom: 8px;
+}
+
+.info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(233, 236, 239, 0.5);
+}
+
+.info-item:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.info-item label {
+    font-weight: 600;
+    color: #293E4C;
+    margin-right: 15px;
+    min-width: 140px;
+    flex-shrink: 0;
+}
+
+.info-item span {
+    color: #666;
+    text-align: right;
+    word-break: break-word;
+}
+
+.info-action-button {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 25px;
+    text-decoration: none;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+    display: inline-block;
+    cursor: pointer;
+}
+
+.info-action-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(72, 140, 154, 0.4);
+    color: white;
+    text-decoration: none;
+}
+
+.batch-header {
+    margin-bottom: 20px;
+}
+
+.batch-header h3 {
+    margin: 0 0 5px 0;
+    color: #293E4C;
+    font-size: 1.4em;
+}
+
+.batch-meta {
+    margin-top: 5px;
+}
+
+.no-modules-message {
+    text-align: center;
+    padding: 40px;
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 12px;
+    border: 2px dashed #e9ecef;
+}
+
+/* Mobile responsiveness for info containers */
+@media (max-width: 768px) {
+    .info-container {
+        margin: 10px;
+        padding: 20px;
+    }
+    
+    .info-grid {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+    
+    .info-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .info-item label {
+        margin-bottom: 5px;
+        min-width: auto;
+    }
+    
+    .info-item span {
+        text-align: left;
+    }
+}
+
+/* Project Actions Dropdown */
+.project-actions-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.project-actions-dropdown .project-actions-btn {
+    background: none !important;
+    border: none !important;
+    padding: 6px !important;
+    border-radius: 50% !important;
+    cursor: pointer !important;
+    color: #adb5bd !important;
+    transition: all 0.3s ease !important;
+    font-size: 16px !important;
+    opacity: 0.7 !important;
+    width: auto !important;
+    margin: 0 !important;
+    font-weight: normal !important;
+}
+
+.project-actions-dropdown .project-actions-btn:hover {
+    background: rgba(72, 140, 154, 0.08) !important;
+    color: #6c757d !important;
+    opacity: 1 !important;
+    transform: scale(1.1) !important;
+}
+
+.project-actions-content {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: white;
+    min-width: 180px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    border-radius: 8px;
+    z-index: 1000;
+    border: 1px solid #e9ecef;
+}
+
+.project-actions-content a {
+    color: #333;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    transition: background-color 0.3s ease;
+}
+
+.project-actions-content a:hover {
+    background-color: #f8f9fa;
+    color: #488C9A;
+}
+
+/* Module Actions Dropdown */
+.module-actions-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.module-actions-content {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: white;
+    min-width: 220px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    border-radius: 8px;
+    z-index: 1000;
+    border: 1px solid #e9ecef;
+}
+
+.module-actions-content a {
+    color: #333;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    transition: background-color 0.3s ease;
+}
+
+.module-actions-content a:hover {
+    background-color: #f8f9fa;
+    color: #488C9A;
+}
+
+/* Batch Actions Dropdown */
+.batch-actions-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.batch-actions-btn {
+    background: #488C9A;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.3s ease;
+}
+
+.batch-actions-btn:hover {
+    background: #3A6E7F;
+}
+
+.batch-actions-content {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: white;
+    min-width: 200px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    border-radius: 8px;
+    z-index: 1000;
+    border: 1px solid #e9ecef;
+}
+
+.batch-actions-content a {
+    color: #333;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    transition: background-color 0.3s ease;
+}
+
+.batch-actions-content a:hover {
+    background-color: #f8f9fa;
+    color: #488C9A;
+}
+
+/* Delete Modal Styles */
+.delete-modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.7);
+}
+
+.delete-modal-content {
+    background-color: white;
+    margin: 10% auto;
+    padding: 30px;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    text-align: center;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+
+.delete-modal h3 {
+    color: #dc3545;
+    margin-bottom: 20px;
+    font-size: 1.5em;
+}
+
+.delete-modal p {
+    color: #666;
+    margin-bottom: 30px;
+    line-height: 1.5;
+}
+
+.delete-modal .modal-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+}
+
+.delete-modal .modal-btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.delete-modal .btn-cancel {
+    background: #6c757d;
+    color: white;
+}
+
+.delete-modal .btn-cancel:hover {
+    background: #5a6268;
+}
+
+.delete-modal .btn-delete {
+    background: #dc3545;
+    color: white;
+}
+
+.delete-modal .btn-delete:hover {
+    background: #c82333;
+}
+
+/* Add Module Modal Styles */
+.add-module-modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.7);
+    overflow-y: auto;
+}
+
+.add-module-modal-content {
+    background-color: white;
+    margin: 5% auto;
+    padding: 30px;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 800px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+
+.add-module-modal h3 {
+    color: #293E4C;
+    margin-bottom: 25px;
+    font-size: 1.5em;
+    border-bottom: 2px solid #488C9A;
+    padding-bottom: 10px;
+}
+
+.modal-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 25px;
+}
+
+.modal-form-group {
+    margin-bottom: 20px;
+}
+
+.modal-form-group label {
+    display: block;
+    font-weight: 600;
+    color: #293E4C;
+    margin-bottom: 8px;
+}
+
+.modal-form-group input,
+.modal-form-group select,
+.modal-form-group textarea {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #e9ecef;
+    border-radius: 6px;
+    font-size: 1rem;
+    transition: border-color 0.3s ease;
+    box-sizing: border-box;
+}
+
+.modal-form-group input:focus,
+.modal-form-group select:focus,
+.modal-form-group textarea:focus {
+    outline: none;
+    border-color: #488C9A;
+}
+
+.wattage-section {
+    grid-column: 1 / -1;
+    margin-top: 20px;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.wattage-entry {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 15px;
+    align-items: end;
+    margin-bottom: 15px;
+}
+
+.add-wattage-btn {
+    background: #488C9A;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    margin-bottom: 15px;
+}
+
+.remove-wattage-btn {
+    background: #dc3545;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 30px;
+}
+
+.modal-btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-primary {
+    background: #488C9A;
+    color: white;
+}
+
+@media (max-width: 768px) {
+    .modal-form-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .wattage-entry {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+}
 </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
     <?php
-    $backLink = ($role === 'global_admin')
-        ? 'admin_dashboard.php'
-        : 'dashboard.php';
+    $backLink = 'dashboard.php';
     ?>
     <div class="breadcrumb" style="margin: 10px 20px;">
         <a href="<?php echo $backLink; ?>">Dashboard</a>
@@ -1403,9 +2529,24 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         
         <div class="project-info">
             <!-- Desktop Project Name -->
-            <h1 class="project-name-desktop"><?php echo htmlspecialchars($project['project_name']); ?></h1>
-            <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
-            <p><strong>Project Size:</strong> <?php echo number_format($project_size_mw, 2); ?> MWs</p>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div style="flex: 1;">
+                    <h1 class="project-name-desktop"><?php echo htmlspecialchars($project['project_name']); ?></h1>
+                    <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
+                    <p><strong>Project Size:</strong> <?php echo number_format($project_size_mw, 2); ?> MWs</p>
+                </div>
+                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                <div class="project-actions-dropdown">
+                    <button class="project-actions-btn" onclick="toggleProjectActions()">
+                        <span style="font-size: 18px;">⚙️</span>
+                    </button>
+                    <div class="project-actions-content" id="projectActionsDropdown">
+                        <a href="edit_project.php?project_id=<?php echo $project_id; ?>">✏️ Edit Project</a>
+                        <a href="#" onclick="confirmDeleteProject(<?php echo $project_id; ?>, '<?php echo htmlspecialchars($project['project_name'], ENT_QUOTES); ?>')">🗑️ Delete Project</a>
+                    </div>
+                </div>
+                <?php endif; ?>
+            </div>
             
             <!-- Admin View Buttons -->
             <div id="admin-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: block;"' : 'style="display: none;"'; ?>>
@@ -1450,205 +2591,793 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         </div>
     </div>
 
-    <div class="toggle-buttons">
-        <button id="delivery-info-btn" class="active" onclick="showView('delivery-info')">Delivery View</button>
-        <button id="financial-info-btn" onclick="showView('financial-info')">Financial View</button>
-    </div>
+    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+        <!-- Admin Timeline View -->
+        <div id="admin-view-content">
+            <div class="toggle-buttons">
+                <button id="progress-info-btn" class="active" onclick="showView('progress-info')">Project Progress</button>
+                <button id="site-info-btn" onclick="showView('site-info')">Site Information</button>
+                <button id="module-info-btn" onclick="showView('module-info')">Module Information</button>
+            </div>
 
-    <!-- Delivery Info -->
-    <div id="delivery-info">
-        <form method="GET" id="filter-form">
-            <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-            <label>
-                <input type="radio" name="view_mode" value="mw"
-                       <?php if($view_mode=='mw') echo 'checked';?>
-                       onchange="this.form.submit();"> MWs
-            </label>
-            <label>
-                <input type="radio" name="view_mode" value="modules"
-                       <?php if($view_mode=='modules') echo 'checked';?>
-                       onchange="this.form.submit();"> Number of Modules
-            </label>
-        </form>
-        <div class="tables-and-charts">
-            <div class="left-side">
-                <h2>Next 5 Weeks of Deliveries</h2>
-                <div class="table-responsive">
-                    <table id="table1">
-                        <thead>
-                            <tr>
-                                <th>Project</th>
-                                <th>Module Type</th>
-                                <th>Total Order</th>
-                                <th>Delivered</th>
-                                <?php foreach($weeks as $wk): ?>
-                                    <th><?php echo $wk['end']->format('n/j'); ?></th>
-                                <?php endforeach; ?>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr onclick="toggleSubRows('delivery-row')">
-                                <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                <td><?php echo htmlspecialchars($module_type_combined);?></td>
-                                <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
-                                <?php foreach($anticipated_quantities_combined as $qq): ?>
-                                    <td><?php echo number_format($qq,($view_mode=='mw')?2:0);?></td>
-                                <?php endforeach;?>
-                            </tr>
-                            <?php foreach($sub_rows as $lbl=>$sr): ?>
-                                <tr class="delivery-row" style="display:none;">
+            <div class="admin-content-wrapper">
+                <!-- Project Progress -->
+                <div id="progress-info">        
+                    <div class="timeline-container">
+                        <ul class="timeline" style="--progress-width: <?php echo $progress_percentage; ?>%">
+                        <li class="timeline-item<?php echo $step1_completed ? ' completed' : ''; ?><?php echo $current_step == 1 ? ' current' : ''; ?>">
+                            <div class="circle clickable" onclick="window.location.href='edit_project.php?project_id=<?php echo $project_id; ?>'">1</div>
+                            <span class="label">
+                                <a href="edit_project.php?project_id=<?php echo $project_id; ?>">Project Created</a>
+                            </span>
+                            <div class="description">Foundation established</div>
+                        </li>
+                        
+                        <li class="timeline-item<?php echo $step2_completed ? ' completed' : ''; ?><?php echo $current_step == 2 ? ' current' : ''; ?>">
+                            <div class="circle clickable" onclick="window.location.href='modules.php?project_id=<?php echo $project_id; ?>'">2</div>
+                            <span class="label">
+                                <a href="modules.php?project_id=<?php echo $project_id; ?>">Add Modules</a>
+                            </span>
+                            <div class="description"><?php echo number_format($total_raw_modules); ?> modules added</div>
+                        </li>
+                        
+                        <li class="timeline-item<?php echo $step3_completed ? ' completed' : ''; ?><?php echo $current_step == 3 ? ' current' : ''; ?>">
+                            <div class="circle clickable" onclick="window.location.href='module_overview.php?project_id=<?php echo $project_id; ?>'">3</div>
+                            <span class="label">
+                                <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Palletize Modules</a>
+                            </span>
+                            <div class="description">
+                                <?php 
+                                echo number_format($actual_palletized_count) . ' of ' . number_format($expected_pallets) . ' palletized';
+                                ?>
+                            </div>
+                        </li>
+                        
+                        <li class="timeline-item<?php echo $step4_completed ? ' completed' : ''; ?><?php echo $current_step == 4 ? ' current' : ''; ?>">
+                            <div class="circle clickable" onclick="window.location.href='<?php echo $deliveriesLink; ?>'">4</div>
+                            <span class="label">
+                                <a href="<?php echo $deliveriesLink; ?>">Shipping</a>
+                            </span>
+                            <div class="description">Logistics in progress</div>
+                            
+                            <?php if ($current_step == 4): ?>
+                            <div class="shipping-statuses">
+                                <?php if(($status_totals['At Manufacturer']['pallets'] ?? 0) > 0): ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('At Manufacturer')">
+                                    <div class="status-label">At Manufacturer</div>
+                                    <div class="status-count"><?php echo $status_totals['At Manufacturer']['pallets']; ?></div>
+                                    <div class="status-unit">pallets</div>
+                                </div>
+                                <?php endif; ?>
+                                
+                                <?php if(($status_totals['In Transit to Warehouse']['pallets'] ?? 0) > 0): ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('In Transit to Warehouse')">
+                                    <div class="status-label">In Transit to Warehouse</div>
+                                    <div class="status-count"><?php echo $status_totals['In Transit to Warehouse']['pallets']; ?></div>
+                                    <div class="status-unit">pallets</div>
+                                </div>
+                                <?php endif; ?>
+                                
+                                <?php if(($status_totals['In Warehouse']['pallets'] ?? 0) > 0): ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('In Warehouse')">
+                                    <div class="status-label">In Warehouse</div>
+                                    <div class="status-count"><?php echo $status_totals['In Warehouse']['pallets']; ?></div>
+                                    <div class="status-unit">pallets</div>
+                                </div>
+                                <?php endif; ?>
+                                
+                                <?php if(($status_totals['In Transit to Project']['pallets'] ?? 0) > 0): ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('In Transit to Project')">
+                                    <div class="status-label">In Transit to Project</div>
+                                    <div class="status-count"><?php echo $status_totals['In Transit to Project']['pallets']; ?></div>
+                                    <div class="status-unit">pallets</div>
+                                </div>
+                                <?php endif; ?>
+                                
+                                <?php if(($delivered_raw_total > 0)): ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('Delivered')">
+                                    <div class="status-label">Delivered to Project</div>
+                                    <div class="status-count"><?php echo number_format($delivered_raw_total / 30, 0); ?></div>
+                                    <div class="status-unit">pallets</div>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                            <?php endif; ?>
+                        </li>
+                        
+                        <li class="timeline-item<?php echo $step5_completed ? ' completed' : ''; ?><?php echo $current_step == 5 ? ' current' : ''; ?>">
+                            <div class="circle clickable" onclick="window.location.href='project_overview.php?project_id=<?php echo $project_id; ?>'">5</div>
+                            <span class="label">
+                                <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Completed</a>
+                            </span>
+                            <div class="description">
+                                <?php 
+                                if ($step5_completed) {
+                                    echo "All modules delivered";
+                                } else {
+                                    $remaining = $total_raw_modules - $delivered_raw_total;
+                                    echo number_format($remaining) . ' modules remaining';
+                                }
+                                ?>
+                            </div>
+                        </li>
+                    </ul>
+                    </div>
+                </div>
+
+                <!-- Site Information -->
+                <div id="site-info" style="display:none;">
+                    <div class="info-container">
+                        <div class="header-with-button">
+                            <h2>Site Information</h2>
+                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <button onclick="window.location.href='edit_project.php?project_id=<?php echo $project_id; ?>'" class="info-action-button" style="margin: 0;">
+                                    Edit Site Information
+                                </button>
+                            <?php endif; ?>
+                        </div>
+                        <div class="info-grid">
+                            <div class="info-section">
+                                <h3>Project Details</h3>
+                                <div class="info-item">
+                                    <label>Project Name:</label>
+                                    <span><?php echo htmlspecialchars($project['project_name']); ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Project Address:</label>
+                                    <span><?php 
+                                        $address_parts = array_filter([
+                                            $project['street_address'], 
+                                            $project['city'], 
+                                            $project['state'], 
+                                            $project['zip_code']
+                                        ]);
+                                        echo htmlspecialchars(implode(', ', $address_parts));
+                                    ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Estimated Completion:</label>
+                                    <span><?php echo $project['estimated_completion_date'] ? date('F j, Y', strtotime($project['estimated_completion_date'])) : 'Not set'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Project Size:</label>
+                                    <span><?php echo number_format($project_size_mw, 2); ?> MW</span>
+                                </div>
+                            </div>
+                            
+                            <div class="info-section">
+                                <h3>Contact Information</h3>
+                                <div class="info-item">
+                                    <label>Primary Phone:</label>
+                                    <span><?php echo !empty($project['phone1']) ? htmlspecialchars($project['phone1']) : 'Not provided'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Secondary Phone:</label>
+                                    <span><?php echo !empty($project['phone2']) ? htmlspecialchars($project['phone2']) : 'Not provided'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Timezone:</label>
+                                    <span><?php 
+                                        $timezone_display = [
+                                            'America/New_York' => 'Eastern',
+                                            'America/Chicago' => 'Central', 
+                                            'America/Denver' => 'Mountain',
+                                            'America/Los_Angeles' => 'Pacific',
+                                            'UTC' => 'UTC'
+                                        ];
+                                        echo $timezone_display[$project['timezone']] ?? htmlspecialchars($project['timezone'] ?? 'Not set');
+                                    ?></span>
+                                </div>
+                            </div>
+                            
+                            <div class="info-section">
+                                <h3>Additional Information</h3>
+                                <div class="info-item">
+                                    <label>Reference Numbers:</label>
+                                    <span><?php echo !empty($project['reference_numbers']) ? htmlspecialchars($project['reference_numbers']) : 'None provided'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Special Instructions:</label>
+                                    <span><?php echo !empty($project['instructions']) ? htmlspecialchars($project['instructions']) : 'None provided'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Additional Notes:</label>
+                                    <span><?php echo !empty($project['additional_notes']) ? htmlspecialchars($project['additional_notes']) : 'None provided'; ?></span>
+                                </div>
+                                <?php if (!empty($project['driver_handout_url'])): ?>
+                                <div class="info-item">
+                                    <label>Driver Handout:</label>
+                                    <span><a href="<?php echo htmlspecialchars($project['driver_handout_url']); ?>" target="_blank" style="color: #488C9A;">Download</a></span>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Module Information -->
+                <div id="module-info" style="display:none;">
+                    <div class="info-container">
+                        <div class="header-with-button">
+                            <h2>Module Information</h2>
+                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <div class="module-actions-dropdown">
+                                    <button class="info-action-button" onclick="toggleModuleActions()" style="margin: 0;">
+                                        Edit Module Information ▼
+                                    </button>
+                                    <div class="module-actions-content" id="moduleActionsDropdown">
+                                        <a href="edit_module_batch.php?project_id=<?php echo $project_id; ?>&batch_id=<?php echo !empty($module_batches) ? $module_batches[0]['id'] : ''; ?>">Edit Current Module Batch</a>
+                                        <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>">+ Add New Module Batch</a>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                        <?php if (!empty($module_batches)): ?>
+                            <?php foreach ($module_batches as $index => $batch): ?>
+                                <div class="module-batch-section" style="<?php echo $index > 0 ? 'margin-top: 30px; border-top: 2px solid #e9ecef; padding-top: 20px;' : ''; ?>">
+                                    <div class="batch-header">
+                                        <h3>Module Batch <?php echo $index + 1; ?>: <?php echo htmlspecialchars($batch['vendor_name']); ?></h3>
+                                        <div class="batch-meta">
+                                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                <span style="color: #666; font-size: 0.9em;">
+                                                    Added: <?php echo date('F j, Y', strtotime($batch['created_at'])); ?>
+                                                </span>
+
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="info-grid">
+                                        <div class="info-section">
+                                            <h4>Basic Information</h4>
+                                            <div class="info-item">
+                                                <label>Vendor/Manufacturer:</label>
+                                                <span><?php echo htmlspecialchars($batch['vendor_name']); ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Initial Location:</label>
+                                                <span><?php echo htmlspecialchars($batch['initial_location']); ?></span>
+                                            </div>
+                                                                                            <div class="info-item">
+                                                    <label>Account:</label>
+                                                    <span><?php echo htmlspecialchars($batch['account_name']); ?></span>
+                                                </div>
+                                                <div class="info-item">
+                                                    <label>Module Configuration:</label>
+                                                    <span>
+                                                        <?php if (!empty($batch['wattages'])): ?>
+                                                            <?php 
+                                                            $wattage_details = [];
+                                                            foreach ($batch['wattages'] as $watt_info) {
+                                                                $wattage_details[] = $watt_info['wattage'] . 'W (' . number_format($watt_info['quantity']) . ' modules)';
+                                                            }
+                                                            echo implode('<br>', $wattage_details);
+                                                            ?>
+                                                        <?php else: ?>
+                                                            No modules configured yet
+                                                        <?php endif; ?>
+                                                    </span>
+                                                </div>
+                                                <?php if (!empty($batch['module_notes'])): ?>
+                                                <div class="info-item">
+                                                    <label>Module Notes:</label>
+                                                    <span><?php echo htmlspecialchars($batch['module_notes']); ?></span>
+                                                </div>
+                                                <?php endif; ?>
+                                        </div>
+                                        
+                                        <div class="info-section">
+                                            <h4>Pallet Specifications</h4>
+                                            <div class="info-item">
+                                                <label>Modules per Pallet:</label>
+                                                <span><?php echo $batch['modules_per_pallet'] ?: 'Not specified'; ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Pallets per Truck:</label>
+                                                <span><?php echo $batch['pallets_per_truck'] ?: 'Not specified'; ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Modules per Truck:</label>
+                                                <span><?php echo $batch['modules_per_truck'] ?: 'Not specified'; ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Pallet Dimensions:</label>
+                                                <span>
+                                                    <?php if ($batch['pallet_length_mm'] && $batch['pallet_depth_mm']): ?>
+                                                        <?php echo $batch['pallet_length_mm']; ?>mm × <?php echo $batch['pallet_depth_mm']; ?>mm
+                                                    <?php else: ?>
+                                                        Not specified
+                                                    <?php endif; ?>
+                                                </span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Pallet Height (Stacked):</label>
+                                                <span><?php echo $batch['pallet_double_stacked_height_mm'] ? $batch['pallet_double_stacked_height_mm'] . 'mm' : 'Not specified'; ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Pallet Weight:</label>
+                                                <span><?php echo $batch['pallet_total_weight_kg'] ? $batch['pallet_total_weight_kg'] . 'kg' : 'Not specified'; ?></span>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="info-section">
+                                            <h4>Handling Requirements</h4>
+                                            <div class="info-item">
+                                                <label>Forklift Requirements:</label>
+                                                <span>
+                                                    <?php if ($batch['forklift_truck_long_side_mm'] && $batch['forklift_truck_short_side_mm']): ?>
+                                                        <?php echo $batch['forklift_truck_long_side_mm']; ?>mm × <?php echo $batch['forklift_truck_short_side_mm']; ?>mm
+                                                    <?php else: ?>
+                                                        Not specified
+                                                    <?php endif; ?>
+                                                </span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Pallet Jack Requirements:</label>
+                                                <span>
+                                                    <?php if ($batch['pallet_jack_long_side_mm'] && $batch['pallet_jack_short_side_mm']): ?>
+                                                        <?php echo $batch['pallet_jack_long_side_mm']; ?>mm × <?php echo $batch['pallet_jack_short_side_mm']; ?>mm
+                                                    <?php else: ?>
+                                                        Not specified
+                                                    <?php endif; ?>
+                                                </span>
+                                            </div>
+                                            <?php if (!empty($batch['stacking_in_warehouse'])): ?>
+                                            <div class="info-item">
+                                                <label>Warehouse Stacking:</label>
+                                                <span><?php echo htmlspecialchars($batch['stacking_in_warehouse']); ?></span>
+                                            </div>
+                                            <?php endif; ?>
+                                            <?php if (!empty($batch['stacking_during_transport'])): ?>
+                                            <div class="info-item">
+                                                <label>Transport Stacking:</label>
+                                                <span><?php echo htmlspecialchars($batch['stacking_during_transport']); ?></span>
+                                            </div>
+                                            <?php endif; ?>
+                                            <?php if (!empty($batch['module_docs_url'])): ?>
+                                            <div class="info-item">
+                                                <label>Module Documentation:</label>
+                                                <span><a href="<?php echo htmlspecialchars($batch['module_docs_url']); ?>" target="_blank" style="color: #488C9A;">Download</a></span>
+                                            </div>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                    
+                                    <div style="margin-top: 20px; text-align: center;">
+                                        <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="info-action-button">
+                                            View Pallets & Module Status
+                                        </a>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <div class="no-modules-message">
+                                <p style="text-align: center; color: #666; margin: 40px 0;">
+                                    No module batches have been added to this project yet.
+                                </p>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                    <div style="text-align: center;">
+                                        <a href="modules.php?project_id=<?php echo $project_id; ?>" class="info-action-button">
+                                            + Add Module Batch
+                                        </a>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Customer View Content (for admins switching to customer view) -->
+        <div id="customer-view-content" style="display: none;">
+            <div class="toggle-buttons">
+                <button id="delivery-info-btn-admin" class="active" onclick="showCustomerView('delivery-info')">Delivery View</button>
+                <button id="financial-info-btn-admin" onclick="showCustomerView('financial-info')">Financial View</button>
+            </div>
+
+            <!-- Delivery Info -->
+            <div id="delivery-info-admin">
+                <form method="GET" id="filter-form-admin">
+                    <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+                    <label>
+                        <input type="radio" name="view_mode" value="mw"
+                               <?php if($view_mode=='mw') echo 'checked';?>
+                               onchange="this.form.submit();"> MWs
+                    </label>
+                    <label>
+                        <input type="radio" name="view_mode" value="modules"
+                               <?php if($view_mode=='modules') echo 'checked';?>
+                               onchange="this.form.submit();"> Number of Modules
+                    </label>
+                </form>
+                <div class="tables-and-charts">
+                    <div class="left-side">
+                        <h2>Next 5 Weeks of Deliveries</h2>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Project</th>
+                                        <th>Module Type</th>
+                                        <th>Total Order</th>
+                                        <th>Delivered</th>
+                                        <?php foreach($weeks as $wk): ?>
+                                            <th><?php echo $wk['end']->format('n/j'); ?></th>
+                                        <?php endforeach; ?>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr onclick="toggleSubRowsAdmin('delivery-row-admin')">
+                                        <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                        <td><?php echo htmlspecialchars($module_type_combined);?></td>
+                                        <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
+                                        <?php foreach($anticipated_quantities_combined as $qq): ?>
+                                            <td><?php echo number_format($qq,($view_mode=='mw')?2:0);?></td>
+                                        <?php endforeach;?>
+                                    </tr>
+                                    <?php foreach($sub_rows as $lbl=>$sr): ?>
+                                        <tr class="delivery-row-admin" style="display:none;">
+                                            <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                            <td><?php echo htmlspecialchars($sr['wattage_label']);?></td>
+                                            <td><?php echo number_format($sr['total_order'],($view_mode=='mw')?2:0);?></td>
+                                            <td><?php echo number_format($sr['delivered'],($view_mode=='mw')?2:0);?></td>
+                                            <?php foreach($sr['anticipated_quantities'] as $val): ?>
+                                                <td><?php echo number_format($val,($view_mode=='mw')?2:0);?></td>
+                                            <?php endforeach;?>
+                                        </tr>
+                                    <?php endforeach;?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h2>Anticipated vs Actual Deliveries</h2>
+                        <canvas id="lineChartAdmin"></canvas>
+                    </div>
+
+                    <div class="right-side">
+                        <h2>Module Delivery Status</h2>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Project</th>
+                                        <th>Module Type</th>
+                                        <th>Total Order</th>
+                                        <th>Delivered to Project</th>
+                                        <th>In Warehouse</th>
+                                        <th>Pending</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr onclick="toggleSubRowsAdmin('status-row-admin')">
+                                        <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                        <td><?php echo htmlspecialchars($module_type_combined);?></td>
+                                        <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format($pending_combined,($view_mode=='mw')?2:0);?></td>
+                                    </tr>
+                                    <?php foreach($sub_rows_status as $lbl=>$srs): ?>
+                                        <tr class="status-row-admin" style="display:none;">
+                                            <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                            <td><?php echo htmlspecialchars($srs['wattage_label']);?></td>
+                                            <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
+                                            <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
+                                            <td><?php echo number_format($srs['in_warehouse'],($view_mode=='mw')?2:0);?></td>
+                                            <td><?php echo number_format($srs['pending'],($view_mode=='mw')?2:0);?></td>
+                                        </tr>
+                                    <?php endforeach;?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h2>Delivery Overview</h2>
+                        <div class="chart-container">
+                            <canvas id="pieChartAdmin"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Financial Info -->
+            <div id="financial-info-admin" style="display: none;">
+                <div class="tables-and-charts">
+                    <div class="left-side">
+                        <h2>Invoices and Cashflow Forecast</h2>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Project</th>
+                                        <th>Open Invoices</th>
+                                        <th>Total Costs</th>
+                                        <?php foreach($weeks_financial as $wf): ?>
+                                            <th><?php echo $wf['end']->format('n/j'); ?></th>
+                                        <?php endforeach;?>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                        <td>
+                                            <a href="invoices.php?project_id=<?php echo $project_id; ?>">
+                                                $<?php echo number_format($open_invoices_total,2);?>
+                                            </a>
+                                        </td>
+                                        <td>$<?php echo number_format($total_logistics_cost,2);?></td>
+                                        <?php foreach($weeks_financial as $ix=>$wf){
+                                            $val = $anticipated_deliveries_financial[$ix] ?? 0;
+                                            echo "<td>$".number_format($val,2)."</td>";
+                                        } ?>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h2>Forecasted vs Actual Cost</h2>
+                        <canvas id="budgetLineChartAdmin"></canvas>
+                    </div>
+
+                    <div class="right-side">
+                        <h2>Cost per Unit</h2>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Project</th>
+                                        <th>Module Type</th>
+                                        <th>Total Costs</th>
+                                        <th>Price Per Pallet</th>
+                                        <th>Price Per Module</th>
+                                        <th>Price Per Watt</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Combined row -->
+                                    <tr onclick="toggleSubRowsAdmin('cost-row-admin')">
+                                        <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                        <td><?php echo htmlspecialchars($combined_label);?></td>
+                                        <td>$<?php echo number_format($combined_total_costs,2);?></td>
+                                        <td>$<?php echo number_format($combined_ppp,2);?></td>
+                                        <td>$<?php echo number_format($combined_ppm,2);?></td>
+                                        <td>$<?php echo number_format($combined_ppw,4);?></td>
+                                    </tr>
+                                    <!-- Detailed rows -->
+                                    <?php foreach($cost_data as $key=>$cd): ?>
+                                        <tr class="cost-row-admin" style="display:none;">
+                                            <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                            <td><?php echo htmlspecialchars($cd['module_type']);?></td>
+                                            <td>$<?php echo number_format($cd['total_costs'],2);?></td>
+                                            <td>$<?php echo number_format($cd['price_per_pallet'],2);?></td>
+                                            <td>$<?php echo number_format($cd['price_per_module'],2);?></td>
+                                            <td>$<?php echo number_format($cd['price_per_watt'],4);?></td>
+                                        </tr>
+                                    <?php endforeach;?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h2>Cost Breakdown</h2>
+                        <div class="chart-container">
+                            <canvas id="costPieChartAdmin"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Shipping Breakdown Modal -->
+        <div id="shippingModal" class="warehouse-selection-modal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="shippingModalTitle"></h3>
+                    <span class="close-modal" onclick="closeShippingModal()">&times;</span>
+                </div>
+                <div class="modal-body" id="shippingModalContent"></div>
+            </div>
+        </div>
+    <?php else: ?>
+        <!-- Regular User Delivery/Financial View -->
+        <div class="toggle-buttons">
+            <button id="delivery-info-btn" class="active" onclick="showView('delivery-info')">Delivery View</button>
+            <button id="financial-info-btn" onclick="showView('financial-info')">Financial View</button>
+        </div>
+
+        <!-- Delivery Info -->
+        <div id="delivery-info">
+            <form method="GET" id="filter-form">
+                <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+                <label>
+                    <input type="radio" name="view_mode" value="mw"
+                           <?php if($view_mode=='mw') echo 'checked';?>
+                           onchange="this.form.submit();"> MWs
+                </label>
+                <label>
+                    <input type="radio" name="view_mode" value="modules"
+                           <?php if($view_mode=='modules') echo 'checked';?>
+                           onchange="this.form.submit();"> Number of Modules
+                </label>
+            </form>
+            <div class="tables-and-charts">
+                <div class="left-side">
+                    <h2>Next 5 Weeks of Deliveries</h2>
+                    <div class="table-responsive">
+                        <table id="table1">
+                            <thead>
+                                <tr>
+                                    <th>Project</th>
+                                    <th>Module Type</th>
+                                    <th>Total Order</th>
+                                    <th>Delivered</th>
+                                    <?php foreach($weeks as $wk): ?>
+                                        <th><?php echo $wk['end']->format('n/j'); ?></th>
+                                    <?php endforeach; ?>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr onclick="toggleSubRows('delivery-row')">
                                     <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                    <td><?php echo htmlspecialchars($sr['wattage_label']);?></td>
-                                    <td><?php echo number_format($sr['total_order'],($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($sr['delivered'],($view_mode=='mw')?2:0);?></td>
-                                    <?php foreach($sr['anticipated_quantities'] as $val): ?>
-                                        <td><?php echo number_format($val,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo htmlspecialchars($module_type_combined);?></td>
+                                    <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php foreach($anticipated_quantities_combined as $qq): ?>
+                                        <td><?php echo number_format($qq,($view_mode=='mw')?2:0);?></td>
                                     <?php endforeach;?>
                                 </tr>
-                            <?php endforeach;?>
-                        </tbody>
-                    </table>
-                </div>
-                <h2>Anticipated vs Actual Deliveries</h2>
-                <canvas id="lineChart"></canvas>
-            </div>
-
-            <div class="right-side">
-                <h2>Module Delivery Status</h2>
-                <div class="table-responsive">
-                    <table id="table2">
-                        <thead>
-                            <tr>
-                                <th>Project</th>
-                                <th>Module Type</th>
-                                <th>Total Order</th>
-                                <th>Delivered to Project</th>
-                                <th>In Warehouse</th>
-                                <th>Pending</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr onclick="toggleSubRows('status-row')">
-                                <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                <td><?php echo htmlspecialchars($module_type_combined);?></td>
-                                <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
-                                <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
-                                <td><?php echo number_format($pending_combined,($view_mode=='mw')?2:0);?></td>
-                            </tr>
-                            <?php foreach($sub_rows_status as $lbl=>$srs): ?>
-                                <tr class="status-row" style="display:none;">
-                                    <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                    <td><?php echo htmlspecialchars($srs['wattage_label']);?></td>
-                                    <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($srs['in_warehouse'],($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($srs['pending'],($view_mode=='mw')?2:0);?></td>
-                                </tr>
-                            <?php endforeach;?>
-                        </tbody>
-                    </table>
-                </div>
-                <h2>Delivery Overview</h2>
-                <div class="chart-container">
-                    <canvas id="pieChart"></canvas>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Financial Info -->
-    <div id="financial-info">
-        <div class="tables-and-charts">
-            <div class="left-side">
-                <h2>Invoices and Cashflow Forecast</h2>
-                <div class="table-responsive">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Project</th>
-                                <th>Open Invoices</th>
-                                <th>Total Costs</th>
-                                <?php foreach($weeks_financial as $wf): ?>
-                                    <th><?php echo $wf['end']->format('n/j'); ?></th>
+                                <?php foreach($sub_rows as $lbl=>$sr): ?>
+                                    <tr class="delivery-row" style="display:none;">
+                                        <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                        <td><?php echo htmlspecialchars($sr['wattage_label']);?></td>
+                                        <td><?php echo number_format($sr['total_order'],($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format($sr['delivered'],($view_mode=='mw')?2:0);?></td>
+                                        <?php foreach($sr['anticipated_quantities'] as $val): ?>
+                                            <td><?php echo number_format($val,($view_mode=='mw')?2:0);?></td>
+                                        <?php endforeach;?>
+                                    </tr>
                                 <?php endforeach;?>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                <td>
-                                    <a href="invoices.php?project_id=<?php echo $project_id; ?>">
-                                        $<?php echo number_format($open_invoices_total,2);?>
-                                    </a>
-                                </td>
-                                <td>$<?php echo number_format($total_logistics_cost,2);?></td>
-                                <?php foreach($weeks_financial as $ix=>$wf){
-                                    $val = $anticipated_deliveries_financial[$ix] ?? 0;
-                                    echo "<td>$".number_format($val,2)."</td>";
-                                } ?>
-                            </tr>
-                        </tbody>
-                    </table>
+                            </tbody>
+                        </table>
+                    </div>
+                    <h2>Anticipated vs Actual Deliveries</h2>
+                    <canvas id="lineChart"></canvas>
                 </div>
-                <h2>Forecasted vs Actual Cost</h2>
-                <canvas id="budgetLineChart"></canvas>
-            </div>
 
-            <div class="right-side">
-                <h2>Cost per Unit</h2>
-                <div class="table-responsive">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Project</th>
-                                <th>Module Type</th>
-                                <th>Total Costs</th>
-                                <th>Price Per Pallet</th>
-                                <th>Price Per Module</th>
-                                <th>Price Per Watt</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <!-- Combined row -->
-                            <tr onclick="toggleSubRows('cost-row')">
-                                <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                <td><?php echo htmlspecialchars($combined_label);?></td>
-                                <td>$<?php echo number_format($combined_total_costs,2);?></td>
-                                <td>$<?php echo number_format($combined_ppp,2);?></td>
-                                <td>$<?php echo number_format($combined_ppm,2);?></td>
-                                <td>$<?php echo number_format($combined_ppw,4);?></td>
-                            </tr>
-                            <!-- Detailed rows -->
-                            <?php foreach($cost_data as $key=>$cd): ?>
-                                <tr class="cost-row" style="display:none;">
-                                    <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                    <td><?php echo htmlspecialchars($cd['module_type']);?></td>
-                                    <td>$<?php echo number_format($cd['total_costs'],2);?></td>
-                                    <td>$<?php echo number_format($cd['price_per_pallet'],2);?></td>
-                                    <td>$<?php echo number_format($cd['price_per_module'],2);?></td>
-                                    <td>$<?php echo number_format($cd['price_per_watt'],4);?></td>
+                <div class="right-side">
+                    <h2>Module Delivery Status</h2>
+                    <div class="table-responsive">
+                        <table id="table2">
+                            <thead>
+                                <tr>
+                                    <th>Project</th>
+                                    <th>Module Type</th>
+                                    <th>Total Order</th>
+                                    <th>Delivered to Project</th>
+                                    <th>In Warehouse</th>
+                                    <th>Pending</th>
                                 </tr>
-                            <?php endforeach;?>
-                        </tbody>
-                    </table>
-                </div>
-                <h2>Cost Breakdown</h2>
-                <div class="chart-container">
-                    <canvas id="costPieChart"></canvas>
+                            </thead>
+                            <tbody>
+                                <tr onclick="toggleSubRows('status-row')">
+                                    <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                    <td><?php echo htmlspecialchars($module_type_combined);?></td>
+                                    <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($pending_combined,($view_mode=='mw')?2:0);?></td>
+                                </tr>
+                                <?php foreach($sub_rows_status as $lbl=>$srs): ?>
+                                    <tr class="status-row" style="display:none;">
+                                        <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                        <td><?php echo htmlspecialchars($srs['wattage_label']);?></td>
+                                        <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format($srs['in_warehouse'],($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format($srs['pending'],($view_mode=='mw')?2:0);?></td>
+                                    </tr>
+                                <?php endforeach;?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <h2>Delivery Overview</h2>
+                    <div class="chart-container">
+                        <canvas id="pieChart"></canvas>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
+
+        <!-- Financial Info -->
+        <div id="financial-info">
+            <div class="tables-and-charts">
+                <div class="left-side">
+                    <h2>Invoices and Cashflow Forecast</h2>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Project</th>
+                                    <th>Open Invoices</th>
+                                    <th>Total Costs</th>
+                                    <?php foreach($weeks_financial as $wf): ?>
+                                        <th><?php echo $wf['end']->format('n/j'); ?></th>
+                                    <?php endforeach;?>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                    <td>
+                                        <a href="invoices.php?project_id=<?php echo $project_id; ?>">
+                                            $<?php echo number_format($open_invoices_total,2);?>
+                                        </a>
+                                    </td>
+                                    <td>$<?php echo number_format($total_logistics_cost,2);?></td>
+                                    <?php foreach($weeks_financial as $ix=>$wf){
+                                        $val = $anticipated_deliveries_financial[$ix] ?? 0;
+                                        echo "<td>$".number_format($val,2)."</td>";
+                                    } ?>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <h2>Forecasted vs Actual Cost</h2>
+                    <canvas id="budgetLineChart"></canvas>
+                </div>
+
+                <div class="right-side">
+                    <h2>Cost per Unit</h2>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Project</th>
+                                    <th>Module Type</th>
+                                    <th>Total Costs</th>
+                                    <th>Price Per Pallet</th>
+                                    <th>Price Per Module</th>
+                                    <th>Price Per Watt</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Combined row -->
+                                <tr onclick="toggleSubRows('cost-row')">
+                                    <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                    <td><?php echo htmlspecialchars($combined_label);?></td>
+                                    <td>$<?php echo number_format($combined_total_costs,2);?></td>
+                                    <td>$<?php echo number_format($combined_ppp,2);?></td>
+                                    <td>$<?php echo number_format($combined_ppm,2);?></td>
+                                    <td>$<?php echo number_format($combined_ppw,4);?></td>
+                                </tr>
+                                <!-- Detailed rows -->
+                                <?php foreach($cost_data as $key=>$cd): ?>
+                                    <tr class="cost-row" style="display:none;">
+                                        <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                        <td><?php echo htmlspecialchars($cd['module_type']);?></td>
+                                        <td>$<?php echo number_format($cd['total_costs'],2);?></td>
+                                        <td>$<?php echo number_format($cd['price_per_pallet'],2);?></td>
+                                        <td>$<?php echo number_format($cd['price_per_module'],2);?></td>
+                                        <td>$<?php echo number_format($cd['price_per_watt'],4);?></td>
+                                    </tr>
+                                <?php endforeach;?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <h2>Cost Breakdown</h2>
+                    <div class="chart-container">
+                        <canvas id="costPieChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    <?php endif; ?>
 </main>
 
 <script>
-// Delivery View line chart
+<?php if ($role !== 'admin' && $role !== 'global_admin'): ?>
+// Delivery View line chart (for regular users)
 var dateLabels = <?php echo $dateLabelsJSON; ?>;
 var lineData   = <?php echo $lineChartDataJSON; ?>;
-var ctxLine    = document.getElementById('lineChart').getContext('2d');
-
+var ctxLineEl  = document.getElementById('lineChart');
+if(ctxLineEl){
+var ctxLine    = ctxLineEl.getContext('2d');
 var lineChart = new Chart(ctxLine, {
     type: 'line',
     data: {
@@ -1698,11 +3427,14 @@ var lineChart = new Chart(ctxLine, {
         }
     }
 });
+}
 
-// Delivery Overview pie
+// Delivery Overview pie (for regular users)
 var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages));?>;
 var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages));?>;
-var ctxPie         = document.getElementById('pieChart').getContext('2d');
+var ctxPieEl       = document.getElementById('pieChart');
+if(ctxPieEl){
+var ctxPie         = ctxPieEl.getContext('2d');
 var pieChart = new Chart(ctxPie,{
     type:'pie',
     data:{
@@ -1730,8 +3462,30 @@ var pieChart = new Chart(ctxPie,{
         }
     }
 });
+}
+<?php endif; ?>
 
 function showView(viewId) {
+    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+    // Admin view logic
+    ['progress-info','site-info','module-info'].forEach(function(id){
+        var sec = document.getElementById(id);
+        var btn = document.getElementById(id+'-btn');
+        if(sec) sec.style.display = (id===viewId)?'block':'none';
+        if(btn){
+            if(id===viewId) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
+    });
+    
+    // Load content for site-info and module-info when they're selected
+    if(viewId === 'site-info') {
+        loadSiteInfo();
+    } else if(viewId === 'module-info') {
+        loadModuleInfo();
+    }
+    <?php else: ?>
+    // Regular user view logic
     document.getElementById('delivery-info').style.display='none';
     document.getElementById('financial-info').style.display='none';
 
@@ -1746,8 +3500,181 @@ function showView(viewId) {
         document.getElementById('financial-info-btn').classList.add('active');
         initializeFinancialCharts();
     }
+    <?php endif; ?>
 }
 
+<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+function loadSiteInfo() {
+    var siteSection = document.getElementById('site-info');
+    if(siteSection && siteSection.innerHTML.trim() === '') {
+        siteSection.innerHTML = `
+            <div style="text-align: center; padding: 40px; color: #6c757d;">
+                <h3 style="color: #293E4C; margin-bottom: 15px;">Site Information</h3>
+                <p>This section will contain project site details, location information, and site-specific requirements.</p>
+                <p style="font-style: italic; margin-top: 20px;">Content coming soon...</p>
+            </div>
+        `;
+    }
+}
+
+function loadModuleInfo() {
+    var moduleSection = document.getElementById('module-info');
+    if(moduleSection && moduleSection.innerHTML.trim() === '') {
+        moduleSection.innerHTML = `
+            <div style="text-align: center; padding: 40px; color: #6c757d;">
+                <h3 style="color: #293E4C; margin-bottom: 15px;">Module Information</h3>
+                <p>This section will contain detailed module specifications, performance data, and technical documentation.</p>
+                <p style="font-style: italic; margin-top: 20px;">Content coming soon...</p>
+            </div>
+        `;
+    }
+}
+
+// Shipping Breakdown modal
+const shippingBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
+function showShippingBreakdown(type){
+    const modal = document.getElementById('shippingModal');
+    const title = document.getElementById('shippingModalTitle');
+    const content = document.getElementById('shippingModalContent');
+    title.textContent = type + ' - Detailed Breakdown';
+    content.innerHTML = generateShippingContent(type);
+    modal.style.display = 'block';
+}
+function closeShippingModal(){
+    const modal = document.getElementById('shippingModal');
+    if(modal) modal.style.display = 'none';
+}
+function generateShippingContent(filter){
+    let html='<div style="max-height:400px;overflow-y:auto;">';
+    let has=false;
+    
+    // Handle special case for "Delivered" status
+    if(filter === 'Delivered') {
+        has = true;
+        const totalDeliveredRaw = <?php echo $delivered_raw_total; ?>;
+        const totalDeliveredMW = <?php echo $delivered_combined; ?>;
+        const totalPallets = Math.round(totalDeliveredRaw / 30);
+        
+        html += `<div style="margin-bottom:20px;padding:15px;background:#e8f5e8;border-radius:8px;border-left:4px solid #28a745;">` +
+               `<h4 style="margin-top:0;color:#28a745;">Delivered to Project</h4>` +
+               `<p><strong>Total:</strong> ${totalPallets} pallets, ${totalDeliveredRaw.toLocaleString()} modules` +
+               `<?php if($view_mode == 'mw'): ?> (${totalDeliveredMW.toFixed(2)} MW)<?php endif; ?></p>`;
+        
+        // Show wattage breakdown for delivered modules        
+        const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage); ?>;
+        if(deliveredBreakdown.length > 0) {
+            html += '<p><strong>Wattage Breakdown:</strong></p><ul>';
+            deliveredBreakdown.forEach(function(item) {
+                const pallets = Math.round(item.modules / 30);
+                html += `<li>${item.wattage}W: ${pallets} pallets (${item.modules.toLocaleString()} modules)</li>`;
+            });
+            html += '</ul>';
+        }
+        
+        html += `<div style="text-align:center;margin-top:15px;">` +
+               `<a href="manage_deliveries?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#28a745;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">View Delivery Details</a>` +
+               `</div>`;
+        html += '</div>';
+    } else {
+        // Handle other shipping statuses
+        for(const key in shippingBreakdown){
+            if(key.includes(filter)){
+                has=true;
+                const data=shippingBreakdown[key];
+                html+=`<div style="margin-bottom:20px;padding:15px;background:#f8f9fa;border-radius:8px;border-left:4px solid #488C9A;">`+
+                     `<h4 style="margin-top:0;">${key}</h4>`+
+                     `<p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>`;
+                if(data.wattage_breakdown && Object.keys(data.wattage_breakdown).length>0){
+                    html+='<p><strong>Wattage Breakdown:</strong></p><ul>';
+                    for(const w in data.wattage_breakdown){
+                        const d=data.wattage_breakdown[w];
+                        html+=`<li>${w}W: ${d.pallets} pallets (${d.modules.toLocaleString()} modules)</li>`;
+                    }
+                    html+='</ul>';
+                }
+                if(filter==='In Transit to Warehouse' && data.warehouse_id){
+                    html+=`<a href="manage_warehouse_inventory.php?warehouse_id=${data.warehouse_id}&project_id=<?php echo $project_id; ?>" class="modal-action" style="display:inline-block;margin-top:8px;background:#488C9A;color:#fff;padding:6px 10px;border-radius:4px;text-decoration:none;">Receive into Warehouse</a>`;
+                }
+                html+='</div>';
+            }
+        }
+        
+        if(!has){html+='<p style="text-align:center;color:#666;font-style:italic;">No data.</p>';}
+        
+        // Add action buttons for different statuses
+        if(filter==='At Manufacturer'){
+            html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status=manufacturer" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
+        }else if(filter==='In Warehouse'){
+            html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status=warehouse" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
+        }else if(filter==='In Transit to Project'){
+            html+=`<div style="text-align:center;margin-top:15px;"><a href="scheduling.php?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Schedule Deliveries</a></div>`;
+        }
+    }
+    
+    html+='</div>';
+    return html;
+}
+
+// Admin warehousing functionality
+const warehousesWithInventory = <?php echo json_encode($warehouses_with_inventory); ?>;
+function handleAdminWarehousing() {
+    const projectId = <?php echo $project_id; ?>;
+    
+    if (warehousesWithInventory.length === 0) {
+        alert('No inventory found for this project in any warehouse.');
+        return;
+    } else if (warehousesWithInventory.length === 1) {
+        // Single warehouse - go directly to manage_warehouse_inventory
+        window.location.href = 'manage_warehouse_inventory.php?warehouse_id=' + warehousesWithInventory[0].id + '&project_id=' + projectId;
+    } else {
+        // Multiple warehouses - show warehouse selection page
+        showWarehouseSelectionModal();
+    }
+}
+
+function showWarehouseSelectionModal() {
+    const modal = document.createElement('div');
+    modal.className = 'warehouse-selection-modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Select Warehouse to Manage</h3>
+                <span class="close-modal" onclick="closeWarehouseModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>This project has inventory in multiple warehouses. Select a warehouse to manage:</p>
+                <div class="warehouse-selection-grid">
+                    ${warehousesWithInventory.map(wh => `
+                        <div class="warehouse-selection-card" onclick="goToWarehouseManagement(${wh.id})">
+                            <h4>${wh.name}</h4>
+                            <p><strong>Address:</strong> ${wh.address || 'N/A'}</p>
+                            <p><strong>Pallets Stored:</strong> ${wh.pallets_in_warehouse || 0}</p>
+                            <p><strong>Modules Stored:</strong> ${wh.modules_in_warehouse || 0}</p>
+                            <p><strong>Pallets In Transit:</strong> ${wh.pallets_in_transit_to_wh || 0}</p>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.style.display = 'block';
+}
+
+function closeWarehouseModal() {
+    const modal = document.querySelector('.warehouse-selection-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+function goToWarehouseManagement(warehouseId) {
+    const projectId = <?php echo $project_id; ?>;
+    window.location.href = 'manage_warehouse_inventory.php?warehouse_id=' + warehouseId + '&project_id=' + projectId;
+}
+<?php endif; ?>
+
+<?php if ($role !== 'admin' && $role !== 'global_admin'): ?>
 function toggleSubRows(cls){
     var rows = document.getElementsByClassName(cls);
     for(var i=0; i<rows.length; i++){
@@ -1759,7 +3686,7 @@ function toggleSubRows(cls){
     }
 }
 
-// Prepare costPie + budgetLineChart
+// Prepare costPie + budgetLineChart (for regular users)
 var pieChartDataFinancial = <?php echo json_encode($pieChartDataFinancial);?>;
 var dateLabelsForBudget   = <?php echo $dateLabelsForBudget;?>;
 var budgetLineData        = <?php echo $budgetLineChartDataJSON;?>;
@@ -1864,84 +3791,279 @@ function initializeFinancialCharts(){
         }
     });
 }
+<?php endif; ?>
 
-// View Toggle functionality
+<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+// View Toggle functionality (for admins only)
 function switchView(view) {
     const adminButtons = document.getElementById('admin-buttons');
     const customerButtons = document.getElementById('customer-buttons');
     const adminBtn = document.getElementById('admin-view-btn');
     const customerBtn = document.getElementById('customer-view-btn');
+    const adminContent = document.getElementById('admin-view-content');
+    const customerContent = document.getElementById('customer-view-content');
     
     if (view === 'admin') {
         adminButtons.style.display = 'block';
         customerButtons.style.display = 'none';
         adminBtn.classList.add('active');
         customerBtn.classList.remove('active');
+        adminContent.style.display = 'block';
+        customerContent.style.display = 'none';
     } else {
         adminButtons.style.display = 'none';
         customerButtons.style.display = 'block';
         adminBtn.classList.remove('active');
         customerBtn.classList.add('active');
+        adminContent.style.display = 'none';
+        customerContent.style.display = 'block';
+        initializeAdminCustomerCharts();
     }
 }
 
-// Admin warehousing functionality
-const warehousesWithInventory = <?php echo json_encode($warehouses_with_inventory); ?>;
-function handleAdminWarehousing() {
-    const projectId = <?php echo $project_id; ?>;
-    
-    if (warehousesWithInventory.length === 0) {
-        alert('No inventory found for this project in any warehouse.');
-        return;
-    } else if (warehousesWithInventory.length === 1) {
-        // Single warehouse - go directly to manage_warehouse_inventory
-        window.location.href = 'manage_warehouse_inventory.php?warehouse_id=' + warehousesWithInventory[0].id + '&project_id=' + projectId;
+// Customer view functions for admins
+function showCustomerView(viewId) {
+    document.getElementById('delivery-info-admin').style.display = 'none';
+    document.getElementById('financial-info-admin').style.display = 'none';
+
+    document.getElementById('delivery-info-btn-admin').classList.remove('active');
+    document.getElementById('financial-info-btn-admin').classList.remove('active');
+
+    if(viewId === 'delivery-info'){
+        document.getElementById('delivery-info-admin').style.display = 'block';
+        document.getElementById('delivery-info-btn-admin').classList.add('active');
+        initializeAdminCustomerCharts();
     } else {
-        // Multiple warehouses - show warehouse selection page
-        showWarehouseSelectionModal();
+        document.getElementById('financial-info-admin').style.display = 'block';
+        document.getElementById('financial-info-btn-admin').classList.add('active');
+        initializeAdminFinancialCharts();
     }
 }
 
-function showWarehouseSelectionModal() {
-    const modal = document.createElement('div');
-    modal.className = 'warehouse-selection-modal';
-    modal.innerHTML = `
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Select Warehouse to Manage</h3>
-                <span class="close-modal" onclick="closeWarehouseModal()">&times;</span>
-            </div>
-            <div class="modal-body">
-                <p>This project has inventory in multiple warehouses. Select a warehouse to manage:</p>
-                <div class="warehouse-selection-grid">
-                    ${warehousesWithInventory.map(wh => `
-                        <div class="warehouse-selection-card" onclick="goToWarehouseManagement(${wh.id})">
-                            <h4>${wh.name}</h4>
-                            <p><strong>Address:</strong> ${wh.address || 'N/A'}</p>
-                            <p><strong>Pallets Stored:</strong> ${wh.pallets_in_warehouse || 0}</p>
-                            <p><strong>Modules Stored:</strong> ${wh.modules_in_warehouse || 0}</p>
-                            <p><strong>Pallets In Transit:</strong> ${wh.pallets_in_transit_to_wh || 0}</p>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-    modal.style.display = 'block';
-}
-
-function closeWarehouseModal() {
-    const modal = document.querySelector('.warehouse-selection-modal');
-    if (modal) {
-        modal.remove();
+function toggleSubRowsAdmin(cls){
+    var rows = document.getElementsByClassName(cls);
+    for(var i=0; i<rows.length; i++){
+        if(rows[i].style.display==='' || rows[i].style.display==='none'){
+            rows[i].style.display='table-row';
+        } else {
+            rows[i].style.display='none';
+        }
     }
 }
 
-function goToWarehouseManagement(warehouseId) {
-    const projectId = <?php echo $project_id; ?>;
-    window.location.href = 'manage_warehouse_inventory.php?warehouse_id=' + warehouseId + '&project_id=' + projectId;
+// Initialize charts for admin customer view
+function initializeAdminCustomerCharts() {
+    // Delivery View line chart (for admin customer view)
+    var dateLabels = <?php echo $dateLabelsJSON; ?>;
+    var lineData   = <?php echo $lineChartDataJSON; ?>;
+    var ctxLineEl  = document.getElementById('lineChartAdmin');
+    
+    if(ctxLineEl && !ctxLineEl.chartInitialized){
+        var ctxLine = ctxLineEl.getContext('2d');
+        new Chart(ctxLine, {
+            type: 'line',
+            data: {
+                labels: dateLabels,
+                datasets: [
+                    {
+                        label: 'Anticipated',
+                        data: lineData.anticipated,
+                        borderColor: '#488C9A',
+                        borderDash: [5,5],
+                        borderWidth: 2,
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        label: 'Actual',
+                        data: lineData.actual,
+                        borderColor: '#293E4C',
+                        borderWidth: 2,
+                        fill: false,
+                        pointRadius: 0,
+                        spanGaps: false
+                    }
+                ]
+            },
+            options: {
+                tooltips: { mode:'index', intersect:false },
+                hover:     { mode:'index', intersect:false },
+                scales: {
+                    xAxes: [{
+                        type:'time',
+                        time:{
+                            parser:'YYYY-MM-DD',
+                            tooltipFormat:'ll',
+                            unit:'month',
+                            displayFormats:{month:'MMM YYYY'}
+                        },
+                        scaleLabel:{display:true, labelString:'Date'}
+                    }],
+                    yAxes: [{
+                        ticks:{beginAtZero:true, precision:0},
+                        scaleLabel:{
+                            display:true,
+                            labelString:'<?php echo ($view_mode=="mw") ? "MWs" : "Number of Modules";?>'
+                        }
+                    }]
+                }
+            }
+        });
+        ctxLineEl.chartInitialized = true;
+    }
+
+    // Delivery Overview pie (for admin customer view)
+    var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages));?>;
+    var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages));?>;
+    var ctxPieEl       = document.getElementById('pieChartAdmin');
+    
+    if(ctxPieEl && !ctxPieEl.chartInitialized){
+        var ctxPie = ctxPieEl.getContext('2d');
+        new Chart(ctxPie,{
+            type:'pie',
+            data:{
+                labels: pieChartLabels,
+                datasets:[{
+                    data: pieChartData,
+                    backgroundColor:[
+                        '#488C9A',
+                        '#293E4C',
+                        '#fbb040'
+                    ]
+                }]
+            },
+            options:{
+                plugins:{
+                    tooltip:{
+                        callbacks:{
+                            label:function(context){
+                                var lab=context.label||'';
+                                var val=context.parsed||0;
+                                return lab+': '+ val.toFixed(2)+'%';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        ctxPieEl.chartInitialized = true;
+    }
 }
+
+// Initialize financial charts for admin customer view
+function initializeAdminFinancialCharts() {
+    var pieChartDataFinancial = <?php echo json_encode($pieChartDataFinancial);?>;
+    var dateLabelsForBudget   = <?php echo $dateLabelsForBudget;?>;
+    var budgetLineData        = <?php echo $budgetLineChartDataJSON;?>;
+
+    // Cost Breakdown Pie
+    var costPieEl = document.getElementById('costPieChartAdmin');
+    if(costPieEl && !costPieEl.chartInitialized) {
+        var costPie = costPieEl.getContext('2d');
+        var costPieLabels = Object.keys(pieChartDataFinancial);
+        var costPieValues = Object.values(pieChartDataFinancial);
+
+        var colorMap = {
+            'Customer Cost': '#488C9A',
+            'Warehousing':   '#293E4C',
+            'Accessorial':   '#fbb040',
+            'Solterra Fee':  '#BFBFBF'
+        };
+        var backgroundColors = costPieLabels.map(function(lbl){
+            return colorMap[lbl] || '#000000';
+        });
+
+        new Chart(costPie,{
+            type:'pie',
+            data:{
+                labels: costPieLabels,
+                datasets:[{
+                    data: costPieValues,
+                    backgroundColor: backgroundColors
+                }]
+            },
+            options:{
+                title:{display:true, text:'Cost Breakdown'},
+                tooltips:{
+                    callbacks:{
+                        label:function(tooltipItem, data){
+                            var val=data.datasets[0].data[tooltipItem.index];
+                            var lbl=data.labels[tooltipItem.index];
+                            return lbl+': $'+ parseFloat(val).toFixed(2);
+                        }
+                    }
+                }
+            }
+        });
+        costPieEl.chartInitialized = true;
+    }
+
+    // Forecasted vs Actual cost line chart
+    var ctxBudgetEl = document.getElementById('budgetLineChartAdmin');
+    if(ctxBudgetEl && !ctxBudgetEl.chartInitialized) {
+        var ctxBudget = ctxBudgetEl.getContext('2d');
+        var antCost = budgetLineData.anticipated_cost;
+        var actCost = budgetLineData.actual_cost;
+
+        new Chart(ctxBudget,{
+            type:'line',
+            data:{
+                labels: dateLabelsForBudget,
+                datasets:[
+                    {
+                        label:'Anticipated Cost',
+                        data: antCost,
+                        borderColor:'#488C9A',
+                        fill:false,
+                        borderDash:[5,5],
+                        pointRadius:0
+                    },
+                    {
+                        label:'Actual Cost',
+                        data: actCost,
+                        borderColor:'#293E4C',
+                        fill:false,
+                        pointRadius:0,
+                        spanGaps:false
+                    }
+                ]
+            },
+            options:{
+                tooltips:{
+                    mode:'index',
+                    intersect:false,
+                    callbacks:{
+                        label:function(ti, data){
+                            return data.datasets[ti.datasetIndex].label+': $'+ parseFloat(ti.value).toFixed(2);
+                        }
+                    }
+                },
+                hover:{mode:'index', intersect:false},
+                scales:{
+                    xAxes:[{
+                        type:'time',
+                        time:{
+                            parser:'YYYY-MM-DD',
+                            tooltipFormat:'ll',
+                            unit:'month',
+                            displayFormats:{month:'MMM YYYY'}
+                        },
+                        scaleLabel:{display:true, labelString:'Date'}
+                    }],
+                    yAxes:[{
+                        ticks:{
+                            beginAtZero:true,
+                            callback:function(val){return '$'+val.toFixed(2);}
+                        },
+                        scaleLabel:{display:true, labelString:'Cost (USD)'}
+                    }]
+                }
+            }
+        });
+        ctxBudgetEl.chartInitialized = true;
+    }
+}
+<?php endif; ?>
 
 // Dropdown functionality
 function toggleCustomerDeliveriesDropdown() {
@@ -1968,6 +4090,14 @@ function toggleAdminDeliveriesDropdown() {
     dropdownBtn.classList.toggle("active");
 }
 
+function toggleMainDeliveriesDropdown() {
+    // This function handles the main deliveries dropdown if it exists
+    var dropdown = document.getElementById("mainDeliveriesDropdown");
+    if (dropdown) {
+        dropdown.classList.toggle("show");
+    }
+}
+
 // Close dropdown when clicking outside
 window.onclick = function(event) {
     if (!event.target.matches('.dropdown-btn') && !event.target.matches('.dropdown-arrow')) {
@@ -1986,11 +4116,364 @@ window.onclick = function(event) {
         }
     }
     
-    // Close warehouse modal if clicking outside
+    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+    // Close modals if clicking outside (admin only)
     if (event.target.classList.contains('warehouse-selection-modal')) {
         closeWarehouseModal();
     }
+    if (event.target.id === 'shippingModal') {
+        closeShippingModal();
+    }
+    if (event.target.id === 'deleteModal') {
+        closeDeleteModal();
+    }
+    if (event.target.id === 'addModuleModal') {
+        closeAddModuleModal();
+    }
+    if (event.target.id === 'editBatchModal') {
+        closeEditBatchModal();
+    }
+    
+    // Close dropdowns when clicking outside
+    if (!event.target.closest('.project-actions-dropdown')) {
+        document.getElementById('projectActionsDropdown').style.display = 'none';
+    }
+    if (!event.target.closest('.module-actions-dropdown')) {
+        document.getElementById('moduleActionsDropdown').style.display = 'none';
+    }
+    if (!event.target.closest('.batch-actions-dropdown')) {
+        document.querySelectorAll('.batch-actions-content').forEach(function(content) {
+            content.style.display = 'none';
+        });
+    }
+    <?php endif; ?>
 }
+
+<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+// Project Actions Functions
+function toggleProjectActions() {
+    const dropdown = document.getElementById('projectActionsDropdown');
+    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+}
+
+// Module Actions Functions
+function toggleModuleActions() {
+    const dropdown = document.getElementById('moduleActionsDropdown');
+    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+}
+
+// Batch Actions Functions
+function toggleBatchActions(batchId) {
+    const dropdown = document.getElementById('batchActionsDropdown_' + batchId);
+    // Close all other batch dropdowns
+    document.querySelectorAll('.batch-actions-content').forEach(function(content) {
+        if (content.id !== 'batchActionsDropdown_' + batchId) {
+            content.style.display = 'none';
+        }
+    });
+    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+}
+
+// Delete Project Functions
+let deleteProjectId = null;
+let deleteProjectName = null;
+
+function confirmDeleteProject(projectId, projectName) {
+    deleteProjectId = projectId;
+    deleteProjectName = projectName;
+    document.getElementById('deleteModalText').innerHTML = 
+        `Are you sure you want to delete the project "<strong>${projectName}</strong>"?<br><br>
+        This will permanently delete:<br>
+        • All module batches and pallets<br>
+        • All deliveries and shipments<br>
+        • All project data and documents<br><br>
+        <strong>This action cannot be undone.</strong>`;
+    document.getElementById('deleteModal').style.display = 'block';
+}
+
+function closeDeleteModal() {
+    document.getElementById('deleteModal').style.display = 'none';
+    deleteProjectId = null;
+    deleteProjectName = null;
+}
+
+function confirmDelete() {
+    if (!deleteProjectId) return;
+    
+    // Show loading state
+    const deleteBtn = document.querySelector('.btn-delete');
+    deleteBtn.disabled = true;
+    deleteBtn.textContent = 'Deleting...';
+    
+    // Send delete request
+    fetch('delete_project_cascade.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'project_id=' + deleteProjectId
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Project "' + deleteProjectName + '" deleted successfully.');
+            window.location.href = 'manage_projects.php';
+        } else {
+            alert('Error deleting project: ' + (data.error || 'Unknown error'));
+            deleteBtn.disabled = false;
+            deleteBtn.textContent = 'Delete Project';
+        }
+    })
+    .catch(error => {
+        alert('Error deleting project: ' + error.message);
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = 'Delete Project';
+    });
+}
+
+// Add Module Modal Functions
+function openAddModuleModal() {
+    // Load manufacturers
+    loadManufacturers();
+    // Clear form
+    document.getElementById('addModuleForm').reset();
+    document.getElementById('modal_wattage_container').innerHTML = '';
+    addModalWattageField(); // Add one default wattage field
+    document.getElementById('addModuleModal').style.display = 'block';
+}
+
+function closeAddModuleModal() {
+    document.getElementById('addModuleModal').style.display = 'none';
+}
+
+function loadManufacturers() {
+    // Populate manufacturer dropdown (you'll need to implement this based on your data)
+    const select = document.getElementById('modal_manufacturer_id');
+    select.innerHTML = '<option value="">Select Manufacturer</option>';
+    
+    // Add manufacturers from PHP data or make AJAX call
+    <?php if (!empty($manufacturers)): ?>
+    <?php foreach ($manufacturers as $mfg): ?>
+    const option<?php echo $mfg['id']; ?> = document.createElement('option');
+    option<?php echo $mfg['id']; ?>.value = '<?php echo $mfg['id']; ?>';
+    option<?php echo $mfg['id']; ?>.textContent = '<?php echo htmlspecialchars($mfg['name'], ENT_QUOTES); ?>';
+    select.appendChild(option<?php echo $mfg['id']; ?>);
+    <?php endforeach; ?>
+    <?php endif; ?>
+}
+
+let modalWattageIndex = 0;
+function addModalWattageField() {
+    const container = document.getElementById('modal_wattage_container');
+    const div = document.createElement('div');
+    div.className = 'wattage-entry';
+    div.innerHTML = `
+        <div class="modal-form-group">
+            <label>Wattage (W):</label>
+            <input type="number" name="wattages[${modalWattageIndex}]" step="1" min="1" required placeholder="e.g., 555">
+        </div>
+        <div class="modal-form-group">
+            <label>Quantity:</label>
+            <input type="number" name="quantities[${modalWattageIndex}]" step="1" min="1" required placeholder="e.g., 1000">
+        </div>
+        <button type="button" class="remove-wattage-btn" onclick="this.closest('.wattage-entry').remove()">Remove</button>
+    `;
+    container.appendChild(div);
+    modalWattageIndex++;
+}
+
+// Edit Batch Modal Functions
+function openEditBatchModal(batchId, batchName) {
+    document.getElementById('editBatchModalTitle').textContent = 'Edit Module Batch: ' + batchName;
+    document.getElementById('edit_batch_id').value = batchId;
+    
+    // Load existing wattage data for this batch
+    loadBatchWattages(batchId);
+    
+    document.getElementById('editBatchModal').style.display = 'block';
+}
+
+function closeEditBatchModal() {
+    document.getElementById('editBatchModal').style.display = 'none';
+}
+
+function loadBatchWattages(batchId) {
+    // Make AJAX call to get current wattages for this batch
+    fetch('get_batch_wattages.php?batch_id=' + batchId)
+    .then(response => response.json())
+    .then(data => {
+        const container = document.getElementById('edit_wattage_container');
+        container.innerHTML = '';
+        
+        if (data.success && data.wattages) {
+            data.wattages.forEach(function(wattage, index) {
+                addEditWattageField(wattage.wattage, wattage.quantity, wattage.id);
+            });
+        }
+        
+        if (container.children.length === 0) {
+            addEditWattageField(); // Add empty field if no existing data
+        }
+    })
+    .catch(error => {
+        console.error('Error loading batch wattages:', error);
+        addEditWattageField(); // Add empty field on error
+    });
+}
+
+let editWattageIndex = 0;
+function addEditWattageField(wattage = '', quantity = '', itemId = '') {
+    const container = document.getElementById('edit_wattage_container');
+    const div = document.createElement('div');
+    div.className = 'wattage-entry';
+    div.innerHTML = `
+        <div class="modal-form-group">
+            <label>Wattage (W):</label>
+            <input type="number" name="wattages[${editWattageIndex}]" step="1" min="1" required value="${wattage}" placeholder="e.g., 555">
+            <input type="hidden" name="item_ids[${editWattageIndex}]" value="${itemId}">
+        </div>
+        <div class="modal-form-group">
+            <label>Quantity:</label>
+            <input type="number" name="quantities[${editWattageIndex}]" step="1" min="1" required value="${quantity}" placeholder="e.g., 1000">
+        </div>
+        <button type="button" class="remove-wattage-btn" onclick="this.closest('.wattage-entry').remove()">Remove</button>
+    `;
+    container.appendChild(div);
+    editWattageIndex++;
+}
+
+// Form submission handlers
+document.getElementById('addModuleForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    formData.append('project_id', <?php echo $project_id; ?>);
+    formData.append('action', 'add_module_batch');
+    
+    fetch('handle_module_batch.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Module batch added successfully!');
+            location.reload();
+        } else {
+            alert('Error adding module batch: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        alert('Error adding module batch: ' + error.message);
+    });
+});
+
+document.getElementById('editBatchForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    formData.append('action', 'edit_module_batch');
+    
+    fetch('handle_module_batch.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Module batch updated successfully!');
+            location.reload();
+        } else {
+            alert('Error updating module batch: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        alert('Error updating module batch: ' + error.message);
+    });
+});
+<?php endif; ?>
 </script>
+
+<!-- Delete Confirmation Modal -->
+<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+<div id="deleteModal" class="delete-modal">
+    <div class="delete-modal-content">
+        <h3>⚠️ Confirm Project Deletion</h3>
+        <p id="deleteModalText">Are you sure you want to delete this project? This action cannot be undone.</p>
+        <div class="modal-buttons">
+            <button class="modal-btn btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+            <button class="modal-btn btn-delete" onclick="confirmDelete()">Delete Project</button>
+        </div>
+    </div>
+</div>
+
+<!-- Add Module Modal -->
+<div id="addModuleModal" class="add-module-modal">
+    <div class="add-module-modal-content">
+        <h3>Add New Module Batch</h3>
+        <form id="addModuleForm">
+            <div class="modal-form-grid">
+                <div class="modal-form-group">
+                    <label for="modal_manufacturer_id">Manufacturer:</label>
+                    <select id="modal_manufacturer_id" name="manufacturer_id">
+                        <option value="">Select Manufacturer</option>
+                    </select>
+                </div>
+                
+                <div class="modal-form-group">
+                    <label for="modal_vendor_name">Vendor Name:</label>
+                    <input type="text" id="modal_vendor_name" name="vendor_name" required>
+                </div>
+                
+                <div class="modal-form-group">
+                    <label for="modal_initial_location">Initial Location:</label>
+                    <input type="text" id="modal_initial_location" name="initial_location" required>
+                </div>
+                
+                <div class="modal-form-group">
+                    <label for="modal_modules_per_pallet">Modules per Pallet:</label>
+                    <input type="number" id="modal_modules_per_pallet" name="modules_per_pallet" min="1">
+                </div>
+                
+                <div class="wattage-section">
+                    <h4>Module Wattages & Quantities</h4>
+                    <div id="modal_wattage_container">
+                        <!-- Wattage entries will be added here -->
+                    </div>
+                    <button type="button" class="add-wattage-btn" onclick="addModalWattageField()">+ Add Wattage</button>
+                </div>
+            </div>
+            
+            <div class="modal-buttons">
+                <button type="button" class="modal-btn btn-secondary" onclick="closeAddModuleModal()">Cancel</button>
+                <button type="submit" class="modal-btn btn-primary">Add Module Batch</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Batch Modal -->
+<div id="editBatchModal" class="add-module-modal">
+    <div class="add-module-modal-content">
+        <h3 id="editBatchModalTitle">Edit Module Batch</h3>
+        <form id="editBatchForm">
+            <input type="hidden" id="edit_batch_id" name="batch_id">
+            <div class="wattage-section">
+                <h4>Module Wattages & Quantities</h4>
+                <div id="edit_wattage_container">
+                    <!-- Existing wattage entries will be loaded here -->
+                </div>
+                <button type="button" class="add-wattage-btn" onclick="addEditWattageField()">+ Add Wattage</button>
+            </div>
+            
+            <div class="modal-buttons">
+                <button type="button" class="modal-btn btn-secondary" onclick="closeEditBatchModal()">Cancel</button>
+                <button type="submit" class="modal-btn btn-primary">Update Module Batch</button>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
+
 </body>
 </html>

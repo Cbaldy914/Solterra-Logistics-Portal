@@ -1722,7 +1722,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
 <main>
     <!-- Add breadcrumb navigation -->
     <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="<?php echo $is_global_admin ? 'admin_dashboard.php' : 'dashboard.php'; ?>" style="color: #488C9A; text-decoration: none;">Dashboard</a>
+        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
         <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
         <?php 
         // Check if we're viewing deliveries for a specific project (coming from project overview)

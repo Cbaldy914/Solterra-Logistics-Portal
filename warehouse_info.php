@@ -160,26 +160,31 @@ try {
                 WHERE ip_inner.assigned_project_id = ? /* Ensure pallets in transit also belong to the project */
                 GROUP BY dp.delivery_id
             ) d_pal ON d_transit.id = d_pal.delivery_id
-            WHERE 
+            WHERE
                 EXISTS (
                     SELECT 1 FROM inventory_pallets ip_check_stored
                     WHERE ip_check_stored.assigned_project_id = ? AND ip_check_stored.current_warehouse_id = wh.id AND ip_check_stored.status = 'In Warehouse'
-                ) 
+                )
                 OR EXISTS (
                     SELECT 1 FROM deliveries d_check_transit
                     JOIN delivery_pallets dp_check_transit ON d_check_transit.id = dp_check_transit.delivery_id
                     JOIN inventory_pallets ip_check_d_transit ON dp_check_transit.inventory_pallet_id = ip_check_d_transit.id
-                    WHERE ip_check_d_transit.assigned_project_id = ? 
-                      AND d_check_transit.warehouse_id = wh.id 
+                    WHERE ip_check_d_transit.assigned_project_id = ?
+                      AND d_check_transit.warehouse_id = wh.id
                       AND d_check_transit.status_of_delivery LIKE 'In Transit%'
                       AND d_check_transit.warehouse_arrival_date IS NULL
+                )
+                OR EXISTS (
+                    SELECT 1 FROM deliveries d_hist
+                    WHERE d_hist.warehouse_id = wh.id
+                      AND d_hist.project_id = ?
                 )
             GROUP BY wh.id, wh.name, wh.address, wh.image_url
             ORDER BY wh.name ASC
         ";
         $stmtDistinctWH = $conn->prepare($sqlDistinctWH);
         if (!$stmtDistinctWH) throw new Exception("Prepare distinct warehouses failed: " . $conn->error);
-        $stmtDistinctWH->bind_param("iiiii", $project_id, $project_id, $project_id, $project_id, $project_id);
+        $stmtDistinctWH->bind_param("iiiiii", $project_id, $project_id, $project_id, $project_id, $project_id, $project_id);
         $stmtDistinctWH->execute();
         $resultDistinctWH = $stmtDistinctWH->get_result();
 
