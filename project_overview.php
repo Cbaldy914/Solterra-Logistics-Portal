@@ -889,13 +889,57 @@ elseif ($step3_completed && !$step4_completed) $current_step = 4;
 elseif ($step4_completed && !$step5_completed) $current_step = 5;
 elseif ($step5_completed) $current_step = 6; // All completed
 
-// Calculate progress percentage for timeline
+// Calculate progress percentage for timeline - only go to current step, not beyond
 $progress_percentage = 0;
-if ($step1_completed) $progress_percentage = 20;
-if ($step2_completed) $progress_percentage = 40;
-if ($step3_completed) $progress_percentage = 60;
-if ($step4_completed) $progress_percentage = 80;
+if ($current_step >= 2 && $step1_completed) $progress_percentage = 20;
+if ($current_step >= 3 && $step2_completed) $progress_percentage = 40;
+if ($current_step >= 4 && $step3_completed) $progress_percentage = 60;
+if ($current_step >= 5 && $step4_completed) $progress_percentage = 80;
 if ($step5_completed) $progress_percentage = 100;
+
+// Fetch module batches for this project with wattage information
+$module_batches = [];
+$stmt_modules = $conn->prepare("
+    SELECT m.*, c.name as account_name
+    FROM modules m 
+    JOIN customer_accounts c ON m.account_id = c.id
+    WHERE m.project_id = ?
+    ORDER BY m.vendor_name, m.created_at
+");
+$stmt_modules->bind_param("i", $project_id);
+$stmt_modules->execute();
+$modules_result = $stmt_modules->get_result();
+while ($module = $modules_result->fetch_assoc()) {
+    // Get wattage information for this module batch
+    $stmt_wattages = $conn->prepare("
+        SELECT wattage, quantity 
+        FROM unassigned_module_items 
+        WHERE unassigned_module_id = ? 
+        ORDER BY wattage ASC
+    ");
+    $stmt_wattages->bind_param("i", $module['id']);
+    $stmt_wattages->execute();
+    $wattages_result = $stmt_wattages->get_result();
+    
+    $module['wattages'] = [];
+    while ($wattage_row = $wattages_result->fetch_assoc()) {
+        $module['wattages'][] = $wattage_row;
+    }
+    $stmt_wattages->close();
+    
+    $module_batches[] = $module;
+}
+$stmt_modules->close();
+
+// Fetch manufacturers for modal dropdown
+$manufacturers = [];
+$stmt_manufacturers = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
+$stmt_manufacturers->execute();
+$manufacturers_result = $stmt_manufacturers->get_result();
+while ($manufacturer = $manufacturers_result->fetch_assoc()) {
+    $manufacturers[] = $manufacturer;
+}
+$stmt_manufacturers->close();
 
 // Close database connection
 $conn->close();
@@ -1103,6 +1147,26 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     0% { box-shadow: 0 10px 30px rgba(255, 193, 7, 0.4); }
     50% { box-shadow: 0 10px 30px rgba(255, 193, 7, 0.6), 0 0 0 10px rgba(255, 193, 7, 0.1); }
     100% { box-shadow: 0 10px 30px rgba(255, 193, 7, 0.4); }
+}
+
+.timeline-item .circle.clickable {
+    cursor: pointer;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.timeline-item .circle.clickable:hover {
+    transform: scale(1.1);
+    box-shadow: 0 12px 35px rgba(72, 140, 154, 0.4);
+}
+
+.timeline-item.completed .circle.clickable:hover {
+    transform: scale(1.15);
+    box-shadow: 0 15px 40px rgba(72, 140, 154, 0.5);
+}
+
+.timeline-item.current .circle.clickable:hover {
+    transform: scale(1.1);
+    box-shadow: 0 12px 35px rgba(255, 193, 7, 0.5);
 }
 
 .timeline-item .label {
@@ -1927,6 +1991,512 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         font-size: 0.9em;
     }
 }
+
+/* Info Container Styles */
+.info-container {
+    background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+    border-radius: 20px;
+    padding: 30px;
+    margin: 20px;
+    box-shadow: 
+        0 12px 24px rgba(0, 0, 0, 0.08),
+        0 4px 8px rgba(0, 0, 0, 0.04),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.info-container h2 {
+    margin-top: 0;
+    margin-bottom: 25px;
+    color: #293E4C;
+    font-size: 1.8em;
+    font-weight: 700;
+    border-bottom: 3px solid #488C9A;
+    padding-bottom: 10px;
+    background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.info-container .header-with-button {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+}
+
+.info-container .header-with-button h2 {
+    margin: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 25px;
+    margin-bottom: 20px;
+}
+
+.info-section {
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid rgba(72, 140, 154, 0.1);
+    transition: all 0.3s ease;
+}
+
+.info-section:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 16px rgba(72, 140, 154, 0.1);
+}
+
+.info-section h3, .info-section h4 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #488C9A;
+    font-size: 1.2em;
+    font-weight: 600;
+    border-bottom: 2px solid #e9ecef;
+    padding-bottom: 8px;
+}
+
+.info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(233, 236, 239, 0.5);
+}
+
+.info-item:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.info-item label {
+    font-weight: 600;
+    color: #293E4C;
+    margin-right: 15px;
+    min-width: 140px;
+    flex-shrink: 0;
+}
+
+.info-item span {
+    color: #666;
+    text-align: right;
+    word-break: break-word;
+}
+
+.info-action-button {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 25px;
+    text-decoration: none;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+    display: inline-block;
+    cursor: pointer;
+}
+
+.info-action-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(72, 140, 154, 0.4);
+    color: white;
+    text-decoration: none;
+}
+
+.batch-header {
+    margin-bottom: 20px;
+}
+
+.batch-header h3 {
+    margin: 0 0 5px 0;
+    color: #293E4C;
+    font-size: 1.4em;
+}
+
+.batch-meta {
+    margin-top: 5px;
+}
+
+.no-modules-message {
+    text-align: center;
+    padding: 40px;
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 12px;
+    border: 2px dashed #e9ecef;
+}
+
+/* Mobile responsiveness for info containers */
+@media (max-width: 768px) {
+    .info-container {
+        margin: 10px;
+        padding: 20px;
+    }
+    
+    .info-grid {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+    
+    .info-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .info-item label {
+        margin-bottom: 5px;
+        min-width: auto;
+    }
+    
+    .info-item span {
+        text-align: left;
+    }
+}
+
+/* Project Actions Dropdown */
+.project-actions-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.project-actions-dropdown .project-actions-btn {
+    background: none !important;
+    border: none !important;
+    padding: 6px !important;
+    border-radius: 50% !important;
+    cursor: pointer !important;
+    color: #adb5bd !important;
+    transition: all 0.3s ease !important;
+    font-size: 16px !important;
+    opacity: 0.7 !important;
+    width: auto !important;
+    margin: 0 !important;
+    font-weight: normal !important;
+}
+
+.project-actions-dropdown .project-actions-btn:hover {
+    background: rgba(72, 140, 154, 0.08) !important;
+    color: #6c757d !important;
+    opacity: 1 !important;
+    transform: scale(1.1) !important;
+}
+
+.project-actions-content {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: white;
+    min-width: 180px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    border-radius: 8px;
+    z-index: 1000;
+    border: 1px solid #e9ecef;
+}
+
+.project-actions-content a {
+    color: #333;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    transition: background-color 0.3s ease;
+}
+
+.project-actions-content a:hover {
+    background-color: #f8f9fa;
+    color: #488C9A;
+}
+
+/* Module Actions Dropdown */
+.module-actions-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.module-actions-content {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: white;
+    min-width: 220px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    border-radius: 8px;
+    z-index: 1000;
+    border: 1px solid #e9ecef;
+}
+
+.module-actions-content a {
+    color: #333;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    transition: background-color 0.3s ease;
+}
+
+.module-actions-content a:hover {
+    background-color: #f8f9fa;
+    color: #488C9A;
+}
+
+/* Batch Actions Dropdown */
+.batch-actions-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.batch-actions-btn {
+    background: #488C9A;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.3s ease;
+}
+
+.batch-actions-btn:hover {
+    background: #3A6E7F;
+}
+
+.batch-actions-content {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: white;
+    min-width: 200px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    border-radius: 8px;
+    z-index: 1000;
+    border: 1px solid #e9ecef;
+}
+
+.batch-actions-content a {
+    color: #333;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    transition: background-color 0.3s ease;
+}
+
+.batch-actions-content a:hover {
+    background-color: #f8f9fa;
+    color: #488C9A;
+}
+
+/* Delete Modal Styles */
+.delete-modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.7);
+}
+
+.delete-modal-content {
+    background-color: white;
+    margin: 10% auto;
+    padding: 30px;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    text-align: center;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+
+.delete-modal h3 {
+    color: #dc3545;
+    margin-bottom: 20px;
+    font-size: 1.5em;
+}
+
+.delete-modal p {
+    color: #666;
+    margin-bottom: 30px;
+    line-height: 1.5;
+}
+
+.delete-modal .modal-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+}
+
+.delete-modal .modal-btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.delete-modal .btn-cancel {
+    background: #6c757d;
+    color: white;
+}
+
+.delete-modal .btn-cancel:hover {
+    background: #5a6268;
+}
+
+.delete-modal .btn-delete {
+    background: #dc3545;
+    color: white;
+}
+
+.delete-modal .btn-delete:hover {
+    background: #c82333;
+}
+
+/* Add Module Modal Styles */
+.add-module-modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.7);
+    overflow-y: auto;
+}
+
+.add-module-modal-content {
+    background-color: white;
+    margin: 5% auto;
+    padding: 30px;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 800px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+
+.add-module-modal h3 {
+    color: #293E4C;
+    margin-bottom: 25px;
+    font-size: 1.5em;
+    border-bottom: 2px solid #488C9A;
+    padding-bottom: 10px;
+}
+
+.modal-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 25px;
+}
+
+.modal-form-group {
+    margin-bottom: 20px;
+}
+
+.modal-form-group label {
+    display: block;
+    font-weight: 600;
+    color: #293E4C;
+    margin-bottom: 8px;
+}
+
+.modal-form-group input,
+.modal-form-group select,
+.modal-form-group textarea {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #e9ecef;
+    border-radius: 6px;
+    font-size: 1rem;
+    transition: border-color 0.3s ease;
+    box-sizing: border-box;
+}
+
+.modal-form-group input:focus,
+.modal-form-group select:focus,
+.modal-form-group textarea:focus {
+    outline: none;
+    border-color: #488C9A;
+}
+
+.wattage-section {
+    grid-column: 1 / -1;
+    margin-top: 20px;
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.wattage-entry {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 15px;
+    align-items: end;
+    margin-bottom: 15px;
+}
+
+.add-wattage-btn {
+    background: #488C9A;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    margin-bottom: 15px;
+}
+
+.remove-wattage-btn {
+    background: #dc3545;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.modal-buttons {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 30px;
+}
+
+.modal-btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-primary {
+    background: #488C9A;
+    color: white;
+}
+
+@media (max-width: 768px) {
+    .modal-form-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .wattage-entry {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+}
 </style>
 </head>
 <body>
@@ -1959,9 +2529,24 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         
         <div class="project-info">
             <!-- Desktop Project Name -->
-            <h1 class="project-name-desktop"><?php echo htmlspecialchars($project['project_name']); ?></h1>
-            <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
-            <p><strong>Project Size:</strong> <?php echo number_format($project_size_mw, 2); ?> MWs</p>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div style="flex: 1;">
+                    <h1 class="project-name-desktop"><?php echo htmlspecialchars($project['project_name']); ?></h1>
+                    <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
+                    <p><strong>Project Size:</strong> <?php echo number_format($project_size_mw, 2); ?> MWs</p>
+                </div>
+                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                <div class="project-actions-dropdown">
+                    <button class="project-actions-btn" onclick="toggleProjectActions()">
+                        <span style="font-size: 18px;">⚙️</span>
+                    </button>
+                    <div class="project-actions-content" id="projectActionsDropdown">
+                        <a href="edit_project.php?project_id=<?php echo $project_id; ?>">✏️ Edit Project</a>
+                        <a href="#" onclick="confirmDeleteProject(<?php echo $project_id; ?>, '<?php echo htmlspecialchars($project['project_name'], ENT_QUOTES); ?>')">🗑️ Delete Project</a>
+                    </div>
+                </div>
+                <?php endif; ?>
+            </div>
             
             <!-- Admin View Buttons -->
             <div id="admin-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: block;"' : 'style="display: none;"'; ?>>
@@ -2021,13 +2606,15 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                     <div class="timeline-container">
                         <ul class="timeline" style="--progress-width: <?php echo $progress_percentage; ?>%">
                         <li class="timeline-item<?php echo $step1_completed ? ' completed' : ''; ?><?php echo $current_step == 1 ? ' current' : ''; ?>">
-                            <div class="circle">1</div>
-                            <span class="label">Project Created</span>
+                            <div class="circle clickable" onclick="window.location.href='edit_project.php?project_id=<?php echo $project_id; ?>'">1</div>
+                            <span class="label">
+                                <a href="edit_project.php?project_id=<?php echo $project_id; ?>">Project Created</a>
+                            </span>
                             <div class="description">Foundation established</div>
                         </li>
                         
                         <li class="timeline-item<?php echo $step2_completed ? ' completed' : ''; ?><?php echo $current_step == 2 ? ' current' : ''; ?>">
-                            <div class="circle">2</div>
+                            <div class="circle clickable" onclick="window.location.href='modules.php?project_id=<?php echo $project_id; ?>'">2</div>
                             <span class="label">
                                 <a href="modules.php?project_id=<?php echo $project_id; ?>">Add Modules</a>
                             </span>
@@ -2035,7 +2622,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         </li>
                         
                         <li class="timeline-item<?php echo $step3_completed ? ' completed' : ''; ?><?php echo $current_step == 3 ? ' current' : ''; ?>">
-                            <div class="circle">3</div>
+                            <div class="circle clickable" onclick="window.location.href='module_overview.php?project_id=<?php echo $project_id; ?>'">3</div>
                             <span class="label">
                                 <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Palletize Modules</a>
                             </span>
@@ -2047,10 +2634,13 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         </li>
                         
                         <li class="timeline-item<?php echo $step4_completed ? ' completed' : ''; ?><?php echo $current_step == 4 ? ' current' : ''; ?>">
-                            <div class="circle">4</div>
-                            <span class="label">Shipping</span>
+                            <div class="circle clickable" onclick="window.location.href='<?php echo $deliveriesLink; ?>'">4</div>
+                            <span class="label">
+                                <a href="<?php echo $deliveriesLink; ?>">Shipping</a>
+                            </span>
                             <div class="description">Logistics in progress</div>
                             
+                            <?php if ($current_step == 4): ?>
                             <div class="shipping-statuses">
                                 <?php if(($status_totals['At Manufacturer']['pallets'] ?? 0) > 0): ?>
                                 <div class="shipping-box" onclick="showShippingBreakdown('At Manufacturer')">
@@ -2092,11 +2682,14 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 </div>
                                 <?php endif; ?>
                             </div>
+                            <?php endif; ?>
                         </li>
                         
                         <li class="timeline-item<?php echo $step5_completed ? ' completed' : ''; ?><?php echo $current_step == 5 ? ' current' : ''; ?>">
-                            <div class="circle">5</div>
-                            <span class="label">Project Completed</span>
+                            <div class="circle clickable" onclick="window.location.href='project_overview.php?project_id=<?php echo $project_id; ?>'">5</div>
+                            <span class="label">
+                                <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Completed</a>
+                            </span>
                             <div class="description">
                                 <?php 
                                 if ($step5_completed) {
@@ -2113,10 +2706,266 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                 </div>
 
                 <!-- Site Information -->
-                <div id="site-info" style="display:none;"></div>
+                <div id="site-info" style="display:none;">
+                    <div class="info-container">
+                        <div class="header-with-button">
+                            <h2>Site Information</h2>
+                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <button onclick="window.location.href='edit_project.php?project_id=<?php echo $project_id; ?>'" class="info-action-button" style="margin: 0;">
+                                    Edit Site Information
+                                </button>
+                            <?php endif; ?>
+                        </div>
+                        <div class="info-grid">
+                            <div class="info-section">
+                                <h3>Project Details</h3>
+                                <div class="info-item">
+                                    <label>Project Name:</label>
+                                    <span><?php echo htmlspecialchars($project['project_name']); ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Project Address:</label>
+                                    <span><?php 
+                                        $address_parts = array_filter([
+                                            $project['street_address'], 
+                                            $project['city'], 
+                                            $project['state'], 
+                                            $project['zip_code']
+                                        ]);
+                                        echo htmlspecialchars(implode(', ', $address_parts));
+                                    ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Estimated Completion:</label>
+                                    <span><?php echo $project['estimated_completion_date'] ? date('F j, Y', strtotime($project['estimated_completion_date'])) : 'Not set'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Project Size:</label>
+                                    <span><?php echo number_format($project_size_mw, 2); ?> MW</span>
+                                </div>
+                            </div>
+                            
+                            <div class="info-section">
+                                <h3>Contact Information</h3>
+                                <div class="info-item">
+                                    <label>Primary Phone:</label>
+                                    <span><?php echo !empty($project['phone1']) ? htmlspecialchars($project['phone1']) : 'Not provided'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Secondary Phone:</label>
+                                    <span><?php echo !empty($project['phone2']) ? htmlspecialchars($project['phone2']) : 'Not provided'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Timezone:</label>
+                                    <span><?php 
+                                        $timezone_display = [
+                                            'America/New_York' => 'Eastern',
+                                            'America/Chicago' => 'Central', 
+                                            'America/Denver' => 'Mountain',
+                                            'America/Los_Angeles' => 'Pacific',
+                                            'UTC' => 'UTC'
+                                        ];
+                                        echo $timezone_display[$project['timezone']] ?? htmlspecialchars($project['timezone'] ?? 'Not set');
+                                    ?></span>
+                                </div>
+                            </div>
+                            
+                            <div class="info-section">
+                                <h3>Additional Information</h3>
+                                <div class="info-item">
+                                    <label>Reference Numbers:</label>
+                                    <span><?php echo !empty($project['reference_numbers']) ? htmlspecialchars($project['reference_numbers']) : 'None provided'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Special Instructions:</label>
+                                    <span><?php echo !empty($project['instructions']) ? htmlspecialchars($project['instructions']) : 'None provided'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Additional Notes:</label>
+                                    <span><?php echo !empty($project['additional_notes']) ? htmlspecialchars($project['additional_notes']) : 'None provided'; ?></span>
+                                </div>
+                                <?php if (!empty($project['driver_handout_url'])): ?>
+                                <div class="info-item">
+                                    <label>Driver Handout:</label>
+                                    <span><a href="<?php echo htmlspecialchars($project['driver_handout_url']); ?>" target="_blank" style="color: #488C9A;">Download</a></span>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Module Information -->
-                <div id="module-info" style="display:none;"></div>
+                <div id="module-info" style="display:none;">
+                    <div class="info-container">
+                        <div class="header-with-button">
+                            <h2>Module Information</h2>
+                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                <div class="module-actions-dropdown">
+                                    <button class="info-action-button" onclick="toggleModuleActions()" style="margin: 0;">
+                                        Edit Module Information ▼
+                                    </button>
+                                    <div class="module-actions-content" id="moduleActionsDropdown">
+                                        <a href="edit_module_batch.php?project_id=<?php echo $project_id; ?>&batch_id=<?php echo !empty($module_batches) ? $module_batches[0]['id'] : ''; ?>">Edit Current Module Batch</a>
+                                        <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>">+ Add New Module Batch</a>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                        <?php if (!empty($module_batches)): ?>
+                            <?php foreach ($module_batches as $index => $batch): ?>
+                                <div class="module-batch-section" style="<?php echo $index > 0 ? 'margin-top: 30px; border-top: 2px solid #e9ecef; padding-top: 20px;' : ''; ?>">
+                                    <div class="batch-header">
+                                        <h3>Module Batch <?php echo $index + 1; ?>: <?php echo htmlspecialchars($batch['vendor_name']); ?></h3>
+                                        <div class="batch-meta">
+                                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                <span style="color: #666; font-size: 0.9em;">
+                                                    Added: <?php echo date('F j, Y', strtotime($batch['created_at'])); ?>
+                                                </span>
+
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="info-grid">
+                                        <div class="info-section">
+                                            <h4>Basic Information</h4>
+                                            <div class="info-item">
+                                                <label>Vendor/Manufacturer:</label>
+                                                <span><?php echo htmlspecialchars($batch['vendor_name']); ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Initial Location:</label>
+                                                <span><?php echo htmlspecialchars($batch['initial_location']); ?></span>
+                                            </div>
+                                                                                            <div class="info-item">
+                                                    <label>Account:</label>
+                                                    <span><?php echo htmlspecialchars($batch['account_name']); ?></span>
+                                                </div>
+                                                <div class="info-item">
+                                                    <label>Module Configuration:</label>
+                                                    <span>
+                                                        <?php if (!empty($batch['wattages'])): ?>
+                                                            <?php 
+                                                            $wattage_details = [];
+                                                            foreach ($batch['wattages'] as $watt_info) {
+                                                                $wattage_details[] = $watt_info['wattage'] . 'W (' . number_format($watt_info['quantity']) . ' modules)';
+                                                            }
+                                                            echo implode('<br>', $wattage_details);
+                                                            ?>
+                                                        <?php else: ?>
+                                                            No modules configured yet
+                                                        <?php endif; ?>
+                                                    </span>
+                                                </div>
+                                                <?php if (!empty($batch['module_notes'])): ?>
+                                                <div class="info-item">
+                                                    <label>Module Notes:</label>
+                                                    <span><?php echo htmlspecialchars($batch['module_notes']); ?></span>
+                                                </div>
+                                                <?php endif; ?>
+                                        </div>
+                                        
+                                        <div class="info-section">
+                                            <h4>Pallet Specifications</h4>
+                                            <div class="info-item">
+                                                <label>Modules per Pallet:</label>
+                                                <span><?php echo $batch['modules_per_pallet'] ?: 'Not specified'; ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Pallets per Truck:</label>
+                                                <span><?php echo $batch['pallets_per_truck'] ?: 'Not specified'; ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Modules per Truck:</label>
+                                                <span><?php echo $batch['modules_per_truck'] ?: 'Not specified'; ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Pallet Dimensions:</label>
+                                                <span>
+                                                    <?php if ($batch['pallet_length_mm'] && $batch['pallet_depth_mm']): ?>
+                                                        <?php echo $batch['pallet_length_mm']; ?>mm × <?php echo $batch['pallet_depth_mm']; ?>mm
+                                                    <?php else: ?>
+                                                        Not specified
+                                                    <?php endif; ?>
+                                                </span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Pallet Height (Stacked):</label>
+                                                <span><?php echo $batch['pallet_double_stacked_height_mm'] ? $batch['pallet_double_stacked_height_mm'] . 'mm' : 'Not specified'; ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Pallet Weight:</label>
+                                                <span><?php echo $batch['pallet_total_weight_kg'] ? $batch['pallet_total_weight_kg'] . 'kg' : 'Not specified'; ?></span>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="info-section">
+                                            <h4>Handling Requirements</h4>
+                                            <div class="info-item">
+                                                <label>Forklift Requirements:</label>
+                                                <span>
+                                                    <?php if ($batch['forklift_truck_long_side_mm'] && $batch['forklift_truck_short_side_mm']): ?>
+                                                        <?php echo $batch['forklift_truck_long_side_mm']; ?>mm × <?php echo $batch['forklift_truck_short_side_mm']; ?>mm
+                                                    <?php else: ?>
+                                                        Not specified
+                                                    <?php endif; ?>
+                                                </span>
+                                            </div>
+                                            <div class="info-item">
+                                                <label>Pallet Jack Requirements:</label>
+                                                <span>
+                                                    <?php if ($batch['pallet_jack_long_side_mm'] && $batch['pallet_jack_short_side_mm']): ?>
+                                                        <?php echo $batch['pallet_jack_long_side_mm']; ?>mm × <?php echo $batch['pallet_jack_short_side_mm']; ?>mm
+                                                    <?php else: ?>
+                                                        Not specified
+                                                    <?php endif; ?>
+                                                </span>
+                                            </div>
+                                            <?php if (!empty($batch['stacking_in_warehouse'])): ?>
+                                            <div class="info-item">
+                                                <label>Warehouse Stacking:</label>
+                                                <span><?php echo htmlspecialchars($batch['stacking_in_warehouse']); ?></span>
+                                            </div>
+                                            <?php endif; ?>
+                                            <?php if (!empty($batch['stacking_during_transport'])): ?>
+                                            <div class="info-item">
+                                                <label>Transport Stacking:</label>
+                                                <span><?php echo htmlspecialchars($batch['stacking_during_transport']); ?></span>
+                                            </div>
+                                            <?php endif; ?>
+                                            <?php if (!empty($batch['module_docs_url'])): ?>
+                                            <div class="info-item">
+                                                <label>Module Documentation:</label>
+                                                <span><a href="<?php echo htmlspecialchars($batch['module_docs_url']); ?>" target="_blank" style="color: #488C9A;">Download</a></span>
+                                            </div>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                    
+                                    <div style="margin-top: 20px; text-align: center;">
+                                        <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="info-action-button">
+                                            View Pallets & Module Status
+                                        </a>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <div class="no-modules-message">
+                                <p style="text-align: center; color: #666; margin: 40px 0;">
+                                    No module batches have been added to this project yet.
+                                </p>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                    <div style="text-align: center;">
+                                        <a href="modules.php?project_id=<?php echo $project_id; ?>" class="info-action-button">
+                                            + Add Module Batch
+                                        </a>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -3275,8 +4124,356 @@ window.onclick = function(event) {
     if (event.target.id === 'shippingModal') {
         closeShippingModal();
     }
+    if (event.target.id === 'deleteModal') {
+        closeDeleteModal();
+    }
+    if (event.target.id === 'addModuleModal') {
+        closeAddModuleModal();
+    }
+    if (event.target.id === 'editBatchModal') {
+        closeEditBatchModal();
+    }
+    
+    // Close dropdowns when clicking outside
+    if (!event.target.closest('.project-actions-dropdown')) {
+        document.getElementById('projectActionsDropdown').style.display = 'none';
+    }
+    if (!event.target.closest('.module-actions-dropdown')) {
+        document.getElementById('moduleActionsDropdown').style.display = 'none';
+    }
+    if (!event.target.closest('.batch-actions-dropdown')) {
+        document.querySelectorAll('.batch-actions-content').forEach(function(content) {
+            content.style.display = 'none';
+        });
+    }
     <?php endif; ?>
 }
+
+<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+// Project Actions Functions
+function toggleProjectActions() {
+    const dropdown = document.getElementById('projectActionsDropdown');
+    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+}
+
+// Module Actions Functions
+function toggleModuleActions() {
+    const dropdown = document.getElementById('moduleActionsDropdown');
+    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+}
+
+// Batch Actions Functions
+function toggleBatchActions(batchId) {
+    const dropdown = document.getElementById('batchActionsDropdown_' + batchId);
+    // Close all other batch dropdowns
+    document.querySelectorAll('.batch-actions-content').forEach(function(content) {
+        if (content.id !== 'batchActionsDropdown_' + batchId) {
+            content.style.display = 'none';
+        }
+    });
+    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+}
+
+// Delete Project Functions
+let deleteProjectId = null;
+let deleteProjectName = null;
+
+function confirmDeleteProject(projectId, projectName) {
+    deleteProjectId = projectId;
+    deleteProjectName = projectName;
+    document.getElementById('deleteModalText').innerHTML = 
+        `Are you sure you want to delete the project "<strong>${projectName}</strong>"?<br><br>
+        This will permanently delete:<br>
+        • All module batches and pallets<br>
+        • All deliveries and shipments<br>
+        • All project data and documents<br><br>
+        <strong>This action cannot be undone.</strong>`;
+    document.getElementById('deleteModal').style.display = 'block';
+}
+
+function closeDeleteModal() {
+    document.getElementById('deleteModal').style.display = 'none';
+    deleteProjectId = null;
+    deleteProjectName = null;
+}
+
+function confirmDelete() {
+    if (!deleteProjectId) return;
+    
+    // Show loading state
+    const deleteBtn = document.querySelector('.btn-delete');
+    deleteBtn.disabled = true;
+    deleteBtn.textContent = 'Deleting...';
+    
+    // Send delete request
+    fetch('delete_project_cascade.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'project_id=' + deleteProjectId
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Project "' + deleteProjectName + '" deleted successfully.');
+            window.location.href = 'manage_projects.php';
+        } else {
+            alert('Error deleting project: ' + (data.error || 'Unknown error'));
+            deleteBtn.disabled = false;
+            deleteBtn.textContent = 'Delete Project';
+        }
+    })
+    .catch(error => {
+        alert('Error deleting project: ' + error.message);
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = 'Delete Project';
+    });
+}
+
+// Add Module Modal Functions
+function openAddModuleModal() {
+    // Load manufacturers
+    loadManufacturers();
+    // Clear form
+    document.getElementById('addModuleForm').reset();
+    document.getElementById('modal_wattage_container').innerHTML = '';
+    addModalWattageField(); // Add one default wattage field
+    document.getElementById('addModuleModal').style.display = 'block';
+}
+
+function closeAddModuleModal() {
+    document.getElementById('addModuleModal').style.display = 'none';
+}
+
+function loadManufacturers() {
+    // Populate manufacturer dropdown (you'll need to implement this based on your data)
+    const select = document.getElementById('modal_manufacturer_id');
+    select.innerHTML = '<option value="">Select Manufacturer</option>';
+    
+    // Add manufacturers from PHP data or make AJAX call
+    <?php if (!empty($manufacturers)): ?>
+    <?php foreach ($manufacturers as $mfg): ?>
+    const option<?php echo $mfg['id']; ?> = document.createElement('option');
+    option<?php echo $mfg['id']; ?>.value = '<?php echo $mfg['id']; ?>';
+    option<?php echo $mfg['id']; ?>.textContent = '<?php echo htmlspecialchars($mfg['name'], ENT_QUOTES); ?>';
+    select.appendChild(option<?php echo $mfg['id']; ?>);
+    <?php endforeach; ?>
+    <?php endif; ?>
+}
+
+let modalWattageIndex = 0;
+function addModalWattageField() {
+    const container = document.getElementById('modal_wattage_container');
+    const div = document.createElement('div');
+    div.className = 'wattage-entry';
+    div.innerHTML = `
+        <div class="modal-form-group">
+            <label>Wattage (W):</label>
+            <input type="number" name="wattages[${modalWattageIndex}]" step="1" min="1" required placeholder="e.g., 555">
+        </div>
+        <div class="modal-form-group">
+            <label>Quantity:</label>
+            <input type="number" name="quantities[${modalWattageIndex}]" step="1" min="1" required placeholder="e.g., 1000">
+        </div>
+        <button type="button" class="remove-wattage-btn" onclick="this.closest('.wattage-entry').remove()">Remove</button>
+    `;
+    container.appendChild(div);
+    modalWattageIndex++;
+}
+
+// Edit Batch Modal Functions
+function openEditBatchModal(batchId, batchName) {
+    document.getElementById('editBatchModalTitle').textContent = 'Edit Module Batch: ' + batchName;
+    document.getElementById('edit_batch_id').value = batchId;
+    
+    // Load existing wattage data for this batch
+    loadBatchWattages(batchId);
+    
+    document.getElementById('editBatchModal').style.display = 'block';
+}
+
+function closeEditBatchModal() {
+    document.getElementById('editBatchModal').style.display = 'none';
+}
+
+function loadBatchWattages(batchId) {
+    // Make AJAX call to get current wattages for this batch
+    fetch('get_batch_wattages.php?batch_id=' + batchId)
+    .then(response => response.json())
+    .then(data => {
+        const container = document.getElementById('edit_wattage_container');
+        container.innerHTML = '';
+        
+        if (data.success && data.wattages) {
+            data.wattages.forEach(function(wattage, index) {
+                addEditWattageField(wattage.wattage, wattage.quantity, wattage.id);
+            });
+        }
+        
+        if (container.children.length === 0) {
+            addEditWattageField(); // Add empty field if no existing data
+        }
+    })
+    .catch(error => {
+        console.error('Error loading batch wattages:', error);
+        addEditWattageField(); // Add empty field on error
+    });
+}
+
+let editWattageIndex = 0;
+function addEditWattageField(wattage = '', quantity = '', itemId = '') {
+    const container = document.getElementById('edit_wattage_container');
+    const div = document.createElement('div');
+    div.className = 'wattage-entry';
+    div.innerHTML = `
+        <div class="modal-form-group">
+            <label>Wattage (W):</label>
+            <input type="number" name="wattages[${editWattageIndex}]" step="1" min="1" required value="${wattage}" placeholder="e.g., 555">
+            <input type="hidden" name="item_ids[${editWattageIndex}]" value="${itemId}">
+        </div>
+        <div class="modal-form-group">
+            <label>Quantity:</label>
+            <input type="number" name="quantities[${editWattageIndex}]" step="1" min="1" required value="${quantity}" placeholder="e.g., 1000">
+        </div>
+        <button type="button" class="remove-wattage-btn" onclick="this.closest('.wattage-entry').remove()">Remove</button>
+    `;
+    container.appendChild(div);
+    editWattageIndex++;
+}
+
+// Form submission handlers
+document.getElementById('addModuleForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    formData.append('project_id', <?php echo $project_id; ?>);
+    formData.append('action', 'add_module_batch');
+    
+    fetch('handle_module_batch.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Module batch added successfully!');
+            location.reload();
+        } else {
+            alert('Error adding module batch: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        alert('Error adding module batch: ' + error.message);
+    });
+});
+
+document.getElementById('editBatchForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    formData.append('action', 'edit_module_batch');
+    
+    fetch('handle_module_batch.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Module batch updated successfully!');
+            location.reload();
+        } else {
+            alert('Error updating module batch: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        alert('Error updating module batch: ' + error.message);
+    });
+});
+<?php endif; ?>
 </script>
+
+<!-- Delete Confirmation Modal -->
+<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+<div id="deleteModal" class="delete-modal">
+    <div class="delete-modal-content">
+        <h3>⚠️ Confirm Project Deletion</h3>
+        <p id="deleteModalText">Are you sure you want to delete this project? This action cannot be undone.</p>
+        <div class="modal-buttons">
+            <button class="modal-btn btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+            <button class="modal-btn btn-delete" onclick="confirmDelete()">Delete Project</button>
+        </div>
+    </div>
+</div>
+
+<!-- Add Module Modal -->
+<div id="addModuleModal" class="add-module-modal">
+    <div class="add-module-modal-content">
+        <h3>Add New Module Batch</h3>
+        <form id="addModuleForm">
+            <div class="modal-form-grid">
+                <div class="modal-form-group">
+                    <label for="modal_manufacturer_id">Manufacturer:</label>
+                    <select id="modal_manufacturer_id" name="manufacturer_id">
+                        <option value="">Select Manufacturer</option>
+                    </select>
+                </div>
+                
+                <div class="modal-form-group">
+                    <label for="modal_vendor_name">Vendor Name:</label>
+                    <input type="text" id="modal_vendor_name" name="vendor_name" required>
+                </div>
+                
+                <div class="modal-form-group">
+                    <label for="modal_initial_location">Initial Location:</label>
+                    <input type="text" id="modal_initial_location" name="initial_location" required>
+                </div>
+                
+                <div class="modal-form-group">
+                    <label for="modal_modules_per_pallet">Modules per Pallet:</label>
+                    <input type="number" id="modal_modules_per_pallet" name="modules_per_pallet" min="1">
+                </div>
+                
+                <div class="wattage-section">
+                    <h4>Module Wattages & Quantities</h4>
+                    <div id="modal_wattage_container">
+                        <!-- Wattage entries will be added here -->
+                    </div>
+                    <button type="button" class="add-wattage-btn" onclick="addModalWattageField()">+ Add Wattage</button>
+                </div>
+            </div>
+            
+            <div class="modal-buttons">
+                <button type="button" class="modal-btn btn-secondary" onclick="closeAddModuleModal()">Cancel</button>
+                <button type="submit" class="modal-btn btn-primary">Add Module Batch</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Batch Modal -->
+<div id="editBatchModal" class="add-module-modal">
+    <div class="add-module-modal-content">
+        <h3 id="editBatchModalTitle">Edit Module Batch</h3>
+        <form id="editBatchForm">
+            <input type="hidden" id="edit_batch_id" name="batch_id">
+            <div class="wattage-section">
+                <h4>Module Wattages & Quantities</h4>
+                <div id="edit_wattage_container">
+                    <!-- Existing wattage entries will be loaded here -->
+                </div>
+                <button type="button" class="add-wattage-btn" onclick="addEditWattageField()">+ Add Wattage</button>
+            </div>
+            
+            <div class="modal-buttons">
+                <button type="button" class="modal-btn btn-secondary" onclick="closeEditBatchModal()">Cancel</button>
+                <button type="submit" class="modal-btn btn-primary">Update Module Batch</button>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
+
 </body>
 </html>
