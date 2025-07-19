@@ -69,9 +69,7 @@ try {
         'site_safety' => 0,
         'site_scheduling' => 0,
         'site_operating_hours' => 0,
-        'site_module_info' => 0,
         'site_module_wattages' => 0,
-        'sites' => 0,
         'delivery_pallets' => 0,
         'deliveries' => 0,
         'pallets' => 0,
@@ -80,82 +78,49 @@ try {
         'wattage_orders' => 0
     ];
     
-    // SITE DELETION STEPS (must come first due to foreign key constraints)
+    // SITE DELETION STEPS (simplified after migration - direct project_id references)
     
-    // Site Step 1: Delete warranty_claims linked to site_scheduling for this project's sites
+    // Site Step 1: Delete warranty_claims linked to site_scheduling for this project
     $stmtDelWarrantyClaims = $conn->prepare("
         DELETE wc FROM warranty_claims wc 
         JOIN site_scheduling ss ON wc.scheduling_id = ss.id 
-        JOIN sites s ON ss.site_id = s.id 
-        WHERE s.project_id = ?
+        WHERE ss.project_id = ?
     ");
     $stmtDelWarrantyClaims->bind_param("i", $project_id);
     $stmtDelWarrantyClaims->execute();
     $deleted_counts['warranty_claims'] = $stmtDelWarrantyClaims->affected_rows;
     $stmtDelWarrantyClaims->close();
     
-    // Site Step 2: Delete site_safety linked to site_scheduling for this project's sites
-    $stmtDelSiteSafety = $conn->prepare("
-        DELETE safety FROM site_safety safety 
-        JOIN site_scheduling ss ON safety.scheduling_id = ss.id 
-        JOIN sites s ON ss.site_id = s.id 
-        WHERE s.project_id = ?
-    ");
+    // Site Step 2: Delete site_safety for this project
+    $stmtDelSiteSafety = $conn->prepare("DELETE FROM site_safety WHERE project_id = ?");
     $stmtDelSiteSafety->bind_param("i", $project_id);
     $stmtDelSiteSafety->execute();
     $deleted_counts['site_safety'] = $stmtDelSiteSafety->affected_rows;
     $stmtDelSiteSafety->close();
     
-    // Site Step 3: Delete site_scheduling for this project's sites
-    $stmtDelSiteScheduling = $conn->prepare("
-        DELETE ss FROM site_scheduling ss 
-        JOIN sites s ON ss.site_id = s.id 
-        WHERE s.project_id = ?
-    ");
+    // Site Step 3: Delete site_scheduling for this project
+    $stmtDelSiteScheduling = $conn->prepare("DELETE FROM site_scheduling WHERE project_id = ?");
     $stmtDelSiteScheduling->bind_param("i", $project_id);
     $stmtDelSiteScheduling->execute();
     $deleted_counts['site_scheduling'] = $stmtDelSiteScheduling->affected_rows;
     $stmtDelSiteScheduling->close();
     
-    // Site Step 4: Delete site_operating_hours for this project's sites
-    $stmtDelSiteOpHours = $conn->prepare("
-        DELETE soh FROM site_operating_hours soh 
-        JOIN sites s ON soh.site_id = s.id 
-        WHERE s.project_id = ?
-    ");
+    // Site Step 4: Delete site_operating_hours for this project
+    $stmtDelSiteOpHours = $conn->prepare("DELETE FROM site_operating_hours WHERE project_id = ?");
     $stmtDelSiteOpHours->bind_param("i", $project_id);
     $stmtDelSiteOpHours->execute();
     $deleted_counts['site_operating_hours'] = $stmtDelSiteOpHours->affected_rows;
     $stmtDelSiteOpHours->close();
     
-    // Site Step 5: Delete site_module_info for this project's sites
-    $stmtDelSiteModuleInfo = $conn->prepare("
-        DELETE smi FROM site_module_info smi 
-        JOIN sites s ON smi.site_id = s.id 
-        WHERE s.project_id = ?
-    ");
-    $stmtDelSiteModuleInfo->bind_param("i", $project_id);
-    $stmtDelSiteModuleInfo->execute();
-    $deleted_counts['site_module_info'] = $stmtDelSiteModuleInfo->affected_rows;
-    $stmtDelSiteModuleInfo->close();
-    
-    // Site Step 6: Delete site_module_wattages for this project's sites
-    $stmtDelSiteModuleWattages = $conn->prepare("
-        DELETE smw FROM site_module_wattages smw 
-        JOIN sites s ON smw.site_id = s.id 
-        WHERE s.project_id = ?
-    ");
+    // Site Step 5: Delete site_module_wattages for this project
+    $stmtDelSiteModuleWattages = $conn->prepare("DELETE FROM site_module_wattages WHERE project_id = ?");
     $stmtDelSiteModuleWattages->bind_param("i", $project_id);
     $stmtDelSiteModuleWattages->execute();
     $deleted_counts['site_module_wattages'] = $stmtDelSiteModuleWattages->affected_rows;
     $stmtDelSiteModuleWattages->close();
     
-    // Site Step 7: Delete sites linked to this project
-    $stmtDelSites = $conn->prepare("DELETE FROM sites WHERE project_id = ?");
-    $stmtDelSites->bind_param("i", $project_id);
-    $stmtDelSites->execute();
-    $deleted_counts['sites'] = $stmtDelSites->affected_rows;
-    $stmtDelSites->close();
+    // Note: site_module_info table will be dropped after migration, so no need to delete from it
+    // Note: sites table will be dropped after migration, so no need to delete from it
     
     // PROJECT DELETION STEPS (existing logic)
     
