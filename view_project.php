@@ -66,7 +66,7 @@ if ($project_id) {
     $project = $result->fetch_assoc();
     $stmt->close();
     $page_title_info = htmlspecialchars($project['project_name']);
-    $breadcrumbs[] = ['href' => ($role === 'admin' || $role === 'global_admin') ? 'admin_dashboard.php' : 'dashboard.php', 'text' => 'Dashboard'];
+    $breadcrumbs[] = ['href' => 'dashboard.php', 'text' => 'Dashboard'];
     $breadcrumbs[] = ['href' => "project_overview.php?project_id={$project_id}", 'text' => 'Project Overview'];
     $breadcrumbs[] = ['text' => 'Delivery Tracker'];
 
