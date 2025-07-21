@@ -295,17 +295,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         $totalDeliveries = count($createdDeliveryIds);
         $totalPallets = count($palletIds);
         
-        // Enhanced success message with warehouse handling and scheduling links
-        if ($destinationType === 'warehouse') {
-            $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets. Pallets are now in transit to the selected warehouse. To receive modules into the warehouse when they arrive, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>click here</a>.";
-        } else {
-            // Project delivery - offer scheduling
-            $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
+        // Check if user wants to generate BOL
+        $generateBol = isset($_POST['generate_bol']) && $_POST['generate_bol'] === '1';
+        $deliveryIdsParam = implode(',', $createdDeliveryIds);
+        
+        if ($generateBol) {
+            // User wants to generate BOL - redirect directly to BOL generation
+            // Store a simple success message for later display after BOL generation
+            $_SESSION['shipment_success_for_bol'] = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
             
-            // Provide single scheduling link for the project
-            if ($destinationId > 0) {
+            // Preserve project_id for breadcrumb navigation and links
+            if ($project_id_from_url > 0) {
+                $_SESSION['shipment_origin_project_id'] = $project_id_from_url;
+            }
+            
+            // Preserve project_id for any links needed later
+            if ($destinationType === 'project' && $destinationId > 0) {
                 $dateParam = urlencode($estArrivalDate);
-                $shipMessage .= " <a href='scheduling.php?project_id={$destinationId}&date={$dateParam}' style='color: #488C9A; text-decoration: underline;'>Schedule Delivery</a>";
+                $_SESSION['shipment_scheduling_link'] = "scheduling.php?project_id={$destinationId}&date={$dateParam}";
+            }
+            
+            // Include project_id in BOL URL if available
+            $bolUrl = "generate_bol.php?delivery_ids={$deliveryIdsParam}";
+            if ($project_id_from_url > 0) {
+                $bolUrl .= "&project_id={$project_id_from_url}";
+            }
+            
+            header("Location: {$bolUrl}");
+            exit();
+        } else {
+            // Normal flow - show success message with links
+            $bolLinkUrl = "generate_bol.php?delivery_ids={$deliveryIdsParam}";
+            if ($project_id_from_url > 0) {
+                $bolLinkUrl .= "&project_id={$project_id_from_url}";
+            }
+            $bolLink = " <a href='{$bolLinkUrl}' style='color: #488C9A; text-decoration: underline; margin-left: 10px;'>Generate BOL</a>";
+            
+            if ($destinationType === 'warehouse') {
+                $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets. Pallets are now in transit to the selected warehouse. To receive modules into the warehouse when they arrive, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>click here</a>.{$bolLink}";
+            } else {
+                // Project delivery - offer scheduling
+                $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
+                
+                // Provide single scheduling link for the project
+                if ($destinationId > 0) {
+                    $dateParam = urlencode($estArrivalDate);
+                    $shipMessage .= " <a href='scheduling.php?project_id={$destinationId}&date={$dateParam}' style='color: #488C9A; text-decoration: underline;'>Schedule Delivery</a>";
+                }
+                
+                // Add BOL generation link
+                $shipMessage .= $bolLink;
             }
         }
     } catch (Exception $e) {
@@ -518,6 +557,15 @@ $conn->close();
 $sessionMessage = $_SESSION['create_shipment_message'] ?? '';
 if (!empty($sessionMessage)) {
     unset($_SESSION['create_shipment_message']);
+}
+
+// Check for BOL completion message
+$bolCompletionMessage = $_SESSION['bol_completion_message'] ?? '';
+if (!empty($bolCompletionMessage)) {
+    $sessionMessage = $bolCompletionMessage; // Override with BOL completion message
+    unset($_SESSION['bol_completion_message']);
+    // Clean up the origin project ID since we're back to the main flow
+    unset($_SESSION['shipment_origin_project_id']);
 }
 ?>
 <!DOCTYPE html>
@@ -1136,6 +1184,17 @@ if (!empty($sessionMessage)) {
                         <input type="hidden" id="miles" name="miles" value="">
                     </div>
                     
+                    <!-- Generate BOL Checkbox -->
+                    <div style="margin-top: 15px; margin-bottom: 20px; padding: 10px; background-color: #f8f9fa; border-radius: 4px; border: 1px solid #e9ecef;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" id="generate_bol_single" name="generate_bol" value="1" style="margin: 0;">
+                            <span>Generate Bill of Lading (BOL) after creating delivery</span>
+                        </label>
+                        <small style="color: #6c757d; margin-left: 20px; display: block; margin-top: 3px;">
+                            Check this to immediately create a BOL document for this shipment
+                        </small>
+                    </div>
+                    
                     <button type="button" id="confirmShipmentBtn" class="action-button" style="margin-top:15px;">
                         Create Delivery
                     </button>
@@ -1213,6 +1272,17 @@ if (!empty($sessionMessage)) {
                             </div>
                         </div>
                         <input type="hidden" id="miles_multi" name="miles_multi" value="">
+                    </div>
+                    
+                    <!-- Generate BOL Checkbox -->
+                    <div style="margin-top: 15px; padding: 10px; background-color: #f8f9fa; border-radius: 4px; border: 1px solid #e9ecef;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" id="generate_bol_multi" name="generate_bol" value="1" style="margin: 0;">
+                            <span>Generate Bill of Lading (BOL) after creating deliveries</span>
+                        </label>
+                        <small style="color: #6c757d; margin-left: 20px; display: block; margin-top: 3px;">
+                            Check this to immediately create BOL documents for these shipments
+                        </small>
                     </div>
                     
                     <button type="button" id="confirmMultiShipmentBtn" class="action-button" style="margin-top:15px;">
@@ -1922,6 +1992,9 @@ if (confirmShipmentBtn) {
             return;
         }
 
+        // Check if Generate BOL checkbox is checked
+        const generateBol = document.getElementById('generate_bol_single').checked;
+
         // Populate hidden inputs
         setOrCreateHidden(mainForm, 'origin_type', originType);
         setOrCreateHidden(mainForm, 'origin_id', originId);
@@ -1934,6 +2007,7 @@ if (confirmShipmentBtn) {
         setOrCreateHidden(mainForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
         setOrCreateHidden(mainForm, 'customer_cost', customerCost);
         setOrCreateHidden(mainForm, 'miles', miles);
+        setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
 
         mainForm.submit();
     });
@@ -2017,6 +2091,9 @@ if (confirmMultiShipmentBtn) {
             return;
         }
 
+        // Check if Generate BOL checkbox is checked
+        const generateBol = document.getElementById('generate_bol_multi').checked;
+
         // Populate hidden inputs
         setOrCreateHidden(mainForm, 'origin_type', originType);
         setOrCreateHidden(mainForm, 'origin_id', originId);
@@ -2034,6 +2111,7 @@ if (confirmMultiShipmentBtn) {
         
         // Also set the first BOL as fallback for bol_number field
         setOrCreateHidden(mainForm, 'bol_number', bolNumbers.length > 0 ? bolNumbers[0] : '');
+        setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
 
         mainForm.submit();
     });
