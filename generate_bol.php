@@ -115,8 +115,22 @@ if (empty($deliveries)) {
     die("No deliveries found or you don't have permission to access these deliveries.");
 }
 
-// Get the first delivery for primary BOL info (assuming all deliveries in one BOL have same origin/destination)
-$primary_delivery = $deliveries[0];
+// Group deliveries by BOL number
+$bol_groups = [];
+foreach ($deliveries as $delivery) {
+    $bol_number = $delivery['bol_number'] ?? 'Unknown';
+    if (!isset($bol_groups[$bol_number])) {
+        $bol_groups[$bol_number] = [];
+    }
+    $bol_groups[$bol_number][] = $delivery;
+}
+
+// Determine which BOL group to display
+$selected_bol = $_GET['bol_select'] ?? array_keys($bol_groups)[0];
+$current_deliveries = $bol_groups[$selected_bol] ?? $deliveries;
+
+// Get the first delivery from the selected BOL group for primary BOL info
+$primary_delivery = $current_deliveries[0];
 
 // Determine Ship From address based on origin
 $ship_from_name = '';
@@ -143,12 +157,14 @@ if ($primary_delivery['origin_type'] === 'manufacturer') {
     $ship_from_name = $primary_delivery['supplier'] ?? 'Unknown Origin';
 }
 
-// Determine Ship To address
+// Determine Ship To address based on delivery status and destination
 $ship_to_name = '';
 $ship_to_address = '';
 $ship_to_city_state_zip = '';
 
-if ($primary_delivery['project_id']) {
+// Check if this is shipping to a project or warehouse based on the delivery status and IDs
+if (stripos($primary_delivery['status_of_delivery'], 'project') !== false && $primary_delivery['project_id']) {
+    // Shipping to project
     $ship_to_name = $primary_delivery['project_name'] ?? 'Unknown Project';
     $ship_to_address = $primary_delivery['project_street'] ?? '';
     $ship_to_city_state_zip = trim(implode(', ', array_filter([
@@ -156,7 +172,8 @@ if ($primary_delivery['project_id']) {
         $primary_delivery['project_state'],
         $primary_delivery['project_zip']
     ])));
-} elseif ($primary_delivery['warehouse_id']) {
+} elseif (stripos($primary_delivery['status_of_delivery'], 'warehouse') !== false && $primary_delivery['warehouse_id']) {
+    // Shipping to warehouse
     $ship_to_name = $primary_delivery['warehouse_name'] ?? 'Unknown Warehouse';
     $ship_to_address = $primary_delivery['warehouse_street'] ?? '';
     $ship_to_city_state_zip = trim(implode(', ', array_filter([
@@ -164,14 +181,33 @@ if ($primary_delivery['project_id']) {
         $primary_delivery['warehouse_state'],
         $primary_delivery['warehouse_zip']
     ])));
+} else {
+    // Fallback: try project first, then warehouse
+    if ($primary_delivery['project_id']) {
+        $ship_to_name = $primary_delivery['project_name'] ?? 'Unknown Project';
+        $ship_to_address = $primary_delivery['project_street'] ?? '';
+        $ship_to_city_state_zip = trim(implode(', ', array_filter([
+            $primary_delivery['project_city'],
+            $primary_delivery['project_state'],
+            $primary_delivery['project_zip']
+        ])));
+    } elseif ($primary_delivery['warehouse_id']) {
+        $ship_to_name = $primary_delivery['warehouse_name'] ?? 'Unknown Warehouse';
+        $ship_to_address = $primary_delivery['warehouse_street'] ?? '';
+        $ship_to_city_state_zip = trim(implode(', ', array_filter([
+            $primary_delivery['warehouse_city'],
+            $primary_delivery['warehouse_state'],
+            $primary_delivery['warehouse_zip']
+        ])));
+    }
 }
 
-// Calculate totals
+// Calculate totals for the selected BOL group only
 $total_pallets = 0;
 $total_modules = 0;
 $total_weight = 0; // We'll need to estimate this
 
-foreach ($deliveries as $delivery) {
+foreach ($current_deliveries as $delivery) {
     // Estimate pallets from quantity (assuming modules per pallet)
     $modules_per_pallet = 30; // Default assumption, can be adjusted
     $estimated_pallets = ceil($delivery['quantity'] / $modules_per_pallet);
@@ -185,6 +221,11 @@ foreach ($deliveries as $delivery) {
 
 // Handle form submission for PDF generation
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_pdf'])) {
+    // If BOL selection was submitted via POST, use it to determine the correct deliveries
+    if (isset($_POST['bol_select']) && isset($bol_groups[$_POST['bol_select']])) {
+        $current_deliveries = $bol_groups[$_POST['bol_select']];
+    }
+    
     // Get form data
     $form_data = [
         'bol_number' => $_POST['bol_number'] ?? '',
@@ -213,7 +254,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_pdf'])) {
     ];
     
     // Generate BOL HTML
-    $html = generateBolHtml($form_data, $deliveries);
+    $html = generateBolHtml($form_data, $current_deliveries);
     
     // Create PDF
     $options = new Options();
@@ -996,6 +1037,29 @@ $conn->close();
         </div>
     <?php endif; ?>
 
+    <?php if (count($bol_groups) > 1): ?>
+        <div style="background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; padding: 15px; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                <span style="font-weight: 600; color: #488C9A;">Multiple BOLs Detected:</span>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <label for="bolSelect" style="font-weight: 500;">Select BOL:</label>
+                    <select id="bolSelect" onchange="switchBol()" style="padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; background: white;">
+                        <?php foreach ($bol_groups as $bol_number => $group): ?>
+                            <option value="<?php echo htmlspecialchars($bol_number); ?>" 
+                                    <?php echo ($bol_number === $selected_bol) ? 'selected' : ''; ?>>
+                                BOL: <?php echo htmlspecialchars($bol_number); ?> (<?php echo count($group); ?> deliveries)
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div style="color: #6c757d; font-size: 0.9em;">
+                    Showing BOL <strong><?php echo htmlspecialchars($selected_bol); ?></strong> 
+                    (<?php echo count($current_deliveries); ?> <?php echo count($current_deliveries) === 1 ? 'delivery' : 'deliveries'; ?>)
+                </div>
+            </div>
+        </div>
+    <?php endif; ?>
+
     <!-- Top Action Buttons -->
     <div style="margin-bottom: 30px; display: flex; gap: 15px; align-items: center;">
         <button type="submit" name="generate_pdf" formtarget="_blank" form="bolForm" style="
@@ -1047,7 +1111,7 @@ $conn->close();
                     <div class="bol-info">
                         <div class="bol-info-row">
                             <strong>BOL NO:</strong> 
-                            <input type="text" name="bol_number" value="<?php echo htmlspecialchars($primary_delivery['bol_number'] ?? ''); ?>" style="width: 120px; margin-left: 5px;">
+                            <input type="text" name="bol_number" value="<?php echo htmlspecialchars($selected_bol !== 'Unknown' ? $selected_bol : ($primary_delivery['bol_number'] ?? '')); ?>" style="width: 120px; margin-left: 5px;">
                         </div>
                         <div class="bol-info-row">
                             <strong>Pickup Date:</strong> 
@@ -1114,7 +1178,7 @@ $conn->close();
                 <div class="carrier-grid">
                     <div class="form-group">
                         <label>Carrier name:</label>
-                        <input type="text" name="carrier_name" value="" placeholder="Five Star Transport">
+                        <input type="text" name="carrier_name" value="" placeholder="ABC123 Trucking">
                     </div>
                     <div class="form-group">
                         <label>Trailer number:</label>
@@ -1165,7 +1229,7 @@ $conn->close();
                         <td><input type="text" name="pieces" value="<?php echo $total_modules; ?>" style="width: 80px; text-align: center; border: none;"></td>
                         <td><input type="text" name="weight" value="<?php echo number_format($total_weight); ?>" style="width: 80px; text-align: center; border: none;"></td>
                         <td>
-                            <input type="text" name="additional_info" value="Truckload of <?php echo $primary_delivery['wattage']; ?>W modules.<?php echo PHP_EOL; ?><?php echo $total_modules; ?> modules per pallet. <?php echo $total_pallets; ?> pallets. <?php echo $total_modules; ?> modules total" 
+                            <input type="text" name="additional_info" value="Truckload of <?php echo $primary_delivery['wattage']; ?>W modules. <?php echo $total_modules; ?> modules <?php echo $total_pallets; ?> pallets" 
                                    style="width: 100%; border: none; padding: 4px;">
                         </td>
                     </tr>
@@ -1218,10 +1282,23 @@ $conn->close();
                 <div style="margin-top: 20px; border-bottom: 1px solid #000;"></div>
             </div>
         </div>
+        <!-- Hidden field to preserve BOL selection -->
+        <input type="hidden" name="bol_select" value="<?php echo htmlspecialchars($selected_bol); ?>">
     </form>
 </main>
 
 <script>
+// Function to switch between BOL groups
+function switchBol() {
+    const select = document.getElementById('bolSelect');
+    if (select) {
+        const selectedBol = select.value;
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.set('bol_select', selectedBol);
+        window.location.href = currentUrl.toString();
+    }
+}
+
 // Auto-calculate weight when modules change
 document.addEventListener('DOMContentLoaded', function() {
     const piecesInput = document.querySelector('input[name="pieces"]');

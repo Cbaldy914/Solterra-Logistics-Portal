@@ -66,24 +66,22 @@ if (!$project_access_stmt->fetch()) {
 }
 $project_access_stmt->close();
 
-// Get site information via project relationship
-$site_sql = "SELECT s.id, s.timezone, s.appointment_duration FROM sites s WHERE s.project_id = ? LIMIT 1";
-$site_stmt = $conn->prepare($site_sql);
-$site_stmt->bind_param("i", $project_id);
-$site_stmt->execute();
-$site_stmt->bind_result($site_id, $site_timezone, $appointment_duration);
-if (!$site_stmt->fetch()) {
-    die("No site found for this project.");
+// Get project information (timezone comes from projects table now)
+$project_info_sql = "SELECT timezone FROM projects WHERE id = ? LIMIT 1";
+$project_info_stmt = $conn->prepare($project_info_sql);
+$project_info_stmt->bind_param("i", $project_id);
+$project_info_stmt->execute();
+$project_info_stmt->bind_result($site_timezone);
+if (!$project_info_stmt->fetch()) {
+    die("Project not found.");
 }
-$site_stmt->close();
+$project_info_stmt->close();
 
 // Set defaults if not configured
 if (empty($site_timezone)) {
     $site_timezone = 'UTC';
 }
-if (empty($appointment_duration)) {
-    $appointment_duration = 30;
-}
+$appointment_duration = 30; // Default appointment duration
 
 $site_tz = new DateTimeZone($site_timezone);
 
@@ -340,7 +338,7 @@ function processSafetyIncident($conn, $appointment_id, $bol_number) {
     }
 }
 
-// Load operating hours for the site
+// Load operating hours for the project
 $days_oh = [];
 for ($i = 0; $i < 7; $i++) {
     $days_oh[$i] = [];
@@ -349,10 +347,10 @@ for ($i = 0; $i < 7; $i++) {
 $oh_stmt = $conn->prepare("
     SELECT day_of_week, start_time, end_time
     FROM site_operating_hours
-    WHERE site_id = ?
+    WHERE project_id = ?
     ORDER BY day_of_week, start_time
 ");
-$oh_stmt->bind_param("i", $site_id);
+$oh_stmt->bind_param("i", $project_id);
 $oh_stmt->execute();
 $oh_res = $oh_stmt->get_result();
 while($row = $oh_res->fetch_assoc()) {
@@ -417,10 +415,10 @@ if ($action) {
             LEFT JOIN deliveries d ON s.delivery_id = d.id
             LEFT JOIN warranty_claims w ON s.id = w.scheduling_id
             LEFT JOIN site_safety ss ON s.id = ss.scheduling_id
-            WHERE s.site_id = ?
+            WHERE s.project_id = ?
               AND s.start_time BETWEEN ? AND ?
         ");
-        $stmt->bind_param("iss", $site_id, $start_utc, $end_utc);
+        $stmt->bind_param("iss", $project_id, $start_utc, $end_utc);
         $stmt->execute();
         $res = $stmt->get_result();
         while($row = $res->fetch_assoc()) {
@@ -519,12 +517,12 @@ if ($action) {
             
             $stmt = $conn->prepare("
                 INSERT INTO site_scheduling
-                (site_id, delivery_id, start_time, bol_number, wattage,
+                (project_id, delivery_id, start_time, bol_number, wattage,
                  reference_numbers, description, is_closed)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 0)
             ");
             $stmt->bind_param("iisssss",
-                $site_id,
+                $project_id,
                 $delivery_id,
                 $start_utc,
                 $delivery_data['bol_number'],
@@ -562,9 +560,9 @@ if ($action) {
                        d.status_of_delivery, d.supplier, d.quantity as delivery_quantity
                 FROM site_scheduling s
                 LEFT JOIN deliveries d ON s.delivery_id = d.id
-                WHERE s.id = ? AND s.site_id = ?
+                WHERE s.id = ? AND s.project_id = ?
             ");
-            $stmt->bind_param("ii", $appointment_id, $site_id);
+            $stmt->bind_param("ii", $appointment_id, $project_id);
             $stmt->execute();
             $res = $stmt->get_result();
             
@@ -638,9 +636,9 @@ if ($action) {
                 $param_types .= "s";
             }
             
-            $update_sql .= " WHERE id = ? AND site_id = ?";
+            $update_sql .= " WHERE id = ? AND project_id = ?";
             $params[] = $appointment_id;
-            $params[] = $site_id;
+            $params[] = $project_id;
             $param_types .= "ii";
             
             $stmt = $conn->prepare($update_sql);
@@ -676,8 +674,8 @@ if ($action) {
             // NEW: Update delivery status if appointment is completed (both arrival and departure times are set)
             if ($arrival_utc && $departure_utc) {
                 // Get the delivery_id for this appointment
-                $get_delivery_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ? AND site_id = ?");
-                $get_delivery_stmt->bind_param("ii", $appointment_id, $site_id);
+                $get_delivery_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ? AND project_id = ?");
+                $get_delivery_stmt->bind_param("ii", $appointment_id, $project_id);
                 $get_delivery_stmt->execute();
                 $get_delivery_stmt->bind_result($delivery_id_for_update);
                 if ($get_delivery_stmt->fetch() && $delivery_id_for_update) {
@@ -779,8 +777,8 @@ if ($action) {
         }
         
         // Get delivery_id from appointment
-        $delivery_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ? AND site_id = ?");
-        $delivery_stmt->bind_param("ii", $appointment_id, $site_id);
+        $delivery_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ? AND project_id = ?");
+        $delivery_stmt->bind_param("ii", $appointment_id, $project_id);
         $delivery_stmt->execute();
         $delivery_stmt->bind_result($delivery_id);
         if (!$delivery_stmt->fetch()) {
@@ -841,8 +839,8 @@ if ($action) {
         $conn->begin_transaction();
         try {
             // First, check if this appointment has a delivery_id to update
-            $check_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ? AND site_id = ?");
-            $check_stmt->bind_param("ii", $appointment_id, $site_id);
+            $check_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ? AND project_id = ?");
+            $check_stmt->bind_param("ii", $appointment_id, $project_id);
             $check_stmt->execute();
             $check_stmt->bind_result($delivery_id);
             $check_stmt->fetch();
@@ -861,8 +859,8 @@ if ($action) {
             $del_safety->close();
             
             // Delete the appointment
-            $stmt = $conn->prepare("DELETE FROM site_scheduling WHERE id = ? AND site_id = ?");
-            $stmt->bind_param("ii", $appointment_id, $site_id);
+            $stmt = $conn->prepare("DELETE FROM site_scheduling WHERE id = ? AND project_id = ?");
+            $stmt->bind_param("ii", $appointment_id, $project_id);
             
             if (!$stmt->execute()) {
                 throw new Exception("Failed to delete appointment: " . $stmt->error);
@@ -1985,7 +1983,6 @@ include('header.php');
 
     <script>
         const projectId = <?php echo $project_id; ?>;
-        const siteId = <?php echo $site_id; ?>;
         const csrfToken = '<?php echo $csrf_token; ?>';
         const operatingHours = <?php echo $operating_hours_js; ?>;
         const deliveryId = <?php echo $delivery_id; ?>;
