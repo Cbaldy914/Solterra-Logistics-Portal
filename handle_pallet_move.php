@@ -83,7 +83,22 @@ try {
     $stmtOrigin->close();
 
     // 2. Fetch details of selected pallets to verify they are in the origin warehouse and group them
-    $sqlFetchPallets = "SELECT id, wattage, quantity FROM inventory_pallets WHERE id IN ($placeholders) AND current_warehouse_id = ? AND status = 'In Warehouse'";
+    $sqlFetchPallets = "
+        SELECT ip.id, ip.wattage, ip.quantity, 
+               COALESCE(ip.manufacturer, 
+                   CASE 
+                       WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
+                       ELSE m.vendor_name
+                   END,
+                   'Unknown Manufacturer'
+               ) as manufacturer
+        FROM inventory_pallets ip
+        LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+        LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE ip.id IN ($placeholders) 
+        AND ip.current_warehouse_id = ? 
+        AND ip.status = 'In Warehouse'
+    ";
     $stmtFetch = $conn->prepare($sqlFetchPallets);
     if (!$stmtFetch) throw new Exception("Failed to prepare pallet fetch query: " . $conn->error);
     $params = array_merge($palletIds, [$current_warehouse_id]);
@@ -99,11 +114,22 @@ try {
     while ($pallet = $resultPallets->fetch_assoc()) {
         $fetchedPalletIds[] = $pallet['id']; // Keep track of verified IDs
         $wattage = $pallet['wattage'];
+        $manufacturer = $pallet['manufacturer'];
+        
         if (!isset($palletsByWattage[$wattage])) {
-            $palletsByWattage[$wattage] = ['quantity' => 0, 'ids' => []];
+            $palletsByWattage[$wattage] = [
+                'quantity' => 0, 
+                'ids' => [], 
+                'manufacturer' => $manufacturer
+            ];
         }
         $palletsByWattage[$wattage]['quantity'] += $pallet['quantity'];
         $palletsByWattage[$wattage]['ids'][] = $pallet['id'];
+        
+        // Ensure all pallets in this wattage group have the same manufacturer
+        if ($palletsByWattage[$wattage]['manufacturer'] !== $manufacturer) {
+            $palletsByWattage[$wattage]['manufacturer'] = 'Mixed Manufacturers';
+        }
     }
     $stmtFetch->close();
 
@@ -157,10 +183,12 @@ try {
     foreach ($palletsByWattage as $wattage => $group) {
         $groupQty = $group['quantity'];
         $groupPalletIds = $group['ids'];
+        $groupManufacturer = $group['manufacturer'];
 
         // --- Dynamically build INSERT for deliveries for *this group* ---
+        // Use manufacturer as supplier (not warehouse name) to maintain data integrity
         $deliveryColumns = ["supplier", "origin_type", "origin_id", "wattage", "quantity", "bol_number", "left_warehouse_date", "anticipated_delivery_date", "status_of_delivery"];
-        $deliveryParams = [$origin_warehouse_name, 'warehouse', $current_warehouse_id, $wattage, $groupQty, $bol_number, $departure_date, $est_arrival_date, $delivery_status];
+        $deliveryParams = [$groupManufacturer, 'warehouse', $current_warehouse_id, $wattage, $groupQty, $bol_number, $departure_date, $est_arrival_date, $delivery_status];
         $deliveryTypes = "sisssisss"; // Updated types: added 's' for origin_type and 'i' for origin_id
 
         if ($destination_type === 'project') {

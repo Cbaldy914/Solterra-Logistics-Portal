@@ -16,9 +16,9 @@ define('ALLOWED_MIME_TYPES', [
 ]);
 
 // Ensure only global_admin can upload a POD
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'global_admin') {
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
     header("Location: unauthorized");
-    exit();
+     exit();
 }
 
 // Database connection

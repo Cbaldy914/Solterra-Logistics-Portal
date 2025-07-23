@@ -14,6 +14,7 @@ $role    = $_SESSION['role'] ?? 'user';
 // Validate the project ID or origin_batch_id
 $project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : null;
 $origin_batch_id = isset($_GET['origin_batch_id']) ? intval($_GET['origin_batch_id']) : null;
+$highlight_delivery_id = isset($_GET['delivery_id']) ? intval($_GET['delivery_id']) : null;
 
 if (empty($project_id) && empty($origin_batch_id)) {
     die("Project ID or Origin Batch ID is missing.");
@@ -487,6 +488,25 @@ if ($count_stmt) {
                 display: none !important;
             }
         }
+        
+        /* Delivery highlighting styles */
+        .highlighted-delivery {
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%) !important;
+            border: 3px solid #488C9A !important;
+            box-shadow: 0 0 15px rgba(72, 140, 154, 0.3) !important;
+            animation: highlightPulse 2s ease-in-out;
+        }
+        
+        @keyframes highlightPulse {
+            0%, 100% { 
+                transform: scale(1); 
+                box-shadow: 0 0 15px rgba(72, 140, 154, 0.3);
+            }
+            50% { 
+                transform: scale(1.02); 
+                box-shadow: 0 0 25px rgba(72, 140, 154, 0.5);
+            }
+        }
     </style>
 </head>
 <body>
@@ -655,7 +675,10 @@ if ($count_stmt) {
                                 }
                             }
                             ?>
-                            <tr>
+                            <tr data-delivery-id="<?php echo $delivery['id']; ?>" 
+                                <?php if ($highlight_delivery_id && $delivery['id'] == $highlight_delivery_id): ?>
+                                    class="highlighted-delivery" id="highlighted-delivery"
+                                <?php endif; ?>>
                                 <td><?php echo htmlspecialchars($delivery['supplier'] ?? ''); ?></td>
                                 <td><?php echo htmlspecialchars($delivery['wattage'] ?? ''); ?></td>
                                 <td><?php echo htmlspecialchars($delivery['status_of_delivery'] ?? ''); ?></td>
@@ -837,6 +860,48 @@ window.addEventListener('click', function(event) {
         closeAssociatedPalletModal();
     }
 });
+
+// Auto-scroll to highlighted delivery
+document.addEventListener('DOMContentLoaded', function() {
+    const highlightedDelivery = document.getElementById('highlighted-delivery');
+    if (highlightedDelivery) {
+        // Wait a bit for the page to fully render, then scroll to the highlighted delivery
+        setTimeout(function() {
+            highlightedDelivery.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+                inline: 'nearest'
+            });
+            
+            // Add extra pulsing to make it obvious
+            highlightedDelivery.style.animation = 'highlightPulse 3s ease-in-out 2';
+            
+            // Optional: Remove the highlight after 15 seconds for better UX
+            setTimeout(function() {
+                highlightedDelivery.style.animation = 'fadeOutHighlight 2s ease-in-out forwards';
+            }, 12000);
+        }, 800);
+    }
+});
+
+// Add fade out animation
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes fadeOutHighlight {
+        0% { 
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+            border: 3px solid #488C9A;
+            box-shadow: 0 0 15px rgba(72, 140, 154, 0.3);
+        }
+        100% { 
+            background: #f1f1f1;
+            border: 1px solid #ccc;
+            box-shadow: none;
+            transform: scale(1);
+        }
+    }
+`;
+document.head.appendChild(style);
 </script>
 </body>
 </html>
