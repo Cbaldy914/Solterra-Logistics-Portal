@@ -75,6 +75,105 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         }
         $successMessage = "Created $totalPallets pallets (up to $modulesPerPallet modules each) for $remainingModules remaining modules.";
     }
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'undo_palletization') {
+    $undoMessage = '';
+    $wattage = intval($_POST['wattage']);
+    $conn_undo = getDBConnection();
+    if (!$conn_undo) {
+        $undoMessage = "Error: Database connection failed.";
+    } else {
+        $conn_undo->begin_transaction();
+        try {
+            // Get all pallet IDs for this wattage across all batches in the current view
+            $pallet_ids = [];
+            
+            if ($view_mode === 'project') {
+                // For project view, get pallets for all batches in the project
+                $stmt_get_pallets = $conn_undo->prepare("
+                    SELECT ip.id 
+                    FROM inventory_pallets ip 
+                    JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id 
+                    JOIN modules m ON umi.unassigned_module_id = m.id 
+                    WHERE m.project_id = ? AND ip.wattage = ?
+                ");
+                $stmt_get_pallets->bind_param("ii", $project_id, $wattage);
+            } else {
+                // For batch view, get pallets for the specific batch
+                $stmt_get_pallets = $conn_undo->prepare("
+                    SELECT ip.id 
+                    FROM inventory_pallets ip 
+                    JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id 
+                    WHERE umi.unassigned_module_id = ? AND ip.wattage = ?
+                ");
+                $stmt_get_pallets->bind_param("ii", $batch_id, $wattage);
+            }
+            
+            if (!$stmt_get_pallets) throw new Exception("Failed to prepare pallet query: " . $conn_undo->error);
+            
+            $stmt_get_pallets->execute();
+            $result_pallets = $stmt_get_pallets->get_result();
+            while ($row = $result_pallets->fetch_assoc()) {
+                $pallet_ids[] = $row['id'];
+            }
+            $stmt_get_pallets->close();
+            
+            if (empty($pallet_ids)) {
+                throw new Exception("No pallets found for {$wattage}W modules.");
+            }
+
+            // Check if any pallets are linked to deliveries
+            $placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
+            $types = str_repeat('i', count($pallet_ids));
+            
+            $stmtCheckDeliveries = $conn_undo->prepare("SELECT inventory_pallet_id FROM delivery_pallets WHERE inventory_pallet_id IN ($placeholders)");
+            if (!$stmtCheckDeliveries) throw new Exception("Failed to prepare delivery check: " . $conn_undo->error);
+            
+            $stmtCheckDeliveries->bind_param($types, ...$pallet_ids);
+            $stmtCheckDeliveries->execute();
+            $resultDeliveries = $stmtCheckDeliveries->get_result();
+            $linkedPallets = [];
+            while ($row = $resultDeliveries->fetch_assoc()) {
+                $linkedPallets[] = $row['inventory_pallet_id'];
+            }
+            $stmtCheckDeliveries->close();
+
+            if (!empty($linkedPallets)) {
+                throw new Exception("Cannot undo palletization: Some {$wattage}W pallets are already linked to deliveries. Pallet IDs: " . implode(', ', $linkedPallets));
+            }
+
+            // Delete pallets
+            $stmtDelete = $conn_undo->prepare("DELETE FROM inventory_pallets WHERE id IN ($placeholders)");
+            if (!$stmtDelete) throw new Exception("Failed to prepare pallet deletion: " . $conn_undo->error);
+            
+            $stmtDelete->bind_param($types, ...$pallet_ids);
+            if (!$stmtDelete->execute()) {
+                throw new Exception("Failed to delete pallets: " . $stmtDelete->error);
+            }
+            
+            $deletedCount = $stmtDelete->affected_rows;
+            $stmtDelete->close();
+            $conn_undo->commit();
+            
+            $undoMessage = "Successfully deleted all $deletedCount pallet(s) for {$wattage}W modules. These modules are now available for re-palletization.";
+            
+        } catch (Exception $e) {
+            $conn_undo->rollback();
+            $undoMessage = "Error undoing palletization: " . $e->getMessage();
+        } finally {
+            $conn_undo->close();
+        }
+    }
+    
+    // Store message in session and redirect to prevent form resubmission
+    $_SESSION['module_overview_message'] = $undoMessage;
+    
+    // Construct appropriate redirect URL based on view mode
+    if ($view_mode === 'project' && $project_id > 0) {
+        header("Location: module_overview.php?project_id=" . $project_id);
+    } else {
+        header("Location: module_overview.php?batch_id=" . $batch_id);
+    }
+    exit();
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_pallets') {
     $deleteMessage = '';
     $conn_delete = getDBConnection(); // Use separate connection variable
@@ -147,10 +246,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
 function insertPallet($itemId, $watt, $qty) {
     global $conn;
 
-    // --- NEW: Fetch assigned project_id from the parent module batch --- 
+    // --- Fetch assigned project_id and manufacturer from the parent module batch --- 
     $assignedProjectId = null; // Default to NULL
+    $manufacturer = null; // Default to NULL
     $stmtFetchProject = $conn->prepare("
-        SELECT m.project_id 
+        SELECT m.project_id, 
+               CASE 
+                   WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
+                   ELSE m.vendor_name
+               END as manufacturer
         FROM modules m 
         JOIN unassigned_module_items umi ON m.id = umi.unassigned_module_id 
         WHERE umi.id = ? 
@@ -159,9 +263,10 @@ function insertPallet($itemId, $watt, $qty) {
     if ($stmtFetchProject) {
         $stmtFetchProject->bind_param("i", $itemId);
         if ($stmtFetchProject->execute()) {
-            $stmtFetchProject->bind_result($fetchedProjectId);
+            $stmtFetchProject->bind_result($fetchedProjectId, $fetchedManufacturer);
             if ($stmtFetchProject->fetch()) {
                 $assignedProjectId = $fetchedProjectId; // Can be NULL if the module batch wasn't assigned
+                $manufacturer = $fetchedManufacturer; // Extract manufacturer from vendor_name
             }
         } else {
             // Log error or handle appropriately if project fetch fails
@@ -171,12 +276,12 @@ function insertPallet($itemId, $watt, $qty) {
     } else {
         error_log("Error preparing project fetch for item ID {$itemId}: " . $conn->error);
     }
-    // --- END NEW --- 
+    // --- END --- 
 
     $stmtIns = $conn->prepare(
         "INSERT INTO inventory_pallets 
-         (pallet_identifier, unassigned_module_item_id, assigned_project_id, wattage, quantity, status) 
-         VALUES (?, ?, ?, ?, ?, 'At Manufacturer')"
+         (pallet_identifier, unassigned_module_item_id, assigned_project_id, wattage, quantity, status, manufacturer) 
+         VALUES (?, ?, ?, ?, ?, 'At Manufacturer', ?)"
     );
     if (!$stmtIns) {
         // Log error or handle appropriately
@@ -186,8 +291,8 @@ function insertPallet($itemId, $watt, $qty) {
     }
 
     $emptyId = ''; // Pallet identifier will be set after insert
-    // Bind parameters including the fetched assigned project ID (type 'i' handles NULL correctly)
-    $stmtIns->bind_param("siiid", $emptyId, $itemId, $assignedProjectId, $watt, $qty);
+    // Bind parameters including the fetched assigned project ID and manufacturer
+    $stmtIns->bind_param("siiids", $emptyId, $itemId, $assignedProjectId, $watt, $qty, $manufacturer);
     
     if (!$stmtIns->execute()) {
         error_log("Error executing pallet insert for item ID {$itemId}: " . $stmtIns->error);
@@ -330,7 +435,8 @@ try {
                     'item_id' => $item['id'], // For single batch mode compatibility
                     'ordered_quantity' => 0,
                     'palletized_quantity' => 0,
-                    'remaining_quantity' => 0
+                    'remaining_quantity' => 0,
+                    'pallet_distribution' => []
                 ];
             }
             $wattage_summary[$wattage]['ordered_quantity'] += $item['quantity'];
@@ -367,6 +473,13 @@ try {
             $wattage = $pallet['wattage'];
             if (isset($wattage_summary[$wattage])) {
                 $wattage_summary[$wattage]['palletized_quantity'] += $pallet['quantity'];
+                
+                // Track pallet distribution by quantity
+                $pallet_qty = $pallet['quantity'];
+                if (!isset($wattage_summary[$wattage]['pallet_distribution'][$pallet_qty])) {
+                    $wattage_summary[$wattage]['pallet_distribution'][$pallet_qty] = 0;
+                }
+                $wattage_summary[$wattage]['pallet_distribution'][$pallet_qty]++;
             }
             // Determine display location
             if ($pallet['status'] === 'In Warehouse' && $pallet['current_warehouse_id']) {
@@ -1088,6 +1201,21 @@ $conn->close();
                             <p><strong>Ordered:</strong> <?php echo number_format($data['ordered_quantity']); ?></p>
                             <p><strong>On Pallets:</strong> <?php echo number_format($data['palletized_quantity']); ?></p>
                             
+                            <?php if ($data['palletized_quantity'] > 0 && !empty($data['pallet_distribution'])): ?>
+                                <div style="margin: 8px 0; padding: 8px; background-color: #f8f9fa; border-radius: 4px; border-left: 3px solid #488C9A;">
+                                    <strong>Pallet Distribution:</strong><br>
+                                    <?php 
+                                    // Sort by quantity (descending) for better readability
+                                    $distribution = $data['pallet_distribution'];
+                                    krsort($distribution);
+                                    $distribution_parts = [];
+                                    foreach ($distribution as $modules_per_pallet => $pallet_count) {
+                                        $distribution_parts[] = "{$pallet_count} " . ($pallet_count === 1 ? "pallet" : "pallets") . " with {$modules_per_pallet} modules";
+                                    }
+                                    echo '<span style="font-size: 0.9em; color: #555;">' . implode('<br>', $distribution_parts) . '</span>';
+                                    ?>
+                                </div>
+                            <?php endif; ?>
                             <?php if ($data['remaining_quantity'] < 0): ?>
                                 <p><strong>Over-palletized:</strong> <span style="color: #d32f2f;"><?php echo number_format(abs($data['remaining_quantity'])); ?> excess modules</span></p>
                                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
@@ -1095,24 +1223,53 @@ $conn->close();
                                         ⚠️ You have <?php echo number_format(abs($data['remaining_quantity'])); ?> more modules on pallets than ordered. 
                                         Consider removing excess pallets via the pallet list below.
                                     </p>
+                                    <?php if ($data['palletized_quantity'] > 0): ?>
+                                        <form method="POST" style="margin-top: 15px;">
+                                            <input type="hidden" name="action" value="undo_palletization">
+                                            <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                            <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules? This will make all modules available for re-palletization.')" style="background-color: #dc3545; color: white; border: none; padding: 8px 12px; border-radius: 3px; cursor: pointer; font-size: 0.9em;">
+                                                Undo All Palletization
+                                            </button>
+                                        </form>
+                                    <?php endif; ?>
                                 <?php endif; ?>
                             <?php elseif ($data['remaining_quantity'] > 0): ?>
                                 <p><strong>Remaining:</strong> <span style="color: #2e7d32;"><?php echo number_format($data['remaining_quantity']); ?></span></p>
                                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                                    <form method="POST">
+                                    <form method="POST" class="palletization-form" onsubmit="return handlePalletizationSubmit(event)">
                                         <input type="hidden" name="action" value="generate_pallets">
                                         <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
+                                        <input type="hidden" name="remaining_modules" value="<?php echo $data['remaining_quantity']; ?>">
+                                        <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
                                         <div>
                                             <label for="modules_per_pallet_<?php echo $wattage; ?>">Modules per Pallet:</label>
                                             <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $wattage; ?>" min="1" value="1" required>
                                             <button type="submit">Generate</button>
                                         </div>
                                     </form>
+                                    <?php if ($data['palletized_quantity'] > 0): ?>
+                                        <form method="POST" style="margin-top: 10px;">
+                                            <input type="hidden" name="action" value="undo_palletization">
+                                            <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                            <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules? This will make all modules available for re-palletization.')" style="background-color: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
+                                                Undo All Palletization
+                                            </button>
+                                        </form>
+                                    <?php endif; ?>
                                 <?php endif; ?>
                             <?php else: ?>
                                 <p><strong>Remaining:</strong> <span style="color: green;">0 (Perfect match)</span></p>
                                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
                                     <p style="color: green; margin-top: 15px;">✅ All modules perfectly palletized.</p>
+                                    <?php if ($data['palletized_quantity'] > 0): ?>
+                                        <form method="POST" style="margin-top: 10px;">
+                                            <input type="hidden" name="action" value="undo_palletization">
+                                            <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                            <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules? This will make all modules available for re-palletization.')" style="background-color: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
+                                                Undo All Palletization
+                                            </button>
+                                        </form>
+                                    <?php endif; ?>
                                 <?php elseif ($_SESSION['role'] === 'user'): ?>
                                     <p style="color: green; margin-top: 15px;">All modules palletized.</p>
                                 <?php endif; ?>
@@ -1320,6 +1477,23 @@ $conn->close();
     </div>
 </div>
 
+<!-- Warning Modal for Uneven Palletization -->
+<div id="warningModal" class="modal">
+    <div class="modal-content">
+        <span class="close-modal-btn" onclick="closeWarningModal()">&times;</span>
+        <h2>Palletization Warning</h2>
+        <div id="warningMessage"></div>
+        <div style="margin-top: 20px; text-align: right;">
+            <button type="button" onclick="closeWarningModal()" style="background-color: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 4px; margin-right: 10px; cursor: pointer;">
+                Cancel
+            </button>
+            <button type="button" onclick="confirmPalletization()" style="background-color: #488C9A; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer;">
+                Proceed
+            </button>
+        </div>
+    </div>
+</div>
+
 
 
 
@@ -1475,21 +1649,81 @@ function hideLoadingModal() {
     if (modal) modal.style.display = 'none';
 }
 
-// Add loading spinner to pallet generation forms
-document.addEventListener('DOMContentLoaded', function() {
-    const palletForms = document.querySelectorAll('.wattage-summary-block form');
-    palletForms.forEach(function(form) {
-        form.addEventListener('submit', function() {
-            showLoadingModal();
-        });
-    });
+// ----------------- PALLETIZATION WARNING MODAL -----------------
+let currentForm = null;
+
+function handlePalletizationSubmit(event) {
+    event.preventDefault();
     
-    // Hide loading modal if page loads (in case of refresh/back button)
-    hideLoadingModal();
+    const form = event.target;
+    const modulesPerPallet = parseInt(form.querySelector('input[name="modules_per_pallet"]').value);
+    const remainingModules = parseInt(form.querySelector('input[name="remaining_modules"]').value);
+    const wattage = form.querySelector('input[name="wattage"]').value;
     
-    // Initialize pagination for pallets
-    initializePalletPagination();
-});
+    if (isNaN(modulesPerPallet) || modulesPerPallet <= 0) {
+        alert('Please enter a valid number of modules per pallet.');
+        return false;
+    }
+    
+    const fullPallets = Math.floor(remainingModules / modulesPerPallet);
+    const remainder = remainingModules % modulesPerPallet;
+    
+    if (remainder === 0) {
+        // Even distribution, proceed without warning
+        showLoadingModal();
+        form.submit();
+        return true;
+    } else {
+        // Uneven distribution, show warning
+        currentForm = form;
+        showWarningModal(fullPallets, modulesPerPallet, remainder, wattage);
+        return false;
+    }
+}
+
+function showWarningModal(fullPallets, modulesPerPallet, remainder, wattage) {
+    const modal = document.getElementById('warningModal');
+    const messageDiv = document.getElementById('warningMessage');
+    
+    let message = `<div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; padding: 15px; margin-bottom: 15px;">
+        <h4 style="margin-top: 0; color: #856404;">⚠️ Uneven Distribution Warning</h4>
+        <p style="margin-bottom: 10px; color: #856404;">This will create an uneven distribution of ${wattage}W modules:</p>
+        <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">`;
+    
+    if (fullPallets > 0) {
+        message += `<li><strong>${fullPallets}</strong> ${fullPallets === 1 ? 'pallet' : 'pallets'} with <strong>${modulesPerPallet}</strong> modules each</li>`;
+    }
+    
+    message += `<li><strong>1</strong> pallet with <strong>${remainder}</strong> modules</li>
+        </ul>
+        <p style="margin-bottom: 0; color: #856404;"><strong>Do you want to proceed with this distribution?</strong></p>
+    </div>`;
+    
+    messageDiv.innerHTML = message;
+    modal.style.display = 'block';
+}
+
+function closeWarningModal() {
+    const modal = document.getElementById('warningModal');
+    modal.style.display = 'none';
+    currentForm = null;
+}
+
+function confirmPalletization() {
+    if (currentForm) {
+        closeWarningModal();
+        showLoadingModal();
+        currentForm.submit();
+    }
+}
+
+// Close modal when clicking outside of it
+window.onclick = function(event) {
+    const warningModal = document.getElementById('warningModal');
+    if (event.target === warningModal) {
+        closeWarningModal();
+    }
+}
 
 // ----------------- FILTER DROPDOWN FUNCTIONALITY -----------------
 function toggleFilters() {
@@ -1537,6 +1771,15 @@ document.addEventListener('click', function(event) {
             toggleBtn.classList.remove('active');
         }
     }
+});
+
+// Add loading spinner to non-palletization forms and initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    // Hide loading modal if page loads (in case of refresh/back button)
+    hideLoadingModal();
+    
+    // Initialize pagination for pallets
+    initializePalletPagination();
 });
 </script>
 </body>

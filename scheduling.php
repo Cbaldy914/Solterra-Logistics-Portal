@@ -125,79 +125,10 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
         // Get pallet damage data
         $pallet_damages = isset($_POST['pallet_damages']) ? json_decode($_POST['pallet_damages'], true) : [];
         $pallet_actuals = isset($_POST['pallet_actuals']) ? json_decode($_POST['pallet_actuals'], true) : [];
+        $pallet_accepted = isset($_POST['pallet_accepted']) ? json_decode($_POST['pallet_accepted'], true) : [];
         $pallet_notes = isset($_POST['pallet_notes']) ? json_decode($_POST['pallet_notes'], true) : [];
         
-        $modules_rejected = [];
-        $quantity_discrepancy = [];
-        $modules_accepted = [];
-        
-        // Process pallet-level damage data
-        foreach ($pallet_damages as $pallet_id => $damaged_count) {
-            if ($damaged_count > 0) {
-                // Get pallet info
-                $pallet_stmt = $conn->prepare("SELECT wattage, quantity FROM inventory_pallets WHERE id = ?");
-                $pallet_stmt->bind_param("i", $pallet_id);
-                $pallet_stmt->execute();
-                $pallet_stmt->bind_result($wattage, $original_qty);
-                $pallet_stmt->fetch();
-                $pallet_stmt->close();
-                
-                $modules_rejected[] = [
-                    'pallet_id' => $pallet_id,
-                    'module' => $wattage . 'W',
-                    'qty' => intval($damaged_count),
-                    'notes' => $pallet_notes[$pallet_id] ?? ''
-                ];
-                
-                // Update pallet status to reflect damage
-                $update_pallet = $conn->prepare("
-                    UPDATE inventory_pallets 
-                    SET quantity = quantity - ?, 
-                        status = CASE 
-                            WHEN quantity - ? <= 0 THEN 'Damaged - Total Loss'
-                            ELSE 'Partially Damaged'
-                        END
-                    WHERE id = ?
-                ");
-                $update_pallet->bind_param("iii", $damaged_count, $damaged_count, $pallet_id);
-                $update_pallet->execute();
-                $update_pallet->close();
-            }
-        }
-        
-        // Process quantity discrepancies
-        foreach ($pallet_actuals as $pallet_id => $actual_count) {
-            $pallet_stmt = $conn->prepare("SELECT wattage, quantity FROM inventory_pallets WHERE id = ?");
-            $pallet_stmt->bind_param("i", $pallet_id);
-            $pallet_stmt->execute();
-            $pallet_stmt->bind_result($wattage, $expected_qty);
-            $pallet_stmt->fetch();
-            $pallet_stmt->close();
-            
-            if ($actual_count != $expected_qty) {
-                $quantity_discrepancy[] = [
-                    'pallet_id' => $pallet_id,
-                    'module' => $wattage . 'W',
-                    'expected' => intval($expected_qty),
-                    'actual' => intval($actual_count)
-                ];
-                
-                // Update pallet quantity
-                $update_qty = $conn->prepare("UPDATE inventory_pallets SET quantity = ? WHERE id = ?");
-                $update_qty->bind_param("ii", $actual_count, $pallet_id);
-                $update_qty->execute();
-                $update_qty->close();
-            } else {
-                // No discrepancy, add to accepted
-                $modules_accepted[] = [
-                    'pallet_id' => $pallet_id,
-                    'module' => $wattage . 'W',
-                    'qty' => intval($actual_count)
-                ];
-            }
-        }
-        
-        // Handle photo uploads
+        // Handle photo uploads first
         $pictures = [];
         if (isset($_FILES['damage_pictures']) && is_array($_FILES['damage_pictures']['name'])) {
             $upload_dir = 'uploads/damage_photos/';
@@ -216,52 +147,88 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
             }
         }
         
-        // Create or update warranty claim
-        $check_warranty = $conn->prepare("SELECT id FROM warranty_claims WHERE scheduling_id = ?");
-        $check_warranty->bind_param("i", $appointment_id);
-        $check_warranty->execute();
-        $check_warranty->store_result();
+        // First, delete any existing warranty claims for this appointment
+        $delete_existing = $conn->prepare("DELETE FROM warranty_claims WHERE scheduling_id = ?");
+        $delete_existing->bind_param("i", $appointment_id);
+        $delete_existing->execute();
+        $delete_existing->close();
         
-        if ($check_warranty->num_rows > 0) {
-            // Update existing warranty claim
-            $update_warranty = $conn->prepare("
-                UPDATE warranty_claims 
-                SET modules_rejected = ?, quantity_discrepancy = ?, modules_accepted = ?,
-                    pictures = ?, delivery_date = ?, bol_number = ?
-                WHERE scheduling_id = ?
-            ");
-            $update_warranty->bind_param("ssssssi", 
-                json_encode($modules_rejected),
-                json_encode($quantity_discrepancy),
-                json_encode($modules_accepted),
-                json_encode($pictures),
-                $delivery_date,
-                $bol_number,
-                $appointment_id
-            );
-            $update_warranty->execute();
-            $update_warranty->close();
-        } else {
-            // Create new warranty claim
+        // Get all unique pallet IDs that have any kind of issue
+        $all_pallet_ids = array_unique(array_merge(
+            array_keys($pallet_damages),
+            array_keys($pallet_actuals),
+            array_keys($pallet_accepted)
+        ));
+        
+        // Process each pallet individually
+        foreach ($all_pallet_ids as $pallet_id) {
+            // Get pallet info
+            $pallet_stmt = $conn->prepare("SELECT wattage, quantity FROM inventory_pallets WHERE id = ?");
+            $pallet_stmt->bind_param("i", $pallet_id);
+            $pallet_stmt->execute();
+            $pallet_stmt->bind_result($wattage, $original_qty);
+            $pallet_stmt->fetch();
+            $pallet_stmt->close();
+            
+            $expected_qty = intval($original_qty);
+            $actual_qty = isset($pallet_actuals[$pallet_id]) ? intval($pallet_actuals[$pallet_id]) : $expected_qty;
+            $damaged_qty = isset($pallet_damages[$pallet_id]) ? intval($pallet_damages[$pallet_id]) : 0;
+            $accepted_qty = isset($pallet_accepted[$pallet_id]) ? intval($pallet_accepted[$pallet_id]) : $actual_qty;
+            $notes = isset($pallet_notes[$pallet_id]) ? trim($pallet_notes[$pallet_id]) : '';
+            
+            // Determine issue type
+            $has_damage = ($damaged_qty > 0);
+            $has_quantity_discrepancy = ($actual_qty != $expected_qty);
+            
+            $issue_type = '';
+            if ($has_damage && $has_quantity_discrepancy) {
+                $issue_type = 'both';
+            } elseif ($has_damage) {
+                $issue_type = 'damaged';
+            } elseif ($has_quantity_discrepancy) {
+                $issue_type = 'quantity_discrepancy';
+            } else {
+                // No issues, skip this pallet
+                continue;
+            }
+            
+            // Create warranty claim for this pallet
             $insert_warranty = $conn->prepare("
                 INSERT INTO warranty_claims 
-                (scheduling_id, bol_number, modules_rejected, quantity_discrepancy, 
-                 modules_accepted, pictures, delivery_date, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending')
+                (scheduling_id, bol_number, delivery_date, status, notes, pictures, 
+                 pallet_id, issue_type, expected_quantity, actual_quantity, 
+                 damaged_quantity, accepted_quantity)
+                VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?)
             ");
-            $insert_warranty->bind_param("issssss", 
+            $insert_warranty->bind_param("issssissiii", 
                 $appointment_id,
                 $bol_number,
-                json_encode($modules_rejected),
-                json_encode($quantity_discrepancy),
-                json_encode($modules_accepted),
-                json_encode($pictures),
-                $delivery_date
+                $delivery_date,
+                $notes,
+                json_encode($pictures), // Store pictures on each claim
+                $pallet_id,
+                $issue_type,
+                $expected_qty,
+                $actual_qty,
+                $damaged_qty,
+                $accepted_qty
             );
             $insert_warranty->execute();
             $insert_warranty->close();
+            
+            // Update pallet status based on issues
+            if ($has_damage) {
+                $new_status = ($damaged_qty >= $actual_qty) ? 'Damaged - Total Loss' : 'Partially Damaged';
+                $update_pallet = $conn->prepare("UPDATE inventory_pallets SET status = ? WHERE id = ?");
+                $update_pallet->bind_param("si", $new_status, $pallet_id);
+                $update_pallet->execute();
+                $update_pallet->close();
+            }
+            
+            // Note: We do NOT update the pallet quantity in inventory_pallets when there's a discrepancy.
+            // The original expected quantity should remain unchanged in the database.
+            // The actual received quantity is recorded in the warranty_claims table for tracking purposes.
         }
-        $check_warranty->close();
         
     } catch (Exception $e) {
         throw new Exception("Error processing damage report: " . $e->getMessage());
@@ -557,9 +524,23 @@ if ($action) {
                 SELECT s.id, s.start_time, s.bol_number, s.delivery_id, s.wattage,
                        s.reference_numbers, s.description, s.arrival_time, s.departure_time,
                        s.proof_of_delivery, s.is_closed,
-                       d.status_of_delivery, d.supplier, d.quantity as delivery_quantity
+                       d.status_of_delivery, d.supplier, d.quantity as delivery_quantity,
+                       CASE 
+                           WHEN d.supplier LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(d.supplier, '-', 1))
+                           ELSE d.supplier
+                       END AS manufacturer_name,
+                       CASE
+                           WHEN d.origin_type = 'warehouse' THEN w.name
+                           WHEN d.origin_type = 'manufacturer' THEN 
+                               CASE 
+                                   WHEN d.supplier LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(d.supplier, '-', 1))
+                                   ELSE d.supplier
+                               END
+                           ELSE d.supplier
+                       END AS origin_name
                 FROM site_scheduling s
                 LEFT JOIN deliveries d ON s.delivery_id = d.id
+                LEFT JOIN warehouses w ON d.origin_type = 'warehouse' AND d.origin_id = w.id
                 WHERE s.id = ? AND s.project_id = ?
             ");
             $stmt->bind_param("ii", $appointment_id, $project_id);
@@ -828,6 +809,36 @@ if ($action) {
         json_response(['success' => true, 'has_damages' => $count > 0]);
     }
 
+    // Get existing damage data for appointment
+    if ($action === 'get_damage_data') {
+        $appointment_id = isset($_GET['appointment_id']) ? intval($_GET['appointment_id']) : 0;
+        
+        if ($appointment_id <= 0) {
+            json_response(['success' => false, 'error' => 'Invalid appointment ID']);
+        }
+        
+        // Get warranty claims for this appointment
+        $damage_stmt = $conn->prepare("
+            SELECT w.pallet_id, w.expected_quantity, w.actual_quantity, 
+                   w.damaged_quantity, w.accepted_quantity, w.notes,
+                   ip.pallet_identifier, ip.wattage
+            FROM warranty_claims w
+            LEFT JOIN inventory_pallets ip ON w.pallet_id = ip.id
+            WHERE w.scheduling_id = ?
+        ");
+        $damage_stmt->bind_param("i", $appointment_id);
+        $damage_stmt->execute();
+        $damage_result = $damage_stmt->get_result();
+        
+        $damage_data = [];
+        while ($row = $damage_result->fetch_assoc()) {
+            $damage_data[] = $row;
+        }
+        $damage_stmt->close();
+        
+        json_response(['success' => true, 'damage_data' => $damage_data]);
+    }
+
     // Delete appointment
     if ($action === 'delete_appointment') {
         $appointment_id = isset($_POST['appointment_id']) ? intval($_POST['appointment_id']) : 0;
@@ -907,7 +918,8 @@ include('header.php');
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scheduling - <?php echo htmlspecialchars($project_name); ?></title>
     <link rel="stylesheet" href="portal.css">
-    <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
+    <link rel="icon" href="pictures/favicon.png" type="image/png">
+    <link rel="shortcut icon" href="pictures/favicon.png" type="image/png">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         /* Modern CSS Reset and Base Styles */
@@ -1358,7 +1370,7 @@ include('header.php');
             background: white;
             padding: 32px;
             border-radius: 24px;
-            max-width: 800px;
+            max-width: 900px;
             width: 95%;
             max-height: 90vh;
             overflow-y: auto;
@@ -1660,6 +1672,15 @@ include('header.php');
          .pallet-damage-table tr:hover {
              background: #f8f9fa;
          }
+
+         .pallet-damage-table tr.damage-highlighted {
+             background-color: #ffebee !important;
+             border-left: 4px solid #f44336 !important;
+         }
+
+         .pallet-damage-table tr.damage-highlighted:hover {
+             background-color: #ffcdd2 !important;
+         }
          
          .damage-input {
              width: 70px;
@@ -1711,7 +1732,7 @@ include('header.php');
              gap: 8px;
              padding: 14px 24px;
              background: linear-gradient(135deg, #488C9A, #3a6e7f);
-             color: white;
+             color: white !important;
              border-radius: 12px;
              cursor: pointer;
              transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1882,7 +1903,7 @@ include('header.php');
                     <div class="tab-navigation">
                         <button type="button" class="tab-btn active" onclick="showTab('details')">Details</button>
                         <button type="button" class="tab-btn" onclick="showTab('delivery')">Delivery Status</button>
-                        <button type="button" class="tab-btn" onclick="showTab('damages')">Damage/Safety</button>
+                        <button type="button" class="tab-btn" onclick="showTab('damages')">Damage/Safety <span style="font-size: 0.8em; color: #dc3545;">*</span></button>
                     </div>
 
                     <!-- Details Tab -->
@@ -1900,7 +1921,8 @@ include('header.php');
                         <div class="form-group" id="deliveryInfoEditGroup" style="display: none;">
                             <label>Delivery Information</label>
                             <div style="padding:10px; background:#f8f9fa; border:1px solid #ddd; border-radius:4px;">
-                                <div>Supplier: <span id="editDeliverySupplier">-</span></div>
+                                <div>Origin: <span id="editDeliveryOrigin">-</span></div>
+                                <div>Manufacturer: <span id="editDeliveryManufacturer">-</span></div>
                                 <div>Wattage: <span id="editDeliveryWattage">-</span>W</div>
                                 <div>Quantity: <span id="editDeliveryQuantity">-</span></div>
                             </div>
@@ -1920,8 +1942,15 @@ include('header.php');
                     <!-- Delivery Status Tab -->
                     <div id="delivery-tab" class="tab-content">
                         <div class="form-group">
+                            <label>Expected Delivery Time</label>
+                            <input type="datetime-local" id="edit_expected_time" readonly 
+                                   style="background-color: #f8f9fa; color: #6c757d; cursor: not-allowed;">
+                        </div>
+
+                        <div class="form-group">
                             <label>Arrival Time</label>
-                            <input type="datetime-local" name="arrival_time" id="edit_arrival_time">
+                            <input type="datetime-local" name="arrival_time" id="edit_arrival_time" onchange="checkLateness()">
+                            <div id="lateness_message" style="margin-top: 8px; font-weight: 600;"></div>
                         </div>
 
                         <div class="form-group">
@@ -2498,7 +2527,8 @@ include('header.php');
                         if (appointment.arrival_time) {
                             document.getElementById('edit_arrival_time').value = appointment.arrival_time.replace(' ', 'T').substring(0, 16);
                         } else {
-                            document.getElementById('edit_arrival_time').value = '';
+                            // Default to expected delivery time if no arrival time is set
+                            document.getElementById('edit_arrival_time').value = appointment.start_time.replace(' ', 'T').substring(0, 16);
                         }
 
                         if (appointment.departure_time) {
@@ -2662,6 +2692,17 @@ include('header.php');
         
         // Tab Management
         function showTab(tabName) {
+            // Check if trying to access damages tab without required completion times
+            if (tabName === 'damages') {
+                const arrivalTime = document.getElementById('edit_arrival_time').value;
+                const departureTime = document.getElementById('edit_departure_time').value;
+                
+                if (!arrivalTime || !departureTime) {
+                    alert('Please enter both Arrival Time and Departure Time in the Delivery Status tab before reporting damages or safety incidents.\n\nDamage and safety reporting can only be done after delivery completion.');
+                    return; // Don't switch to damages tab
+                }
+            }
+            
             // Hide all tab contents
             document.querySelectorAll('.tab-content').forEach(tab => {
                 tab.classList.remove('active');
@@ -2763,8 +2804,9 @@ include('header.php');
                                     <th style="min-width: 100px;">Pallet ID</th>
                                     <th style="min-width: 80px;">Wattage</th>
                                     <th style="min-width: 90px;">Expected Qty</th>
+                                    <th style="min-width: 100px;">Actual QTY</th>
                                     <th style="min-width: 110px;">Damaged Modules</th>
-                                    <th style="min-width: 120px;">Actual Qty Received</th>
+                                    <th style="min-width: 120px;">Accepted Modules</th>
                                     <th style="min-width: 150px;">Notes</th>
                                 </tr>
                             </thead>
@@ -2779,15 +2821,24 @@ include('header.php');
                         <td>${pallet.quantity}</td>
                         <td>
                             <input type="number" 
+                                   name="pallet_actual[${pallet.id}]" 
+                                   class="damage-input" 
+                                   min="0" 
+                                   value="${pallet.quantity}"
+                                   onchange="updateAcceptedQuantity(${pallet.id}, ${pallet.quantity})">
+                        </td>
+                        <td>
+                            <input type="number" 
                                    name="pallet_damaged[${pallet.id}]" 
                                    class="damage-input" 
                                    min="0" 
                                    max="${pallet.quantity}" 
-                                   value="0">
+                                   value="0"
+                                   onchange="updateAcceptedQuantity(${pallet.id}, ${pallet.quantity})">
                         </td>
                         <td>
                             <input type="number" 
-                                   name="pallet_actual[${pallet.id}]" 
+                                   name="pallet_accepted[${pallet.id}]" 
                                    class="damage-input" 
                                    min="0" 
                                    value="${pallet.quantity}">
@@ -2817,6 +2868,11 @@ include('header.php');
             `;
             
             container.innerHTML = html;
+            
+            // Populate existing damage data if available
+            if (window.existingDamageData) {
+                setTimeout(() => populateExistingDamageData(), 100);
+            }
         }
         
         // Fallback Basic Damage Form
@@ -2853,6 +2909,7 @@ include('header.php');
                 // Collect pallet-level damage data
                 const palletDamages = {};
                 const palletActuals = {};
+                const palletAccepted = {};
                 const palletNotes = {};
                 
                 document.querySelectorAll('input[name^="pallet_damaged["]').forEach(input => {
@@ -2865,6 +2922,11 @@ include('header.php');
                     palletActuals[palletId] = input.value;
                 });
                 
+                document.querySelectorAll('input[name^="pallet_accepted["]').forEach(input => {
+                    const palletId = input.name.match(/\d+/)[0];
+                    palletAccepted[palletId] = input.value;
+                });
+                
                 document.querySelectorAll('input[name^="pallet_notes["]').forEach(input => {
                     const palletId = input.name.match(/\d+/)[0];
                     palletNotes[palletId] = input.value;
@@ -2872,6 +2934,7 @@ include('header.php');
                 
                 formData.append('pallet_damages', JSON.stringify(palletDamages));
                 formData.append('pallet_actuals', JSON.stringify(palletActuals));
+                formData.append('pallet_accepted', JSON.stringify(palletAccepted));
                 formData.append('pallet_notes', JSON.stringify(palletNotes));
             }
             
@@ -2926,8 +2989,9 @@ include('header.php');
                         document.getElementById('editDateTimeDisplay').textContent = formatDateTime(appointment.start_time);
                         
                         // Show delivery information if available
-                        if (appointment.supplier || appointment.delivery_quantity || appointment.wattage) {
-                            document.getElementById('editDeliverySupplier').textContent = appointment.supplier || 'Unknown';
+                        if (appointment.origin_name || appointment.delivery_quantity || appointment.wattage) {
+                            document.getElementById('editDeliveryOrigin').textContent = appointment.origin_name || 'Unknown';
+                            document.getElementById('editDeliveryManufacturer').textContent = appointment.manufacturer_name || 'Unknown';
                             
                             // Parse wattage from JSON if it exists, otherwise use delivery wattage
                             let wattageDisplay = 'Unknown';
@@ -2950,11 +3014,15 @@ include('header.php');
                             document.getElementById('deliveryInfoEditGroup').style.display = 'none';
                         }
                         
+                        // Set expected time (read-only)
+                        document.getElementById('edit_expected_time').value = appointment.start_time.replace(' ', 'T').substring(0, 16);
+                        
                         // Format datetime for input fields
                         if (appointment.arrival_time) {
                             document.getElementById('edit_arrival_time').value = appointment.arrival_time.replace(' ', 'T').substring(0, 16);
                         } else {
-                            document.getElementById('edit_arrival_time').value = '';
+                            // Default to expected delivery time if no arrival time is set
+                            document.getElementById('edit_arrival_time').value = appointment.start_time.replace(' ', 'T').substring(0, 16);
                         }
                         
                         if (appointment.departure_time) {
@@ -2962,6 +3030,21 @@ include('header.php');
                         } else {
                             document.getElementById('edit_departure_time').value = '';
                         }
+                        
+                        // Check lateness after setting arrival time (including default)
+                        checkLateness();
+                        
+                        // Add event listeners to update damage tab state when times change
+                        document.getElementById('edit_arrival_time').addEventListener('change', function() {
+                            checkLateness(); // This will also call updateDamageTabState
+                        });
+                        
+                        document.getElementById('edit_departure_time').addEventListener('change', function() {
+                            updateDamageTabState(); // Update tab state when departure time changes
+                        });
+                        
+                        // Initial update of damage tab state
+                        updateDamageTabState();
                         
                         // Handle existing POD
                         const podContainer = document.getElementById('existing_pod_container');
@@ -2988,18 +3071,164 @@ include('header.php');
         
         // Check for existing damage reports
         function checkExistingDamageReports(appointmentId) {
+            // Clear any existing damage data first
+            window.existingDamageData = null;
+            
             fetch(`scheduling.php?action=check_damages&appointment_id=${appointmentId}&project_id=${projectId}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.has_damages) {
                         document.querySelector('input[name="has_damages"][value="yes"]').checked = true;
                         toggleDamageFields(true);
-                        // Load existing damage data here if needed
+                        // Load existing damage data
+                        loadExistingDamageData(appointmentId);
+                    } else {
+                        // Ensure no damage is selected if no damage data exists
+                        document.querySelector('input[name="has_damages"][value="no"]').checked = true;
+                        toggleDamageFields(false);
                     }
                 })
                 .catch(error => {
                     console.error('Error checking damages:', error);
                 });
+        }
+
+        // Load existing damage data for editing
+        function loadExistingDamageData(appointmentId) {
+            fetch(`scheduling.php?action=get_damage_data&appointment_id=${appointmentId}&project_id=${projectId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.damage_data) {
+                        // Store damage data for when the form is rendered
+                        window.existingDamageData = data.damage_data;
+                        // If form is already loaded, populate it
+                        if (document.getElementById('damage_fields').innerHTML) {
+                            populateExistingDamageData();
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading damage data:', error);
+                });
+        }
+
+        // Populate existing damage data into the form
+        function populateExistingDamageData() {
+            if (!window.existingDamageData) return;
+
+            window.existingDamageData.forEach(damage => {
+                const palletId = damage.pallet_id;
+                
+                // Populate actual quantity received
+                const actualInput = document.querySelector(`input[name="pallet_actual[${palletId}]"]`);
+                if (actualInput) {
+                    actualInput.value = damage.actual_quantity || 0;
+                }
+                
+                // Populate damaged modules
+                const damagedInput = document.querySelector(`input[name="pallet_damaged[${palletId}]"]`);
+                if (damagedInput) {
+                    damagedInput.value = damage.damaged_quantity || 0;
+                }
+                
+                // Populate accepted modules
+                const acceptedInput = document.querySelector(`input[name="pallet_accepted[${palletId}]"]`);
+                if (acceptedInput) {
+                    acceptedInput.value = damage.accepted_quantity || 0;
+                }
+                
+                // Populate notes
+                const notesInput = document.querySelector(`input[name="pallet_notes[${palletId}]"]`);
+                if (notesInput) {
+                    notesInput.value = damage.notes || '';
+                }
+                
+                // Highlight problematic rows
+                const row = damagedInput?.closest('tr');
+                if (row) {
+                    const expectedQty = parseInt(damage.expected_quantity || 0);
+                    const actualQty = parseInt(damage.actual_quantity || 0);
+                    const damagedQty = parseInt(damage.damaged_quantity || 0);
+                    
+                    if (damagedQty > 0 || expectedQty !== actualQty) {
+                        row.classList.add('damage-highlighted');
+                    }
+                }
+            });
+        }
+
+        // Update accepted quantity when actual or damaged quantities change
+        function updateAcceptedQuantity(palletId, expectedQty) {
+            const actualInput = document.querySelector(`input[name="pallet_actual[${palletId}]"]`);
+            const damagedInput = document.querySelector(`input[name="pallet_damaged[${palletId}]"]`);
+            const acceptedInput = document.querySelector(`input[name="pallet_accepted[${palletId}]"]`);
+            
+            if (actualInput && damagedInput && acceptedInput) {
+                const actualQty = parseInt(actualInput.value) || 0;
+                const damagedQty = parseInt(damagedInput.value) || 0;
+                const acceptedQty = Math.max(0, actualQty - damagedQty);
+                acceptedInput.value = acceptedQty;
+            }
+        }
+        
+        // Check if driver is late
+        function checkLateness() {
+            const expectedTime = document.getElementById('edit_expected_time').value;
+            const arrivalTime = document.getElementById('edit_arrival_time').value;
+            const messageDiv = document.getElementById('lateness_message');
+            
+            if (!arrivalTime || !expectedTime) {
+                messageDiv.innerHTML = '';
+                updateDamageTabState(); // Update tab state when times change
+                return;
+            }
+            
+            const expectedDate = new Date(expectedTime);
+            const arrivalDate = new Date(arrivalTime);
+            
+            if (arrivalDate > expectedDate) {
+                // Driver is late
+                const diffMs = arrivalDate - expectedDate;
+                const diffMinutes = Math.floor(diffMs / (1000 * 60));
+                const diffHours = Math.floor(diffMinutes / 60);
+                const remainingMinutes = diffMinutes % 60;
+                
+                let latenessText = '';
+                if (diffHours > 0) {
+                    latenessText = `${diffHours} hour${diffHours > 1 ? 's' : ''}`;
+                    if (remainingMinutes > 0) {
+                        latenessText += ` and ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}`;
+                    }
+                } else {
+                    latenessText = `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''}`;
+                }
+                
+                messageDiv.innerHTML = `<span style="color: #dc3545; background: #f8d7da; padding: 6px 12px; border-radius: 6px; border: 1px solid #f5c6cb;">⚠️ Driver is <strong>${latenessText} late</strong></span>`;
+            } else if (arrivalDate < expectedDate) {
+                // Driver is early
+                const diffMs = expectedDate - arrivalDate;
+                const diffMinutes = Math.floor(diffMs / (1000 * 60));
+                const diffHours = Math.floor(diffMinutes / 60);
+                const remainingMinutes = diffMinutes % 60;
+                
+                let earlyText = '';
+                if (diffHours > 0) {
+                    earlyText = `${diffHours} hour${diffHours > 1 ? 's' : ''}`;
+                    if (remainingMinutes > 0) {
+                        earlyText += ` and ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}`;
+                    }
+                } else {
+                    earlyText = `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''}`;
+                }
+                
+                messageDiv.innerHTML = `<span style="color: #155724; background: #d4edda; padding: 6px 12px; border-radius: 6px; border: 1px solid #c3e6cb;">✅ Driver arrived <strong>${earlyText} early</strong></span>`;
+            } else {
+                // Driver is on time
+                messageDiv.innerHTML = `<span style="color: #155724; background: #d4edda; padding: 6px 12px; border-radius: 6px; border: 1px solid #c3e6cb;">✅ Driver arrived <strong>on time</strong></span>`;
+            }
+            
+            // Update damage tab state whenever times change
+            updateDamageTabState();
         }
         
         // Close modals when clicking outside
@@ -3014,6 +3243,36 @@ include('header.php');
                 closeEditModal();
             }
         });
+        
+        // Update the visual state of the Damage/Safety tab based on completion status
+        function updateDamageTabState() {
+            const arrivalTime = document.getElementById('edit_arrival_time').value;
+            const departureTime = document.getElementById('edit_departure_time').value;
+            const damageTab = document.querySelector('.tab-btn[onclick="showTab(\'damages\')"]');
+            const isDamageTabActive = document.getElementById('damages-tab').classList.contains('active');
+            const asterisk = damageTab.querySelector('span');
+            
+            if (arrivalTime && departureTime) {
+                // Enable the tab
+                damageTab.style.opacity = '1';
+                damageTab.style.cursor = 'pointer';
+                damageTab.style.color = '';
+                damageTab.title = '';
+                if (asterisk) asterisk.style.display = 'none'; // Hide asterisk when enabled
+            } else {
+                // Disable the tab visually
+                damageTab.style.opacity = '0.5';
+                damageTab.style.cursor = 'not-allowed';
+                damageTab.style.color = '#999';
+                damageTab.title = 'Complete delivery (enter arrival and departure times) before reporting damages or safety incidents';
+                if (asterisk) asterisk.style.display = 'inline'; // Show asterisk when disabled
+                
+                // If currently on damage tab and times are incomplete, switch to delivery status tab
+                if (isDamageTabActive) {
+                    showTab('delivery');
+                }
+            }
+        }
     </script>
 </body>
 </html>

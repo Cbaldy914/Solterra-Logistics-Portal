@@ -1,8 +1,4 @@
 <?php
-/***********************
- * Combined add_project.php
- * (No user_id insertion)
- ***********************/
 
 session_name("logistics_session");
 session_start();
@@ -863,7 +859,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             wattageInput.step = '1';
             wattageInput.name = 'wattages[' + index + ']';
             wattageInput.required = true;
-            wattageInput.placeholder = 'e.g., 555';
+            wattageInput.placeholder = 'e.g. 555';
             wattageGroup.appendChild(wattageLabel);
             wattageGroup.appendChild(wattageInput);
 
@@ -876,7 +872,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             quantityInput.step = '1';
             quantityInput.name = 'quantities[' + index + ']';
             quantityInput.required = true;
-            quantityInput.placeholder = 'e.g., 1000';
+            quantityInput.placeholder = 'e.g. 1000';
             quantityGroup.appendChild(quantityLabel);
             quantityGroup.appendChild(quantityInput);
 
@@ -954,7 +950,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     <div class="input-group required">
                         <label for="project_name">Project Name</label>
-                        <input type="text" id="project_name" name="project_name" required placeholder="Enter project name">
+                        <input type="text" id="project_name" name="project_name" required placeholder="e.g. Solar Farm Project Alpha">
                     </div>
 
                     <div class="input-group required">
@@ -962,19 +958,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="address-grid">
                             <div class="input-group required">
                                 <label for="street_address">Street Address</label>
-                                <input type="text" id="street_address" name="street_address" placeholder="1107 W Manresa Way" required>
+                                <input type="text" id="street_address" name="street_address" placeholder="e.g. 123 Main Street" required>
                             </div>
                             <div class="input-group required">
                                 <label for="city">City</label>
-                                <input type="text" id="city" name="city" placeholder="Huachuca City" required>
+                                <input type="text" id="city" name="city" placeholder="e.g. Springfield" required>
                             </div>
                             <div class="input-group required">
                                 <label for="state">State</label>
-                                <input type="text" id="state" name="state" placeholder="AZ" required>
+                                <input type="text" id="state" name="state" placeholder="e.g. CA" required>
                             </div>
                             <div class="input-group required">
                                 <label for="zip_code">Zip Code</label>
-                                <input type="text" id="zip_code" name="zip_code" placeholder="85616" required>
+                                <input type="text" id="zip_code" name="zip_code" placeholder="e.g. 12345" required>
                             </div>
                         </div>
                     </div>
@@ -1008,11 +1004,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="phone-grid">
                             <div class="input-group">
                                 <label for="phone1">Primary Phone</label>
-                                <input type="tel" id="phone1" name="phone1" placeholder="555-555-5555">
+                                <input type="tel" id="phone1" name="phone1" placeholder="e.g. 555-555-5555">
                             </div>
                             <div class="input-group">
                                 <label for="phone2">Secondary Phone</label>
-                                <input type="tel" id="phone2" name="phone2" placeholder="555-555-5555">
+                                <input type="tel" id="phone2" name="phone2" placeholder="e.g. 555-555-5555">
                             </div>
                             <div class="input-group">
                                 <label for="timezone">Timezone</label>
@@ -1029,17 +1025,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     <div class="input-group">
                         <label for="reference_numbers">Reference Numbers</label>
-                        <input type="text" id="reference_numbers" name="reference_numbers" placeholder="PO #, Job #, etc.">
+                        <input type="text" id="reference_numbers" name="reference_numbers" placeholder="e.g. PO #12345, Job #ABC-2024">
                     </div>
 
                     <div class="input-group">
                         <label for="instructions">Special Instructions</label>
-                        <textarea id="instructions" name="instructions" placeholder="Delivery instructions, site access requirements, etc."></textarea>
+                        <textarea id="instructions" name="instructions" placeholder="e.g. Delivery instructions, site access requirements, etc."></textarea>
                     </div>
 
                     <div class="input-group">
                         <label for="additional_notes">Additional Notes</label>
-                        <textarea id="additional_notes" name="additional_notes" placeholder="Any other relevant information for this project..."></textarea>
+                        <textarea id="additional_notes" name="additional_notes" placeholder="e.g. Any other relevant information for this project..."></textarea>
                     </div>
 
                     <div class="input-group">
@@ -1090,63 +1086,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <div class="specs-grid">
                                 <div class="input-group">
                                     <label for="modules_per_pallet">Modules per Pallet</label>
-                                    <input type="number" id="modules_per_pallet" name="modules_per_pallet" min="1" placeholder="30">
+                                    <input type="number" id="modules_per_pallet" name="modules_per_pallet" min="1" placeholder="e.g. 30">
                                 </div>
                                 <div class="input-group">
                                     <label for="pallets_per_truck">Pallets per Truck</label>
-                                    <input type="number" id="pallets_per_truck" name="pallets_per_truck" min="1" placeholder="22">
+                                    <input type="number" id="pallets_per_truck" name="pallets_per_truck" min="1" placeholder="e.g. 22">
                                 </div>
                                 <div class="input-group">
                                     <label for="modules_per_truck">Modules per Truck</label>
-                                    <input type="number" id="modules_per_truck" name="modules_per_truck" min="1" placeholder="660">
+                                    <input type="number" id="modules_per_truck" name="modules_per_truck" min="1" placeholder="Auto-calculated" readonly style="background-color: #f8f9fa; color: #6c757d;">
                                 </div>
                                 <div class="input-group">
                                     <label for="pallet_length_mm">Length (mm)</label>
-                                    <input type="number" id="pallet_length_mm" name="pallet_length_mm" min="1" placeholder="2384">
+                                    <input type="number" id="pallet_length_mm" name="pallet_length_mm" min="1" placeholder="e.g. 2384">
                                 </div>
                                 <div class="input-group">
                                     <label for="pallet_depth_mm">Depth (mm)</label>
-                                    <input type="number" id="pallet_depth_mm" name="pallet_depth_mm" min="1" placeholder="1303">
+                                    <input type="number" id="pallet_depth_mm" name="pallet_depth_mm" min="1" placeholder="e.g. 1303">
                                 </div>
                                 <div class="input-group">
                                     <label for="pallet_double_stacked_height_mm">Stack Height (mm)</label>
-                                    <input type="number" id="pallet_double_stacked_height_mm" name="pallet_double_stacked_height_mm" min="1" placeholder="2200">
+                                    <input type="number" id="pallet_double_stacked_height_mm" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g. 2200">
                                 </div>
                                 <div class="input-group">
                                     <label for="pallet_total_weight_kg">Weight (kg)</label>
-                                    <input type="number" id="pallet_total_weight_kg" name="pallet_total_weight_kg" min="1" placeholder="1200">
+                                    <input type="number" id="pallet_total_weight_kg" name="pallet_total_weight_kg" min="1" placeholder="e.g. 1200">
                                 </div>
                                 <div class="input-group">
                                     <label for="forklift_truck_long_side_mm">Forklift Long (mm)</label>
-                                    <input type="number" id="forklift_truck_long_side_mm" name="forklift_truck_long_side_mm" min="1" placeholder="1200">
+                                    <input type="number" id="forklift_truck_long_side_mm" name="forklift_truck_long_side_mm" min="1" placeholder="e.g. 1200">
                                 </div>
                                 <div class="input-group">
                                     <label for="forklift_truck_short_side_mm">Forklift Short (mm)</label>
-                                    <input type="number" id="forklift_truck_short_side_mm" name="forklift_truck_short_side_mm" min="1" placeholder="1000">
+                                    <input type="number" id="forklift_truck_short_side_mm" name="forklift_truck_short_side_mm" min="1" placeholder="e.g. 1000">
                                 </div>
                                 <div class="input-group">
                                     <label for="pallet_jack_long_side_mm">Pallet Jack Long (mm)</label>
-                                    <input type="number" id="pallet_jack_long_side_mm" name="pallet_jack_long_side_mm" min="1" placeholder="1150">
+                                    <input type="number" id="pallet_jack_long_side_mm" name="pallet_jack_long_side_mm" min="1" placeholder="e.g. 1150">
                                 </div>
                                 <div class="input-group">
                                     <label for="pallet_jack_short_side_mm">Pallet Jack Short (mm)</label>
-                                    <input type="number" id="pallet_jack_short_side_mm" name="pallet_jack_short_side_mm" min="1" placeholder="800">
+                                    <input type="number" id="pallet_jack_short_side_mm" name="pallet_jack_short_side_mm" min="1" placeholder="e.g. 800">
                                 </div>
                             </div>
 
                             <div class="input-group">
                                 <label for="stacking_in_warehouse">Warehouse Stacking</label>
-                                <textarea id="stacking_in_warehouse" name="stacking_in_warehouse" placeholder="Instructions for warehouse stacking..."></textarea>
+                                <textarea id="stacking_in_warehouse" name="stacking_in_warehouse" placeholder="e.g. Instructions for warehouse stacking..."></textarea>
                             </div>
 
                             <div class="input-group">
                                 <label for="stacking_during_transport">Transport Stacking</label>
-                                <textarea id="stacking_during_transport" name="stacking_during_transport" placeholder="Instructions for transport stacking..."></textarea>
+                                <textarea id="stacking_during_transport" name="stacking_during_transport" placeholder="e.g. Instructions for transport stacking..."></textarea>
                             </div>
 
                             <div class="input-group">
                                 <label for="module_notes">Module Notes</label>
-                                <textarea id="module_notes" name="module_notes" placeholder="General notes about the modules..."></textarea>
+                                <textarea id="module_notes" name="module_notes" placeholder="e.g. General notes about the modules..."></textarea>
                             </div>
 
                             <div class="input-group">
@@ -1281,6 +1277,28 @@ document.addEventListener('DOMContentLoaded', function() {
     // Hide loading modal on page load (in case of refresh/back button)
     hideLoadingModal();
 });
+
+        // Auto-calculate modules per truck
+        function calculateModulesPerTruck() {
+            var modulesPerPallet = parseFloat(document.getElementById('modules_per_pallet').value) || 0;
+            var palletsPerTruck = parseFloat(document.getElementById('pallets_per_truck').value) || 0;
+            var modulesPerTruckField = document.getElementById('modules_per_truck');
+            
+            if (modulesPerPallet > 0 && palletsPerTruck > 0) {
+                var result = modulesPerPallet * palletsPerTruck;
+                modulesPerTruckField.value = result;
+                modulesPerTruckField.style.color = '#333'; // Normal text color when calculated
+            } else {
+                modulesPerTruckField.value = '';
+                modulesPerTruckField.style.color = '#6c757d'; // Muted color when empty
+            }
+        }
+
+        // Add event listeners for auto-calculation
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('modules_per_pallet').addEventListener('input', calculateModulesPerTruck);
+            document.getElementById('pallets_per_truck').addEventListener('input', calculateModulesPerTruck);
+        });
 </script>
 
 </body>

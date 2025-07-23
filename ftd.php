@@ -97,7 +97,7 @@ $conn->close();
     <div class="breadcrumb">
         <a href="dashboard.php">Dashboard</a>
         <span class="separator">&raquo;</span>
-        <a href="project_overview.php?id=<?php echo $project_id; ?>">Project Overview</a>
+        <a href="project_documents.php?project_id=<?php echo $project_id; ?>">Project Documents</a>
         <span class="separator">&raquo;</span>
         <span>Flash Test Data</span>
     </div>

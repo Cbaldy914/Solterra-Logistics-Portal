@@ -681,7 +681,7 @@ $conn->close();
                     </select>
                 </div>
                 <div class="page-actions">
-                    <a href="create_shipment.php?source_type=warehouse&source_id=<?php echo $warehouse_id; ?>&status=In%20Warehouse" class="action-button">Create Shipment</a>
+                    <a href="create_shipment.php?source_type=warehouse&source_id=<?php echo $warehouse_id; ?>&status_filter=In%20Warehouse" class="action-button">Create Shipment</a>
                 </div>
             </div>
 

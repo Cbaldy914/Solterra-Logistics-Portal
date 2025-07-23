@@ -141,11 +141,11 @@ if (count($accountIds) > 0) {
             $module_delivery_completion = ($total_delivered / $total_order_quantity) * 100;
         }
 
-        // ---- In Warehouse
+        // ---- In Warehouse (current status, not historical)
         $stmt_in_storage = $conn->prepare("
-            SELECT SUM(quantity) AS total_in_storage
-            FROM deliveries
-            WHERE project_id = ? AND status_of_delivery = 'Delivered to Warehouse'
+            SELECT SUM(ip.quantity) AS total_in_storage
+            FROM inventory_pallets ip
+            WHERE ip.assigned_project_id = ? AND ip.status = 'In Warehouse'
         ");
         $stmt_in_storage->bind_param("i", $project_id);
         $stmt_in_storage->execute();
