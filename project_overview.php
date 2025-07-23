@@ -2164,6 +2164,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 .project-actions-dropdown {
     position: relative;
     display: inline-block;
+    background-color: #488C9A;
 }
 
 .project-actions-dropdown .project-actions-btn {
@@ -2570,6 +2571,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                     </div>
                 </div>
                 <button onclick="handleAdminWarehousing()">Warehousing</button>
+                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Warranty</button>
             </div>
             
             <!-- Customer View Buttons -->
@@ -3603,9 +3605,9 @@ function generateShippingContent(filter){
         
         // Add action buttons for different statuses
         if(filter==='At Manufacturer'){
-            html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status=manufacturer" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
+            html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=At%20Manufacturer" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
         }else if(filter==='In Warehouse'){
-            html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status=warehouse" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
+            html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=In%20Warehouse" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
         }else if(filter==='In Transit to Project'){
             html+=`<div style="text-align:center;margin-top:15px;"><a href="scheduling.php?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Schedule Deliveries</a></div>`;
         }
@@ -4117,22 +4119,8 @@ window.onclick = function(event) {
     }
     
     <?php if ($role === 'admin' || $role === 'global_admin'): ?>
-    // Close modals if clicking outside (admin only)
-    if (event.target.classList.contains('warehouse-selection-modal')) {
-        closeWarehouseModal();
-    }
-    if (event.target.id === 'shippingModal') {
-        closeShippingModal();
-    }
-    if (event.target.id === 'deleteModal') {
-        closeDeleteModal();
-    }
-    if (event.target.id === 'addModuleModal') {
-        closeAddModuleModal();
-    }
-    if (event.target.id === 'editBatchModal') {
-        closeEditBatchModal();
-    }
+    // NOTE: Removed modal closing on outside click to prevent glitches
+    // Users must now use the "x" button to close modals
     
     // Close dropdowns when clicking outside
     if (!event.target.closest('.project-actions-dropdown')) {

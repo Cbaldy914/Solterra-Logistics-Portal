@@ -23,6 +23,9 @@ $user_id = $_SESSION['user_id'];
 // Get project_id from URL parameter for auto-filtering and breadcrumbs
 $project_id_from_url = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
 
+// Get status_filter from URL parameter for auto-filtering pallets
+$status_filter_from_url = isset($_GET['status_filter']) ? htmlspecialchars($_GET['status_filter']) : '';
+
 // --- Account Access Control ---
 $account_id_for_admin = null;
 $is_global_admin = ($role === 'global_admin');
@@ -111,28 +114,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             throw new Exception('Estimated arrival date is required.');
         }
 
-        // Fetch supplier/vendor_name for this batch
+        // Fetch supplier/vendor_name for this batch - ALWAYS use manufacturer, not origin location
         $vendor_name = $current_batch_vendor_name ?? 'Unknown Vendor';
-
-        // Determine supplier name based on origin
+        
+        // Extract manufacturer name from vendor_name (remove anything after " - " if present)
         $supplier_name = $vendor_name;
-        if ($originType === 'warehouse' && $originId) {
-            $whStmt = $conn->prepare("SELECT name FROM warehouses WHERE id = ?");
-            if ($whStmt) {
-                $whStmt->bind_param("i", $originId);
-                $whStmt->execute();
-                $whStmt->bind_result($whName);
-                if ($whStmt->fetch()) {
-                    $supplier_name = $whName;
-                }
-                $whStmt->close();
-            }
+        if (strpos($vendor_name, ' - ') !== false) {
+            $supplier_name = trim(explode(' - ', $vendor_name)[0]);
         }
+        
+        // Note: We do NOT change supplier based on origin type
+        // Supplier should always reflect the manufacturer, not the origin location
 
-        // Fetch details for selected pallets
+        // Fetch details for selected pallets including manufacturer information
         $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
         $types        = str_repeat('i', count($palletIds));
-        $stmtFetchPallets = $conn->prepare("SELECT id, wattage, quantity FROM inventory_pallets WHERE id IN ($placeholders)");
+        $stmtFetchPallets = $conn->prepare("
+            SELECT ip.id, ip.wattage, ip.quantity,
+                   COALESCE(ip.manufacturer, 
+                       CASE 
+                           WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
+                           ELSE m.vendor_name
+                       END,
+                       'Unknown Manufacturer'
+                   ) as manufacturer
+            FROM inventory_pallets ip
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            WHERE ip.id IN ($placeholders)
+        ");
         if (!$stmtFetchPallets) throw new Exception("Failed to prepare pallet fetch: " . $conn->error);
         $stmtFetchPallets->bind_param($types, ...$palletIds);
         $stmtFetchPallets->execute();
@@ -186,6 +196,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
 
             foreach ($groupByWattage as $wattage => $palletsForWatt) {
                 $groupQty = array_sum(array_column($palletsForWatt, 'quantity'));
+                
+                // Determine manufacturer for this specific group (should be consistent within a wattage group)
+                $groupManufacturer = $supplier_name; // Default fallback
+                if (!empty($palletsForWatt) && isset($palletsForWatt[0]['manufacturer'])) {
+                    $groupManufacturer = $palletsForWatt[0]['manufacturer'];
+                }
 
                 $deliveryColumns = [
                     'supplier',
@@ -196,7 +212,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     'bol_number'
                 ];
                 $deliveryParams = [
-                    $supplier_name,
+                    $groupManufacturer, // Use manufacturer from pallets, not warehouse name
                     $originType,
                     $originId,
                     $wattage,
@@ -2284,6 +2300,12 @@ function saveFilters() {
 }
 
 function loadPersistedFilters() {
+    // First check for URL parameters (these take priority)
+    const urlParams = new URLSearchParams(window.location.search);
+    const statusFromUrl = urlParams.get('status_filter');
+    const projectFromUrl = urlParams.get('project_id');
+    
+    // Load from localStorage
     const search = localStorage.getItem('createShipment_palletSearch');
     const project = localStorage.getItem('createShipment_projectFilter');
     const wattage = localStorage.getItem('createShipment_wattageFilter');
@@ -2294,7 +2316,26 @@ function loadPersistedFilters() {
     if (search) document.getElementById('palletSearch').value = search;
     if (project) document.getElementById('projectFilter').value = project;
     if (wattage) document.getElementById('wattageFilter').value = wattage;
-    if (status) document.getElementById('statusFilter').value = status;
+    
+    // URL status filter takes priority over localStorage
+    if (statusFromUrl) {
+        document.getElementById('statusFilter').value = statusFromUrl;
+    } else if (status) {
+        document.getElementById('statusFilter').value = status;
+    }
+    
+    // URL project filter takes priority over localStorage
+    if (projectFromUrl && projectFromUrl !== '0') {
+        // Find the project name in the dropdown and select it
+        const projectSelect = document.getElementById('projectFilter');
+        for (let option of projectSelect.options) {
+            if (option.value.includes('project_id=' + projectFromUrl)) {
+                projectSelect.value = option.value;
+                break;
+            }
+        }
+    }
+    
     if (perPage) {
         document.getElementById('itemsPerPage').value = perPage;
         itemsPerPage = parseInt(perPage);
