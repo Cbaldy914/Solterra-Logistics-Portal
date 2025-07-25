@@ -246,15 +246,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
 function insertPallet($itemId, $watt, $qty) {
     global $conn;
 
-    // --- Fetch assigned project_id and manufacturer from the parent module batch --- 
+    // --- Fetch assigned project_id and full manufacturer info from the parent module batch --- 
     $assignedProjectId = null; // Default to NULL
     $manufacturer = null; // Default to NULL
+    $manufacturer_location_id = null; // Store the specific manufacturer location ID
     $stmtFetchProject = $conn->prepare("
-        SELECT m.project_id, 
-               CASE 
-                   WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
-                   ELSE m.vendor_name
-               END as manufacturer
+        SELECT m.project_id, m.vendor_name, m.initial_location
         FROM modules m 
         JOIN unassigned_module_items umi ON m.id = umi.unassigned_module_id 
         WHERE umi.id = ? 
@@ -263,16 +260,127 @@ function insertPallet($itemId, $watt, $qty) {
     if ($stmtFetchProject) {
         $stmtFetchProject->bind_param("i", $itemId);
         if ($stmtFetchProject->execute()) {
-            $stmtFetchProject->bind_result($fetchedProjectId, $fetchedManufacturer);
+            $stmtFetchProject->bind_result($fetchedProjectId, $vendor_name, $initial_location);
             if ($stmtFetchProject->fetch()) {
                 $assignedProjectId = $fetchedProjectId; // Can be NULL if the module batch wasn't assigned
-                $manufacturer = $fetchedManufacturer; // Extract manufacturer from vendor_name
+                
+                // Extract manufacturer name from vendor_name
+                $manufacturer = $vendor_name;
+                $manufacturer_name = $vendor_name;
+                if (strpos($vendor_name, ' - ') !== false) {
+                    $manufacturer_name = trim(explode(' - ', $vendor_name)[0]);
+                }
+                
+                // Close the first statement before making new queries
+                $stmtFetchProject->close();
+                
+                // Get manufacturer ID
+                $stmt_mfg = $conn->prepare("SELECT id FROM manufacturers WHERE name = ? OR short_name = ? LIMIT 1");
+                if ($stmt_mfg) {
+                    $stmt_mfg->bind_param("ss", $manufacturer_name, $manufacturer_name);
+                    $stmt_mfg->execute();
+                    $stmt_mfg->bind_result($manufacturer_id);
+                    if ($stmt_mfg->fetch()) {
+                        $stmt_mfg->close();
+                        
+                        // Try to match initial_location against manufacturer_locations addresses
+                        if (!empty($initial_location)) {
+                            // Parse the initial_location to extract components
+                            $location_parts = array_map('trim', explode(',', $initial_location));
+                            $street_address = $location_parts[0] ?? '';
+                            $city = $location_parts[1] ?? '';
+                            $state_zip = $location_parts[2] ?? '';
+                            
+                            // Extract state and zip if they're in the same part
+                            $state = '';
+                            $zip = '';
+                            if (!empty($state_zip)) {
+                                $state_zip_parts = explode(' ', trim($state_zip));
+                                if (count($state_zip_parts) >= 2) {
+                                    $state = implode(' ', array_slice($state_zip_parts, 0, -1));
+                                    $zip = end($state_zip_parts);
+                                } else {
+                                    $state = $state_zip;
+                                }
+                            }
+                            
+                            // Try to find exact match first
+                            $stmt_exact = $conn->prepare("
+                                SELECT id FROM manufacturer_locations 
+                                WHERE manufacturer_id = ? 
+                                AND is_active = 1 
+                                AND (
+                                    (street_address = ? AND city = ? AND state = ?) OR
+                                    (street_address = ? AND city = ? AND zip_code = ?) OR
+                                    (street_address = ? AND city = ?) OR
+                                    (CONCAT(street_address, ', ', city, ', ', state, ' ', zip_code) = ?) OR
+                                    (CONCAT(street_address, ', ', city, ', ', state, ', ', zip_code) = ?)
+                                )
+                                LIMIT 1
+                            ");
+                            if ($stmt_exact) {
+                                                             $stmt_exact->bind_param("isssissssss", 
+                                 $manufacturer_id, 
+                                 $street_address, $city, $state,
+                                 $street_address, $city, $zip,
+                                 $street_address, $city,
+                                 $initial_location, $initial_location
+                             );
+                                $stmt_exact->execute();
+                                $stmt_exact->bind_result($exact_location_id);
+                                if ($stmt_exact->fetch()) {
+                                    $manufacturer_location_id = $exact_location_id;
+                                }
+                                $stmt_exact->close();
+                            }
+                            
+                            // If no exact match, try partial matches
+                            if (!$manufacturer_location_id && !empty($street_address)) {
+                                $stmt_partial = $conn->prepare("
+                                    SELECT id FROM manufacturer_locations 
+                                    WHERE manufacturer_id = ? 
+                                    AND is_active = 1 
+                                    AND street_address LIKE ?
+                                    LIMIT 1
+                                ");
+                                if ($stmt_partial) {
+                                    $street_search = "%{$street_address}%";
+                                    $stmt_partial->bind_param("is", $manufacturer_id, $street_search);
+                                    $stmt_partial->execute();
+                                    $stmt_partial->bind_result($partial_location_id);
+                                    if ($stmt_partial->fetch()) {
+                                        $manufacturer_location_id = $partial_location_id;
+                                    }
+                                    $stmt_partial->close();
+                                }
+                            }
+                        }
+                        
+                        // If no location match found, use primary location as fallback
+                        if (!$manufacturer_location_id) {
+                            $stmt_primary = $conn->prepare("SELECT id FROM manufacturer_locations WHERE manufacturer_id = ? AND is_primary = 1 AND is_active = 1 LIMIT 1");
+                            if ($stmt_primary) {
+                                $stmt_primary->bind_param("i", $manufacturer_id);
+                                $stmt_primary->execute();
+                                $stmt_primary->bind_result($primary_location_id);
+                                if ($stmt_primary->fetch()) {
+                                    $manufacturer_location_id = $primary_location_id;
+                                }
+                                $stmt_primary->close();
+                            }
+                        }
+                    } else {
+                        $stmt_mfg->close();
+                    }
+                }
+            } else {
+                $stmtFetchProject->close();
             }
         } else {
             // Log error or handle appropriately if project fetch fails
             error_log("Error executing project fetch for item ID {$itemId}: " . $stmtFetchProject->error);
+            $stmtFetchProject->close();
         }
-        $stmtFetchProject->close();
     } else {
         error_log("Error preparing project fetch for item ID {$itemId}: " . $conn->error);
     }
@@ -280,8 +388,8 @@ function insertPallet($itemId, $watt, $qty) {
 
     $stmtIns = $conn->prepare(
         "INSERT INTO inventory_pallets 
-         (pallet_identifier, unassigned_module_item_id, assigned_project_id, wattage, quantity, status, manufacturer) 
-         VALUES (?, ?, ?, ?, ?, 'At Manufacturer', ?)"
+         (pallet_identifier, unassigned_module_item_id, assigned_project_id, wattage, quantity, status, manufacturer, manufacturer_location_id) 
+         VALUES (?, ?, ?, ?, ?, 'At Manufacturer', ?, ?)"
     );
     if (!$stmtIns) {
         // Log error or handle appropriately
@@ -291,8 +399,8 @@ function insertPallet($itemId, $watt, $qty) {
     }
 
     $emptyId = ''; // Pallet identifier will be set after insert
-    // Bind parameters including the fetched assigned project ID and manufacturer
-    $stmtIns->bind_param("siiids", $emptyId, $itemId, $assignedProjectId, $watt, $qty, $manufacturer);
+    // Bind parameters including the fetched assigned project ID, manufacturer, and manufacturer location ID
+    $stmtIns->bind_param("siiidsi", $emptyId, $itemId, $assignedProjectId, $watt, $qty, $manufacturer, $manufacturer_location_id);
     
     if (!$stmtIns->execute()) {
         error_log("Error executing pallet insert for item ID {$itemId}: " . $stmtIns->error);
@@ -590,9 +698,20 @@ try {
         $stmtW->close();
     }
 
-    // Fetch Manufacturers for origin selection (with addresses)
+    // Fetch Manufacturers for origin selection (with addresses from primary locations)
     $all_manufacturers = [];
-    $stmtM = $conn->prepare("SELECT id, name, street_address, city, state, zip_code FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
+    $stmtM = $conn->prepare("
+        SELECT 
+            m.id, 
+            m.name, 
+            ml.street_address, 
+            ml.city, 
+            ml.state, 
+            ml.zip_code 
+        FROM manufacturers m
+        LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
+        WHERE m.is_active = 1 
+        ORDER BY m.name ASC");
     if ($stmtM) {
         $stmtM->execute();
         $resultM = $stmtM->get_result();

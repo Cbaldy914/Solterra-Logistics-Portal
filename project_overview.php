@@ -2164,7 +2164,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 .project-actions-dropdown {
     position: relative;
     display: inline-block;
-    background-color: #488C9A;
 }
 
 .project-actions-dropdown .project-actions-btn {
@@ -2176,7 +2175,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     color: #adb5bd !important;
     transition: all 0.3s ease !important;
     font-size: 16px !important;
-    opacity: 0.7 !important;
     width: auto !important;
     margin: 0 !important;
     font-weight: normal !important;
@@ -2185,7 +2183,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 .project-actions-dropdown .project-actions-btn:hover {
     background: rgba(72, 140, 154, 0.08) !important;
     color: #6c757d !important;
-    opacity: 1 !important;
     transform: scale(1.1) !important;
 }
 

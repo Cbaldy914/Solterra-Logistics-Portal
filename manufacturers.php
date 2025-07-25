@@ -346,6 +346,7 @@ $conn->close();
                                     </button>
                                     <div id="dropdown-menu-<?php echo $manufacturer['id']; ?>" class="dropdown-menu">
                                         <a href="edit_manufacturer.php?id=<?php echo $manufacturer['id']; ?>" class="dropdown-item edit">Edit</a>
+                                        <a href="manufacturer_locations.php?manufacturer_id=<?php echo $manufacturer['id']; ?>" class="dropdown-item">Manage Locations</a>
                                         <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($manufacturer['name'], ENT_QUOTES); ?>', <?php echo $manufacturer['id']; ?>)" class="dropdown-item delete">Delete</a>
                                     </div>
                                 </div>

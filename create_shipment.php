@@ -93,6 +93,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         $estArrivalDate  = $_POST['est_arrival_date'] ?? null;
         $shipmentMode    = $_POST['shipment_mode'] ?? 'single';
         
+        // If origin is manufacturer, find the correct manufacturer location ID (override any manufacturer ID passed from UI)
+        if ($originType === 'manufacturer' && !empty($current_batch_vendor_name)) {
+            $originId = null; // Reset to ensure we find the correct location ID, not use manufacturer ID from UI
+            
+            // Extract manufacturer name (remove location suffix like " - Raleigh Plant")
+            $manufacturer_name = $current_batch_vendor_name;
+            if (strpos($current_batch_vendor_name, ' - ') !== false) {
+                $manufacturer_name = trim(explode(' - ', $current_batch_vendor_name)[0]);
+            }
+            
+            // Try to find the manufacturer location ID
+            // First, get manufacturer ID
+            $stmt_mfg = $conn->prepare("SELECT id FROM manufacturers WHERE name = ? OR short_name = ? LIMIT 1");
+            if ($stmt_mfg) {
+                $stmt_mfg->bind_param("ss", $manufacturer_name, $manufacturer_name);
+                $stmt_mfg->execute();
+                $stmt_mfg->bind_result($manufacturer_id);
+                if ($stmt_mfg->fetch()) {
+                    $stmt_mfg->close();
+                    
+                    // If vendor name contains location info (like "Meyer Burger - Raleigh Plant"), find specific location
+                    if (strpos($current_batch_vendor_name, ' - ') !== false) {
+                        $location_part = trim(explode(' - ', $current_batch_vendor_name)[1]);
+                        $stmt_loc = $conn->prepare("SELECT id FROM manufacturer_locations WHERE manufacturer_id = ? AND location_name LIKE ? AND is_active = 1 LIMIT 1");
+                        if ($stmt_loc) {
+                            $location_search = "%{$location_part}%";
+                            $stmt_loc->bind_param("is", $manufacturer_id, $location_search);
+                            $stmt_loc->execute();
+                            $stmt_loc->bind_result($found_location_id);
+                            if ($stmt_loc->fetch()) {
+                                $originId = $found_location_id;
+                            }
+                            $stmt_loc->close();
+                        }
+                    }
+                    
+                    // If no specific location found, use primary location
+                    if (!$originId) {
+                        $stmt_primary = $conn->prepare("SELECT id FROM manufacturer_locations WHERE manufacturer_id = ? AND is_primary = 1 AND is_active = 1 LIMIT 1");
+                        if ($stmt_primary) {
+                            $stmt_primary->bind_param("i", $manufacturer_id);
+                            $stmt_primary->execute();
+                            $stmt_primary->bind_result($primary_location_id);
+                            if ($stmt_primary->fetch()) {
+                                $originId = $primary_location_id;
+                            }
+                            $stmt_primary->close();
+                        }
+                    }
+                } else {
+                    $stmt_mfg->close();
+                }
+            }
+        }
+        
 
         $palletsPerTruck = (isset($_POST['pallets_per_truck']) && is_numeric($_POST['pallets_per_truck']))
                            ? intval($_POST['pallets_per_truck'])
@@ -397,6 +452,19 @@ try {
                 ip.current_project_id,
                 ip.assigned_project_id,
                 m.vendor_name AS origin_vendor,
+                COALESCE(
+                    CONCAT(ml.street_address, ', ', ml.city, ', ', ml.state, ' ', ml.zip_code),
+                    m.initial_location
+                ) AS origin_vendor_address,
+                COALESCE(mfg.name, 
+                    CASE 
+                        WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
+                        ELSE m.vendor_name
+                    END
+                ) AS origin_vendor_name,
+                COALESCE(ml.location_name, '') AS origin_location_name,
+                COALESCE(ml.city, '') AS origin_vendor_city,
+                COALESCE(ml.state, '') AS origin_vendor_state,
                 m.account_id AS pallet_account_id,
                 w.name AS current_warehouse_name,
                 w.street_address as warehouse_street, w.city as warehouse_city, w.state as warehouse_state, w.zip_code as warehouse_zip,
@@ -410,6 +478,8 @@ try {
             FROM inventory_pallets ip
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN manufacturer_locations ml ON ip.manufacturer_location_id = ml.id
+            LEFT JOIN manufacturers mfg ON ml.manufacturer_id = mfg.id
             LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
             LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
             LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
@@ -421,7 +491,7 @@ try {
         $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?)";
     }
     
-    $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, m.vendor_name, m.account_id, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
+    $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, m.vendor_name, m.account_id, ml.street_address, ml.city, ml.state, ml.zip_code, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
               ORDER BY ip.id ASC";
     
     if ($role === 'admin' && $account_id_for_admin) {
@@ -549,9 +619,20 @@ try {
         $stmtW->close();
     }
 
-    // Fetch Manufacturers for origin selection (with addresses)
+    // Fetch Manufacturers for origin selection (with addresses from primary locations)
     $all_manufacturers = [];
-    $stmtM = $conn->prepare("SELECT id, name, street_address, city, state, zip_code FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
+    $stmtM = $conn->prepare("
+        SELECT 
+            m.id, 
+            m.name, 
+            ml.street_address, 
+            ml.city, 
+            ml.state, 
+            ml.zip_code 
+        FROM manufacturers m
+        LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
+        WHERE m.is_active = 1 
+        ORDER BY m.name ASC");
     if ($stmtM) {
         $stmtM->execute();
         $resultM = $stmtM->get_result();
@@ -1679,6 +1760,25 @@ function getAddressFromSelection(selectElement, type) {
     return selectedOption ? selectedOption.getAttribute('data-address') : '';
 }
 
+// ----------------- STATE ABBREVIATION FUNCTION -----------------
+function getStateAbbreviation(stateName) {
+    const stateMap = {
+        'Alabama': 'AL', 'Alaska': 'AK', 'Arizona': 'AZ', 'Arkansas': 'AR', 'California': 'CA',
+        'Colorado': 'CO', 'Connecticut': 'CT', 'Delaware': 'DE', 'Florida': 'FL', 'Georgia': 'GA',
+        'Hawaii': 'HI', 'Idaho': 'ID', 'Illinois': 'IL', 'Indiana': 'IN', 'Iowa': 'IA',
+        'Kansas': 'KS', 'Kentucky': 'KY', 'Louisiana': 'LA', 'Maine': 'ME', 'Maryland': 'MD',
+        'Massachusetts': 'MA', 'Michigan': 'MI', 'Minnesota': 'MN', 'Mississippi': 'MS', 'Missouri': 'MO',
+        'Montana': 'MT', 'Nebraska': 'NE', 'Nevada': 'NV', 'New Hampshire': 'NH', 'New Jersey': 'NJ',
+        'New Mexico': 'NM', 'New York': 'NY', 'North Carolina': 'NC', 'North Dakota': 'ND', 'Ohio': 'OH',
+        'Oklahoma': 'OK', 'Oregon': 'OR', 'Pennsylvania': 'PA', 'Rhode Island': 'RI', 'South Carolina': 'SC',
+        'South Dakota': 'SD', 'Tennessee': 'TN', 'Texas': 'TX', 'Utah': 'UT', 'Vermont': 'VT',
+        'Virginia': 'VA', 'Washington': 'WA', 'West Virginia': 'WV', 'Wisconsin': 'WI', 'Wyoming': 'WY'
+    };
+    
+    // Return abbreviation if found, otherwise return original (in case it's already abbreviated)
+    return stateMap[stateName] || stateName;
+}
+
 // ----------------- ORIGIN DETERMINATION FUNCTIONS -----------------
 function determineOriginFromSelectedPallets() {
     const selectedPallets = getSelectedPallets();
@@ -1734,20 +1834,42 @@ function determineOriginFromSelectedPallets() {
     let originInfo = {};
     
     if (firstPallet.status === 'At Manufacturer') {
-        // Find manufacturer by vendor name
-        const manufacturer = manufacturersData.find(m => m.name === firstPallet.origin_vendor);
+        // Use the specific manufacturer name and location from the database
+        let manufacturerName = firstPallet.origin_vendor_name || firstPallet.origin_vendor;
+        if (manufacturerName.includes(' - ')) {
+            manufacturerName = manufacturerName.split(' - ')[0].trim();
+        }
+        
+        // Use the specific location address from the manufacturer_locations table
+        let manufacturerAddress = firstPallet.origin_vendor_address || '';
+        
+        // Create display text with city and state if available
+        let locationDisplay = manufacturerName;
+        if (firstPallet.origin_vendor_city && firstPallet.origin_vendor_state) {
+            // Convert state to abbreviation if it's a full state name
+            const stateAbbr = getStateAbbreviation(firstPallet.origin_vendor_state);
+            locationDisplay += ` - ${firstPallet.origin_vendor_city}, ${stateAbbr}`;
+        }
+        
+        // Find manufacturer by extracted name for ID
+        const manufacturer = manufacturersData.find(m => m.name === manufacturerName);
         if (manufacturer) {
+            // Use the specific location address if available, otherwise fall back to primary location
+            if (!manufacturerAddress) {
+                manufacturerAddress = manufacturer.full_address;
+            }
+            
             originInfo = {
                 type: 'manufacturer',
                 id: manufacturer.id,
                 name: manufacturer.name,
-                address: manufacturer.full_address,
-                displayText: `Manufacturer: ${manufacturer.name}`
+                address: manufacturerAddress,
+                displayText: `Manufacturer: ${locationDisplay}`
             };
         } else {
             return {
                 success: false,
-                message: `Manufacturer "${firstPallet.origin_vendor}" not found in system`
+                message: `Manufacturer "${manufacturerName}" not found in system`
             };
         }
     } else if (firstPallet.status === 'In Warehouse') {
