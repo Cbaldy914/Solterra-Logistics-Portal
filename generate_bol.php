@@ -63,7 +63,10 @@ if (isset($_GET['project_id']) && $_GET['project_id'] > 0) {
 
 // Create placeholders for IN clause
 $placeholders = implode(',', array_fill(0, count($delivery_ids), '?'));
-$types = str_repeat('i', count($delivery_ids));
+
+// Prepare parameters array - delivery_ids will be used twice (subquery + main query)
+$params = array_merge($delivery_ids, $delivery_ids);
+$types = str_repeat('i', count($delivery_ids) * 2);
 
 // Query to get delivery information with related data
 $sql = "
@@ -79,15 +82,27 @@ $sql = "
         w.city as warehouse_city,
         w.state as warehouse_state,
         w.zip_code as warehouse_zip,
-        m.name as manufacturer_name,
-        m.street_address as manufacturer_street,
-        m.city as manufacturer_city,
-        m.state as manufacturer_state,
-        m.zip_code as manufacturer_zip
+        CASE 
+            WHEN ml.location_name IS NOT NULL AND m.name IS NOT NULL THEN CONCAT(m.name, ' - ', ml.location_name)
+            ELSE COALESCE(ml.location_name, m.name, d.supplier)
+        END as manufacturer_name,
+        COALESCE(ml.street_address, m.street_address) as manufacturer_street,
+        COALESCE(ml.city, m.city) as manufacturer_city,
+        COALESCE(ml.state, m.state) as manufacturer_state,
+        COALESCE(ml.zip_code, m.zip_code) as manufacturer_zip
     FROM deliveries d
     LEFT JOIN projects p ON d.project_id = p.id
     LEFT JOIN warehouses w ON d.warehouse_id = w.id
-    LEFT JOIN manufacturers m ON d.origin_type = 'manufacturer' AND d.origin_id = m.id
+    -- Get manufacturer location from any pallet in this delivery
+    LEFT JOIN (
+        SELECT dp.delivery_id, MIN(ip.manufacturer_location_id) as manufacturer_location_id
+        FROM delivery_pallets dp
+        JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+        WHERE dp.delivery_id IN ($placeholders)
+        GROUP BY dp.delivery_id
+    ) first_pallet ON d.id = first_pallet.delivery_id
+    LEFT JOIN manufacturer_locations ml ON d.origin_type = 'manufacturer' AND first_pallet.manufacturer_location_id = ml.id
+    LEFT JOIN manufacturers m ON ml.manufacturer_id = m.id OR (d.origin_type = 'manufacturer' AND m.name = TRIM(SUBSTRING_INDEX(d.supplier, ' - ', 1)))
     WHERE d.id IN ($placeholders)
 ";
 
@@ -95,13 +110,13 @@ $sql = "
 if ($role === 'admin' && $account_id_for_admin) {
     $sql .= " AND (p.account_id = ? OR p.account_id IS NULL)";
     $types .= 'i';
-    $delivery_ids[] = $account_id_for_admin;
+    $params[] = $account_id_for_admin;
 }
 
 $sql .= " ORDER BY d.id";
 
 $stmt = $conn->prepare($sql);
-$stmt->bind_param($types, ...$delivery_ids);
+$stmt->bind_param($types, ...$params);
 $stmt->execute();
 $result = $stmt->get_result();
 
@@ -1062,20 +1077,7 @@ $conn->close();
 
     <!-- Top Action Buttons -->
     <div style="margin-bottom: 30px; display: flex; gap: 15px; align-items: center;">
-        <button type="submit" name="generate_pdf" formtarget="_blank" form="bolForm" style="
-            background: #488C9A;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 4px;
-            font-weight: 600;
-            font-size: 16px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        " onmouseover="this.style.background='#3A6E7F'; this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.15)'" onmouseout="this.style.background='#488C9A'; this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'">
-            📄 Generate BOL PDF
-        </button>
+
         
         <?php 
         $back_url = "create_shipment.php";
@@ -1097,6 +1099,20 @@ $conn->close();
         " onmouseover="this.style.background='#5a6268'; this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.15)'" onmouseout="this.style.background='#6c757d'; this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'">
             ← Back to Shipments
         </a>
+        <button type="submit" name="generate_pdf" formtarget="_blank" form="bolForm" style="
+            background: #488C9A;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        " onmouseover="this.style.background='#3A6E7F'; this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.15)'" onmouseout="this.style.background='#488C9A'; this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'">
+            📄 Generate BOL PDF
+        </button>
     </div>
 
     <form method="POST" action="" id="bolForm">

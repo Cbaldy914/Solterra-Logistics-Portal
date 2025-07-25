@@ -305,6 +305,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $wattages   = $_POST['wattages'];
             $quantities = $_POST['quantities'];
             $manufacturer_id_for_batch = isset($_POST['manufacturer_id']) ? intval($_POST['manufacturer_id']) : null;
+            $location_id_for_batch = isset($_POST['location_id']) ? intval($_POST['location_id']) : null;
 
             if (count($wattages) !== count($quantities)) {
                 throw new Exception("Mismatch between wattage[] and quantities[] arrays.");
@@ -350,9 +351,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $manufacturer_name = "Unknown Manufacturer";
             $manufacturer_address = "";
             
-            if ($manufacturer_id_for_batch) {
-                // Get manufacturer details for vendor name and initial location
-                $stmt_mfg = $conn->prepare("SELECT name, street_address, city, state, zip_code FROM manufacturers WHERE id = ?");
+            if ($manufacturer_id_for_batch && $location_id_for_batch) {
+                // Get manufacturer details for vendor name and initial location (from selected location)
+                $stmt_mfg = $conn->prepare("
+                    SELECT 
+                        m.name, 
+                        ml.street_address, 
+                        ml.city, 
+                        ml.state, 
+                        ml.zip_code 
+                    FROM manufacturers m
+                    LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id
+                    WHERE m.id = ? AND ml.id = ?");
+                if ($stmt_mfg) {
+                    $stmt_mfg->bind_param("ii", $manufacturer_id_for_batch, $location_id_for_batch);
+                    $stmt_mfg->execute();
+                    $stmt_mfg->bind_result($mfg_name, $mfg_street, $mfg_city, $mfg_state, $mfg_zip);
+                    if ($stmt_mfg->fetch()) {
+                        $manufacturer_name = $mfg_name;
+                        $address_parts = array_filter([$mfg_street, $mfg_city, $mfg_state, $mfg_zip]);
+                        $manufacturer_address = implode(', ', $address_parts);
+                    }
+                    $stmt_mfg->close();
+                }
+            } else if ($manufacturer_id_for_batch) {
+                // Fallback to primary location if no specific location was selected
+                $stmt_mfg = $conn->prepare("
+                    SELECT 
+                        m.name, 
+                        ml.street_address, 
+                        ml.city, 
+                        ml.state, 
+                        ml.zip_code 
+                    FROM manufacturers m
+                    LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
+                    WHERE m.id = ?");
                 if ($stmt_mfg) {
                     $stmt_mfg->bind_param("i", $manufacturer_id_for_batch);
                     $stmt_mfg->execute();
@@ -446,9 +479,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // Set a success message to be displayed with the form below
-        $successMessage = "Project added successfully!";
+        $successMessage = "Project added successfully! <a href='project_overview?project_id=" . $project_id . "' style='color: #488C9A; text-decoration: underline;'>View Project</a>.";
         
-        // If modules were created, enhance the success message
+        // If modules were created, enhance the success message with module count
         if (isset($_POST['wattages'], $_POST['quantities'])) {
             $totalModulesCreated = 0;
             for ($i = 0; $i < count($quantities); $i++) {
@@ -1058,7 +1091,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             
                             <div class="input-group">
                                 <label for="manufacturer_id">Manufacturer</label>
-                                <select name="manufacturer_id" id="manufacturer_id">
+                                <select name="manufacturer_id" id="manufacturer_id" onchange="handleManufacturerChange(this)">
                                     <option value="">Select Manufacturer</option>
                                     <?php foreach ($manufacturers as $mfg): ?>
                                         <option value="<?php echo $mfg['id']; ?>">
@@ -1068,6 +1101,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             <?php endif; ?>
                                         </option>
                                     <?php endforeach; ?>
+                                    <option value="add_new" style="background-color: #f0f8ff; font-style: italic;">+ Add New Manufacturer</option>
+                                </select>
+                            </div>
+
+                            <div class="input-group">
+                                <label for="location_id">Location</label>
+                                <select name="location_id" id="location_id" disabled>
+                                    <option value="">Select a manufacturer first</option>
                                 </select>
                             </div>
 
@@ -1278,6 +1319,99 @@ document.addEventListener('DOMContentLoaded', function() {
     hideLoadingModal();
 });
 
+        // Handle manufacturer dropdown change
+        function handleManufacturerChange(select) {
+            const locationSelect = document.getElementById('location_id');
+            
+            if (select.value === 'add_new') {
+                // Open add manufacturer page in new tab/window
+                window.open('add_manufacturer.php', '_blank');
+                // Reset the dropdown to empty value
+                select.value = '';
+                // Reset and disable location dropdown
+                locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
+                locationSelect.disabled = true;
+                return;
+            }
+            
+            if (select.value === '') {
+                // Reset and disable location dropdown
+                locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
+                locationSelect.disabled = true;
+                return;
+            }
+            
+            // Fetch locations for selected manufacturer
+            const manufacturerId = select.value;
+            
+            // Show loading state
+            locationSelect.innerHTML = '<option value="">Loading locations...</option>';
+            locationSelect.disabled = true;
+            
+            // Fetch locations via AJAX
+            fetch(`get_manufacturer_locations.php?manufacturer_id=${manufacturerId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Error fetching locations:', data.error);
+                        locationSelect.innerHTML = '<option value="">Error loading locations</option>';
+                        return;
+                    }
+                    
+                    // Clear existing options
+                    locationSelect.innerHTML = '';
+                    
+                    if (data.locations.length === 0) {
+                        locationSelect.innerHTML = '<option value="">No locations found</option>';
+                        locationSelect.disabled = true;
+                        return;
+                    }
+                    
+                    // Add default option
+                    locationSelect.innerHTML = '<option value="">Select Location</option>';
+                    
+                    // Add location options
+                    data.locations.forEach(location => {
+                        const option = document.createElement('option');
+                        option.value = location.id;
+                        
+                        // Create display text with location name and address
+                        let displayText = location.location_name;
+                        if (location.formatted_address) {
+                            displayText += ' - ' + location.formatted_address;
+                        }
+                        if (location.is_primary) {
+                            displayText += ' (Primary)';
+                        }
+                        
+                        option.textContent = displayText;
+                        locationSelect.appendChild(option);
+                    });
+                    
+                    // Auto-select primary location if available
+                    const primaryLocation = data.locations.find(loc => loc.is_primary);
+                    if (primaryLocation) {
+                        locationSelect.value = primaryLocation.id;
+                    }
+                    
+                    // Enable the dropdown
+                    locationSelect.disabled = false;
+                })
+                .catch(error => {
+                    console.error('Error fetching locations:', error);
+                    locationSelect.innerHTML = '<option value="">Error loading locations</option>';
+                    locationSelect.disabled = true;
+                });
+        }
+
+        // Prevent form submission on Enter key press
+        function preventEnterSubmission(event) {
+            if (event.key === 'Enter' && event.target.tagName !== 'TEXTAREA' && event.target.type !== 'submit') {
+                event.preventDefault();
+                return false;
+            }
+        }
+
         // Auto-calculate modules per truck
         function calculateModulesPerTruck() {
             var modulesPerPallet = parseFloat(document.getElementById('modules_per_pallet').value) || 0;
@@ -1294,10 +1428,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        // Add event listeners for auto-calculation
+        // Add event listeners for auto-calculation and form behavior
         document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('modules_per_pallet').addEventListener('input', calculateModulesPerTruck);
             document.getElementById('pallets_per_truck').addEventListener('input', calculateModulesPerTruck);
+            
+            // Add event listener to prevent Enter key submission on form fields
+            document.addEventListener('keydown', preventEnterSubmission);
         });
 </script>
 

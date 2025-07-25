@@ -162,11 +162,16 @@ try {
                 ip.status,
                 ip.wattage,
                 COALESCE(m.vendor_name, 'Unknown Manufacturer') as manufacturer_name,
-                mfg.name as manufacturer_company,
-                COALESCE(mfg.street_address, '') as mfg_street,
-                COALESCE(mfg.city, '') as mfg_city,
-                COALESCE(mfg.state, '') as mfg_state,
-                COALESCE(mfg.zip_code, '') as mfg_zip,
+                COALESCE(mfg.name, 
+                    CASE 
+                        WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
+                        ELSE m.vendor_name
+                    END
+                ) as manufacturer_company,
+                COALESCE(ml.street_address, mfg.street_address, '') as mfg_street,
+                COALESCE(ml.city, mfg.city, '') as mfg_city,
+                COALESCE(ml.state, mfg.state, '') as mfg_state,
+                COALESCE(ml.zip_code, mfg.zip_code, '') as mfg_zip,
                 
                 -- Warehouse info (current location)
                 w2.id as current_warehouse_id_info,
@@ -213,15 +218,17 @@ try {
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
             
-            -- Simplified manufacturer matching
+            -- Link to manufacturer_locations first, then manufacturers as fallback
+            LEFT JOIN manufacturer_locations ml ON ip.manufacturer_location_id = ml.id
             LEFT JOIN manufacturers mfg ON (
-                m.vendor_name IS NOT NULL 
+                ml.manufacturer_id = mfg.id OR
+                (ip.manufacturer_location_id IS NULL AND m.vendor_name IS NOT NULL 
                 AND (
                     (LOCATE(' - ', m.vendor_name) > 0 AND mfg.name = TRIM(SUBSTRING_INDEX(m.vendor_name, ' - ', 1)))
                     OR (LOCATE(' - ', m.vendor_name) > 0 AND mfg.short_name = TRIM(SUBSTRING_INDEX(m.vendor_name, ' - ', 1)))
                     OR (LOCATE(' - ', m.vendor_name) = 0 AND mfg.name = m.vendor_name)
                     OR (LOCATE(' - ', m.vendor_name) = 0 AND mfg.short_name = m.vendor_name)
-                )
+                ))
             )
             
             -- Join to the most recent delivery for each pallet to avoid
