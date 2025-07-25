@@ -1248,98 +1248,341 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
+        /* Modern Design System */
+        :root {
+            --primary-color: #488C9A;
+            --primary-dark: #3A6E7F;
+            --secondary-color: #f8f9fa;
+            --accent-color: #28a745;
+            --danger-color: #dc3545;
+            --text-primary: #293E4C;
+            --text-secondary: #6c757d;
+            --border-radius: 12px;
+            --box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
         .error-messages {
-            background-color: #f8d7da;
-            border: 1px solid #f5c6cb;
-            padding: 10px;
-            margin-bottom: 20px;
-            color: #721c24;
-        }
-        .top-container {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            gap: 20px;
-            padding: 15px;
-            border: 1px solid #ccc;
-        }
-        .top-container > div {
-            flex: 1;
-            min-width: 300px;
-            padding: 15px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            background-color: #f9f9f9;
-            text-align: center;
-        }
-        /* Styling for single entry button */
-        .add-single-entry-button {
-            background-color: #488C9A;
+            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
             border: none;
-            color: #fff;
-            padding: 1px 8px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 1.5em;
-            font-weight: bold;
-            margin-left: 10px;
+            padding: 20px;
+            margin-bottom: 24px;
+            color: #721c24;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
         }
-        .add-single-entry-button:hover {
-            background-color: #3A6E7F;
+
+        /* Clean Stats Container */
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin: 32px 0;
+            padding: 0;
         }
-        /* Time Filter Header Styling */
-        .time-filter-header {
+
+        .stats-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border: none;
+            border-radius: var(--border-radius);
+            padding: 32px;
+            text-align: center;
+            box-shadow: var(--box-shadow);
+            transition: var(--transition);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stats-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--primary-color), var(--accent-color));
+            border-radius: var(--border-radius) var(--border-radius) 0 0;
+        }
+
+        .stats-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 32px rgba(72, 140, 154, 0.15);
+        }
+
+        .stats-card h2 {
+            color: var(--text-primary);
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            letter-spacing: 0.5px;
+        }
+        /* Modern Bulk Actions */
+        .bulk-actions-container {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: var(--border-radius);
+            padding: 24px;
+            margin: 24px 0;
+            box-shadow: var(--box-shadow);
+            border-top: 4px solid var(--primary-color);
+        }
+
+        .bulk-actions-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin: 30px 20px 10px 20px;
+            margin-bottom: 16px;
+        }
+
+        .bulk-actions-header h2 {
+            color: var(--text-primary);
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .selected-count {
+            background: var(--primary-color);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .bulk-actions-buttons {
+            display: flex;
+            gap: 12px;
             flex-wrap: wrap;
         }
+
+        .bulk-action-btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 0.9rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .bulk-action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .bulk-action-btn.edit {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            color: white;
+        }
+
+        .bulk-action-btn.delete {
+            background: linear-gradient(135deg, var(--danger-color) 0%, #c82333 100%);
+            color: white;
+        }
+
+        .bulk-action-btn.export {
+            background: linear-gradient(135deg, var(--accent-color) 0%, #218838 100%);
+            color: white;
+        }
+
+        .bulk-action-btn:not(:disabled):hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        }
+
+        /* Modern Filter Header */
+        .time-filter-header {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: var(--border-radius);
+            padding: 24px;
+            margin: 24px 0;
+            box-shadow: var(--box-shadow);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
         .time-filters {
             display: flex;
-            gap: 10px;
+            gap: 4px;
+            background: var(--secondary-color);
+            padding: 4px;
+            border-radius: 10px;
         }
+
         .time-filters a {
             text-decoration: none;
-            padding: 6px 12px;
-            background: #eee;
-            border-radius: 4px;
-            color: #333;
+            padding: 10px 20px;
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            transition: var(--transition);
+            position: relative;
         }
+
         .time-filters a.active {
-            background: #488C9A;
-            color: #fff;
+            background: var(--primary-color);
+            color: white;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+
+        .time-filters a:not(.active):hover {
+            background: rgba(72, 140, 154, 0.1);
+            color: var(--primary-color);
         }
         .date-navigation {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 16px;
+            background: white;
+            padding: 12px 16px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         }
+
         .nav-arrow {
-            font-weight: bold;
-            cursor: pointer;
-            background: #eee;
+            width: 40px;
+            height: 40px;
             border: none;
-            padding: 5px 10px;
-            border-radius: 4px;
+            border-radius: 50%;
+            background: var(--secondary-color);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            transition: var(--transition);
         }
+
         .nav-arrow:hover {
-            background: #ccc;
+            background: var(--primary-color);
+            color: white;
+            transform: scale(1.1);
         }
+
         .date-label {
-            font-weight: bold;
-            font-size: 1.1em;
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: var(--text-primary);
+            min-width: 160px;
+            text-align: center;
         }
+
         .right-filters {
             display: flex;
-            flex-direction: column;
-            gap: 10px;
-            align-items: flex-start;
-            margin-right: 15px;
+            gap: 12px;
+            align-items: center;
         }
+
+        /* Modern Table Styling */
         .table-responsive {
+            background: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            overflow: hidden;
+            margin: 24px 0;
+        }
+
+        .deliveries-table {
             width: 100%;
-            overflow-x: auto;
+            border-collapse: collapse;
+            background: white;
+        }
+
+        .deliveries-table th {
+            background: linear-gradient(135deg, var(--text-primary) 0%, #1f2937 100%);
+            color: white;
+            padding: 16px 12px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border: none;
+            position: relative;
+        }
+
+        .deliveries-table td {
+            padding: 16px 12px;
+            border-bottom: 1px solid #f1f5f9;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            vertical-align: middle;
+        }
+
+        .deliveries-table tbody tr {
+            transition: var(--transition);
+        }
+
+        .deliveries-table tbody tr:hover {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        }
+
+        /* Expandable Row Styling */
+        .grouped-delivery-row {
+            cursor: pointer;
+            position: relative;
+        }
+
+        .grouped-delivery-row::after {
+            content: '▼';
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--primary-color);
+            font-size: 0.8rem;
+            transition: var(--transition);
+        }
+
+        .grouped-delivery-row.expanded::after {
+            transform: translateY(-50%) rotate(180deg);
+        }
+
+        .delivery-detail-row {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            display: none;
+            opacity: 0;
+            transform: translateY(-10px);
+            transition: all 0.3s ease;
+        }
+
+        .delivery-detail-row.show {
+            display: table-row;
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .delivery-detail-row td {
+            padding: 12px 24px;
+            font-size: 0.85rem;
+            border-left: 4px solid var(--primary-color);
+            position: relative;
+        }
+
+        .delivery-detail-row td:first-child::before {
+            content: '';
+            position: absolute;
+            left: -4px;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
+        }
+
+        /* Mixed Wattage Styling */
+        .mixed-wattage {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            display: inline-block;
         }
         @media screen and (max-width: 768px) {
             .mobile-hide {
@@ -1548,6 +1791,39 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             /* Add any specific table styling here if needed, e.g., for borders within the scrollable area */
         }
         
+        /* Modern Button Styling */
+        .modern-btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 0.9rem;
+            position: relative;
+            overflow: hidden;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .modern-btn.primary {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+
+        .modern-btn.secondary {
+            background: var(--secondary-color);
+            color: var(--text-primary);
+            border: 2px solid #e9ecef;
+        }
+
+        .modern-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        }
+
         /* Filters Dropdown Styling */
         .filters-dropdown-container {
             position: relative;
@@ -1555,18 +1831,24 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         }
         
         .filters-dropdown-btn {
-            background-color: #488C9A;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
             color: white;
             border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
+            padding: 12px 20px;
+            border-radius: 10px;
             cursor: pointer;
-            font-size: 0.9em;
-            transition: background-color 0.3s ease;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
         }
         
         .filters-dropdown-btn:hover {
-            background-color: #3A6E7F;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(72, 140, 154, 0.4);
         }
         
         .filters-dropdown-content {
@@ -1737,21 +2019,21 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
     <h1>Manage Deliveries: <?php echo htmlspecialchars($project_name); ?></h1>
 
     <!-- Delivery Type Tabs -->
-    <div class="delivery-type-tabs" style="margin: 20px; border-bottom: 2px solid #eee;">
-        <div style="display: flex; gap: 0;">
+    <div class="delivery-type-tabs" style="margin: 24px 0;">
+        <div style="display: flex; gap: 4px; background: var(--secondary-color); padding: 6px; border-radius: var(--border-radius); box-shadow: var(--box-shadow);">
             <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=project" 
-               class="delivery-tab <?php echo ($delivery_type === 'project') ? 'active' : ''; ?>"
-               style="padding: 12px 24px; background: <?php echo ($delivery_type === 'project') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'project') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; margin-right: 2px;">
+               class="delivery-tab modern-btn <?php echo ($delivery_type === 'project') ? 'primary' : 'secondary'; ?>"
+               style="flex: 1; text-align: center; font-weight: 500; transition: var(--transition); <?php echo ($delivery_type === 'project') ? 'background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%); color: white; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);' : ''; ?>">
                 🏗️ Project Deliveries (<?php echo $delivery_counts['project']; ?>)
             </a>
             <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=warehouse" 
-               class="delivery-tab <?php echo ($delivery_type === 'warehouse') ? 'active' : ''; ?>"
-               style="padding: 12px 24px; background: <?php echo ($delivery_type === 'warehouse') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'warehouse') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; margin-right: 2px;">
+               class="delivery-tab modern-btn <?php echo ($delivery_type === 'warehouse') ? 'primary' : 'secondary'; ?>"
+               style="flex: 1; text-align: center; font-weight: 500; transition: var(--transition); <?php echo ($delivery_type === 'warehouse') ? 'background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%); color: white; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);' : ''; ?>">
                 🏢 Warehouse Deliveries (<?php echo $delivery_counts['warehouse']; ?>)
             </a>
             <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=all" 
-               class="delivery-tab <?php echo ($delivery_type === 'all') ? 'active' : ''; ?>"
-               style="padding: 12px 24px; background: <?php echo ($delivery_type === 'all') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'all') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0;">
+               class="delivery-tab modern-btn <?php echo ($delivery_type === 'all') ? 'primary' : 'secondary'; ?>"
+               style="flex: 1; text-align: center; font-weight: 500; transition: var(--transition); <?php echo ($delivery_type === 'all') ? 'background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%); color: white; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);' : ''; ?>">
                 📦 All Deliveries (<?php echo $delivery_counts['all']; ?>)
             </a>
         </div>
@@ -1767,66 +2049,50 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
     }
     ?>
 
-    <div class="top-container">
-        <!-- Add Deliveries Section -->
-        <div class="left-section">
-            <h2>Add Deliveries</h2>
-            <?php if ($is_global_admin): ?>
-            <h3>Upload via CSV</h3>
-            <p style="font-size: 0.9em; color: #666; margin: 5px 0;">
-                CSV should include: manufacturer, wattage, status_of_delivery, quantity, bol_number, anticipated_delivery_date
-            </p>
-            <!-- CSV Upload Form -->
-            <form action="manage_deliveries?filter_project_id=<?php echo urlencode($filter_project_id); ?>" method="post" enctype="multipart/form-data">
-                <input type="file" name="csv_file" accept=".csv" required>
-                <button type="submit" name="upload_csv">Upload CSV</button>
-            </form>
-            <?php endif; ?>
-            <div class="single-entry">
-                <h3>Add Single Entry:
-                    <button type="button" class="add-single-entry-button"
-                            onclick="window.location.href='add_delivery?<?php echo (is_numeric($filter_project_id)) ? 'project_id=' . $filter_project_id : ''; ?>';">+</button>
-                </h3>
+    <!-- Stats Overview -->
+    <div class="stats-container">
+        <div class="stats-card">
+            <h2>💰 Customer Cost</h2>
+            <div style="font-size: 2.2rem; font-weight: 700; color: var(--primary-color); margin: 16px 0;">
+                $<?php echo number_format($total_customer_cost, 2); ?>
             </div>
+            <p style="color: var(--text-secondary); margin: 0; font-size: 0.9rem;">Total charged to customers</p>
         </div>
-
-        <!-- Bulk Actions Section -->
-        <div class="middle-section">
-            <h2>Bulk Edit / Bulk Delete</h2>
-            <span id="selectedRowCount" style="margin-left: 10px; font-size: 0.9em; color: #555;"></span>
-            <div class="bulk-actions-buttons">
-                <!-- Bulk Edit opens the modal -->
-                <button type="button" id="bulkEditBtn" disabled onclick="openBulkEditModal()">Bulk Edit</button>
-                <!-- Bulk Delete submits the form -->
-                <button type="submit" form="deliveriesForm" name="delete_selected" id="bulkDeleteBtn" disabled
-                    onclick="return confirm('Are you sure you want to delete the selected deliveries?');">
-                    Bulk Delete
-                </button>
-                <!-- Export CSV Button -->
-                <button type="button" id="exportCsvBtn" onclick="exportToCSV()" 
-                    style="background-color: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9em; margin-left: 5px; transition: background-color 0.3s ease;"
-                    onmouseover="this.style.backgroundColor='#218838'" 
-                    onmouseout="this.style.backgroundColor='#28a745'">
-                    📥 Export CSV
-                </button>
+        
+        <div class="stats-card">
+            <h2>🚛 Carrier Cost</h2>
+            <div style="font-size: 2.2rem; font-weight: 700; color: var(--primary-color); margin: 16px 0;">
+                $<?php echo number_format($total_freight_cost, 2); ?>
             </div>
+            <p style="color: var(--text-secondary); margin: 0; font-size: 0.9rem;">Total paid to carriers</p>
         </div>
+        
+        <div class="stats-card">
+            <h2>📋 Accessorial Costs</h2>
+            <div style="font-size: 2.2rem; font-weight: 700; color: var(--primary-color); margin: 16px 0;">
+                $<?php echo number_format($total_accessorial_costs, 2); ?>
+            </div>
+            <p style="color: var(--text-secondary); margin: 0; font-size: 0.9rem;">Additional service charges</p>
+        </div>
+    </div>
 
-        <!-- Total Freight Costs Overview Section -->
-        <div class="right-section">
-            <h2>Total Freight Costs</h2>
-            <table class="freight-costs">
-                <tr>
-                    <th>Customer Cost</th>
-                    <th>Carrier Cost</th>
-                    <th>Accessorial Costs</th>
-                </tr>
-                <tr>
-                    <td>$<?php echo number_format($total_customer_cost, 2); ?></td>
-                    <td>$<?php echo number_format($total_freight_cost, 2); ?></td>
-                    <td>$<?php echo number_format($total_accessorial_costs, 2); ?></td>
-                </tr>
-            </table>
+    <!-- Bulk Actions -->
+    <div class="bulk-actions-container">
+        <div class="bulk-actions-header">
+            <h2>🔧 Bulk Actions</h2>
+            <span id="selectedRowCount" class="selected-count" style="display: none;"></span>
+        </div>
+        <div class="bulk-actions-buttons">
+            <button type="button" id="bulkEditBtn" class="bulk-action-btn edit" disabled onclick="openBulkEditModal()">
+                ✏️ Bulk Edit
+            </button>
+            <button type="submit" form="deliveriesForm" name="delete_selected" id="bulkDeleteBtn" class="bulk-action-btn delete" disabled
+                onclick="return confirm('Are you sure you want to delete the selected deliveries?');">
+                🗑️ Bulk Delete
+            </button>
+            <button type="button" id="exportCsvBtn" class="bulk-action-btn export" onclick="exportToCSV()">
+                📥 Export CSV
+            </button>
         </div>
     </div>
 
@@ -1937,20 +2203,20 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                 Manufacturer
                             </label>
                             <label class="column-option">
-                                <input type="checkbox" class="column-toggle" data-column="wattage-column" checked>
-                                Wattage
+                                <input type="checkbox" class="column-toggle" data-column="bol-column" checked>
+                                BOL Number
                             </label>
                             <label class="column-option">
-                                <input type="checkbox" class="column-toggle" data-column="status-column" checked>
-                                Status of Delivery
+                                <input type="checkbox" class="column-toggle" data-column="wattage-column" checked>
+                                Wattage
                             </label>
                             <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="quantity-column" checked>
                                 Quantity
                             </label>
                             <label class="column-option">
-                                <input type="checkbox" class="column-toggle" data-column="bol-column" checked>
-                                BOL Number
+                                <input type="checkbox" class="column-toggle" data-column="status-column" checked>
+                                Status of Delivery
                             </label>
                             <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="anticipated-column" checked>
@@ -2023,10 +2289,10 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                         <th class="project-column">Project</th>
                     <?php endif; ?>
                     <th class="manufacturer-column">Manufacturer</th>
-                    <th class="wattage-column">Wattage</th>
-                    <th class="status-column">Status of Delivery</th>
-                    <th class="quantity-column">Quantity</th>
                     <th class="bol-column">BOL Number</th>
+                    <th class="wattage-column">Wattage</th>
+                    <th class="quantity-column">Quantity</th>
+                    <th class="status-column">Status of Delivery</th>
                     <th class="anticipated-column">Anticipated Delivery Date</th>
                     <th class="warehouse-arrival-column">Warehouse Arrival Date</th>
                     <th class="actual-column">Actual Delivery Date</th>
@@ -2041,6 +2307,64 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                 </tr>
                 <?php if ($deliveries_result && $deliveries_result->num_rows > 0): ?>
                     <?php 
+                    // Group deliveries by BOL number and prepare grouped data
+                    $all_deliveries = [];
+                    $grouped_deliveries = [];
+                    
+                    // Fetch all deliveries into an array
+                    while($delivery = $deliveries_result->fetch_assoc()) {
+                        $all_deliveries[] = $delivery;
+                    }
+                    
+                    // Group by BOL number
+                    $bol_groups = [];
+                    foreach ($all_deliveries as $delivery) {
+                        $bol = $delivery['bol_number'];
+                        if (!isset($bol_groups[$bol])) {
+                            $bol_groups[$bol] = [];
+                        }
+                        $bol_groups[$bol][] = $delivery;
+                    }
+                    
+                    // Create grouped delivery data with mixed wattage detection
+                    foreach ($bol_groups as $bol => $deliveries) {
+                        if (count($deliveries) > 1) {
+                            // Check if wattages are different (mixed shipment)
+                            $wattages = array_unique(array_column($deliveries, 'wattage'));
+                            $is_mixed = count($wattages) > 1;
+                            
+                            // Create a master delivery record
+                            $master_delivery = $deliveries[0]; // Use first delivery as base
+                            $master_delivery['is_grouped'] = true;
+                            $master_delivery['is_mixed_wattage'] = $is_mixed;
+                            $master_delivery['grouped_deliveries'] = $deliveries;
+                            
+                            // Calculate totals
+                            $total_quantity = array_sum(array_column($deliveries, 'quantity'));
+                            $total_freight = array_sum(array_column($deliveries, 'freight_cost_with_default'));
+                            $total_accessorial = array_sum(array_column($deliveries, 'accessorial_costs'));
+                            $total_customer = array_sum(array_column($deliveries, 'customer_cost'));
+                            $total_miles = array_sum(array_column($deliveries, 'miles'));
+                            
+                            $master_delivery['total_quantity'] = $total_quantity;
+                            $master_delivery['total_freight_cost'] = $total_freight;
+                            $master_delivery['total_accessorial_costs'] = $total_accessorial;
+                            $master_delivery['total_customer_cost'] = $total_customer;
+                            $master_delivery['total_miles'] = $total_miles;
+                            
+                            if ($is_mixed) {
+                                $master_delivery['display_wattage'] = 'Mixed';
+                            }
+                            
+                            $grouped_deliveries[] = $master_delivery;
+                        } else {
+                            // Single delivery, add normally
+                            $deliveries[0]['is_grouped'] = false;
+                            $deliveries[0]['is_mixed_wattage'] = false;
+                            $grouped_deliveries[] = $deliveries[0];
+                        }
+                    }
+                    
                     // Create a fresh connection for pallet fetching to avoid connection issues
                     $palletConn = getDBConnection();
                     $stmtPallets = null;
@@ -2055,18 +2379,32 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                         echo "Database connection is not available for pallet fetching.";
                     }
                     ?>
-                    <?php while($delivery = $deliveries_result->fetch_assoc()): ?>
+                    <?php foreach($grouped_deliveries as $index => $delivery): ?>
                         <?php
-                        // Fetch associated pallets for this delivery
+                        // Fetch associated pallets for this delivery (or grouped deliveries)
                         $associatedPallets = [];
                         $palletDataJson = '[]'; // Default to empty JSON array
                         $palletCount = 0;
+                        
                         if ($stmtPallets) { // Check if statement was prepared successfully
-                            $stmtPallets->bind_param("i", $delivery['id']);
-                            $stmtPallets->execute();
-                            $palletsResult = $stmtPallets->get_result();
-                            while ($palletRow = $palletsResult->fetch_assoc()) {
-                                $associatedPallets[] = $palletRow;
+                            if ($delivery['is_grouped']) {
+                                // For grouped deliveries, collect pallets from all deliveries in the group
+                                foreach ($delivery['grouped_deliveries'] as $grouped_del) {
+                                    $stmtPallets->bind_param("i", $grouped_del['id']);
+                                    $stmtPallets->execute();
+                                    $palletsResult = $stmtPallets->get_result();
+                                    while ($palletRow = $palletsResult->fetch_assoc()) {
+                                        $associatedPallets[] = $palletRow;
+                                    }
+                                }
+                            } else {
+                                // For single deliveries, get pallets normally
+                                $stmtPallets->bind_param("i", $delivery['id']);
+                                $stmtPallets->execute();
+                                $palletsResult = $stmtPallets->get_result();
+                                while ($palletRow = $palletsResult->fetch_assoc()) {
+                                    $associatedPallets[] = $palletRow;
+                                }
                             }
                             $palletCount = count($associatedPallets);
                             if ($palletCount > 0) {
@@ -2076,16 +2414,33 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                             // Handle case where statement couldn't be prepared
                             $associatedPallets = 'Error fetching pallets'; // Or some other indicator
                         }
+                        
+                        $row_class = '';
+                        if ($highlight_delivery_id && $delivery['id'] == $highlight_delivery_id) {
+                            $row_class .= ' highlighted-delivery';
+                        }
+                        if ($delivery['is_grouped'] && $delivery['is_mixed_wattage']) {
+                            $row_class .= ' grouped-delivery-row';
+                        }
                         ?>
-                        <tr <?php if ($highlight_delivery_id && $delivery['id'] == $highlight_delivery_id): ?>class="highlighted-delivery"<?php endif; ?>>
+                        
+                        <!-- Main delivery row -->
+                        <tr class="<?php echo trim($row_class); ?>" <?php if ($delivery['is_grouped'] && $delivery['is_mixed_wattage']): ?>onclick="toggleDeliveryDetails(<?php echo $index; ?>)"<?php endif; ?> data-delivery-index="<?php echo $index; ?>">
                             <td class="select-column">
-                                <input type="checkbox" name="selected_deliveries[]" value="<?php echo $delivery['id']; ?>" onclick="updateBulkActionButtons()">
+                                <?php if ($delivery['is_grouped']): ?>
+                                    <!-- For grouped deliveries, we need multiple checkboxes for bulk operations -->
+                                    <?php foreach ($delivery['grouped_deliveries'] as $grouped_del): ?>
+                                        <input type="checkbox" name="selected_deliveries[]" value="<?php echo $grouped_del['id']; ?>" onclick="updateBulkActionButtons()" style="display: none;" class="grouped-checkbox-<?php echo $index; ?>">
+                                    <?php endforeach; ?>
+                                    <input type="checkbox" onclick="toggleGroupedCheckboxes(<?php echo $index; ?>); updateBulkActionButtons();">
+                                <?php else: ?>
+                                    <input type="checkbox" name="selected_deliveries[]" value="<?php echo $delivery['id']; ?>" onclick="updateBulkActionButtons()">
+                                <?php endif; ?>
                             </td>
                             <?php if ($filter_project_id === 'all' || $filter_project_id === 'unassigned'): ?>
                                 <td class="project-column">
                                     <?php 
                                     if (!empty($delivery['project_id'])) {
-                                        // Display project name from the join, or fetch if necessary (though join is better)
                                         echo htmlspecialchars($delivery['project_name_from_join'] ?? 'N/A');
                                     } else {
                                         echo "<em>Unassigned</em>";
@@ -2094,15 +2449,24 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                 </td>
                             <?php endif; ?>
                             <td class="manufacturer-column">
-                                <?php 
-                                // Display only manufacturer name from modules, fallback to supplier field
-                                echo htmlspecialchars($delivery['manufacturer_name']); 
-                                ?>
+                                <?php echo htmlspecialchars($delivery['manufacturer_name']); ?>
                             </td>
-                            <td class="wattage-column"><?php echo htmlspecialchars($delivery['wattage']); ?></td>
-                            <td class="status-column"><?php echo htmlspecialchars($delivery['status_of_delivery']); ?></td>
-                            <td class="quantity-column"><?php echo htmlspecialchars($delivery['quantity']); ?></td>
                             <td class="bol-column"><?php echo htmlspecialchars($delivery['bol_number']); ?></td>
+                            <td class="wattage-column">
+                                <?php if ($delivery['is_mixed_wattage']): ?>
+                                    <span class="mixed-wattage">Mixed</span>
+                                <?php else: ?>
+                                    <?php echo htmlspecialchars($delivery['wattage']); ?>
+                                <?php endif; ?>
+                            </td>
+                            <td class="quantity-column">
+                                <?php if ($delivery['is_grouped']): ?>
+                                    <?php echo htmlspecialchars($delivery['total_quantity']); ?>
+                                <?php else: ?>
+                                    <?php echo htmlspecialchars($delivery['quantity']); ?>
+                                <?php endif; ?>
+                            </td>
+                            <td class="status-column"><?php echo htmlspecialchars($delivery['status_of_delivery']); ?></td>
                             <td class="anticipated-column"><?php echo htmlspecialchars($delivery['anticipated_delivery_date']); ?></td>
                             <td class="warehouse-arrival-column"><?php echo htmlspecialchars($delivery['warehouse_arrival_date']); ?></td>
                             <td class="actual-column"><?php echo htmlspecialchars($delivery['actual_delivery_date']); ?></td>
@@ -2117,10 +2481,34 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                     <?php endif; ?>
                                 <?php endif; ?>
                             </td>
-                            <td class="miles-column"><?php echo htmlspecialchars($delivery['miles']); ?></td>
-                            <td class="freight-column">$<?php echo number_format($delivery['freight_cost_with_default'], 2); ?></td>
-                            <td class="accessorial-column">$<?php echo number_format($delivery['accessorial_costs'], 2); ?></td>
-                            <td class="customer-column">$<?php echo number_format($delivery['customer_cost'], 2); ?></td>
+                            <td class="miles-column">
+                                <?php if ($delivery['is_grouped']): ?>
+                                    <?php echo htmlspecialchars($delivery['total_miles']); ?>
+                                <?php else: ?>
+                                    <?php echo htmlspecialchars($delivery['miles']); ?>
+                                <?php endif; ?>
+                            </td>
+                            <td class="freight-column">
+                                <?php if ($delivery['is_grouped']): ?>
+                                    $<?php echo number_format($delivery['total_freight_cost'], 2); ?>
+                                <?php else: ?>
+                                    $<?php echo number_format($delivery['freight_cost_with_default'], 2); ?>
+                                <?php endif; ?>
+                            </td>
+                            <td class="accessorial-column">
+                                <?php if ($delivery['is_grouped']): ?>
+                                    $<?php echo number_format($delivery['total_accessorial_costs'], 2); ?>
+                                <?php else: ?>
+                                    $<?php echo number_format($delivery['accessorial_costs'], 2); ?>
+                                <?php endif; ?>
+                            </td>
+                            <td class="customer-column">
+                                <?php if ($delivery['is_grouped']): ?>
+                                    $<?php echo number_format($delivery['total_customer_cost'], 2); ?>
+                                <?php else: ?>
+                                    $<?php echo number_format($delivery['customer_cost'], 2); ?>
+                                <?php endif; ?>
+                            </td>
                             <td class="scheduled-column">
                                 <?php if ($delivery['scheduled'] == 1): ?>
                                     <?php if (!empty($delivery['project_id']) && !empty($delivery['appointment_id'])): ?>
@@ -2140,10 +2528,10 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                             </td>
                             <td class="pallets-column">
                                 <?php if ($stmtPallets && $palletCount > 0): ?>
-                                    <button type="button" class="action-buttons" 
+                                    <button type="button" class="modern-btn secondary" 
                                             onclick="showPalletModal(this)" 
                                             data-pallets='<?php echo $palletDataJson; ?>'
-                                            >View Pallets (<?php echo $palletCount; ?>)</button>
+                                            >📦 Pallets (<?php echo $palletCount; ?>)</button>
                                 <?php elseif ($stmtPallets): ?>
                                     N/A
                                 <?php else: ?>
@@ -2151,12 +2539,54 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                 <?php endif; ?>
                             </td>
                             <td class="actions-column">
-                                <a href="edit_delivery?delivery_id=<?php echo $delivery['id']; ?><?php echo (is_numeric($filter_project_id)) ? '&project_id=' . $filter_project_id : ((!empty($delivery['project_id'])) ? '&project_id=' . $delivery['project_id'] : ''); ?>">
-                                    Edit
-                                </a>
+                                <?php if ($delivery['is_grouped']): ?>
+                                    <span style="color: #666;">Grouped</span>
+                                <?php else: ?>
+                                    <a href="edit_delivery?delivery_id=<?php echo $delivery['id']; ?><?php echo (is_numeric($filter_project_id)) ? '&project_id=' . $filter_project_id : ((!empty($delivery['project_id'])) ? '&project_id=' . $delivery['project_id'] : ''); ?>" class="modern-btn primary">
+                                        ✏️ Edit
+                                    </a>
+                                <?php endif; ?>
                             </td>
                         </tr>
-                    <?php endwhile; ?>
+                        
+                        <!-- Detail rows for grouped deliveries -->
+                        <?php if ($delivery['is_grouped'] && $delivery['is_mixed_wattage']): ?>
+                            <?php foreach ($delivery['grouped_deliveries'] as $detail_delivery): ?>
+                                <tr class="delivery-detail-row" id="detail-<?php echo $index; ?>-<?php echo $detail_delivery['id']; ?>">
+                                    <td class="select-column"></td>
+                                    <?php if ($filter_project_id === 'all' || $filter_project_id === 'unassigned'): ?>
+                                        <td class="project-column"></td>
+                                    <?php endif; ?>
+                                    <td class="manufacturer-column" style="padding-left: 30px;">
+                                        ↳ <?php echo htmlspecialchars($detail_delivery['manufacturer_name']); ?>
+                                    </td>
+                                    <td class="bol-column"></td>
+                                    <td class="wattage-column">
+                                        <strong><?php echo htmlspecialchars($detail_delivery['wattage']); ?></strong>
+                                    </td>
+                                    <td class="quantity-column">
+                                        <strong><?php echo htmlspecialchars($detail_delivery['quantity']); ?></strong>
+                                    </td>
+                                    <td class="status-column"><?php echo htmlspecialchars($detail_delivery['status_of_delivery']); ?></td>
+                                    <td class="anticipated-column"><?php echo htmlspecialchars($detail_delivery['anticipated_delivery_date']); ?></td>
+                                    <td class="warehouse-arrival-column"><?php echo htmlspecialchars($detail_delivery['warehouse_arrival_date']); ?></td>
+                                    <td class="actual-column"><?php echo htmlspecialchars($detail_delivery['actual_delivery_date']); ?></td>
+                                    <td class="pod-column">-</td>
+                                    <td class="miles-column"><?php echo htmlspecialchars($detail_delivery['miles']); ?></td>
+                                    <td class="freight-column">$<?php echo number_format($detail_delivery['freight_cost_with_default'], 2); ?></td>
+                                    <td class="accessorial-column">$<?php echo number_format($detail_delivery['accessorial_costs'], 2); ?></td>
+                                    <td class="customer-column">$<?php echo number_format($detail_delivery['customer_cost'], 2); ?></td>
+                                    <td class="scheduled-column">-</td>
+                                    <td class="pallets-column">-</td>
+                                    <td class="actions-column">
+                                        <a href="edit_delivery?delivery_id=<?php echo $detail_delivery['id']; ?><?php echo (is_numeric($filter_project_id)) ? '&project_id=' . $filter_project_id : ((!empty($detail_delivery['project_id'])) ? '&project_id=' . $detail_delivery['project_id'] : ''); ?>" class="modern-btn secondary" style="font-size: 0.8rem; padding: 6px 12px;">
+                                            ✏️ Edit
+                                        </a>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    <?php endforeach; ?>
                     <?php 
                     // Close the prepared statement after the loop
                     if ($stmtPallets) $stmtPallets->close(); 
@@ -2324,7 +2754,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         document.getElementById('bulkEditBtn').disabled = !anyChecked;
         document.getElementById('bulkDeleteBtn').disabled = !anyChecked;
 
-        // NEW: Update selected row count
+        // Update selected row count with modern styling
         var count = 0;
         for (var checkbox of checkboxes) {
             if (checkbox.checked) {
@@ -2333,8 +2763,51 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         }
         var countDisplay = document.getElementById('selectedRowCount');
         if (countDisplay) {
-            countDisplay.textContent = count > 0 ? count + (count === 1 ? " row selected" : " rows selected") : "";
+            if (count > 0) {
+                countDisplay.textContent = count + (count === 1 ? " delivery selected" : " deliveries selected");
+                countDisplay.style.display = 'inline-block';
+            } else {
+                countDisplay.style.display = 'none';
+            }
         }
+    }
+
+    // Toggle grouped delivery details
+    function toggleDeliveryDetails(index) {
+        var detailRows = document.querySelectorAll('[id^="detail-' + index + '-"]');
+        var mainRow = document.querySelector('[data-delivery-index="' + index + '"]');
+        
+        var isExpanded = mainRow.classList.contains('expanded');
+        
+        if (isExpanded) {
+            // Collapse
+            detailRows.forEach(function(row) {
+                row.classList.remove('show');
+                setTimeout(function() {
+                    row.style.display = 'none';
+                }, 300);
+            });
+            mainRow.classList.remove('expanded');
+        } else {
+            // Expand
+            detailRows.forEach(function(row) {
+                row.style.display = 'table-row';
+                setTimeout(function() {
+                    row.classList.add('show');
+                }, 10);
+            });
+            mainRow.classList.add('expanded');
+        }
+    }
+
+    // Toggle grouped checkboxes
+    function toggleGroupedCheckboxes(index) {
+        var groupedCheckboxes = document.querySelectorAll('.grouped-checkbox-' + index);
+        var mainCheckbox = event.target;
+        
+        groupedCheckboxes.forEach(function(checkbox) {
+            checkbox.checked = mainCheckbox.checked;
+        });
     }
 
     // Table search
