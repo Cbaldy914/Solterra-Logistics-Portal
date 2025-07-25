@@ -410,9 +410,20 @@ try {
         }
     }
 
-    // Fetch Manufacturers for origin selection (with addresses)
+    // Fetch Manufacturers for origin selection (with addresses from primary locations)
     $all_manufacturers_for_shipping = [];
-    $sqlAllManufacturersModal = "SELECT id, name, street_address, city, state, zip_code FROM manufacturers WHERE is_active = 1 ORDER BY name ASC";
+    $sqlAllManufacturersModal = "
+        SELECT 
+            m.id, 
+            m.name, 
+            ml.street_address, 
+            ml.city, 
+            ml.state, 
+            ml.zip_code 
+        FROM manufacturers m
+        LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
+        WHERE m.is_active = 1 
+        ORDER BY m.name ASC";
     $resultAllManufacturersModal = $conn->query($sqlAllManufacturersModal);
     if ($resultAllManufacturersModal) {
         while ($row = $resultAllManufacturersModal->fetch_assoc()) {

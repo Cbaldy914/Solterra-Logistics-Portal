@@ -104,9 +104,22 @@ if ($role === 'admin' && $account_id_for_admin && !empty($projects_for_account))
     }
 }
 
-// Fetch manufacturers for dropdown
+// Fetch manufacturers for dropdown with primary location address
 $manufacturers = [];
-$sqlManufacturers = "SELECT id, name, short_name, address FROM manufacturers WHERE is_active = 1 ORDER BY name ASC";
+$sqlManufacturers = "
+    SELECT 
+        m.id, 
+        m.name, 
+        m.short_name,
+        CONCAT_WS(', ', 
+            NULLIF(ml.street_address, ''),
+            NULLIF(ml.city, ''),
+            CONCAT(NULLIF(ml.state, ''), ' ', NULLIF(ml.zip_code, ''))
+        ) as address
+    FROM manufacturers m
+    LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
+    WHERE m.is_active = 1 
+    ORDER BY m.name ASC";
 $resManufacturers = $conn->query($sqlManufacturers);
 if ($resManufacturers && $resManufacturers->num_rows > 0) {
     while ($row = $resManufacturers->fetch_assoc()) {
@@ -203,7 +216,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Get manufacturer details and set vendor name and initial location
             $vendor_name = "Unknown Manufacturer";
             $initial_location = "Unknown Location";
-            $stmt_mfg = $conn->prepare("SELECT name, address FROM manufacturers WHERE id = ?");
+            $stmt_mfg = $conn->prepare("
+                SELECT 
+                    m.name,
+                    CONCAT_WS(', ', 
+                        NULLIF(ml.street_address, ''),
+                        NULLIF(ml.city, ''),
+                        CONCAT(NULLIF(ml.state, ''), ' ', NULLIF(ml.zip_code, ''))
+                    ) as address
+                FROM manufacturers m
+                LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
+                WHERE m.id = ?");
             if ($stmt_mfg) {
                 $stmt_mfg->bind_param("i", $manufacturer_id);
                 $stmt_mfg->execute();

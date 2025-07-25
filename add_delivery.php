@@ -155,24 +155,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
              $total_quantity += $q;
         }
 
+        // Find manufacturer location ID based on supplier name and address
+        $manufacturer_location_id = null;
+        if (!empty($supplier)) {
+            // Extract manufacturer name (remove location suffix like " - Raleigh Plant")
+            $manufacturer_name = $supplier;
+            if (strpos($supplier, ' - ') !== false) {
+                $manufacturer_name = trim(explode(' - ', $supplier)[0]);
+            }
+            
+            // Try to find the manufacturer location ID
+            // First, get manufacturer ID
+            $stmt_mfg = $conn->prepare("SELECT id FROM manufacturers WHERE name = ? OR short_name = ? LIMIT 1");
+            if ($stmt_mfg) {
+                $stmt_mfg->bind_param("ss", $manufacturer_name, $manufacturer_name);
+                $stmt_mfg->execute();
+                $stmt_mfg->bind_result($manufacturer_id);
+                if ($stmt_mfg->fetch()) {
+                    $stmt_mfg->close();
+                    
+                    // If supplier contains location info (like "Meyer Burger - Raleigh Plant"), find specific location
+                    if (strpos($supplier, ' - ') !== false) {
+                        $location_part = trim(explode(' - ', $supplier)[1]);
+                        $stmt_loc = $conn->prepare("SELECT id FROM manufacturer_locations WHERE manufacturer_id = ? AND location_name LIKE ? AND is_active = 1 LIMIT 1");
+                        if ($stmt_loc) {
+                            $location_search = "%{$location_part}%";
+                            $stmt_loc->bind_param("is", $manufacturer_id, $location_search);
+                            $stmt_loc->execute();
+                            $stmt_loc->bind_result($found_location_id);
+                            if ($stmt_loc->fetch()) {
+                                $manufacturer_location_id = $found_location_id;
+                            }
+                            $stmt_loc->close();
+                        }
+                    }
+                    
+                    // If no specific location found, use primary location
+                    if (!$manufacturer_location_id) {
+                        $stmt_primary = $conn->prepare("SELECT id FROM manufacturer_locations WHERE manufacturer_id = ? AND is_primary = 1 AND is_active = 1 LIMIT 1");
+                        if ($stmt_primary) {
+                            $stmt_primary->bind_param("i", $manufacturer_id);
+                            $stmt_primary->execute();
+                            $stmt_primary->bind_result($primary_location_id);
+                            if ($stmt_primary->fetch()) {
+                                $manufacturer_location_id = $primary_location_id;
+                            }
+                            $stmt_primary->close();
+                        }
+                    }
+                } else {
+                    $stmt_mfg->close();
+                }
+            }
+        }
+
         // Prepare INSERT statement once based on destination
         if ($assignType === 'project') {
     $sql = "INSERT INTO deliveries
             (project_id, supplier, origin_type, origin_id, wattage, status_of_delivery, quantity, bol_number,
                      anticipated_delivery_date, actual_delivery_date,
                      freight_cost, accessorial_costs_paid, accessorial_costs, customer_cost, proof_of_delivery, miles)
-                    VALUES (?, ?, 'manufacturer', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 16 placeholders
+                    VALUES (?, ?, 'manufacturer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 16 placeholders
             $stmt = $conn->prepare($sql);
             if (!$stmt) throw new Exception("Prepare project delivery failed: " . $conn->error);
-            $bind_types = "isssississddddsd"; // 14 parameters: i,s,s,s,i,s,s,s,d,d,d,d,s,d
+            $bind_types = "isisissssddddsd"; // 15 parameters: i,s,i,i,s,i,s,s,s,d,d,d,d,s,d
         } else { // Warehouse
             $sql = "INSERT INTO deliveries
                     (warehouse_id, supplier, origin_type, origin_id, wattage, status_of_delivery, quantity, bol_number,
                      freight_cost, accessorial_costs_paid, accessorial_costs, customer_cost, proof_of_delivery, miles)
-                    VALUES (?, ?, 'manufacturer', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 14 placeholders
+                    VALUES (?, ?, 'manufacturer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"; // 14 placeholders
             $stmt = $conn->prepare($sql);
              if (!$stmt) throw new Exception("Prepare warehouse delivery failed: " . $conn->error);
-             $bind_types = "isssisddddsd"; // 12 parameters: i,s,s,s,i,s,d,d,d,d,s,d
+             $bind_types = "isisissddddsd"; // 13 parameters: i,s,i,i,s,i,s,d,d,d,d,s,d
         }
 
         // Loop through each wattage entry and insert
@@ -192,14 +246,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
             // Bind parameters dynamically based on type
             if ($assignType === 'project') {
                 $stmt->bind_param($bind_types,
-                    $targetId, $supplier, $w, $status_of_delivery, $q, $bol_number,
+                    $targetId, $supplier, $manufacturer_location_id, $w, $status_of_delivery, $q, $bol_number,
                     $anticipated_delivery_date, $actual_delivery_date,
                     $proportional_freight, $proportional_acc_paid, $proportional_acc_charged,
                     $proportional_customer_cost, $proof_of_delivery_path, $proportional_miles
                 );
             } else { // Warehouse
                  $stmt->bind_param($bind_types,
-                    $targetId, $supplier, $w, $status_of_delivery, $q, $bol_number,
+                    $targetId, $supplier, $manufacturer_location_id, $w, $status_of_delivery, $q, $bol_number,
                     $proportional_freight, $proportional_acc_paid, $proportional_acc_charged,
                     $proportional_customer_cost, $proof_of_delivery_path, $proportional_miles
                 );
