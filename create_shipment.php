@@ -363,7 +363,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         $stmtUp->close();
         $conn->commit();
         
-        $totalDeliveries = count($createdDeliveryIds);
+        // Count unique BOL numbers instead of total delivery records
+        $uniqueBolNumbers = [];
+        if ($shipmentMode === 'multi' && !empty($bolNumbers)) {
+            $uniqueBolNumbers = array_unique($bolNumbers);
+        } else {
+            $uniqueBolNumbers = [$bolNumber];
+        }
+        $totalDeliveries = count($uniqueBolNumbers);
         $totalPallets = count($palletIds);
         
         // Check if user wants to generate BOL
@@ -373,7 +380,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         if ($generateBol) {
             // User wants to generate BOL - redirect directly to BOL generation
             // Store a simple success message for later display after BOL generation
-            $_SESSION['shipment_success_for_bol'] = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
+            $deliveryWord = ($totalDeliveries === 1) ? 'delivery' : 'deliveries';
+            $_SESSION['shipment_success_for_bol'] = "{$totalDeliveries} {$deliveryWord} successfully created for {$totalPallets} pallets.";
             
             // Preserve project_id for breadcrumb navigation and links
             if ($project_id_from_url > 0) {
@@ -402,11 +410,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             }
             $bolLink = " <a href='{$bolLinkUrl}' style='color: #488C9A; text-decoration: underline; margin-left: 10px;'>Generate BOL</a>";
             
+            $deliveryWord = ($totalDeliveries === 1) ? 'delivery' : 'deliveries';
+            
             if ($destinationType === 'warehouse') {
-                $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets. Pallets are now in transit to the selected warehouse. To receive modules into the warehouse when they arrive, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>click here</a>.{$bolLink}";
+                $shipMessage = "{$totalDeliveries} {$deliveryWord} successfully created for {$totalPallets} pallets. Pallets are now in transit to the selected warehouse. To receive modules into the warehouse when they arrive, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>click here</a>.{$bolLink}";
             } else {
                 // Project delivery - offer scheduling
-                $shipMessage = "{$totalDeliveries} deliveries successfully created for {$totalPallets} pallets.";
+                $shipMessage = "{$totalDeliveries} {$deliveryWord} successfully created for {$totalPallets} pallets.";
                 
                 // Provide single scheduling link for the project
                 if ($destinationId > 0) {
@@ -1216,6 +1226,29 @@ if (!empty($bolCompletionMessage)) {
                 <button type="button" class="modal-tab active" id="singleTabBtn">Single Shipment</button>
                 <button type="button" class="modal-tab" id="multiTabBtn">Multiple Shipments</button>
             </div>
+            
+            <!-- SELECTED PALLETS BREAKDOWN -->
+            <div id="selectedPalletsBreakdown" style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3 style="margin: 0; color: #293E4C; font-size: 1.1em;">Selected Pallets</h3>
+                    <button type="button" id="toggleDetailedBreakdown" style="background: #488C9A; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9em;">Show Details</button>
+                </div>
+                <div id="summaryBreakdown" style="margin-top: 10px;">
+                    <div id="wattageQuantitySummary" style="font-weight: 500; color: #293E4C;">
+                        <!-- Will be populated by JavaScript -->
+                    </div>
+                    <div id="totalPalletsCount" style="font-size: 0.9em; color: #6c757d; margin-top: 5px;">
+                        <!-- Will be populated by JavaScript -->
+                    </div>
+                </div>
+                <div id="detailedBreakdown" style="display: none; margin-top: 15px; border-top: 1px solid #dee2e6; padding-top: 15px;">
+                    <h4 style="margin: 0 0 10px 0; font-size: 1em; color: #293E4C;">Detailed Pallet List</h4>
+                    <div id="detailedPalletsList" style="max-height: 200px; overflow-y: auto;">
+                        <!-- Will be populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+            
             <!-- SINGLE SHIPMENT SECTION -->
             <div id="singleShipmentSection">
                 <form id="singleShipmentForm" onsubmit="return false;">
@@ -1908,6 +1941,9 @@ function getSelectedPallets() {
         }
     });
     
+    // Debug logging to help identify issues with selection across filters
+    console.log(`Found ${selectedCheckboxes.length} checked checkboxes, ${selectedPallets.length} matching pallets in data`);
+    
     return selectedPallets;
 }
 
@@ -2466,6 +2502,141 @@ function loadPersistedFilters() {
     
     // Apply filters after loading
     filterPallets();
+}
+
+// Function to update the selected pallets breakdown in the modal
+function updateSelectedPalletsBreakdown() {
+    const selectedPallets = getSelectedPallets();
+    
+    // Group by wattage and calculate totals
+    const wattageGroups = {};
+    let totalPallets = 0;
+    let totalQuantity = 0;
+    
+    selectedPallets.forEach(pallet => {
+        const wattage = pallet.wattage;
+        const quantity = parseInt(pallet.quantity);
+        
+        if (!wattageGroups[wattage]) {
+            wattageGroups[wattage] = {
+                palletCount: 0,
+                totalQuantity: 0,
+                pallets: []
+            };
+        }
+        
+        wattageGroups[wattage].palletCount++;
+        wattageGroups[wattage].totalQuantity += quantity;
+        wattageGroups[wattage].pallets.push(pallet);
+        
+        totalPallets++;
+        totalQuantity += quantity;
+    });
+    
+    // Create summary display
+    const wattageQuantitySummary = document.getElementById('wattageQuantitySummary');
+    const totalPalletsCount = document.getElementById('totalPalletsCount');
+    
+    if (totalPallets === 0) {
+        wattageQuantitySummary.innerHTML = '<span style="color: #dc3545;">No pallets selected</span>';
+        totalPalletsCount.textContent = '';
+        return;
+    }
+    
+    // Format wattage breakdown in new format: "555W (10 pallets 300 modules)"
+    const wattageBreakdown = Object.keys(wattageGroups)
+        .sort((a, b) => parseInt(a) - parseInt(b))
+        .map(wattage => {
+            const group = wattageGroups[wattage];
+            const palletWord = group.palletCount === 1 ? 'pallet' : 'pallets';
+            const moduleWord = group.totalQuantity === 1 ? 'module' : 'modules';
+            return `${wattage}W (${group.palletCount} ${palletWord} ${group.totalQuantity.toLocaleString()} ${moduleWord})`;
+        })
+        .join(' ');
+    
+    wattageQuantitySummary.innerHTML = wattageBreakdown;
+    totalPalletsCount.textContent = `Total: ${totalPallets} pallets, ${totalQuantity.toLocaleString()} modules`;
+    
+    // Update detailed breakdown
+    updateDetailedBreakdown(wattageGroups, selectedPallets);
+}
+
+// Function to update the detailed pallet list
+function updateDetailedBreakdown(wattageGroups, selectedPallets) {
+    const detailedPalletsList = document.getElementById('detailedPalletsList');
+    
+    if (!detailedPalletsList) return;
+    
+    let html = '';
+    
+    // Sort wattages numerically
+    const sortedWattages = Object.keys(wattageGroups).sort((a, b) => parseInt(a) - parseInt(b));
+    
+    sortedWattages.forEach(wattage => {
+        const group = wattageGroups[wattage];
+        html += `<div style="margin-bottom: 15px;">`;
+        html += `<h5 style="margin: 0 0 8px 0; color: #488C9A; font-size: 0.95em;">${wattage}W - ${group.palletCount} pallets (${group.totalQuantity.toLocaleString()} modules)</h5>`;
+        html += `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px;">`;
+        
+        group.pallets.forEach(pallet => {
+            const palletId = pallet.pallet_identifier || `ID: ${pallet.pallet_id}`;
+            const quantity = parseInt(pallet.quantity).toLocaleString();
+            html += `<div style="padding: 8px; background: white; border: 1px solid #dee2e6; border-radius: 4px; font-size: 0.85em;">`;
+            html += `<div style="font-weight: 500;">${palletId}</div>`;
+            html += `<div style="color: #6c757d;">${quantity} modules</div>`;
+            html += `</div>`;
+        });
+        
+        html += `</div></div>`;
+    });
+    
+    detailedPalletsList.innerHTML = html;
+}
+
+// Initialize the breakdown functionality
+document.addEventListener('DOMContentLoaded', function() {
+    // Toggle detailed breakdown
+    const toggleBtn = document.getElementById('toggleDetailedBreakdown');
+    const detailedBreakdown = document.getElementById('detailedBreakdown');
+    
+    if (toggleBtn && detailedBreakdown) {
+        toggleBtn.addEventListener('click', function() {
+            const isHidden = detailedBreakdown.style.display === 'none';
+            detailedBreakdown.style.display = isHidden ? 'block' : 'none';
+            toggleBtn.textContent = isHidden ? 'Hide Details' : 'Show Details';
+        });
+    }
+    
+    // Update breakdown when pallets are selected/deselected
+    function attachPalletCheckboxListeners() {
+        document.querySelectorAll('.pallet-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', updateSelectedPalletsBreakdown);
+        });
+    }
+    
+    // Initial attachment
+    attachPalletCheckboxListeners();
+    
+    // Re-attach listeners when pagination or filtering changes the table
+    const originalFilterPallets = window.filterPallets;
+    if (originalFilterPallets) {
+        window.filterPallets = function() {
+            originalFilterPallets.apply(this, arguments);
+            setTimeout(() => {
+                attachPalletCheckboxListeners();
+                updateSelectedPalletsBreakdown();
+            }, 100);
+        };
+    }
+});
+
+// Override openShipModal to update breakdown when modal opens
+const originalOpenShipModal = window.openShipModal;
+if (originalOpenShipModal) {
+    window.openShipModal = function() {
+        originalOpenShipModal.apply(this, arguments);
+        updateSelectedPalletsBreakdown();
+    };
 }
 </script>
 </body>
