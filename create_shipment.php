@@ -42,6 +42,131 @@ if ($role === 'admin') {
     }
 }
 
+// --- Handle BOL Check Request ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check_bol') {
+    header('Content-Type: application/json');
+    
+    $bolNumber = trim($_POST['bol_number'] ?? '');
+    $originType = $_POST['origin_type'] ?? '';
+    $originId = isset($_POST['origin_id']) ? intval($_POST['origin_id']) : null;
+    $destinationType = $_POST['destination_type'] ?? '';
+    $destinationId = isset($_POST['destination_id']) ? intval($_POST['destination_id']) : null;
+    
+    if (empty($bolNumber)) {
+        echo json_encode(['exists' => false]);
+        exit();
+    }
+    
+    try {
+        // Check for existing deliveries with this BOL number
+        $stmt = $conn->prepare("
+            SELECT d.id, d.origin_type, d.origin_id, d.project_id, d.warehouse_id,
+                   COALESCE(p.project_name, 'Unknown Project') as project_name,
+                   COALESCE(w.name, 'Unknown Warehouse') as warehouse_name,
+                   COUNT(*) as delivery_count,
+                   MAX(d.created_at) as latest_created_at,
+                   MIN(d.created_at) as earliest_created_at
+            FROM deliveries d
+            LEFT JOIN projects p ON d.project_id = p.id
+            LEFT JOIN warehouses w ON d.warehouse_id = w.id
+            WHERE d.bol_number = ?
+            GROUP BY d.origin_type, d.origin_id, d.project_id, d.warehouse_id
+        ");
+        
+        if ($stmt) {
+            $stmt->bind_param("s", $bolNumber);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $existingDeliveries = [];
+            
+            while ($row = $result->fetch_assoc()) {
+                $existingDeliveries[] = $row;
+            }
+            $stmt->close();
+            
+            if (empty($existingDeliveries)) {
+                echo json_encode(['exists' => false]);
+                exit();
+            }
+            
+            // Check if any of the existing deliveries conflict with the new one
+            $hasConflict = false;
+            $conflictDetails = [];
+            
+                         foreach ($existingDeliveries as $existing) {
+                 $sameOrigin = ($existing['origin_type'] === $originType && $existing['origin_id'] == $originId);
+                 $sameDestination = false;
+                 
+                 if ($destinationType === 'project' && $existing['project_id']) {
+                     $sameDestination = ($existing['project_id'] == $destinationId);
+                 } elseif ($destinationType === 'warehouse' && $existing['warehouse_id']) {
+                     $sameDestination = ($existing['warehouse_id'] == $destinationId);
+                 }
+                 
+                 // If origin and destination are the same, check if created recently (within 10 minutes)
+                 if ($sameOrigin && $sameDestination) {
+                     // Calculate time difference between the latest existing delivery and now
+                     $latestCreatedAt = new DateTime($existing['latest_created_at']);
+                     $now = new DateTime();
+                     $timeDifferenceMinutes = ($now->getTimestamp() - $latestCreatedAt->getTimestamp()) / 60;
+                     
+                                           // If created within 1 minute, this is likely intended wattage combining
+                      if ($timeDifferenceMinutes <= 1) {
+                          continue; // This is fine, probably combining wattages
+                      }
+                     
+                     // If created more than 10 minutes ago, warn about potential reuse
+                     $hasConflict = true;
+                     $destinationName = $existing['project_id'] ? $existing['project_name'] : $existing['warehouse_name'];
+                     $destinationTypeText = $existing['project_id'] ? 'Project' : 'Warehouse';
+                     
+                     // Calculate how long ago it was created for the warning message
+                     $timeAgo = '';
+                     if ($timeDifferenceMinutes < 60) {
+                         $timeAgo = round($timeDifferenceMinutes) . ' minutes ago';
+                     } elseif ($timeDifferenceMinutes < 1440) { // Less than 24 hours
+                         $timeAgo = round($timeDifferenceMinutes / 60) . ' hours ago';
+                     } else {
+                         $timeAgo = round($timeDifferenceMinutes / 1440) . ' days ago';
+                     }
+                     
+                     $conflictDetails[] = [
+                         'destination_type' => $destinationTypeText,
+                         'destination_name' => $destinationName,
+                         'delivery_count' => $existing['delivery_count'],
+                         'time_ago' => $timeAgo,
+                         'is_same_destination' => true
+                     ];
+                 } else {
+                     // Different origin or destination - definitely a conflict
+                     $hasConflict = true;
+                     $destinationName = $existing['project_id'] ? $existing['project_name'] : $existing['warehouse_name'];
+                     $destinationTypeText = $existing['project_id'] ? 'Project' : 'Warehouse';
+                     
+                     $conflictDetails[] = [
+                         'destination_type' => $destinationTypeText,
+                         'destination_name' => $destinationName,
+                         'delivery_count' => $existing['delivery_count'],
+                         'is_same_destination' => false
+                     ];
+                 }
+             }
+            
+            echo json_encode([
+                'exists' => true,
+                'has_conflict' => $hasConflict,
+                'conflicts' => $conflictDetails
+            ]);
+        } else {
+            echo json_encode(['exists' => false, 'error' => 'Database error']);
+        }
+    } catch (Exception $e) {
+        echo json_encode(['exists' => false, 'error' => $e->getMessage()]);
+    }
+    
+    exit();
+}
+
 // --- Handle Pallet Shipment ---
 $shipMessage = '';
 $createdDeliveryIds = [];
@@ -249,8 +374,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                 $groupByWattage[$w][] = $pallet;
             }
 
+            // Calculate total quantity for this group to proportionally distribute costs
+            $totalGroupQty = array_sum(array_map(function($palletsForWatt) {
+                return array_sum(array_column($palletsForWatt, 'quantity'));
+            }, $groupByWattage));
+            
             foreach ($groupByWattage as $wattage => $palletsForWatt) {
                 $groupQty = array_sum(array_column($palletsForWatt, 'quantity'));
+                
+                // Calculate proportional costs based on quantity
+                $proportionOfTotal = $totalGroupQty > 0 ? ($groupQty / $totalGroupQty) : 1;
+                $proportionalFreightCost = $freightCost * $proportionOfTotal;
+                $proportionalAccessorialCost = $accessorialCost * $proportionOfTotal;
+                $proportionalCustomerCost = $customerCost * $proportionOfTotal;
+                $proportionalMiles = $miles * $proportionOfTotal;
                 
                 // Determine manufacturer for this specific group (should be consistent within a wattage group)
                 $groupManufacturer = $supplier_name; // Default fallback
@@ -292,19 +429,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                 $deliveryTypes .= 's';
 
                 $deliveryColumns[] = 'freight_cost';
-                $deliveryParams[] = $freightCost;
+                $deliveryParams[] = $proportionalFreightCost;
                 $deliveryTypes .= 'd';
 
                 $deliveryColumns[] = 'accessorial_costs';
-                $deliveryParams[] = $accessorialCost;
+                $deliveryParams[] = $proportionalAccessorialCost;
                 $deliveryTypes .= 'd';
 
                 $deliveryColumns[] = 'customer_cost';
-                $deliveryParams[] = $customerCost;
+                $deliveryParams[] = $proportionalCustomerCost;
                 $deliveryTypes .= 'd';
 
                 $deliveryColumns[] = 'miles';
-                $deliveryParams[] = $miles;
+                $deliveryParams[] = $proportionalMiles;
                 $deliveryTypes .= 'd';
 
                 if ($destinationType === 'project') {
@@ -1227,27 +1364,7 @@ if (!empty($bolCompletionMessage)) {
                 <button type="button" class="modal-tab" id="multiTabBtn">Multiple Shipments</button>
             </div>
             
-            <!-- SELECTED PALLETS BREAKDOWN -->
-            <div id="selectedPalletsBreakdown" style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <h3 style="margin: 0; color: #293E4C; font-size: 1.1em;">Selected Pallets</h3>
-                    <button type="button" id="toggleDetailedBreakdown" style="background: #488C9A; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9em;">Show Details</button>
-                </div>
-                <div id="summaryBreakdown" style="margin-top: 10px;">
-                    <div id="wattageQuantitySummary" style="font-weight: 500; color: #293E4C;">
-                        <!-- Will be populated by JavaScript -->
-                    </div>
-                    <div id="totalPalletsCount" style="font-size: 0.9em; color: #6c757d; margin-top: 5px;">
-                        <!-- Will be populated by JavaScript -->
-                    </div>
-                </div>
-                <div id="detailedBreakdown" style="display: none; margin-top: 15px; border-top: 1px solid #dee2e6; padding-top: 15px;">
-                    <h4 style="margin: 0 0 10px 0; font-size: 1em; color: #293E4C;">Detailed Pallet List</h4>
-                    <div id="detailedPalletsList" style="max-height: 200px; overflow-y: auto;">
-                        <!-- Will be populated by JavaScript -->
-                    </div>
-                </div>
-            </div>
+
             
             <!-- SINGLE SHIPMENT SECTION -->
             <div id="singleShipmentSection">
@@ -1419,6 +1536,27 @@ if (!empty($bolCompletionMessage)) {
                         Create Deliveries
                     </button>
                 </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- BOL Duplicate Warning Modal -->
+<div id="bolWarningModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 500px;">
+        <span class="close-modal-btn" onclick="closeBolWarningModal()">&times;</span>
+        <div class="shipment-details-modal-content">
+            <h2 style="margin-top: 0; text-align: center; color: #d32f2f;">⚠️ BOL Number Already Exists</h2>
+            <div id="bolWarningContent" style="margin: 20px 0;">
+                <!-- Warning content will be populated by JavaScript -->
+            </div>
+            <div style="display: flex; gap: 15px; justify-content: center; margin-top: 25px;">
+                <button type="button" class="action-button" style="background: #d32f2f !important;" onclick="closeBolWarningModal()">
+                    Cancel
+                </button>
+                <button type="button" class="action-button" onclick="proceedWithDuplicateBol()">
+                    Proceed Anyway
+                </button>
             </div>
         </div>
     </div>
@@ -1930,7 +2068,9 @@ function determineOriginFromSelectedPallets() {
 }
 
 function getSelectedPallets() {
-    const selectedCheckboxes = document.querySelectorAll('.pallet-checkbox:checked');
+    // Get ALL checkboxes, regardless of visibility, and filter for checked ones
+    const allCheckboxes = document.querySelectorAll('.pallet-checkbox');
+    const selectedCheckboxes = Array.from(allCheckboxes).filter(checkbox => checkbox.checked);
     const selectedPallets = [];
     
     selectedCheckboxes.forEach(checkbox => {
@@ -1942,7 +2082,7 @@ function getSelectedPallets() {
     });
     
     // Debug logging to help identify issues with selection across filters
-    console.log(`Found ${selectedCheckboxes.length} checked checkboxes, ${selectedPallets.length} matching pallets in data`);
+    console.log(`Found ${selectedCheckboxes.length} checked checkboxes out of ${allCheckboxes.length} total, ${selectedPallets.length} matching pallets in data`);
     
     return selectedPallets;
 }
@@ -2099,6 +2239,97 @@ function calculateDistanceMulti() {
     });
 }
 
+// ----------------- BOL DUPLICATE WARNING SYSTEM -----------------
+let pendingSubmission = null; // Store the pending submission details
+
+function checkBolDuplicates(bolNumber, originType, originId, destinationType, destinationId, callback) {
+    if (!bolNumber || !bolNumber.trim()) {
+        callback(false);
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('action', 'check_bol');
+    formData.append('bol_number', bolNumber.trim());
+    formData.append('origin_type', originType);
+    formData.append('origin_id', originId);
+    formData.append('destination_type', destinationType);
+    formData.append('destination_id', destinationId);
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.exists && data.has_conflict) {
+            showBolWarning(bolNumber, data.conflicts);
+            callback(true); // Has conflict
+        } else {
+            callback(false); // No conflict
+        }
+    })
+    .catch(error => {
+        console.error('Error checking BOL:', error);
+        callback(false); // On error, allow to proceed
+    });
+}
+
+function showBolWarning(bolNumber, conflicts) {
+    const modal = document.getElementById('bolWarningModal');
+    const content = document.getElementById('bolWarningContent');
+    
+    let conflictText = `<p>The BOL number "<strong>${bolNumber}</strong>" is already being used for:</p><ul style="margin: 15px 0; padding-left: 25px;">`;
+    
+    conflicts.forEach(conflict => {
+        const plural = conflict.delivery_count > 1 ? 'deliveries' : 'delivery';
+        let listItem = `<li>${conflict.destination_type}: <strong>${conflict.destination_name}</strong> (${conflict.delivery_count} ${plural})`;
+        
+        // Add time information if it's the same destination but created at different times
+        if (conflict.is_same_destination && conflict.time_ago) {
+            listItem += ` <em style="color: #d32f2f;">- Created ${conflict.time_ago}</em>`;
+        }
+        
+        listItem += `</li>`;
+        conflictText += listItem;
+    });
+    
+    conflictText += `</ul>`;
+    
+    // Customize the warning message based on conflict type
+    const hasSameDestinationConflict = conflicts.some(c => c.is_same_destination);
+    if (hasSameDestinationConflict) {
+        conflictText += `<p><strong>Warning:</strong> This BOL number was used for the same destination but created at a different time. This may be an accidental duplicate. Are you sure you want to proceed?</p>`;
+    } else {
+        conflictText += `<p><strong>Warning:</strong> Using the same BOL number for different destinations may cause confusion. Are you sure you want to proceed?</p>`;
+    }
+    
+    content.innerHTML = conflictText;
+    modal.style.display = 'block';
+}
+
+function closeBolWarningModal() {
+    const modal = document.getElementById('bolWarningModal');
+    modal.style.display = 'none';
+    pendingSubmission = null;
+}
+
+function proceedWithDuplicateBol() {
+    closeBolWarningModal();
+    if (pendingSubmission) {
+        pendingSubmission(); // Execute the pending submission
+        pendingSubmission = null;
+    }
+}
+
+// Close modal when clicking outside
+window.addEventListener('click', function(e) {
+    const modal = document.getElementById('bolWarningModal');
+    if (e.target === modal) {
+        closeBolWarningModal();
+    }
+});
+
 // ----------------- CONFIRM BUTTONS (SINGLE & MULTI) -----------------
 const confirmShipmentBtn = document.getElementById('confirmShipmentBtn');
 const confirmMultiShipmentBtn = document.getElementById('confirmMultiShipmentBtn');
@@ -2169,21 +2400,36 @@ if (confirmShipmentBtn) {
         // Check if Generate BOL checkbox is checked
         const generateBol = document.getElementById('generate_bol_single').checked;
 
-        // Populate hidden inputs
-        setOrCreateHidden(mainForm, 'origin_type', originType);
-        setOrCreateHidden(mainForm, 'origin_id', originId);
-        setOrCreateHidden(mainForm, 'destination_type', destinationType);
-        setOrCreateHidden(mainForm, 'destination_id', destinationId);
-        setOrCreateHidden(mainForm, 'bol_number', bol);
-        setOrCreateHidden(mainForm, 'departure_date', departure);
-        setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
-        setOrCreateHidden(mainForm, 'freight_cost', freightCost);
-        setOrCreateHidden(mainForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
-        setOrCreateHidden(mainForm, 'customer_cost', customerCost);
-        setOrCreateHidden(mainForm, 'miles', miles);
-        setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
+        // Function to actually submit the form
+        const submitForm = () => {
+            // Populate hidden inputs
+            setOrCreateHidden(mainForm, 'origin_type', originType);
+            setOrCreateHidden(mainForm, 'origin_id', originId);
+            setOrCreateHidden(mainForm, 'destination_type', destinationType);
+            setOrCreateHidden(mainForm, 'destination_id', destinationId);
+            setOrCreateHidden(mainForm, 'bol_number', bol);
+            setOrCreateHidden(mainForm, 'departure_date', departure);
+            setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
+            setOrCreateHidden(mainForm, 'freight_cost', freightCost);
+            setOrCreateHidden(mainForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
+            setOrCreateHidden(mainForm, 'customer_cost', customerCost);
+            setOrCreateHidden(mainForm, 'miles', miles);
+            setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
 
-        mainForm.submit();
+            mainForm.submit();
+        };
+
+        // Check for BOL duplicates before submitting
+        checkBolDuplicates(bol, originType, originId, destinationType, destinationId, (hasConflict) => {
+            if (hasConflict) {
+                // Store the submission function to execute if user confirms
+                pendingSubmission = submitForm;
+                // Modal is already shown by checkBolDuplicates
+            } else {
+                // No conflict, proceed normally
+                submitForm();
+            }
+        });
     });
 }
 
@@ -2268,26 +2514,61 @@ if (confirmMultiShipmentBtn) {
         // Check if Generate BOL checkbox is checked
         const generateBol = document.getElementById('generate_bol_multi').checked;
 
-        // Populate hidden inputs
-        setOrCreateHidden(mainForm, 'origin_type', originType);
-        setOrCreateHidden(mainForm, 'origin_id', originId);
-        setOrCreateHidden(mainForm, 'destination_type', destinationType);
-        setOrCreateHidden(mainForm, 'destination_id', destinationId);
-        setOrCreateHidden(mainForm, 'departure_date', departure);
-        setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
-        setOrCreateHidden(mainForm, 'freight_cost', freightCost);
-        setOrCreateHidden(mainForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
-        setOrCreateHidden(mainForm, 'customer_cost', customerCost);
-        setOrCreateHidden(mainForm, 'miles', miles);
-        
-        // Add all BOL numbers as a JSON array
-        setOrCreateHidden(mainForm, 'bol_numbers', JSON.stringify(bolNumbers));
-        
-        // Also set the first BOL as fallback for bol_number field
-        setOrCreateHidden(mainForm, 'bol_number', bolNumbers.length > 0 ? bolNumbers[0] : '');
-        setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
+        // Function to actually submit the form
+        const submitForm = () => {
+            // Populate hidden inputs
+            setOrCreateHidden(mainForm, 'origin_type', originType);
+            setOrCreateHidden(mainForm, 'origin_id', originId);
+            setOrCreateHidden(mainForm, 'destination_type', destinationType);
+            setOrCreateHidden(mainForm, 'destination_id', destinationId);
+            setOrCreateHidden(mainForm, 'departure_date', departure);
+            setOrCreateHidden(mainForm, 'est_arrival_date', arrival);
+            setOrCreateHidden(mainForm, 'freight_cost', freightCost);
+            setOrCreateHidden(mainForm, 'accessorial_cost', '0'); // Default to 0 since field is removed
+            setOrCreateHidden(mainForm, 'customer_cost', customerCost);
+            setOrCreateHidden(mainForm, 'miles', miles);
+            
+            // Add all BOL numbers as a JSON array
+            setOrCreateHidden(mainForm, 'bol_numbers', JSON.stringify(bolNumbers));
+            
+            // Also set the first BOL as fallback for bol_number field
+            setOrCreateHidden(mainForm, 'bol_number', bolNumbers.length > 0 ? bolNumbers[0] : '');
+            setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
 
-        mainForm.submit();
+            mainForm.submit();
+        };
+
+        // Check each BOL number for duplicates
+        let bolChecksCompleted = 0;
+        let hasAnyConflict = false;
+        const totalBolNumbers = bolNumbers.length;
+
+        if (totalBolNumbers === 0) {
+            submitForm();
+            return;
+        }
+
+        bolNumbers.forEach((bolNum, index) => {
+            checkBolDuplicates(bolNum, originType, originId, destinationType, destinationId, (hasConflict) => {
+                if (hasConflict) {
+                    hasAnyConflict = true;
+                }
+                
+                bolChecksCompleted++;
+                
+                // If this is the last BOL to check
+                if (bolChecksCompleted === totalBolNumbers) {
+                    if (hasAnyConflict) {
+                        // Store the submission function to execute if user confirms
+                        pendingSubmission = submitForm;
+                        // Modal is already shown by the first conflict found
+                    } else {
+                        // No conflicts found, proceed normally
+                        submitForm();
+                    }
+                }
+            });
+        });
     });
 }
 
@@ -2504,140 +2785,9 @@ function loadPersistedFilters() {
     filterPallets();
 }
 
-// Function to update the selected pallets breakdown in the modal
-function updateSelectedPalletsBreakdown() {
-    const selectedPallets = getSelectedPallets();
-    
-    // Group by wattage and calculate totals
-    const wattageGroups = {};
-    let totalPallets = 0;
-    let totalQuantity = 0;
-    
-    selectedPallets.forEach(pallet => {
-        const wattage = pallet.wattage;
-        const quantity = parseInt(pallet.quantity);
-        
-        if (!wattageGroups[wattage]) {
-            wattageGroups[wattage] = {
-                palletCount: 0,
-                totalQuantity: 0,
-                pallets: []
-            };
-        }
-        
-        wattageGroups[wattage].palletCount++;
-        wattageGroups[wattage].totalQuantity += quantity;
-        wattageGroups[wattage].pallets.push(pallet);
-        
-        totalPallets++;
-        totalQuantity += quantity;
-    });
-    
-    // Create summary display
-    const wattageQuantitySummary = document.getElementById('wattageQuantitySummary');
-    const totalPalletsCount = document.getElementById('totalPalletsCount');
-    
-    if (totalPallets === 0) {
-        wattageQuantitySummary.innerHTML = '<span style="color: #dc3545;">No pallets selected</span>';
-        totalPalletsCount.textContent = '';
-        return;
-    }
-    
-    // Format wattage breakdown in new format: "555W (10 pallets 300 modules)"
-    const wattageBreakdown = Object.keys(wattageGroups)
-        .sort((a, b) => parseInt(a) - parseInt(b))
-        .map(wattage => {
-            const group = wattageGroups[wattage];
-            const palletWord = group.palletCount === 1 ? 'pallet' : 'pallets';
-            const moduleWord = group.totalQuantity === 1 ? 'module' : 'modules';
-            return `${wattage}W (${group.palletCount} ${palletWord} ${group.totalQuantity.toLocaleString()} ${moduleWord})`;
-        })
-        .join(' ');
-    
-    wattageQuantitySummary.innerHTML = wattageBreakdown;
-    totalPalletsCount.textContent = `Total: ${totalPallets} pallets, ${totalQuantity.toLocaleString()} modules`;
-    
-    // Update detailed breakdown
-    updateDetailedBreakdown(wattageGroups, selectedPallets);
-}
 
-// Function to update the detailed pallet list
-function updateDetailedBreakdown(wattageGroups, selectedPallets) {
-    const detailedPalletsList = document.getElementById('detailedPalletsList');
-    
-    if (!detailedPalletsList) return;
-    
-    let html = '';
-    
-    // Sort wattages numerically
-    const sortedWattages = Object.keys(wattageGroups).sort((a, b) => parseInt(a) - parseInt(b));
-    
-    sortedWattages.forEach(wattage => {
-        const group = wattageGroups[wattage];
-        html += `<div style="margin-bottom: 15px;">`;
-        html += `<h5 style="margin: 0 0 8px 0; color: #488C9A; font-size: 0.95em;">${wattage}W - ${group.palletCount} pallets (${group.totalQuantity.toLocaleString()} modules)</h5>`;
-        html += `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px;">`;
-        
-        group.pallets.forEach(pallet => {
-            const palletId = pallet.pallet_identifier || `ID: ${pallet.pallet_id}`;
-            const quantity = parseInt(pallet.quantity).toLocaleString();
-            html += `<div style="padding: 8px; background: white; border: 1px solid #dee2e6; border-radius: 4px; font-size: 0.85em;">`;
-            html += `<div style="font-weight: 500;">${palletId}</div>`;
-            html += `<div style="color: #6c757d;">${quantity} modules</div>`;
-            html += `</div>`;
-        });
-        
-        html += `</div></div>`;
-    });
-    
-    detailedPalletsList.innerHTML = html;
-}
 
-// Initialize the breakdown functionality
-document.addEventListener('DOMContentLoaded', function() {
-    // Toggle detailed breakdown
-    const toggleBtn = document.getElementById('toggleDetailedBreakdown');
-    const detailedBreakdown = document.getElementById('detailedBreakdown');
-    
-    if (toggleBtn && detailedBreakdown) {
-        toggleBtn.addEventListener('click', function() {
-            const isHidden = detailedBreakdown.style.display === 'none';
-            detailedBreakdown.style.display = isHidden ? 'block' : 'none';
-            toggleBtn.textContent = isHidden ? 'Hide Details' : 'Show Details';
-        });
-    }
-    
-    // Update breakdown when pallets are selected/deselected
-    function attachPalletCheckboxListeners() {
-        document.querySelectorAll('.pallet-checkbox').forEach(checkbox => {
-            checkbox.addEventListener('change', updateSelectedPalletsBreakdown);
-        });
-    }
-    
-    // Initial attachment
-    attachPalletCheckboxListeners();
-    
-    // Re-attach listeners when pagination or filtering changes the table
-    const originalFilterPallets = window.filterPallets;
-    if (originalFilterPallets) {
-        window.filterPallets = function() {
-            originalFilterPallets.apply(this, arguments);
-            setTimeout(() => {
-                attachPalletCheckboxListeners();
-                updateSelectedPalletsBreakdown();
-            }, 100);
-        };
-    }
-});
 
-// Override openShipModal to update breakdown when modal opens
-const originalOpenShipModal = window.openShipModal;
-if (originalOpenShipModal) {
-    window.openShipModal = function() {
-        originalOpenShipModal.apply(this, arguments);
-        updateSelectedPalletsBreakdown();
-    };
-}
 </script>
 </body>
 </html> 
