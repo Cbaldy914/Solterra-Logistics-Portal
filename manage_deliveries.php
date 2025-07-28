@@ -2755,12 +2755,17 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         document.getElementById('bulkDeleteBtn').disabled = !anyChecked;
 
         // Update selected row count with modern styling
+        // Count unique shipments (rows), not individual delivery records
         var count = 0;
-        for (var checkbox of checkboxes) {
-            if (checkbox.checked) {
+        var mainRows = document.querySelectorAll('tbody tr[data-delivery-index]');
+        
+        for (var row of mainRows) {
+            var visibleCheckbox = row.querySelector('td.select-column input[type="checkbox"]:not([style*="display: none"])');
+            if (visibleCheckbox && visibleCheckbox.checked) {
                 count++;
             }
         }
+        
         var countDisplay = document.getElementById('selectedRowCount');
         if (countDisplay) {
             if (count > 0) {
