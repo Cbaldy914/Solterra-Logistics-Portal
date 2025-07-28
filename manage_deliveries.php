@@ -1021,9 +1021,9 @@ if (!empty($status_filter)) {
 
 $count_sql = "
     SELECT 
-        SUM(CASE WHEN (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project') THEN 1 ELSE 0 END) as project_count,
-        SUM(CASE WHEN d.warehouse_id IS NOT NULL THEN 1 ELSE 0 END) as warehouse_count,
-        COUNT(d.id) as total_count
+        COUNT(DISTINCT CASE WHEN (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project') THEN d.bol_number ELSE NULL END) as project_count,
+        COUNT(DISTINCT CASE WHEN d.warehouse_id IS NOT NULL THEN d.bol_number ELSE NULL END) as warehouse_count,
+        COUNT(DISTINCT d.bol_number) as total_count
     FROM deliveries d
     LEFT JOIN projects p ON d.project_id = p.id
     WHERE 1=1
@@ -2021,6 +2021,11 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
     <!-- Delivery Type Tabs -->
     <div class="delivery-type-tabs" style="margin: 24px 0;">
         <div style="display: flex; gap: 4px; background: var(--secondary-color); padding: 6px; border-radius: var(--border-radius); box-shadow: var(--box-shadow);">
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=all" 
+               class="delivery-tab modern-btn <?php echo ($delivery_type === 'all') ? 'primary' : 'secondary'; ?>"
+               style="flex: 1; text-align: center; font-weight: 500; transition: var(--transition); <?php echo ($delivery_type === 'all') ? 'background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%); color: white; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);' : ''; ?>">
+                📦 All Deliveries (<?php echo $delivery_counts['all']; ?>)
+            </a>
             <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=project" 
                class="delivery-tab modern-btn <?php echo ($delivery_type === 'project') ? 'primary' : 'secondary'; ?>"
                style="flex: 1; text-align: center; font-weight: 500; transition: var(--transition); <?php echo ($delivery_type === 'project') ? 'background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%); color: white; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);' : ''; ?>">
@@ -2030,11 +2035,6 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                class="delivery-tab modern-btn <?php echo ($delivery_type === 'warehouse') ? 'primary' : 'secondary'; ?>"
                style="flex: 1; text-align: center; font-weight: 500; transition: var(--transition); <?php echo ($delivery_type === 'warehouse') ? 'background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%); color: white; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);' : ''; ?>">
                 🏢 Warehouse Deliveries (<?php echo $delivery_counts['warehouse']; ?>)
-            </a>
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=all" 
-               class="delivery-tab modern-btn <?php echo ($delivery_type === 'all') ? 'primary' : 'secondary'; ?>"
-               style="flex: 1; text-align: center; font-weight: 500; transition: var(--transition); <?php echo ($delivery_type === 'all') ? 'background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%); color: white; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);' : ''; ?>">
-                📦 All Deliveries (<?php echo $delivery_counts['all']; ?>)
             </a>
         </div>
     </div>
