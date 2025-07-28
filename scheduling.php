@@ -426,7 +426,7 @@ if ($action) {
         }
     }
 
-    // List available deliveries for dropdown
+    // List available deliveries for dropdown - grouped by BOL number
     if ($action === 'list_deliveries') {
         $stmt = $conn->prepare(
             "SELECT id, bol_number, wattage, quantity, supplier
@@ -434,26 +434,69 @@ if ($action) {
              WHERE project_id = ?
                AND status_of_delivery = 'In Transit to Project'
                AND IFNULL(scheduled, 0) = 0
-             ORDER BY bol_number"
+             ORDER BY bol_number, wattage"
         );
         $stmt->bind_param("i", $project_id);
         $stmt->execute();
         $res = $stmt->get_result();
-        $deliveries = [];
+        $deliveries_raw = [];
         while ($row = $res->fetch_assoc()) {
-            $deliveries[] = $row;
+            $deliveries_raw[] = $row;
         }
         $stmt->close();
+        
+        // Group deliveries by BOL number
+        $grouped_deliveries = [];
+        foreach ($deliveries_raw as $delivery) {
+            $bol = $delivery['bol_number'];
+            if (!isset($grouped_deliveries[$bol])) {
+                $grouped_deliveries[$bol] = [
+                    'bol_number' => $bol,
+                    'supplier' => $delivery['supplier'],
+                    'delivery_ids' => [],
+                    'wattages' => [],
+                    'total_quantity' => 0
+                ];
+            }
+            $grouped_deliveries[$bol]['delivery_ids'][] = $delivery['id'];
+            $grouped_deliveries[$bol]['wattages'][] = $delivery['wattage'] . 'W (' . number_format($delivery['quantity']) . ')';
+            $grouped_deliveries[$bol]['total_quantity'] += $delivery['quantity'];
+        }
+        
+        // Convert to indexed array and format display info
+        $deliveries = [];
+        foreach ($grouped_deliveries as $group) {
+            $deliveries[] = [
+                'bol_number' => $group['bol_number'],
+                'supplier' => $group['supplier'],
+                'delivery_ids' => implode(',', $group['delivery_ids']),
+                'wattage_display' => implode(', ', $group['wattages']),
+                'total_quantity' => $group['total_quantity']
+            ];
+        }
+        
         json_response(['success' => true, 'deliveries' => $deliveries]);
     }
 
     // Add appointment (linked to delivery)
     if ($action === 'add_appointment') {
-        $delivery_id = isset($_POST['delivery_id']) ? intval($_POST['delivery_id']) : 0;
+        $delivery_id_param = $_POST['delivery_id'] ?? '';
         $start_local = $_POST['start_datetime'] ?? '';
         
         if (empty($start_local)) {
             json_response(['success' => false, 'error' => 'Please choose a time slot.']);
+        }
+        
+        if (empty($delivery_id_param)) {
+            json_response(['success' => false, 'error' => 'Valid delivery required for appointment.']);
+        }
+        
+        // Parse delivery IDs (could be single ID or comma-separated list)
+        $delivery_ids = array_map('intval', explode(',', $delivery_id_param));
+        $delivery_ids = array_filter($delivery_ids, function($id) { return $id > 0; });
+        
+        if (empty($delivery_ids)) {
+            json_response(['success' => false, 'error' => 'Valid delivery IDs required for appointment.']);
         }
         
         // Debug logging for timezone conversion
@@ -462,96 +505,161 @@ if ($action) {
         $start_utc = local_to_utc($start_local, $site_tz);
         error_log("Scheduling: Converted to UTC: $start_utc");
 
-        // Regular appointment with delivery
-        if ($delivery_id <= 0) {
-            json_response(['success' => false, 'error' => 'Valid delivery required for appointment.']);
-        }
-        
-        // Get delivery data
+        // Get combined delivery data for the group
+        $placeholders = implode(',', array_fill(0, count($delivery_ids), '?'));
+        $types = str_repeat('i', count($delivery_ids));
         $delivery_stmt = $conn->prepare("
             SELECT bol_number, wattage, quantity, supplier
             FROM deliveries 
-            WHERE id = ? AND project_id = ?
+            WHERE id IN ($placeholders) AND project_id = ?
+            ORDER BY wattage
         ");
-        $delivery_stmt->bind_param("ii", $delivery_id, $project_id);
+        $delivery_stmt->bind_param($types . 'i', ...array_merge($delivery_ids, [$project_id]));
         $delivery_stmt->execute();
         $delivery_res = $delivery_stmt->get_result();
         
-        if ($delivery_data = $delivery_res->fetch_assoc()) {
-            $wattage_json = json_encode([['watt' => $delivery_data['wattage'], 'qty' => $delivery_data['quantity']]]);
-            $ref_nums = trim($_POST['reference_numbers'] ?? '');
-            $descr = trim($_POST['description'] ?? '');
-            
+        $deliveries_data = [];
+        $bol_number = '';
+        $combined_wattage = [];
+        
+        while ($delivery = $delivery_res->fetch_assoc()) {
+            $deliveries_data[] = $delivery;
+            $bol_number = $delivery['bol_number']; // Should be same for all in group
+            $combined_wattage[] = ['watt' => $delivery['wattage'], 'qty' => $delivery['quantity']];
+        }
+        $delivery_stmt->close();
+        
+        if (empty($deliveries_data)) {
+            json_response(['success' => false, 'error' => 'No valid deliveries found']);
+        }
+        
+        $wattage_json = json_encode($combined_wattage);
+        $ref_nums = trim($_POST['reference_numbers'] ?? '');
+        $descr = trim($_POST['description'] ?? '');
+        
+        // Create appointments for each delivery in the group
+        $conn->begin_transaction();
+        try {
             $stmt = $conn->prepare("
                 INSERT INTO site_scheduling
                 (project_id, delivery_id, start_time, bol_number, wattage,
                  reference_numbers, description, is_closed)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 0)
             ");
-            $stmt->bind_param("iisssss",
-                $project_id,
-                $delivery_id,
-                $start_utc,
-                $delivery_data['bol_number'],
-                $wattage_json,
-                $ref_nums,
-                $descr
-            );
             
-            if ($stmt->execute()) {
-                // Update delivery as scheduled
-                $update_delivery = $conn->prepare("UPDATE deliveries SET scheduled = 1 WHERE id = ?");
-                $update_delivery->bind_param("i", $delivery_id);
-                $update_delivery->execute();
-                $update_delivery->close();
+            foreach ($delivery_ids as $delivery_id) {
+                $stmt->bind_param("iisssss",
+                    $project_id,
+                    $delivery_id,
+                    $start_utc,
+                    $bol_number,
+                    $wattage_json,
+                    $ref_nums,
+                    $descr
+                );
                 
-                json_response(['success' => true]);
-            } else {
-                json_response(['success' => false, 'error' => $stmt->error]);
+                if (!$stmt->execute()) {
+                    throw new Exception($stmt->error);
+                }
             }
             $stmt->close();
-        } else {
-            json_response(['success' => false, 'error' => 'Delivery not found']);
+            
+            // Update all deliveries as scheduled
+            $placeholders_update = implode(',', array_fill(0, count($delivery_ids), '?'));
+            $update_delivery = $conn->prepare("UPDATE deliveries SET scheduled = 1 WHERE id IN ($placeholders_update)");
+            $update_delivery->bind_param(str_repeat('i', count($delivery_ids)), ...$delivery_ids);
+            $update_delivery->execute();
+            $update_delivery->close();
+            
+            $conn->commit();
+            json_response(['success' => true]);
+            
+        } catch (Exception $e) {
+            $conn->rollback();
+            json_response(['success' => false, 'error' => $e->getMessage()]);
         }
-        $delivery_stmt->close();
     }
 
     // Get appointment details for editing
     if ($action === 'get_appointment') {
         $appointment_id = isset($_GET['appointment_id']) ? intval($_GET['appointment_id']) : 0;
         if ($appointment_id > 0) {
+            // First get the basic appointment info
             $stmt = $conn->prepare("
-                SELECT s.id, s.start_time, s.bol_number, s.delivery_id, s.wattage,
-                       s.reference_numbers, s.description, s.arrival_time, s.departure_time,
-                       s.proof_of_delivery, s.is_closed,
-                       d.status_of_delivery, d.supplier, d.quantity as delivery_quantity,
-                       CASE 
-                           WHEN d.supplier LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(d.supplier, '-', 1))
-                           ELSE d.supplier
-                       END AS manufacturer_name,
-                       CASE
-                           WHEN d.origin_type = 'warehouse' THEN w.name
-                           WHEN d.origin_type = 'manufacturer' THEN 
-                               CASE 
-                                   WHEN d.supplier LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(d.supplier, '-', 1))
-                                   ELSE d.supplier
-                               END
-                           ELSE d.supplier
-                       END AS origin_name
+                SELECT s.bol_number, s.start_time, s.reference_numbers, s.description, 
+                       s.arrival_time, s.departure_time, s.proof_of_delivery, s.is_closed
                 FROM site_scheduling s
-                LEFT JOIN deliveries d ON s.delivery_id = d.id
-                LEFT JOIN warehouses w ON d.origin_type = 'warehouse' AND d.origin_id = w.id
                 WHERE s.id = ? AND s.project_id = ?
             ");
             $stmt->bind_param("ii", $appointment_id, $project_id);
             $stmt->execute();
             $res = $stmt->get_result();
             
-            if ($appointment = $res->fetch_assoc()) {
-                // Convert UTC times to local
-                $appointment['start_time'] = utc_to_local($appointment['start_time'], $site_tz);
-                $appointment['arrival_time'] = utc_to_local($appointment['arrival_time'], $site_tz);
-                $appointment['departure_time'] = utc_to_local($appointment['departure_time'], $site_tz);
+            if ($appointment_base = $res->fetch_assoc()) {
+                $stmt->close();
+                
+                // Get all related appointments for the same BOL and time
+                $related_stmt = $conn->prepare("
+                    SELECT s.id, s.delivery_id, s.wattage,
+                           d.status_of_delivery, d.supplier, d.quantity as delivery_quantity, d.wattage as delivery_wattage,
+                           CASE 
+                               WHEN d.supplier LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(d.supplier, '-', 1))
+                               ELSE d.supplier
+                           END AS manufacturer_name,
+                           CASE
+                               WHEN d.origin_type = 'warehouse' THEN w.name
+                               WHEN d.origin_type = 'manufacturer' THEN 
+                                   CASE 
+                                       WHEN d.supplier LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(d.supplier, '-', 1))
+                                       ELSE d.supplier
+                                   END
+                               ELSE d.supplier
+                           END AS origin_name
+                    FROM site_scheduling s
+                    LEFT JOIN deliveries d ON s.delivery_id = d.id
+                    LEFT JOIN warehouses w ON d.origin_type = 'warehouse' AND d.origin_id = w.id
+                    WHERE s.bol_number = ? AND s.start_time = ? AND s.project_id = ?
+                    ORDER BY d.wattage
+                ");
+                $related_stmt->bind_param("ssi", $appointment_base['bol_number'], $appointment_base['start_time'], $project_id);
+                $related_stmt->execute();
+                $related_res = $related_stmt->get_result();
+                
+                $appointment_ids = [];
+                $wattages = [];
+                $total_quantity = 0;
+                $supplier = '';
+                $manufacturer_name = '';
+                $origin_name = '';
+                
+                while ($related = $related_res->fetch_assoc()) {
+                    $appointment_ids[] = $related['id'];
+                    $wattages[] = $related['delivery_wattage'] . 'W (' . number_format($related['delivery_quantity']) . ')';
+                    $total_quantity += $related['delivery_quantity'];
+                    if (empty($supplier)) $supplier = $related['supplier'];
+                    if (empty($manufacturer_name)) $manufacturer_name = $related['manufacturer_name'];
+                    if (empty($origin_name)) $origin_name = $related['origin_name'];
+                }
+                $related_stmt->close();
+                
+                // Combine the data
+                $appointment = [
+                    'id' => $appointment_id,
+                    'all_appointment_ids' => implode(',', $appointment_ids),
+                    'bol_number' => $appointment_base['bol_number'],
+                    'start_time' => utc_to_local($appointment_base['start_time'], $site_tz),
+                    'arrival_time' => utc_to_local($appointment_base['arrival_time'], $site_tz),
+                    'departure_time' => utc_to_local($appointment_base['departure_time'], $site_tz),
+                    'reference_numbers' => $appointment_base['reference_numbers'],
+                    'description' => $appointment_base['description'],
+                    'proof_of_delivery' => $appointment_base['proof_of_delivery'],
+                    'is_closed' => $appointment_base['is_closed'],
+                    'supplier' => $supplier,
+                    'manufacturer_name' => $manufacturer_name,
+                    'origin_name' => $origin_name,
+                    'wattage_display' => implode(', ', $wattages),
+                    'total_quantity' => $total_quantity
+                ];
                 
                 json_response(['success' => true, 'appointment' => $appointment]);
             } else {
@@ -654,89 +762,115 @@ if ($action) {
             
             // NEW: Update delivery status if appointment is completed (both arrival and departure times are set)
             if ($arrival_utc && $departure_utc) {
-                // Get the delivery_id for this appointment
-                $get_delivery_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ? AND project_id = ?");
-                $get_delivery_stmt->bind_param("ii", $appointment_id, $project_id);
-                $get_delivery_stmt->execute();
-                $get_delivery_stmt->bind_result($delivery_id_for_update);
-                if ($get_delivery_stmt->fetch() && $delivery_id_for_update) {
-                    $get_delivery_stmt->close();
+                // Get the BOL and start_time for this appointment to find ALL related appointments
+                $get_appointment_info_stmt = $conn->prepare("SELECT bol_number, start_time FROM site_scheduling WHERE id = ? AND project_id = ?");
+                $get_appointment_info_stmt->bind_param("ii", $appointment_id, $project_id);
+                $get_appointment_info_stmt->execute();
+                $get_appointment_info_stmt->bind_result($appointment_bol, $appointment_start_time);
+                
+                if ($get_appointment_info_stmt->fetch() && $appointment_bol && $appointment_start_time) {
+                    $get_appointment_info_stmt->close();
                     
-                    // Update delivery status to "Delivered to Project", set actual delivery date, and copy POD
-                    $update_delivery_sql = "
-                        UPDATE deliveries 
-                        SET status_of_delivery = 'Delivered to Project', 
-                            actual_delivery_date = ?";
-                    $delivery_params = [$arrival_time]; // Use local arrival time for delivery date
-                    $delivery_param_types = "s";
+                    // Find ALL delivery_ids for appointments with the same BOL and start_time (grouped delivery)
+                    $get_all_deliveries_stmt = $conn->prepare("
+                        SELECT delivery_id 
+                        FROM site_scheduling 
+                        WHERE bol_number = ? AND start_time = ? AND project_id = ?
+                    ");
+                    $get_all_deliveries_stmt->bind_param("ssi", $appointment_bol, $appointment_start_time, $project_id);
+                    $get_all_deliveries_stmt->execute();
+                    $delivery_result = $get_all_deliveries_stmt->get_result();
+                    $delivery_ids_to_update = [];
                     
-                    // If POD was uploaded, copy it to the delivery record
-                    if ($pod_path) {
-                        $update_delivery_sql .= ", proof_of_delivery = ?";
-                        $delivery_params[] = $pod_path;
-                        $delivery_param_types .= "s";
+                    while ($delivery_row = $delivery_result->fetch_assoc()) {
+                        $delivery_ids_to_update[] = $delivery_row['delivery_id'];
                     }
+                    $get_all_deliveries_stmt->close();
                     
-                    $update_delivery_sql .= " WHERE id = ?";
-                    $delivery_params[] = $delivery_id_for_update;
-                    $delivery_param_types .= "i";
-                    
-                    $update_delivery_stmt = $conn->prepare($update_delivery_sql);
-                    $update_delivery_stmt->bind_param($delivery_param_types, ...$delivery_params);
-                    
-                    if (!$update_delivery_stmt->execute()) {
-                        error_log("Failed to update delivery status: " . $update_delivery_stmt->error);
-                    } else {
-                        // Update associated pallet statuses to "Delivered to Project"
-                        $pallet_status_update_count = 0;
-                        $new_pallet_status = 'Delivered to Project';
+                    if (!empty($delivery_ids_to_update)) {
+                        // Update ALL delivery records for this grouped shipment
+                        $placeholders = implode(',', array_fill(0, count($delivery_ids_to_update), '?'));
+                        $update_delivery_sql = "
+                            UPDATE deliveries 
+                            SET status_of_delivery = 'Delivered to Project', 
+                                actual_delivery_date = ?";
+                        $delivery_params = [$arrival_time]; // Use local arrival time for delivery date
+                        $delivery_param_types = "s";
                         
-                        // Get all pallets associated with this delivery
-                        $get_pallets_stmt = $conn->prepare("
-                            SELECT dp.inventory_pallet_id 
-                            FROM delivery_pallets dp 
-                            WHERE dp.delivery_id = ?
-                        ");
-                        
-                        if ($get_pallets_stmt) {
-                            $get_pallets_stmt->bind_param("i", $delivery_id_for_update);
-                            $get_pallets_stmt->execute();
-                            $pallet_result = $get_pallets_stmt->get_result();
-                            $pallet_ids_to_update = [];
-                            
-                            while ($pallet_row = $pallet_result->fetch_assoc()) {
-                                $pallet_ids_to_update[] = $pallet_row['inventory_pallet_id'];
-                            }
-                            $get_pallets_stmt->close();
-                            
-                            // Update pallet statuses if we found any pallets
-                            if (!empty($pallet_ids_to_update)) {
-                                $placeholders = implode(',', array_fill(0, count($pallet_ids_to_update), '?'));
-                                $types = 's' . str_repeat('i', count($pallet_ids_to_update)); // status + pallet IDs
-                                
-                                $update_pallets_stmt = $conn->prepare("
-                                    UPDATE inventory_pallets 
-                                    SET status = ? 
-                                    WHERE id IN ($placeholders)
-                                ");
-                                
-                                if ($update_pallets_stmt) {
-                                    $update_pallets_stmt->bind_param($types, $new_pallet_status, ...$pallet_ids_to_update);
-                                    if ($update_pallets_stmt->execute()) {
-                                        $pallet_status_update_count = $update_pallets_stmt->affected_rows;
-                                    }
-                                    $update_pallets_stmt->close();
-                                }
-                            }
+                        // If POD was uploaded, copy it to all delivery records
+                        if ($pod_path) {
+                            $update_delivery_sql .= ", proof_of_delivery = ?";
+                            $delivery_params[] = $pod_path;
+                            $delivery_param_types .= "s";
                         }
                         
-                        // Log the successful update for debugging
-                        error_log("Scheduling: Updated delivery {$delivery_id_for_update} to 'Delivered to Project' and {$pallet_status_update_count} associated pallets");
+                        $update_delivery_sql .= " WHERE id IN ($placeholders)";
+                        foreach ($delivery_ids_to_update as $delivery_id) {
+                            $delivery_params[] = $delivery_id;
+                            $delivery_param_types .= "i";
+                        }
+                        
+                        $update_delivery_stmt = $conn->prepare($update_delivery_sql);
+                        $update_delivery_stmt->bind_param($delivery_param_types, ...$delivery_params);
+                        
+                        if (!$update_delivery_stmt->execute()) {
+                            error_log("Failed to update delivery statuses: " . $update_delivery_stmt->error);
+                        } else {
+                            $updated_delivery_count = $update_delivery_stmt->affected_rows;
+                            
+                            // Update associated pallet statuses to "Delivered to Project" for ALL deliveries
+                            $pallet_status_update_count = 0;
+                            $new_pallet_status = 'Delivered to Project';
+                            
+                            // Get all pallets associated with ALL these deliveries
+                            $placeholders_pallets = implode(',', array_fill(0, count($delivery_ids_to_update), '?'));
+                            $get_pallets_stmt = $conn->prepare("
+                                SELECT DISTINCT dp.inventory_pallet_id 
+                                FROM delivery_pallets dp 
+                                WHERE dp.delivery_id IN ($placeholders_pallets)
+                            ");
+                            
+                            if ($get_pallets_stmt) {
+                                $types_pallets = str_repeat('i', count($delivery_ids_to_update));
+                                $get_pallets_stmt->bind_param($types_pallets, ...$delivery_ids_to_update);
+                                $get_pallets_stmt->execute();
+                                $pallet_result = $get_pallets_stmt->get_result();
+                                $pallet_ids_to_update = [];
+                                
+                                while ($pallet_row = $pallet_result->fetch_assoc()) {
+                                    $pallet_ids_to_update[] = $pallet_row['inventory_pallet_id'];
+                                }
+                                $get_pallets_stmt->close();
+                                
+                                // Update pallet statuses if we found any pallets
+                                if (!empty($pallet_ids_to_update)) {
+                                    $placeholders_pallet_update = implode(',', array_fill(0, count($pallet_ids_to_update), '?'));
+                                    $types_pallet_update = 's' . str_repeat('i', count($pallet_ids_to_update)); // status + pallet IDs
+                                    
+                                    $update_pallets_stmt = $conn->prepare("
+                                        UPDATE inventory_pallets 
+                                        SET status = ? 
+                                        WHERE id IN ($placeholders_pallet_update)
+                                    ");
+                                    
+                                    if ($update_pallets_stmt) {
+                                        $update_pallets_stmt->bind_param($types_pallet_update, $new_pallet_status, ...$pallet_ids_to_update);
+                                        if ($update_pallets_stmt->execute()) {
+                                            $pallet_status_update_count = $update_pallets_stmt->affected_rows;
+                                        }
+                                        $update_pallets_stmt->close();
+                                    }
+                                }
+                            }
+                            
+                            // Log the successful update for debugging
+                            error_log("Scheduling: Updated {$updated_delivery_count} delivery records to 'Delivered to Project' for BOL {$appointment_bol} and {$pallet_status_update_count} associated pallets");
+                        }
+                        
+                        $update_delivery_stmt->close();
                     }
-                    
-                    $update_delivery_stmt->close();
                 } else {
-                    $get_delivery_stmt->close();
+                    $get_appointment_info_stmt->close();
                 }
             }
             
@@ -849,39 +983,68 @@ if ($action) {
         
         $conn->begin_transaction();
         try {
-            // First, check if this appointment has a delivery_id to update
-            $check_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ? AND project_id = ?");
+            // First, get the BOL number and start time to find all related appointments
+            $check_stmt = $conn->prepare("SELECT bol_number, start_time FROM site_scheduling WHERE id = ? AND project_id = ?");
             $check_stmt->bind_param("ii", $appointment_id, $project_id);
             $check_stmt->execute();
-            $check_stmt->bind_result($delivery_id);
+            $check_stmt->bind_result($bol_number, $start_time);
             $check_stmt->fetch();
             $check_stmt->close();
             
-            // Delete associated warranty claims
-            $del_warranty = $conn->prepare("DELETE FROM warranty_claims WHERE scheduling_id = ?");
-            $del_warranty->bind_param("i", $appointment_id);
-            $del_warranty->execute();
-            $del_warranty->close();
-            
-            // Delete associated safety incidents
-            $del_safety = $conn->prepare("DELETE FROM site_safety WHERE scheduling_id = ?");
-            $del_safety->bind_param("i", $appointment_id);
-            $del_safety->execute();
-            $del_safety->close();
-            
-            // Delete the appointment
-            $stmt = $conn->prepare("DELETE FROM site_scheduling WHERE id = ? AND project_id = ?");
-            $stmt->bind_param("ii", $appointment_id, $project_id);
-            
-            if (!$stmt->execute()) {
-                throw new Exception("Failed to delete appointment: " . $stmt->error);
+            if (empty($bol_number)) {
+                throw new Exception("Appointment not found");
             }
-            $stmt->close();
             
-            // If there was a delivery_id, update the delivery to mark as unscheduled
-            if ($delivery_id) {
-                $update_delivery = $conn->prepare("UPDATE deliveries SET scheduled = 0 WHERE id = ?");
-                $update_delivery->bind_param("i", $delivery_id);
+            // Get all related appointment IDs and delivery IDs for the same BOL and time
+            $related_stmt = $conn->prepare("SELECT id, delivery_id FROM site_scheduling WHERE bol_number = ? AND start_time = ? AND project_id = ?");
+            $related_stmt->bind_param("ssi", $bol_number, $start_time, $project_id);
+            $related_stmt->execute();
+            $related_res = $related_stmt->get_result();
+            
+            $all_appointment_ids = [];
+            $all_delivery_ids = [];
+            
+            while ($related = $related_res->fetch_assoc()) {
+                $all_appointment_ids[] = $related['id'];
+                if ($related['delivery_id']) {
+                    $all_delivery_ids[] = $related['delivery_id'];
+                }
+            }
+            $related_stmt->close();
+            
+            if (empty($all_appointment_ids)) {
+                throw new Exception("No related appointments found");
+            }
+            
+            // Delete associated warranty claims for all appointments
+            if (!empty($all_appointment_ids)) {
+                $placeholders = implode(',', array_fill(0, count($all_appointment_ids), '?'));
+                $del_warranty = $conn->prepare("DELETE FROM warranty_claims WHERE scheduling_id IN ($placeholders)");
+                $del_warranty->bind_param(str_repeat('i', count($all_appointment_ids)), ...$all_appointment_ids);
+                $del_warranty->execute();
+                $del_warranty->close();
+                
+                // Delete associated safety incidents for all appointments
+                $del_safety = $conn->prepare("DELETE FROM site_safety WHERE scheduling_id IN ($placeholders)");
+                $del_safety->bind_param(str_repeat('i', count($all_appointment_ids)), ...$all_appointment_ids);
+                $del_safety->execute();
+                $del_safety->close();
+                
+                // Delete all related appointments
+                $stmt = $conn->prepare("DELETE FROM site_scheduling WHERE id IN ($placeholders) AND project_id = ?");
+                $stmt->bind_param(str_repeat('i', count($all_appointment_ids)) . 'i', ...array_merge($all_appointment_ids, [$project_id]));
+                
+                if (!$stmt->execute()) {
+                    throw new Exception("Failed to delete appointments: " . $stmt->error);
+                }
+                $stmt->close();
+            }
+            
+            // Update all related deliveries to mark as unscheduled
+            if (!empty($all_delivery_ids)) {
+                $placeholders_deliveries = implode(',', array_fill(0, count($all_delivery_ids), '?'));
+                $update_delivery = $conn->prepare("UPDATE deliveries SET scheduled = 0 WHERE id IN ($placeholders_deliveries)");
+                $update_delivery->bind_param(str_repeat('i', count($all_delivery_ids)), ...$all_delivery_ids);
                 $update_delivery->execute();
                 $update_delivery->close();
             }
@@ -1867,7 +2030,7 @@ include('header.php');
                         <div id="deliveryInfoDisplay" style="padding:10px; background:#f8f9fa; border:1px solid #ddd; border-radius:4px;">
                             <div>BOL#: <span id="deliveryBOL">-</span></div>
                             <div>Supplier: <span id="deliverySupplier">-</span></div>
-                            <div>Wattage: <span id="deliveryWattage">-</span>W</div>
+                            <div>Wattage: <span id="deliveryWattage">-</span></div>
                             <div>Quantity: <span id="deliveryQuantity">-</span></div>
                         </div>
                     </div>
@@ -1923,7 +2086,7 @@ include('header.php');
                             <div style="padding:10px; background:#f8f9fa; border:1px solid #ddd; border-radius:4px;">
                                 <div>Origin: <span id="editDeliveryOrigin">-</span></div>
                                 <div>Manufacturer: <span id="editDeliveryManufacturer">-</span></div>
-                                <div>Wattage: <span id="editDeliveryWattage">-</span>W</div>
+                                <div>Wattage: <span id="editDeliveryWattage">-</span></div>
                                 <div>Quantity: <span id="editDeliveryQuantity">-</span></div>
                             </div>
                         </div>
@@ -2579,11 +2742,11 @@ include('header.php');
                     if (data.success) {
                         data.deliveries.forEach(del => {
                             const opt = document.createElement('option');
-                            opt.value = del.id;
+                            opt.value = del.delivery_ids; // Now contains comma-separated delivery IDs
                             opt.textContent = del.bol_number;
                             opt.dataset.supplier = del.supplier;
-                            opt.dataset.wattage = del.wattage;
-                            opt.dataset.quantity = del.quantity;
+                            opt.dataset.wattageDisplay = del.wattage_display;
+                            opt.dataset.totalQuantity = del.total_quantity;
                             select.appendChild(opt);
                         });
                     }
@@ -2592,12 +2755,12 @@ include('header.php');
 
             document.getElementById('bol_select').addEventListener('change', function() {
                 const selected = this.options[this.selectedIndex];
-                document.getElementById('add_delivery_id').value = this.value;
+                document.getElementById('add_delivery_id').value = this.value; // This will now be comma-separated IDs
                 if (this.value) {
                     document.getElementById('deliveryBOL').textContent = selected.textContent;
                     document.getElementById('deliverySupplier').textContent = selected.dataset.supplier || '-';
-                    document.getElementById('deliveryWattage').textContent = selected.dataset.wattage || '0';
-                    document.getElementById('deliveryQuantity').textContent = selected.dataset.quantity || '0';
+                    document.getElementById('deliveryWattage').textContent = selected.dataset.wattageDisplay || '0';
+                    document.getElementById('deliveryQuantity').textContent = parseInt(selected.dataset.totalQuantity).toLocaleString() || '0';
                     document.getElementById('deliveryInfoGroup').style.display = 'block';
                 } else {
                     document.getElementById('deliveryInfoGroup').style.display = 'none';
@@ -2989,26 +3152,13 @@ include('header.php');
                         document.getElementById('editDateTimeDisplay').textContent = formatDateTime(appointment.start_time);
                         
                         // Show delivery information if available
-                        if (appointment.origin_name || appointment.delivery_quantity || appointment.wattage) {
+                        if (appointment.origin_name || appointment.total_quantity || appointment.wattage_display) {
                             document.getElementById('editDeliveryOrigin').textContent = appointment.origin_name || 'Unknown';
                             document.getElementById('editDeliveryManufacturer').textContent = appointment.manufacturer_name || 'Unknown';
                             
-                            // Parse wattage from JSON if it exists, otherwise use delivery wattage
-                            let wattageDisplay = 'Unknown';
-                            if (appointment.wattage) {
-                                try {
-                                    const wattageData = JSON.parse(appointment.wattage);
-                                    if (Array.isArray(wattageData) && wattageData.length > 0) {
-                                        // Just show the wattage values, not the quantities
-                                        wattageDisplay = wattageData.map(w => `${w.watt}`).join(', ');
-                                    }
-                                } catch (e) {
-                                    // If parsing fails, try to use as direct value
-                                    wattageDisplay = appointment.wattage;
-                                }
-                            }
-                            document.getElementById('editDeliveryWattage').innerHTML = wattageDisplay;
-                            document.getElementById('editDeliveryQuantity').textContent = appointment.delivery_quantity || 'Unknown';
+                            // Use the combined wattage display from the updated get_appointment
+                            document.getElementById('editDeliveryWattage').innerHTML = appointment.wattage_display || 'Unknown';
+                            document.getElementById('editDeliveryQuantity').textContent = parseInt(appointment.total_quantity || 0).toLocaleString();
                             document.getElementById('deliveryInfoEditGroup').style.display = 'block';
                         } else {
                             document.getElementById('deliveryInfoEditGroup').style.display = 'none';
