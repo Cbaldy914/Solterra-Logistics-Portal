@@ -163,79 +163,159 @@ try {
         $stmtTransitTruckloads->close();
     }
 
-    // NEW: Fetch Inbound History (completed arrivals)
+    // NEW: Fetch Inbound History (completed arrivals) - Grouped by BOL#
     $inbound_history = [];
+    $inbound_grouped = [];
+    
+    // First get all deliveries grouped by BOL#
     $stmtInboundHistory = $conn->prepare("
         SELECT 
-            d.id AS delivery_id,
             d.bol_number,
             d.supplier,
-            d.wattage,
-            d.quantity AS total_modules,
             d.warehouse_arrival_date,
             d.proof_of_delivery,
-            COUNT(dp.inventory_pallet_id) AS pallet_count,
-            p.project_name AS source_project
+            COUNT(DISTINCT d.id) AS delivery_count,
+            COUNT(DISTINCT dp.inventory_pallet_id) AS total_pallets,
+            (SELECT SUM(d_inner.quantity) FROM deliveries d_inner WHERE d_inner.bol_number = d.bol_number AND d_inner.warehouse_id = d.warehouse_id AND d_inner.warehouse_arrival_date = d.warehouse_arrival_date) AS total_modules,
+            GROUP_CONCAT(DISTINCT d.wattage ORDER BY d.wattage SEPARATOR ', ') AS wattages,
+            GROUP_CONCAT(DISTINCT p.project_name SEPARATOR ', ') AS projects,
+            GROUP_CONCAT(DISTINCT d.id ORDER BY d.id SEPARATOR ',') AS delivery_ids,
+            CASE WHEN COUNT(DISTINCT d.wattage) > 1 THEN 1 ELSE 0 END AS is_mixed_wattage
         FROM deliveries d
         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
         LEFT JOIN projects p ON d.project_id = p.id
         WHERE d.warehouse_id = ? 
         AND d.status_of_delivery = 'Delivered to Warehouse'
         AND d.warehouse_arrival_date IS NOT NULL
-        GROUP BY d.id, d.bol_number, d.supplier, d.wattage, d.quantity, d.warehouse_arrival_date, d.proof_of_delivery, p.project_name
+        GROUP BY d.bol_number, d.supplier, d.warehouse_arrival_date, d.proof_of_delivery
         ORDER BY d.warehouse_arrival_date DESC
     ");
     if ($stmtInboundHistory) {
         $stmtInboundHistory->bind_param("i", $warehouse_id);
         $stmtInboundHistory->execute();
         $resultInboundHistory = $stmtInboundHistory->get_result();
+        $index = 0;
         while ($delivery = $resultInboundHistory->fetch_assoc()) {
-            $inbound_history[] = $delivery;
-            $delivery['source_project'] = $delivery['source_project'] ?? 'N/A';
+            $delivery['source_project'] = $delivery['projects'] ?? 'N/A';
+            $delivery['index'] = $index;
+            
+            // If mixed wattage, get individual delivery details
+            if ($delivery['is_mixed_wattage']) {
+                $delivery_ids = explode(',', $delivery['delivery_ids']);
+                $delivery['details'] = [];
+                
+                foreach ($delivery_ids as $del_id) {
+                    $stmtDetail = $conn->prepare("
+                        SELECT d.id, d.wattage, d.quantity, p.project_name,
+                               COUNT(dp.inventory_pallet_id) AS pallet_count
+                        FROM deliveries d
+                        LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+                        LEFT JOIN projects p ON d.project_id = p.id
+                        WHERE d.id = ?
+                        GROUP BY d.id, d.wattage, d.quantity, p.project_name
+                    ");
+                    if ($stmtDetail) {
+                        $stmtDetail->bind_param("i", $del_id);
+                        $stmtDetail->execute();
+                        $resultDetail = $stmtDetail->get_result();
+                        if ($detail = $resultDetail->fetch_assoc()) {
+                            $delivery['details'][] = $detail;
+                        }
+                        $stmtDetail->close();
+                    }
+                }
+            }
+            
+            $inbound_grouped[] = $delivery;
+            $index++;
         }
         $stmtInboundHistory->close();
     }
+    $inbound_history = $inbound_grouped;
 
-    // NEW: Fetch Outbound History (departures from this warehouse)
+    // NEW: Fetch Outbound History (departures from this warehouse) - Grouped by BOL#
     $outbound_history = [];
+    $outbound_grouped = [];
+    
     $stmtOutboundHistory = $conn->prepare("
         SELECT 
-            d.id AS delivery_id,
             d.bol_number,
             d.supplier,
-            d.wattage,
-            d.quantity AS total_modules,
             d.left_warehouse_date AS departure_date,
             d.anticipated_delivery_date,
-            CASE 
-                WHEN d.project_id IS NOT NULL THEN CONCAT('Project: ', p.project_name)
-                WHEN d.warehouse_id IS NOT NULL AND d.warehouse_id != ? THEN CONCAT('Warehouse: ', w.name)
-                ELSE 'Unknown Destination'
-            END AS destination,
-            p.project_name AS destination_project,
             d.status_of_delivery,
-            COUNT(DISTINCT dp.inventory_pallet_id) AS pallet_count
+            COUNT(DISTINCT d.id) AS delivery_count,
+            COUNT(DISTINCT dp.inventory_pallet_id) AS total_pallets,
+            (SELECT SUM(d_inner.quantity) FROM deliveries d_inner WHERE d_inner.bol_number = d.bol_number AND d_inner.supplier = d.supplier AND d_inner.left_warehouse_date = d.left_warehouse_date) AS total_modules,
+            GROUP_CONCAT(DISTINCT d.wattage ORDER BY d.wattage SEPARATOR ', ') AS wattages,
+            GROUP_CONCAT(DISTINCT p.project_name SEPARATOR ', ') AS projects,
+            GROUP_CONCAT(DISTINCT d.id ORDER BY d.id SEPARATOR ',') AS delivery_ids,
+            CASE WHEN COUNT(DISTINCT d.wattage) > 1 THEN 1 ELSE 0 END AS is_mixed_wattage,
+            GROUP_CONCAT(DISTINCT 
+                CASE 
+                    WHEN d.project_id IS NOT NULL THEN CONCAT('Project: ', p.project_name)
+                    WHEN d.warehouse_id IS NOT NULL AND d.warehouse_id != ? THEN CONCAT('Warehouse: ', w.name)
+                    ELSE 'Unknown Destination'
+                END SEPARATOR ', '
+            ) AS destinations
         FROM deliveries d
         LEFT JOIN projects p ON d.project_id = p.id
         LEFT JOIN warehouses w ON d.warehouse_id = w.id
         JOIN delivery_pallets dp ON d.id = dp.delivery_id
         JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
-        WHERE d.supplier = (SELECT name FROM warehouses WHERE id = ?)
+        WHERE d.warehouse_id = ?
         AND d.left_warehouse_date IS NOT NULL
-        AND (d.status_of_delivery LIKE 'In Transit%' OR d.status_of_delivery LIKE 'Delivered%')
-        GROUP BY d.id, d.bol_number, d.supplier, d.wattage, d.quantity, d.left_warehouse_date, d.anticipated_delivery_date, destination, p.project_name, d.status_of_delivery
+        GROUP BY d.bol_number, d.supplier, d.left_warehouse_date, d.anticipated_delivery_date, d.status_of_delivery
         ORDER BY d.left_warehouse_date DESC
     ");
     if ($stmtOutboundHistory) {
         $stmtOutboundHistory->bind_param("ii", $warehouse_id, $warehouse_id);
         $stmtOutboundHistory->execute();
         $resultOutboundHistory = $stmtOutboundHistory->get_result();
+        $index = 0;
         while ($delivery = $resultOutboundHistory->fetch_assoc()) {
-            $outbound_history[] = $delivery;
-            $delivery['destination_project'] = $delivery['destination_project'] ?? 'N/A';
+            $delivery['destination_project'] = $delivery['projects'] ?? 'N/A';
+            $delivery['index'] = $index;
+            
+            // If mixed wattage, get individual delivery details
+            if ($delivery['is_mixed_wattage']) {
+                $delivery_ids = explode(',', $delivery['delivery_ids']);
+                $delivery['details'] = [];
+                
+                foreach ($delivery_ids as $del_id) {
+                    $stmtDetail = $conn->prepare("
+                        SELECT d.id, d.wattage, d.quantity, p.project_name,
+                               COUNT(dp.inventory_pallet_id) AS pallet_count,
+                               CASE 
+                                   WHEN d.project_id IS NOT NULL THEN CONCAT('Project: ', p.project_name)
+                                   WHEN d.warehouse_id IS NOT NULL AND d.warehouse_id != ? THEN CONCAT('Warehouse: ', w2.name)
+                                   ELSE 'Unknown Destination'
+                               END AS destination
+                        FROM deliveries d
+                        LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+                        LEFT JOIN projects p ON d.project_id = p.id
+                        LEFT JOIN warehouses w2 ON d.warehouse_id = w2.id
+                        WHERE d.id = ?
+                        GROUP BY d.id, d.wattage, d.quantity, p.project_name, destination
+                    ");
+                    if ($stmtDetail) {
+                        $stmtDetail->bind_param("ii", $warehouse_id, $del_id);
+                        $stmtDetail->execute();
+                        $resultDetail = $stmtDetail->get_result();
+                        if ($detail = $resultDetail->fetch_assoc()) {
+                            $delivery['details'][] = $detail;
+                        }
+                        $stmtDetail->close();
+                    }
+                }
+            }
+            
+            $outbound_grouped[] = $delivery;
+            $index++;
         }
         $stmtOutboundHistory->close();
     }
+    $outbound_history = $outbound_grouped;
     
     // Monthly cost estimate
     $total_storage_cost_monthly_rate = $total_pallets * ($warehouse['monthly_storage_fee'] ?? 0);
@@ -575,6 +655,31 @@ $conn->close();
         .back-link {
             margin-top: 20px;
         }
+        
+        /* Mixed wattage row styling */
+        .mixed-wattage-row {
+            background-color: #f0f8ff !important;
+            font-weight: 500;
+        }
+        .mixed-wattage-row:hover {
+            background-color: #e6f3ff !important;
+        }
+        .expand-icon {
+            display: inline-block;
+            margin-right: 8px;
+            transition: transform 0.3s ease;
+            font-size: 12px;
+            color: #488C9A;
+        }
+        .expanded .expand-icon {
+            transform: rotate(90deg);
+        }
+        .detail-row {
+            transition: all 0.3s ease;
+        }
+        .detail-row.show {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -877,25 +982,64 @@ $conn->close();
                         <tbody>
                             <?php if (!empty($inbound_history)): ?>
                                 <?php foreach ($inbound_history as $delivery): ?>
-                                    <tr>
-                                        <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
+                                    <tr data-delivery-index="<?php echo $delivery['index']; ?>" 
+                                        class="<?php echo $delivery['is_mixed_wattage'] ? 'mixed-wattage-row' : ''; ?>"
+                                        <?php if ($delivery['is_mixed_wattage']): ?>
+                                            onclick="toggleInboundDetails(<?php echo $delivery['index']; ?>)" 
+                                            style="cursor: pointer;"
+                                        <?php endif; ?>>
+                                        <td>
+                                            <?php if ($delivery['is_mixed_wattage']): ?>
+                                                <span class="expand-icon" id="expand-icon-<?php echo $delivery['index']; ?>">▶</span>
+                                            <?php endif; ?>
+                                            <?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?>
+                                        </td>
                                         <td><?php echo htmlspecialchars($delivery['source_project']); ?></td>
                                         <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
-                                        <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
-                                        <td><?php echo number_format($delivery['total_modules'] ?? 0) . ' (' . number_format($delivery['pallet_count'] ?? 0) . ')'; ?></td>
+                                        <td>
+                                            <?php if ($delivery['is_mixed_wattage']): ?>
+                                                Mixed (<?php echo htmlspecialchars($delivery['wattages']); ?>W)
+                                            <?php else: ?>
+                                                <?php echo htmlspecialchars($delivery['wattages']); ?>W
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?php echo number_format($delivery['total_modules']) . ' (' . number_format($delivery['total_pallets']) . ')'; ?></td>
                                         <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
                                         <td>
                                             <?php if (!empty($delivery['proof_of_delivery'])): ?>
-                                                <a href="view_pod.php?delivery_id=<?php echo $delivery['delivery_id']; ?>" target="_blank" style="color: #488C9A;">View POD</a>
+                                                <a href="view_pod.php?delivery_id=<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>" target="_blank" style="color: #488C9A;">View POD</a>
                                             <?php else: ?>
-                                                <button class="action-button" style="padding: 2px 6px; font-size: 0.8em;" onclick="uploadPOD(<?php echo $delivery['delivery_id']; ?>)">Upload POD</button>
+                                                <button class="action-button" style="padding: 2px 6px; font-size: 0.8em;" onclick="uploadPOD(<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>)">Upload POD</button>
                                             <?php endif; ?>
                                         </td>
                                         <td>
-                                            <a href="edit_delivery.php?delivery_id=<?php echo $delivery['delivery_id']; ?>&warehouse_id=<?php echo $warehouse_id; ?>" 
-                                               class="action-button" style="padding: 3px 8px; font-size: 0.9em;">Edit</a>
+                                            <?php if ($delivery['is_mixed_wattage']): ?>
+                                                <button class="action-button" style="padding: 3px 8px; font-size: 0.9em;" onclick="event.stopPropagation(); window.location.href='manage_deliveries.php?search=<?php echo urlencode($delivery['bol_number']); ?>'">Manage</button>
+                                            <?php else: ?>
+                                                <a href="edit_delivery.php?delivery_id=<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>&warehouse_id=<?php echo $warehouse_id; ?>" 
+                                                   class="action-button" style="padding: 3px 8px; font-size: 0.9em;">Edit</a>
+                                            <?php endif; ?>
                                         </td>
                                     </tr>
+                                    
+                                    <?php if ($delivery['is_mixed_wattage'] && !empty($delivery['details'])): ?>
+                                        <?php foreach ($delivery['details'] as $detail_index => $detail): ?>
+                                            <tr id="inbound-detail-<?php echo $delivery['index']; ?>-<?php echo $detail_index; ?>" 
+                                                class="detail-row" style="display: none; background-color: #f8f9fa;">
+                                                <td style="padding-left: 30px;">└ Detail <?php echo $detail_index + 1; ?></td>
+                                                <td><?php echo htmlspecialchars($detail['project_name'] ?? 'N/A'); ?></td>
+                                                <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
+                                                <td><?php echo htmlspecialchars($detail['wattage']); ?>W</td>
+                                                <td><?php echo number_format($detail['quantity']) . ' (' . number_format($detail['pallet_count']) . ')'; ?></td>
+                                                <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
+                                                <td>-</td>
+                                                <td>
+                                                    <a href="edit_delivery.php?delivery_id=<?php echo $detail['id']; ?>&warehouse_id=<?php echo $warehouse_id; ?>" 
+                                                       class="action-button" style="padding: 2px 6px; font-size: 0.8em;">Edit</a>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr><td colspan="8">No inbound deliveries recorded for this warehouse.</td></tr>
@@ -920,21 +1064,66 @@ $conn->close();
                                 <th>Modules (Pallets)</th>
                                 <th>Departure Date</th>
                                 <th>Status</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (!empty($outbound_history)): ?>
                                 <?php foreach ($outbound_history as $delivery): ?>
-                                    <tr>
-                                        <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
+                                    <tr data-delivery-index="<?php echo $delivery['index']; ?>" 
+                                        class="<?php echo $delivery['is_mixed_wattage'] ? 'mixed-wattage-row' : ''; ?>"
+                                        <?php if ($delivery['is_mixed_wattage']): ?>
+                                            onclick="toggleOutboundDetails(<?php echo $delivery['index']; ?>)" 
+                                            style="cursor: pointer;"
+                                        <?php endif; ?>>
+                                        <td>
+                                            <?php if ($delivery['is_mixed_wattage']): ?>
+                                                <span class="expand-icon" id="outbound-expand-icon-<?php echo $delivery['index']; ?>">▶</span>
+                                            <?php endif; ?>
+                                            <?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?>
+                                        </td>
                                         <td><?php echo htmlspecialchars($delivery['destination_project']); ?></td>
                                         <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
-                                        <td><?php echo htmlspecialchars($delivery['destination'] ?? 'N/A'); ?></td>
-                                        <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
-                                        <td><?php echo number_format($delivery['total_modules'] ?? 0) . ' (' . number_format($delivery['pallet_count'] ?? 0) . ')'; ?></td>
+                                        <td><?php echo htmlspecialchars($delivery['destinations'] ?? 'N/A'); ?></td>
+                                        <td>
+                                            <?php if ($delivery['is_mixed_wattage']): ?>
+                                                Mixed (<?php echo htmlspecialchars($delivery['wattages']); ?>W)
+                                            <?php else: ?>
+                                                <?php echo htmlspecialchars($delivery['wattages']); ?>W
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?php echo number_format($delivery['total_modules']) . ' (' . number_format($delivery['total_pallets']) . ')'; ?></td>
                                         <td><?php echo htmlspecialchars($delivery['departure_date'] ?? 'N/A'); ?></td>
                                         <td><?php echo htmlspecialchars($delivery['status_of_delivery'] ?? 'N/A'); ?></td>
+                                        <td>
+                                            <?php if ($delivery['is_mixed_wattage']): ?>
+                                                <button class="action-button" style="padding: 3px 8px; font-size: 0.9em;" onclick="event.stopPropagation(); window.location.href='manage_deliveries.php?search=<?php echo urlencode($delivery['bol_number']); ?>'">Manage</button>
+                                            <?php else: ?>
+                                                <a href="edit_delivery.php?delivery_id=<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>&warehouse_id=<?php echo $warehouse_id; ?>" 
+                                                   class="action-button" style="padding: 3px 8px; font-size: 0.9em;">Edit</a>
+                                            <?php endif; ?>
+                                        </td>
                                     </tr>
+                                    
+                                    <?php if ($delivery['is_mixed_wattage'] && !empty($delivery['details'])): ?>
+                                        <?php foreach ($delivery['details'] as $detail_index => $detail): ?>
+                                            <tr id="outbound-detail-<?php echo $delivery['index']; ?>-<?php echo $detail_index; ?>" 
+                                                class="detail-row" style="display: none; background-color: #f8f9fa;">
+                                                <td style="padding-left: 30px;">└ Detail <?php echo $detail_index + 1; ?></td>
+                                                <td><?php echo htmlspecialchars($detail['project_name'] ?? 'N/A'); ?></td>
+                                                <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
+                                                <td><?php echo htmlspecialchars($detail['destination'] ?? 'N/A'); ?></td>
+                                                <td><?php echo htmlspecialchars($detail['wattage']); ?>W</td>
+                                                <td><?php echo number_format($detail['quantity']) . ' (' . number_format($detail['pallet_count']) . ')'; ?></td>
+                                                <td><?php echo htmlspecialchars($delivery['departure_date'] ?? 'N/A'); ?></td>
+                                                <td><?php echo htmlspecialchars($delivery['status_of_delivery'] ?? 'N/A'); ?></td>
+                                                <td>
+                                                    <a href="edit_delivery.php?delivery_id=<?php echo $detail['id']; ?>&warehouse_id=<?php echo $warehouse_id; ?>" 
+                                                       class="action-button" style="padding: 2px 6px; font-size: 0.8em;">Edit</a>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr><td colspan="9">No outbound deliveries recorded from this warehouse.</td></tr>
@@ -943,6 +1132,10 @@ $conn->close();
                     </table>
                 </div>
             </div>
+        </div>
+        
+        <div class="back-link" style="margin-top: 20px;">
+            <a href="manage_warehouses.php" class="action-buttons">&larr; Back to Warehouses List</a>
         </div>
     <?php endif; ?>
 </main>
@@ -1025,9 +1218,7 @@ $conn->close();
     </div>
 </div>
 
-<div class="back-link">
-    <a href="manage_warehouses.php" class="action-buttons">&larr; Back to Warehouses List</a>
-</div>
+
 
 <!-- MOVE PALLETS MODAL -->
 <div id="moveModal" class="modal">
@@ -1342,6 +1533,86 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial states
     updateReceiveTruckloadButton();
 });
+
+// Toggle inbound delivery details
+function toggleInboundDetails(index) {
+    try {
+        var detailRows = document.querySelectorAll('[id^="inbound-detail-' + index + '-"]');
+        var mainRow = document.querySelector('[data-delivery-index="' + index + '"]');
+        var expandIcon = document.getElementById('expand-icon-' + index);
+        
+        if (!mainRow) {
+            console.error('Main row not found for index:', index);
+            return;
+        }
+        
+        // Check if any detail row is currently visible
+        var isExpanded = false;
+        detailRows.forEach(function(row) {
+            if (row.style.display !== 'none') {
+                isExpanded = true;
+            }
+        });
+        
+        if (isExpanded) {
+            // Collapse
+            detailRows.forEach(function(row) {
+                row.style.display = 'none';
+            });
+            mainRow.classList.remove('expanded');
+            if (expandIcon) expandIcon.textContent = '▶';
+        } else {
+            // Expand
+            detailRows.forEach(function(row) {
+                row.style.display = 'table-row';
+            });
+            mainRow.classList.add('expanded');
+            if (expandIcon) expandIcon.textContent = '▼';
+        }
+    } catch (error) {
+        console.error('Error toggling inbound details:', error);
+    }
+}
+
+// Toggle outbound delivery details
+function toggleOutboundDetails(index) {
+    try {
+        var detailRows = document.querySelectorAll('[id^="outbound-detail-' + index + '-"]');
+        var mainRow = document.querySelector('[data-delivery-index="' + index + '"]');
+        var expandIcon = document.getElementById('outbound-expand-icon-' + index);
+        
+        if (!mainRow) {
+            console.error('Main row not found for index:', index);
+            return;
+        }
+        
+        // Check if any detail row is currently visible
+        var isExpanded = false;
+        detailRows.forEach(function(row) {
+            if (row.style.display !== 'none') {
+                isExpanded = true;
+            }
+        });
+        
+        if (isExpanded) {
+            // Collapse
+            detailRows.forEach(function(row) {
+                row.style.display = 'none';
+            });
+            mainRow.classList.remove('expanded');
+            if (expandIcon) expandIcon.textContent = '▶';
+        } else {
+            // Expand
+            detailRows.forEach(function(row) {
+                row.style.display = 'table-row';
+            });
+            mainRow.classList.add('expanded');
+            if (expandIcon) expandIcon.textContent = '▼';
+        }
+    } catch (error) {
+        console.error('Error toggling outbound details:', error);
+    }
+}
 </script>
 </body>
 </html>

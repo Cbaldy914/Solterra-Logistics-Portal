@@ -46,7 +46,7 @@ if ($role === 'admin' || $role === 'global_admin') {
             w.name,
             w.address, 
             w.image_url,
-            w.monthly_storage_fee,
+            COALESCE(wci_monthly.amount, 0) as monthly_storage_fee,
             -- Count pallets stored (assigned to projects)
             (SELECT COUNT(ip_stored.id) 
              FROM inventory_pallets ip_stored 
@@ -86,6 +86,8 @@ if ($role === 'admin' || $role === 'global_admin') {
              WHERE ip_transit.status = 'In Transit to Warehouse' 
                AND d_transit.warehouse_id = w.id) as modules_in_transit
         FROM warehouses w
+        LEFT JOIN warehouse_cost_items wci_monthly ON w.id = wci_monthly.warehouse_id 
+            AND wci_monthly.trigger_event = 'monthly' AND wci_monthly.is_active = 1
         WHERE EXISTS (
             SELECT 1 FROM inventory_pallets ip_check
             WHERE ip_check.current_warehouse_id = w.id 
@@ -106,7 +108,7 @@ if ($role === 'admin' || $role === 'global_admin') {
             w.name,
             w.address, 
             w.image_url,
-            w.monthly_storage_fee,
+            COALESCE(wci_monthly.amount, 0) as monthly_storage_fee,
             -- Count pallets stored (assigned to projects in user's account)
             (SELECT COUNT(ip_stored.id) 
              FROM inventory_pallets ip_stored 
@@ -166,6 +168,8 @@ if ($role === 'admin' || $role === 'global_admin') {
                AND d_transit.warehouse_id = w.id
                AND (cau_transit.user_id = ? OR d_transit.project_id IS NULL)) as modules_in_transit
         FROM warehouses w
+        LEFT JOIN warehouse_cost_items wci_monthly ON w.id = wci_monthly.warehouse_id 
+            AND wci_monthly.trigger_event = 'monthly' AND wci_monthly.is_active = 1
         WHERE EXISTS (
             -- Warehouses with assigned inventory for user's account
             SELECT 1 FROM inventory_pallets ip_check

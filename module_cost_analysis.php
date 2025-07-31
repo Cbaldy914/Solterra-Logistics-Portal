@@ -25,7 +25,7 @@ $role    = $_SESSION['role'] ?? 'user';
 function calculateProjectWarehousingCost($conn, $project_id) {
     // Fetch warehouse info
     $stmt = $conn->prepare("
-        SELECT w.id, w.in_fee, w.out_fee, w.monthly_storage_fee
+        SELECT w.id
         FROM warehouses w
         JOIN projects p ON p.warehouse_id=w.id
         WHERE p.id=?
@@ -38,7 +38,34 @@ function calculateProjectWarehousingCost($conn, $project_id) {
     if ($resWarehouse->num_rows < 1) {
         return 0;
     }
-    $warehouse = $resWarehouse->fetch_assoc();
+    $warehouse_basic = $resWarehouse->fetch_assoc();
+    $warehouse_id = $warehouse_basic['id'];
+    
+    // Fetch cost items for this warehouse
+    $cost_stmt = $conn->prepare("
+        SELECT trigger_event, amount 
+        FROM warehouse_cost_items 
+        WHERE warehouse_id = ? AND is_active = 1
+    ");
+    $cost_stmt->bind_param("i", $warehouse_id);
+    $cost_stmt->execute();
+    $cost_result = $cost_stmt->get_result();
+    
+    $warehouse = ['id' => $warehouse_id, 'in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
+    while ($cost = $cost_result->fetch_assoc()) {
+        switch ($cost['trigger_event']) {
+            case 'entry':
+                $warehouse['in_fee'] = $cost['amount'];
+                break;
+            case 'exit':
+                $warehouse['out_fee'] = $cost['amount'];
+                break;
+            case 'monthly':
+                $warehouse['monthly_storage_fee'] = $cost['amount'];
+                break;
+        }
+    }
+    $cost_stmt->close();
 
     // Count inbound deliveries
     $stmt2 = $conn->prepare("
@@ -113,7 +140,7 @@ function calculateProjectWarehousingCost($conn, $project_id) {
 function calculateProjectYTDWarehousingCost($conn, $project_id, $current_year) {
     // Same approach, but restricted to year-based logic
     $stmt = $conn->prepare("
-        SELECT w.id, w.in_fee, w.out_fee, w.monthly_storage_fee
+        SELECT w.id
         FROM warehouses w
         JOIN projects p ON p.warehouse_id=w.id
         WHERE p.id=?
@@ -126,7 +153,34 @@ function calculateProjectYTDWarehousingCost($conn, $project_id, $current_year) {
     if ($warehouse_res->num_rows<1) {
         return 0;
     }
-    $warehouse = $warehouse_res->fetch_assoc();
+    $warehouse_basic = $warehouse_res->fetch_assoc();
+    $warehouse_id = $warehouse_basic['id'];
+    
+    // Fetch cost items for this warehouse
+    $cost_stmt = $conn->prepare("
+        SELECT trigger_event, amount 
+        FROM warehouse_cost_items 
+        WHERE warehouse_id = ? AND is_active = 1
+    ");
+    $cost_stmt->bind_param("i", $warehouse_id);
+    $cost_stmt->execute();
+    $cost_result = $cost_stmt->get_result();
+    
+    $warehouse = ['id' => $warehouse_id, 'in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
+    while ($cost = $cost_result->fetch_assoc()) {
+        switch ($cost['trigger_event']) {
+            case 'entry':
+                $warehouse['in_fee'] = $cost['amount'];
+                break;
+            case 'exit':
+                $warehouse['out_fee'] = $cost['amount'];
+                break;
+            case 'monthly':
+                $warehouse['monthly_storage_fee'] = $cost['amount'];
+                break;
+        }
+    }
+    $cost_stmt->close();
 
     // Count inbound deliveries (arrived this year)
     $stmt2 = $conn->prepare("

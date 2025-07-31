@@ -140,9 +140,6 @@ try {
     $sql_warehouse_history = "SELECT DISTINCT
                                 w.id AS warehouse_id,
                                 w.name AS warehouse_name,
-                                w.in_fee,
-                                w.out_fee,
-                                w.monthly_storage_fee,
                                 -- Get arrival info (when pallet first arrived at this warehouse)
                                 (SELECT MIN(d_arr.warehouse_arrival_date) 
                                  FROM deliveries d_arr 
@@ -190,27 +187,76 @@ try {
     $stmt_warehouse->execute();
     $result_warehouse = $stmt_warehouse->get_result();
 
-    $total_warehouse_cost = 0;
-    while ($row = $result_warehouse->fetch_assoc()) {
-        // Calculate actual warehouse costs based on fees
-        $in_fee_cost = ($row['in_fee'] ?? 0) * ($row['inbound_deliveries'] ?? 0);
-        $out_fee_cost = ($row['out_fee'] ?? 0) * ($row['outbound_deliveries'] ?? 0);
+    // Fetch warehouse cost structures for all relevant warehouses
+    $warehouse_costs = [];
+    if ($result_warehouse->num_rows > 0) {
+        $warehouse_ids = [];
+        $temp_rows = [];
         
-        // Calculate storage cost based on days stored
-        $storage_cost = 0;
-        if (!empty($row['arrival_date'])) {
-            $arrival = new DateTime($row['arrival_date']);
-            $departure = !empty($row['departure_date']) ? new DateTime($row['departure_date']) : new DateTime();
-            $days_stored = $arrival->diff($departure)->days;
-            $daily_storage_fee = ($row['monthly_storage_fee'] ?? 0) / 30;
-            $storage_cost = $days_stored * $daily_storage_fee;
+        // First pass: collect warehouse IDs and store rows
+        while ($row = $result_warehouse->fetch_assoc()) {
+            $warehouse_ids[] = $row['warehouse_id'];
+            $temp_rows[] = $row;
         }
         
-        $row['total_warehouse_costs'] = $in_fee_cost + $out_fee_cost + $storage_cost;
-        $row['cost_breakdown'] = "in_fee:{$in_fee_cost}|out_fee:{$out_fee_cost}|storage:{$storage_cost}|days:{$days_stored}";
+        // Fetch cost items for all warehouses at once
+        if (!empty($warehouse_ids)) {
+            $warehouse_ids_str = implode(',', array_map('intval', $warehouse_ids));
+            $cost_sql = "SELECT warehouse_id, trigger_event, amount 
+                         FROM warehouse_cost_items 
+                         WHERE warehouse_id IN ({$warehouse_ids_str}) AND is_active = 1";
+            $cost_result = $conn->query($cost_sql);
+            
+            if ($cost_result) {
+                while ($cost = $cost_result->fetch_assoc()) {
+                    $wid = $cost['warehouse_id'];
+                    if (!isset($warehouse_costs[$wid])) {
+                        $warehouse_costs[$wid] = ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
+                    }
+                    switch ($cost['trigger_event']) {
+                        case 'entry':
+                            $warehouse_costs[$wid]['in_fee'] = $cost['amount'];
+                            break;
+                        case 'exit':
+                            $warehouse_costs[$wid]['out_fee'] = $cost['amount'];
+                            break;
+                        case 'monthly':
+                            $warehouse_costs[$wid]['monthly_storage_fee'] = $cost['amount'];
+                            break;
+                    }
+                }
+            }
+        }
         
-        $total_warehouse_cost += $row['total_warehouse_costs'];
-        $warehouse_history[] = $row;
+        // Second pass: calculate costs with fetched data
+        $total_warehouse_cost = 0;
+        foreach ($temp_rows as $row) {
+            $wid = $row['warehouse_id'];
+            $costs = $warehouse_costs[$wid] ?? ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
+            
+            // Calculate actual warehouse costs based on fees
+            $in_fee_cost = $costs['in_fee'] * ($row['inbound_deliveries'] ?? 0);
+            $out_fee_cost = $costs['out_fee'] * ($row['outbound_deliveries'] ?? 0);
+            
+            // Calculate storage cost based on days stored
+            $storage_cost = 0;
+            $days_stored = 0;
+            if (!empty($row['arrival_date'])) {
+                $arrival = new DateTime($row['arrival_date']);
+                $departure = !empty($row['departure_date']) ? new DateTime($row['departure_date']) : new DateTime();
+                $days_stored = $arrival->diff($departure)->days;
+                $daily_storage_fee = $costs['monthly_storage_fee'] / 30;
+                $storage_cost = $days_stored * $daily_storage_fee;
+            }
+            
+            $row['total_warehouse_costs'] = $in_fee_cost + $out_fee_cost + $storage_cost;
+            $row['cost_breakdown'] = "in_fee:{$in_fee_cost}|out_fee:{$out_fee_cost}|storage:{$storage_cost}|days:{$days_stored}";
+            
+            $total_warehouse_cost += $row['total_warehouse_costs'];
+            $warehouse_history[] = $row;
+        }
+    } else {
+        $total_warehouse_cost = 0;
     }
     $stmt_warehouse->close();
     

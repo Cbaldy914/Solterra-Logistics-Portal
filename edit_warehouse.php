@@ -32,9 +32,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $city = trim($_POST['city'] ?? '');
         $state = trim($_POST['state'] ?? '');
         $zip_code = trim($_POST['zip_code'] ?? '');
-        $in_fee = floatval($_POST['in_fee'] ?? 0);
-        $out_fee = floatval($_POST['out_fee'] ?? 0);
+        $is_port = isset($_POST['is_port']) ? 1 : 0;
+        
+        // Cost structure fields
+        $entry_fee = floatval($_POST['entry_fee'] ?? 0);
+        $exit_fee = floatval($_POST['exit_fee'] ?? 0);
         $monthly_storage_fee = floatval($_POST['monthly_storage_fee'] ?? 0);
+        $customs_clearance_fee = floatval($_POST['customs_clearance_fee'] ?? 0);
 
         if (empty($name)) {
             throw new Exception("Warehouse name is required.");
@@ -49,16 +53,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $address_parts = array_filter([$street_address, $city, $state, $zip_code]);
         $combined_address = implode(', ', $address_parts);
 
-        // Update warehouse
-        $stmt = $conn->prepare("UPDATE warehouses SET name = ?, address = ?, street_address = ?, city = ?, state = ?, zip_code = ?, in_fee = ?, out_fee = ?, monthly_storage_fee = ? WHERE id = ?");
+        // Update warehouse basic information
+        $stmt = $conn->prepare("UPDATE warehouses SET name = ?, address = ?, street_address = ?, city = ?, state = ?, zip_code = ?, is_port = ? WHERE id = ?");
         if (!$stmt) {
             throw new Exception("Error preparing update statement: " . $conn->error);
         }
 
-        $stmt->bind_param("ssssssdddi", $name, $combined_address, $street_address, $city, $state, $zip_code, $in_fee, $out_fee, $monthly_storage_fee, $warehouse_id);
+        $stmt->bind_param("ssssssii", $name, $combined_address, $street_address, $city, $state, $zip_code, $is_port, $warehouse_id);
         
         if ($stmt->execute()) {
-            $successMessage = "Warehouse updated successfully!";
+            // Update cost structure - first delete existing cost items, then insert new ones
+            $stmt_delete = $conn->prepare("DELETE FROM warehouse_cost_items WHERE warehouse_id = ?");
+            if ($stmt_delete) {
+                $stmt_delete->bind_param("i", $warehouse_id);
+                $stmt_delete->execute();
+                $stmt_delete->close();
+            }
+            
+            // Insert new cost items for any non-zero fees
+            $cost_items = [];
+            if ($entry_fee > 0) {
+                $cost_items[] = ['Entry Fee', 'entry', $entry_fee];
+            }
+            if ($exit_fee > 0) {
+                $cost_items[] = ['Exit Fee', 'exit', $exit_fee];
+            }
+            if ($monthly_storage_fee > 0) {
+                $cost_items[] = ['Monthly Storage', 'monthly', $monthly_storage_fee];
+            }
+            if ($customs_clearance_fee > 0 && $is_port) {
+                $cost_items[] = ['Customs Clearance Fee', 'customs_clearance', $customs_clearance_fee];
+            }
+            
+            if (!empty($cost_items)) {
+                $stmt_cost = $conn->prepare("INSERT INTO warehouse_cost_items (warehouse_id, label, trigger_event, amount) VALUES (?, ?, ?, ?)");
+                if ($stmt_cost) {
+                    foreach ($cost_items as $cost_item) {
+                        $stmt_cost->bind_param("issd", $warehouse_id, $cost_item[0], $cost_item[1], $cost_item[2]);
+                        $stmt_cost->execute();
+                    }
+                    $stmt_cost->close();
+                }
+            }
+            
+            $successMessage = "Warehouse and cost structure updated successfully!";
             // Refresh warehouse data
             $warehouse = null; // Will be fetched again below
         } else {
@@ -71,10 +109,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Fetch warehouse data
+// Fetch warehouse data and cost items
 if (!$warehouse) {
     try {
-        $stmt = $conn->prepare("SELECT id, name, address, street_address, city, state, zip_code, in_fee, out_fee, monthly_storage_fee FROM warehouses WHERE id = ?");
+        $stmt = $conn->prepare("SELECT id, name, address, street_address, city, state, zip_code, is_port FROM warehouses WHERE id = ?");
         if (!$stmt) {
             throw new Exception("Error preparing select statement: " . $conn->error);
         }
@@ -89,6 +127,25 @@ if (!$warehouse) {
 
         $warehouse = $result->fetch_assoc();
         $stmt->close();
+        
+        // Fetch existing cost items
+        $cost_items = [];
+        $stmt_costs = $conn->prepare("SELECT trigger_event, amount FROM warehouse_cost_items WHERE warehouse_id = ? AND is_active = 1");
+        if ($stmt_costs) {
+            $stmt_costs->bind_param("i", $warehouse_id);
+            $stmt_costs->execute();
+            $result_costs = $stmt_costs->get_result();
+            while ($cost = $result_costs->fetch_assoc()) {
+                $cost_items[$cost['trigger_event']] = $cost['amount'];
+            }
+            $stmt_costs->close();
+        }
+        
+        // Set default values for form fields based on existing cost items
+        $warehouse['entry_fee'] = $cost_items['entry'] ?? 0;
+        $warehouse['exit_fee'] = $cost_items['exit'] ?? 0;
+        $warehouse['monthly_storage_fee'] = $cost_items['monthly'] ?? 0;
+        $warehouse['customs_clearance_fee'] = $cost_items['customs_clearance'] ?? 0;
 
     } catch (Exception $e) {
         $errorMessage = $e->getMessage();
@@ -266,21 +323,38 @@ if (!$warehouse && empty($successMessage)) {
             </div>
             <small style="color: #666; font-style: italic;">At least one address field is required</small>
 
-            <h3 style="margin: 30px 0 15px 0; color: #333;">Fee Information</h3>
-            <div class="fee-grid">
+            <div style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
+                <label style="display: flex; align-items: center; margin: 0; font-weight: 600; cursor: pointer;">
+                    <input type="checkbox" id="is_port" name="is_port" style="margin-right: 8px; transform: scale(1.2);" <?php echo !empty($warehouse['is_port']) && $warehouse['is_port'] == 1 ? 'checked' : ''; ?>>
+                    <span>🚢 This warehouse functions as a port of entry for overseas shipments</span>
+                </label>
+                <small style="color: #6c757d; margin-left: 24px; display: block; margin-top: 5px;">
+                    Check this if this warehouse will receive overseas shipments and handle customs clearance
+                </small>
+            </div>
+
+            <h3 style="margin: 30px 0 15px 0; color: #333;">💰 Cost Structure</h3>
+            <div class="fee-grid" style="grid-template-columns: 1fr 1fr;">
                 <div class="form-group">
-                    <label for="in_fee">Incoming Fee ($)</label>
-                    <input type="number" id="in_fee" name="in_fee" step="0.01" min="0" value="<?php echo number_format($warehouse['in_fee'], 2, '.', ''); ?>" placeholder="0.00">
+                    <label for="entry_fee">Entry Fee (per pallet) ($)</label>
+                    <input type="number" id="entry_fee" name="entry_fee" step="0.01" min="0" value="<?php echo number_format($warehouse['entry_fee'], 2, '.', ''); ?>" placeholder="0.00">
                 </div>
                 <div class="form-group">
-                    <label for="out_fee">Outgoing Fee ($)</label>
-                    <input type="number" id="out_fee" name="out_fee" step="0.01" min="0" value="<?php echo number_format($warehouse['out_fee'], 2, '.', ''); ?>" placeholder="0.00">
-                </div>
-                <div class="form-group">
-                    <label for="monthly_storage_fee">Monthly Storage Fee ($)</label>
-                    <input type="number" id="monthly_storage_fee" name="monthly_storage_fee" step="0.01" min="0" value="<?php echo number_format($warehouse['monthly_storage_fee'], 2, '.', ''); ?>" placeholder="0.00">
+                    <label for="exit_fee">Exit Fee (per pallet) ($)</label>
+                    <input type="number" id="exit_fee" name="exit_fee" step="0.01" min="0" value="<?php echo number_format($warehouse['exit_fee'], 2, '.', ''); ?>" placeholder="0.00">
                 </div>
             </div>
+            <div class="fee-grid" style="grid-template-columns: 1fr 1fr;">
+                <div class="form-group">
+                    <label for="monthly_storage_fee">Monthly Storage (per pallet) ($)</label>
+                    <input type="number" id="monthly_storage_fee" name="monthly_storage_fee" step="0.01" min="0" value="<?php echo number_format($warehouse['monthly_storage_fee'], 2, '.', ''); ?>" placeholder="0.00">
+                </div>
+                <div class="form-group">
+                    <label for="customs_clearance_fee">Customs Clearance Fee (if port) ($)</label>
+                    <input type="number" id="customs_clearance_fee" name="customs_clearance_fee" step="0.01" min="0" value="<?php echo number_format($warehouse['customs_clearance_fee'], 2, '.', ''); ?>" placeholder="0.00">
+                </div>
+            </div>
+            <small style="color: #666; font-style: italic;">💡 Leave fees at $0.00 if not applicable. You can modify these anytime.</small>
 
             <div class="button-group">
                 <button type="submit" class="btn btn-primary">Update Warehouse</button>

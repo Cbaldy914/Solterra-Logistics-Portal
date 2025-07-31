@@ -137,15 +137,15 @@ $conn->close();
         <table>
             <tr>
                 <th>Warehouse Location</th>
-                <th>In Fee (per pallet)</th>
-                <th>Out Fee (per pallet)</th>
+                <th>Entry Fee (per pallet)</th>
+                <th>Exit Fee (per pallet)</th>
                 <th>Monthly Storage Fee (per pallet)</th>
             </tr>
             <?php foreach ($estimate_data['quotes'] as $quote): ?>
                 <tr>
                     <td><?php echo htmlspecialchars($quote['warehouse_location']); ?></td>
-                    <td>$<?php echo number_format($quote['in_fee_per_pallet'], 2); ?></td>
-                    <td>$<?php echo number_format($quote['out_fee_per_pallet'], 2); ?></td>
+                    <td>$<?php echo number_format($quote['entry_fee_per_pallet'] ?? $quote['in_fee_per_pallet'] ?? 0, 2); ?></td>
+                    <td>$<?php echo number_format($quote['exit_fee_per_pallet'] ?? $quote['out_fee_per_pallet'] ?? 0, 2); ?></td>
                     <td>$<?php echo number_format($quote['monthly_storage_cost_per_pallet'], 2); ?></td>
                 </tr>
             <?php endforeach; ?>
@@ -251,8 +251,8 @@ $conn->close();
 
                 var infoWindow = new google.maps.InfoWindow({
                     content: '<strong>' + address + '</strong><br>' +
-                             'In Fee: $' + quote.in_fee_per_pallet.toFixed(2) + ' per pallet<br>' +
-                             'Out Fee: $' + quote.out_fee_per_pallet.toFixed(2) + ' per pallet<br>' +
+                                             'Entry Fee: $' + (quote.entry_fee_per_pallet || quote.in_fee_per_pallet || 0).toFixed(2) + ' per pallet<br>' +
+                'Exit Fee: $' + (quote.exit_fee_per_pallet || quote.out_fee_per_pallet || 0).toFixed(2) + ' per pallet<br>' +
                              'Monthly Storage Fee: $' + quote.monthly_storage_cost_per_pallet.toFixed(2) + ' per pallet'
                 });
 

@@ -46,18 +46,33 @@ try {
     $sql = "SELECT 
                 w.id, 
                 w.name, 
-                w.address, 
-                w.in_fee,
-                w.out_fee,
-                w.monthly_storage_fee,
+                w.address,
+                w.is_port,
                 COUNT(DISTINCT CASE WHEN ip_stored.status = 'In Warehouse' THEN ip_stored.id ELSE NULL END) AS current_pallet_count,
-                COUNT(DISTINCT CASE WHEN ip_transit.status = 'In Transit to Warehouse' THEN ip_transit.id ELSE NULL END) AS in_transit_pallet_count
+                COUNT(DISTINCT CASE WHEN ip_transit.status = 'In Transit to Warehouse' THEN ip_transit.id ELSE NULL END) AS in_transit_pallet_count,
+                -- Get cost information from warehouse_cost_items (summarized by trigger type)
+                GROUP_CONCAT(
+                    DISTINCT CONCAT(
+                        CASE wci.trigger_event
+                            WHEN 'entry' THEN 'Entry Fee'
+                            WHEN 'exit' THEN 'Exit Fee' 
+                            WHEN 'monthly' THEN 'Monthly Storage'
+                            WHEN 'customs_clearance' THEN 'Customs Clearance'
+                            WHEN 'drayage' THEN 'Drayage'
+                            ELSE 'Other'
+                        END,
+                        ': $', wci.amount
+                    )
+                    ORDER BY wci.trigger_event 
+                    SEPARATOR '<br>'
+                ) as cost_summary
             FROM warehouses w
             LEFT JOIN inventory_pallets ip_stored ON w.id = ip_stored.current_warehouse_id AND ip_stored.status = 'In Warehouse'
             LEFT JOIN deliveries d_transit ON w.id = d_transit.warehouse_id
             LEFT JOIN delivery_pallets dp_transit ON d_transit.id = dp_transit.delivery_id
             LEFT JOIN inventory_pallets ip_transit ON dp_transit.inventory_pallet_id = ip_transit.id AND ip_transit.status = 'In Transit to Warehouse'
-            GROUP BY w.id, w.name, w.address, w.in_fee, w.out_fee, w.monthly_storage_fee
+            LEFT JOIN warehouse_cost_items wci ON w.id = wci.warehouse_id AND wci.is_active = 1
+            GROUP BY w.id, w.name, w.address, w.is_port
             ORDER BY w.name ASC";
             
     $result = $conn->query($sql);
@@ -322,11 +337,17 @@ $conn->close();
                         <tr>
                             <td>
                                 <strong><?php echo htmlspecialchars($warehouse['name']); ?></strong>
+                                <?php if (!empty($warehouse['is_port']) && $warehouse['is_port'] == 1): ?>
+                                    <br><span style="background: #007cba; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em;">🚢 PORT</span>
+                                <?php endif; ?>
                             </td>
                             <td class="fee-info">
-                                <strong>In Fee:</strong> $<?php echo number_format($warehouse['in_fee'], 2); ?><br>
-                                <strong>Out Fee:</strong> $<?php echo number_format($warehouse['out_fee'], 2); ?><br>
-                                <strong>Monthly Storage:</strong> $<?php echo number_format($warehouse['monthly_storage_fee'], 2); ?>
+                                <?php if (!empty($warehouse['cost_summary'])): ?>
+                                    <?php echo $warehouse['cost_summary']; ?>
+                                <?php else: ?>
+                                    <em style="color: #999;">No cost structure defined</em><br>
+                                    <small><a href="edit_warehouse.php?id=<?php echo $warehouse['id']; ?>">Set up costs →</a></small>
+                                <?php endif; ?>
                             </td>
                             <td><?php echo htmlspecialchars($warehouse['address']); ?></td>
                             <td>
