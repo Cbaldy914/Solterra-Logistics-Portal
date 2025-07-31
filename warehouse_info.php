@@ -112,6 +112,24 @@ try {
         $page_title = htmlspecialchars($warehouse_data['name']);
         $stmtW->close();
 
+        // Fetch warehouse cost items for this warehouse
+        $warehouse_costs = [];
+        $stmtCosts = $conn->prepare("
+            SELECT label, trigger_event, amount 
+            FROM warehouse_cost_items 
+            WHERE warehouse_id = ? AND is_active = 1
+            ORDER BY trigger_event, label
+        ");
+        if ($stmtCosts) {
+            $stmtCosts->bind_param("i", $warehouse_id);
+            $stmtCosts->execute();
+            $resultCosts = $stmtCosts->get_result();
+            while ($cost = $resultCosts->fetch_assoc()) {
+                $warehouse_costs[$cost['trigger_event']][] = $cost;
+            }
+            $stmtCosts->close();
+        }
+
         if ($project_id) {
             $stmtPName = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
             if ($stmtPName) {
@@ -271,14 +289,27 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         }
         $stmt_pallets->close();
 
-        // Fetch Deliveries Arrived (for Inbound Truckloads Table)
+        // Fetch Deliveries Arrived (for Inbound Truckloads Table) - Grouped by BOL#
         $arrived_delivery_ids = [];
-        $inbound_deliveries_for_table = []; // Renamed from $delivered_deliveries
+        $inbound_deliveries_for_table = []; // Grouped by BOL#
+        $inbound_grouped = [];
+        
         $sql_deliveries_arrived = "
             SELECT 
-                d.id, d.supplier, d.wattage, d.quantity, d.bol_number, 
-                d.warehouse_arrival_date, d.proof_of_delivery /* Removed d.left_warehouse_date */
+                d.bol_number,
+                d.supplier,
+                d.warehouse_arrival_date,
+                d.proof_of_delivery,
+                COUNT(DISTINCT d.id) AS delivery_count,
+                COUNT(DISTINCT dp.inventory_pallet_id) AS total_pallets,
+                (SELECT SUM(d_inner.quantity) FROM deliveries d_inner WHERE d_inner.bol_number = d.bol_number AND d_inner.warehouse_id = d.warehouse_id AND d_inner.warehouse_arrival_date = d.warehouse_arrival_date) AS total_modules,
+                GROUP_CONCAT(DISTINCT d.wattage ORDER BY d.wattage SEPARATOR ', ') AS wattages,
+                GROUP_CONCAT(DISTINCT p.project_name SEPARATOR ', ') AS projects,
+                GROUP_CONCAT(DISTINCT d.id ORDER BY d.id SEPARATOR ',') AS delivery_ids,
+                CASE WHEN COUNT(DISTINCT d.wattage) > 1 THEN 1 ELSE 0 END AS is_mixed_wattage
             FROM deliveries d
+            LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+            LEFT JOIN projects p ON d.project_id = p.id
             WHERE d.warehouse_id = ? AND d.warehouse_arrival_date IS NOT NULL
         ";
         $delivered_params = [$warehouse_id];
@@ -289,29 +320,50 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
              $delivered_types .= "i";
         } elseif ($module_batch_id && !$project_id) {
             // If viewing warehouse from batch context, show all its deliveries
-            // Potentially too broad. For now, let's assume project_id or general warehouse view for deliveries.
-            // To show deliveries related to a specific module_batch_id that arrived at THIS warehouse:
-            // We would need to link deliveries to module batches, which is not direct.
-            // For now, if module_batch_id is set and warehouse_id is set, but no project_id, 
-            // we show deliveries for THAT WAREHOUSE irrespective of batch, or we might need to adjust.
-            // Keeping it simple: if module_batch_id brought us here, and project_id is NOT set, then the deliveries
-            // shown are for this warehouse, not further filtered by the original batch for this specific table.
-            // The main use case is listing warehouses containing the batch, then drilling into one of those warehouses.
-            // The inventory table inside WILL be filtered by module_batch_id.
         }
-         $sql_deliveries_arrived .= " ORDER BY d.warehouse_arrival_date DESC";
+        $sql_deliveries_arrived .= " GROUP BY d.bol_number, d.supplier, d.warehouse_arrival_date, d.proof_of_delivery ORDER BY d.warehouse_arrival_date DESC";
         
         $stmt_delivered = $conn->prepare($sql_deliveries_arrived);
         if (!$stmt_delivered) throw new Exception("Prepare arrived deliveries failed: ".$conn->error);
         $stmt_delivered->bind_param($delivered_types, ...$delivered_params);
         $stmt_delivered->execute();
         $result_delivered = $stmt_delivered->get_result();
+        $index = 0;
         while ($drow = $result_delivered->fetch_assoc()) {
-            $inbound_deliveries_for_table[] = $drow; // Populate new array
-            $arrived_delivery_ids[] = $drow['id']; 
+            $drow['index'] = $index;
+            $delivery_ids_array = explode(',', $drow['delivery_ids']);
+            $arrived_delivery_ids = array_merge($arrived_delivery_ids, $delivery_ids_array);
             $arrived_date_values[] = $drow['warehouse_arrival_date'] ?? '';
+            
+            // If mixed wattage, get individual delivery details
+            if ($drow['is_mixed_wattage']) {
+                $drow['details'] = [];
+                foreach ($delivery_ids_array as $del_id) {
+                    $stmtDetail = $conn->prepare("
+                        SELECT d.id, d.wattage, d.quantity, p.project_name,
+                               COUNT(dp.inventory_pallet_id) AS pallet_count
+                        FROM deliveries d
+                        LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+                        LEFT JOIN projects p ON d.project_id = p.id
+                        WHERE d.id = ?
+                        GROUP BY d.id, d.wattage, d.quantity, p.project_name
+                    ");
+                    if ($stmtDetail) {
+                        $stmtDetail->bind_param("i", $del_id);
+                        $stmtDetail->execute();
+                        $resultDetail = $stmtDetail->get_result();
+                        if ($detail = $resultDetail->fetch_assoc()) {
+                            $drow['details'][] = $detail;
+                        }
+                        $stmtDetail->close();
+                    }
+                }
+            }
+            $inbound_grouped[] = $drow;
+            $index++;
         }
         $stmt_delivered->close();
+        $inbound_deliveries_for_table = $inbound_grouped;
 
         // Count actual pallets for INBOUND deliveries
         $total_inbound_pallets_count = 0;
@@ -333,14 +385,27 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $arrived_date_values = array_unique(array_filter($arrived_date_values));
         sort($arrived_date_values);
         
-        // Fetch Deliveries Departed (for Outbound Truckloads Table)
+        // Fetch Deliveries Departed (for Outbound Truckloads Table) - Grouped by BOL#
         $departed_delivery_ids = [];
-        $outbound_deliveries_for_table = []; // New array for direct use in outbound table
+        $outbound_deliveries_for_table = []; // Grouped by BOL#
+        $outbound_grouped = [];
+        
         $sql_deliveries_left = "
             SELECT 
-                d.id, d.supplier, d.wattage, d.quantity, d.bol_number, 
-                d.left_warehouse_date, d.proof_of_delivery /* Removed d.warehouse_arrival_date */
+                d.bol_number,
+                d.supplier,
+                d.left_warehouse_date,
+                d.proof_of_delivery,
+                COUNT(DISTINCT d.id) AS delivery_count,
+                COUNT(DISTINCT dp.inventory_pallet_id) AS total_pallets,
+                (SELECT SUM(d_inner.quantity) FROM deliveries d_inner WHERE d_inner.bol_number = d.bol_number AND d_inner.warehouse_id = d.warehouse_id AND d_inner.left_warehouse_date = d.left_warehouse_date) AS total_modules,
+                GROUP_CONCAT(DISTINCT d.wattage ORDER BY d.wattage SEPARATOR ', ') AS wattages,
+                GROUP_CONCAT(DISTINCT p.project_name SEPARATOR ', ') AS projects,
+                GROUP_CONCAT(DISTINCT d.id ORDER BY d.id SEPARATOR ',') AS delivery_ids,
+                CASE WHEN COUNT(DISTINCT d.wattage) > 1 THEN 1 ELSE 0 END AS is_mixed_wattage
             FROM deliveries d
+            LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+            LEFT JOIN projects p ON d.project_id = p.id
             WHERE d.warehouse_id = ? AND d.left_warehouse_date IS NOT NULL 
         "; 
         $left_params = [$warehouse_id];
@@ -353,19 +418,49 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
             // Similar logic as above for arrived deliveries.
             // If we are here via module_batch_id, then outbound deliveries are for this warehouse.
         }
-        $sql_deliveries_left .= " ORDER BY d.left_warehouse_date DESC";
+        $sql_deliveries_left .= " GROUP BY d.bol_number, d.supplier, d.left_warehouse_date, d.proof_of_delivery ORDER BY d.left_warehouse_date DESC";
         
         $stmt_left = $conn->prepare($sql_deliveries_left);
         if (!$stmt_left) throw new Exception("Prepare left deliveries failed: ".$conn->error);
         $stmt_left->bind_param($left_types, ...$left_params);
         $stmt_left->execute();
         $result_left = $stmt_left->get_result();
+        $index = 0;
         while ($drow = $result_left->fetch_assoc()) {
-            $outbound_deliveries_for_table[] = $drow; // Populate new array directly
-            $departed_delivery_ids[] = $drow['id']; 
+            $drow['index'] = $index;
+            $delivery_ids_array = explode(',', $drow['delivery_ids']);
+            $departed_delivery_ids = array_merge($departed_delivery_ids, $delivery_ids_array);
             $left_warehouse_date_values[] = $drow['left_warehouse_date'] ?? '';
+            
+            // If mixed wattage, get individual delivery details
+            if ($drow['is_mixed_wattage']) {
+                $drow['details'] = [];
+                foreach ($delivery_ids_array as $del_id) {
+                    $stmtDetail = $conn->prepare("
+                        SELECT d.id, d.wattage, d.quantity, p.project_name,
+                               COUNT(dp.inventory_pallet_id) AS pallet_count
+                        FROM deliveries d
+                        LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+                        LEFT JOIN projects p ON d.project_id = p.id
+                        WHERE d.id = ?
+                        GROUP BY d.id, d.wattage, d.quantity, p.project_name
+                    ");
+                    if ($stmtDetail) {
+                        $stmtDetail->bind_param("i", $del_id);
+                        $stmtDetail->execute();
+                        $resultDetail = $stmtDetail->get_result();
+                        if ($detail = $resultDetail->fetch_assoc()) {
+                            $drow['details'][] = $detail;
+                        }
+                        $stmtDetail->close();
+                    }
+                }
+            }
+            $outbound_grouped[] = $drow;
+            $index++;
         }
         $stmt_left->close();
+        $outbound_deliveries_for_table = $outbound_grouped;
 
         // Count actual pallets for OUTBOUND deliveries
         $total_outbound_pallets_count = 0;
@@ -387,20 +482,31 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $left_warehouse_date_values = array_unique(array_filter($left_warehouse_date_values));
         sort($left_warehouse_date_values);
         
-        // Calculate Costs (Based on this specific warehouse's fees)
-        $in_fee_cost  = ($warehouse_data['in_fee'] ?? 0)  * $total_inbound_pallets_count;
-        $out_fee_cost = ($warehouse_data['out_fee'] ?? 0) * $total_outbound_pallets_count;
+        // Calculate Costs using new warehouse_cost_items structure
+        $in_fee_cost = 0;
+        $out_fee_cost = 0;
+        $monthly_storage_rate = 0;
+        
+        // Get cost rates from warehouse_cost_items
+        if (!empty($warehouse_costs['entry'])) {
+            $in_fee_cost = $warehouse_costs['entry'][0]['amount'] * $total_inbound_pallets_count;
+        }
+        if (!empty($warehouse_costs['exit'])) {
+            $out_fee_cost = $warehouse_costs['exit'][0]['amount'] * $total_outbound_pallets_count;
+        }
+        if (!empty($warehouse_costs['monthly'])) {
+            $monthly_storage_rate = $warehouse_costs['monthly'][0]['amount'] * $total_pallets_count;
+        }
         
         // Calculate actual storage costs and average months
         $total_storage_cost_actual = 0;
         $total_days_all_pallets = 0;
-        $monthly_storage_rate = $total_pallets_count * ($warehouse_data['monthly_storage_fee'] ?? 0);
         
         if (!empty($inventory_pallets)) {
+            $daily_rate = !empty($warehouse_costs['monthly']) ? $warehouse_costs['monthly'][0]['amount'] / 30 : 0;
             foreach ($inventory_pallets as $pallet_calc) {
                 $days = max(0, intval($pallet_calc['days_stored'] ?? 0));
                 $total_days_all_pallets += $days;
-                $daily_rate = ($warehouse_data['monthly_storage_fee'] ?? 0) / 30;
                 $total_storage_cost_actual += $days * $daily_rate;
             }
         }
@@ -1087,6 +1193,31 @@ if ($conn) {
                   text-align: center; 
              }
          }
+         
+         /* Mixed wattage row styling */
+         .mixed-wattage-row {
+             background-color: #f0f8ff !important;
+             font-weight: 500;
+         }
+         .mixed-wattage-row:hover {
+             background-color: #e6f3ff !important;
+         }
+         .expand-icon {
+             display: inline-block;
+             margin-right: 8px;
+             transition: transform 0.3s ease;
+             font-size: 12px;
+             color: #488C9A;
+         }
+         .expanded .expand-icon {
+             transform: rotate(90deg);
+         }
+         .detail-row {
+             transition: all 0.3s ease;
+         }
+         .detail-row.show {
+             opacity: 1;
+         }
     </style>
 </head>
 <body>
@@ -1216,9 +1347,27 @@ if ($conn) {
                     <h2 style="font-size: 1.1em; color: #555; margin-top: 5px;">Viewing Inventory from Batch: <?php echo htmlspecialchars($origin_batch_vendor_name); ?> (ID: <?php echo $module_batch_id; ?>)</h2>
                  <?php endif; ?>
                 <p><strong>Address:</strong> <?php echo htmlspecialchars($warehouse_data['address']); ?></p>
-                <p><strong>In Fee:</strong> $<?php echo number_format($warehouse_data['in_fee'] ?? 0, 2); ?></p>
-                <p><strong>Out Fee:</strong> $<?php echo number_format($warehouse_data['out_fee'] ?? 0, 2); ?></p>
-                <p><strong>Monthly Storage Fee (per Pallet):</strong> $<?php echo number_format($warehouse_data['monthly_storage_fee'] ?? 0, 2); ?></p>
+                <?php if (!empty($warehouse_costs)): ?>
+                    <div class="warehouse-cost-summary">
+                        <p><strong>Cost Structure:</strong></p>
+                        <?php 
+                        foreach ($warehouse_costs as $trigger => $costs): 
+                            foreach ($costs as $cost):
+                        ?>
+                            <p style="margin-left: 15px; font-size: 0.9em;">
+                                <strong><?php echo htmlspecialchars($cost['label']); ?>:</strong> 
+                                $<?php echo number_format($cost['amount'], 2); ?>
+                                <?php if ($trigger === 'monthly'): ?> per pallet per month<?php endif; ?>
+                                <?php if ($trigger === 'entry' || $trigger === 'exit'): ?> per pallet<?php endif; ?>
+                            </p>
+                        <?php 
+                            endforeach;
+                        endforeach; 
+                        ?>
+                    </div>
+                <?php else: ?>
+                    <p><em>No cost structure defined for this warehouse.</em></p>
+                <?php endif; ?>
                 <?php if (($_SESSION['role'] ?? '') === 'global_admin'): // Only allow edit for global admin ?>
                     <p style="margin-top:10px;"><a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="action-button">Edit Warehouse Info</a></p>
                 <?php endif; ?>
@@ -1269,14 +1418,9 @@ if ($conn) {
             <div class="tabs">
                 <button class="tab-link active" onclick="openTab(event, 'InventoryView')">Inventory View (<?php echo count($inventory_pallets); ?>)</button>
                 <button class="tab-link" onclick="openTab(event, 'TruckloadView')">Truckload History (<?php 
-                    $all_truckload_ids = [];
-                    if (!empty($inbound_deliveries_for_table)) {
-                        foreach($inbound_deliveries_for_table as $d) { $all_truckload_ids[] = $d['id']; }
-                    }
-                    if (!empty($outbound_deliveries_for_table)) {
-                        foreach($outbound_deliveries_for_table as $d) { $all_truckload_ids[] = $d['id']; }
-                    }
-                    echo count(array_unique($all_truckload_ids)); 
+                    $inbound_count = !empty($inbound_deliveries_for_table) ? count($inbound_deliveries_for_table) : 0;
+                    $outbound_count = !empty($outbound_deliveries_for_table) ? count($outbound_deliveries_for_table) : 0;
+                    echo $inbound_count + $outbound_count; 
                 ?>)</button>
             </div>
         </div>
@@ -1346,16 +1490,16 @@ if ($conn) {
                      </thead>
                      <tbody>
                          <?php if (!empty($inventory_pallets)): ?>
-                             <?php foreach ($inventory_pallets as $pallet): 
-                                 // Calculate costs for this pallet
-                                 $days_stored = max(0, intval($pallet['days_stored'] ?? 0));
-                                 $monthly_storage_fee = floatval($warehouse_data['monthly_storage_fee'] ?? 0);
-                                 $daily_storage_cost = $monthly_storage_fee / 30; // Approximate daily cost
-                                 $storage_cost = $days_stored * $daily_storage_cost;
-                                 
-                                 // Add proportional in fee cost (in fee divided by total pallets)
-                                 $in_fee_per_pallet = $total_pallets_count > 0 ? $in_fee_cost / $total_pallets_count : 0;
-                                 $total_pallet_cost = $storage_cost + $in_fee_per_pallet;
+                                                         <?php foreach ($inventory_pallets as $pallet): 
+                                // Calculate costs for this pallet using new cost structure
+                                $days_stored = max(0, intval($pallet['days_stored'] ?? 0));
+                                $monthly_storage_fee = !empty($warehouse_costs['monthly']) ? floatval($warehouse_costs['monthly'][0]['amount']) : 0;
+                                $daily_storage_cost = $monthly_storage_fee / 30; // Approximate daily cost
+                                $storage_cost = $days_stored * $daily_storage_cost;
+                                
+                                // Add proportional in fee cost (in fee divided by total pallets)
+                                $in_fee_per_pallet = $total_pallets_count > 0 ? $in_fee_cost / $total_pallets_count : 0;
+                                $total_pallet_cost = $storage_cost + $in_fee_per_pallet;
                              ?>
                                  <tr>
                                      <?php if ($warehouse_id && !$project_id && !$module_batch_id): // Show project column when viewing general warehouse ?>
@@ -1405,8 +1549,8 @@ if ($conn) {
         <!-- Tab Content: Truckload View -->
          <div id="TruckloadView" class="tab-content">
             <div class="sub-tabs-container" style="text-align: left; margin-bottom: 15px;">
-                <button class="sub-tab-button active" onclick="showTruckloadSubView('arrivals')">View Arrivals</button>
-                <button class="sub-tab-button" onclick="showTruckloadSubView('departures')">View Departures</button>
+                <button class="sub-tab-button active" onclick="showTruckloadSubView('arrivals')">View Arrivals (<?php echo !empty($inbound_deliveries_for_table) ? count($inbound_deliveries_for_table) : 0; ?>)</button>
+                <button class="sub-tab-button" onclick="showTruckloadSubView('departures')">View Departures (<?php echo !empty($outbound_deliveries_for_table) ? count($outbound_deliveries_for_table) : 0; ?>)</button>
             </div>
 
             <div id="truckloadArrivalsSubView">
@@ -1440,41 +1584,67 @@ if ($conn) {
                  </div>
                  <div class="table-responsive">
                      <table id="inboundTruckloadsTable">
-                         <thead>
-                             <tr>
-                                 <th>BOL Number</th>
-                                 <th>Supplier</th>
-                                 <th>Wattage</th>
-                                 <th>Total Modules</th>
-                                 <th>Arrival Date</th>
-                                 <th>Proof of Delivery</th>
-                                 <th>Actions</th>
-                             </tr>
-                         </thead>
-                         <tbody>
-                             <?php if (!empty($inbound_deliveries_for_table)): ?>
-                                  <?php foreach ($inbound_deliveries_for_table as $delivery): ?>
-                                     <tr>
-                                         <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
-                                         <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
-                                         <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
-                                         <td><?php echo number_format($delivery['quantity'] ?? 0); ?></td>
-                                         <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
-                                          <td>
-                                              <?php if (!empty($delivery['proof_of_delivery'])): ?>
-                                                  <a href="view_pod.php?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">View</a>
-                                              <?php else: ?>
-                                                  N/A
-                                              <?php endif; ?>
-                                          </td>
+                                                 <thead>
+                            <tr>
+                                <th>BOL Number</th>
+                                <th>Supplier</th>
+                                <th>Wattage</th>
+                                <th>Total Modules</th>
+                                <th>Arrival Date</th>
+                                <th>Proof of Delivery</th>
+                            </tr>
+                        </thead>
+                                                  <tbody>
+                            <?php if (!empty($inbound_deliveries_for_table)): ?>
+                                 <?php foreach ($inbound_deliveries_for_table as $delivery): ?>
+                                    <tr data-delivery-index="<?php echo $delivery['index']; ?>" 
+                                        class="<?php echo $delivery['is_mixed_wattage'] ? 'mixed-wattage-row' : ''; ?>"
+                                        <?php if ($delivery['is_mixed_wattage']): ?>
+                                            onclick="toggleWarehouseInboundDetails(<?php echo $delivery['index']; ?>)" 
+                                            style="cursor: pointer;"
+                                        <?php endif; ?>>
+                                        <td>
+                                            <?php if ($delivery['is_mixed_wattage']): ?>
+                                                <span class="expand-icon" id="wh-inbound-expand-icon-<?php echo $delivery['index']; ?>">▶</span>
+                                            <?php endif; ?>
+                                            <?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?>
+                                        </td>
+                                        <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
+                                        <td>
+                                            <?php if ($delivery['is_mixed_wattage']): ?>
+                                                Mixed (<?php echo htmlspecialchars($delivery['wattages']); ?>W)
+                                            <?php else: ?>
+                                                <?php echo htmlspecialchars($delivery['wattages']); ?>W
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?php echo number_format($delivery['total_modules']); ?></td>
+                                        <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
                                          <td>
-                                             <a href="edit_delivery.php?delivery_id=<?php echo $delivery['id']; ?>&warehouse_id=<?php echo $warehouse_id; ?><?php if($project_id) echo '&project_id='.$project_id; ?>" class="action-button" style="padding: 3px 8px; font-size: 0.9em;">Edit</a>
+                                             <?php if (!empty($delivery['proof_of_delivery'])): ?>
+                                                 <a href="view_pod.php?delivery_id=<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>" target="_blank">View</a>
+                                             <?php else: ?>
+                                                 N/A
+                                             <?php endif; ?>
                                          </td>
-                                     </tr>
-                                 <?php endforeach; ?>
-                             <?php else: ?>
-                                 <tr><td colspan="7">No inbound truckloads recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
-                             <?php endif; ?>
+                                    </tr>
+                                    
+                                    <?php if ($delivery['is_mixed_wattage'] && !empty($delivery['details'])): ?>
+                                        <?php foreach ($delivery['details'] as $detail_index => $detail): ?>
+                                            <tr id="wh-inbound-detail-<?php echo $delivery['index']; ?>-<?php echo $detail_index; ?>" 
+                                                class="detail-row" style="display: none; background-color: #f8f9fa;">
+                                                <td style="padding-left: 30px;">└ Detail <?php echo $detail_index + 1; ?></td>
+                                                <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
+                                                <td><?php echo htmlspecialchars($detail['wattage']); ?>W</td>
+                                                <td><?php echo number_format($detail['quantity']); ?></td>
+                                                <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
+                                                <td>-</td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="6">No inbound truckloads recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
+                            <?php endif; ?>
                          </tbody>
                      </table>
                  </div>
@@ -1519,32 +1689,58 @@ if ($conn) {
                               <th>Total Modules</th>
                               <th>Departure Date</th>
                               <th>Proof of Delivery</th>
-                              <th>Actions</th>
                           </tr>
                       </thead>
                       <tbody>
                           <?php if (!empty($outbound_deliveries_for_table)): ?>
                                <?php foreach ($outbound_deliveries_for_table as $delivery): ?>
-                                  <tr>
-                                      <td><?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?></td>
+                                  <tr data-delivery-index="<?php echo $delivery['index']; ?>" 
+                                      class="<?php echo $delivery['is_mixed_wattage'] ? 'mixed-wattage-row' : ''; ?>"
+                                      <?php if ($delivery['is_mixed_wattage']): ?>
+                                          onclick="toggleWarehouseOutboundDetails(<?php echo $delivery['index']; ?>)" 
+                                          style="cursor: pointer;"
+                                      <?php endif; ?>>
+                                      <td>
+                                          <?php if ($delivery['is_mixed_wattage']): ?>
+                                              <span class="expand-icon" id="wh-outbound-expand-icon-<?php echo $delivery['index']; ?>">▶</span>
+                                          <?php endif; ?>
+                                          <?php echo htmlspecialchars($delivery['bol_number'] ?? 'N/A'); ?>
+                                      </td>
                                       <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
-                                      <td><?php echo htmlspecialchars($delivery['wattage'] ?? 'N/A'); ?>W</td>
-                                      <td><?php echo number_format($delivery['quantity'] ?? 0); ?></td>
+                                      <td>
+                                          <?php if ($delivery['is_mixed_wattage']): ?>
+                                              Mixed (<?php echo htmlspecialchars($delivery['wattages']); ?>W)
+                                          <?php else: ?>
+                                              <?php echo htmlspecialchars($delivery['wattages']); ?>W
+                                          <?php endif; ?>
+                                      </td>
+                                      <td><?php echo number_format($delivery['total_modules']); ?></td>
                                       <td><?php echo htmlspecialchars($delivery['left_warehouse_date'] ?? 'N/A'); ?></td>
                                        <td>
                                            <?php if (!empty($delivery['proof_of_delivery'])): ?>
-                                               <a href="view_pod.php?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">View</a>
+                                               <a href="view_pod.php?delivery_id=<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>" target="_blank">View</a>
                                            <?php else: ?>
                                                N/A
                                            <?php endif; ?>
                                        </td>
-                                      <td>
-                                          <a href="edit_delivery.php?delivery_id=<?php echo $delivery['id']; ?>&warehouse_id=<?php echo $warehouse_id; ?><?php if($project_id) echo '&project_id='.$project_id; ?>" class="action-button" style="padding: 3px 8px; font-size: 0.9em;">Edit</a>
-                                      </td>
                                   </tr>
+                                  
+                                  <?php if ($delivery['is_mixed_wattage'] && !empty($delivery['details'])): ?>
+                                      <?php foreach ($delivery['details'] as $detail_index => $detail): ?>
+                                          <tr id="wh-outbound-detail-<?php echo $delivery['index']; ?>-<?php echo $detail_index; ?>" 
+                                              class="detail-row" style="display: none; background-color: #f8f9fa;">
+                                              <td style="padding-left: 30px;">└ Detail <?php echo $detail_index + 1; ?></td>
+                                              <td><?php echo htmlspecialchars($delivery['supplier'] ?? 'N/A'); ?></td>
+                                              <td><?php echo htmlspecialchars($detail['wattage']); ?>W</td>
+                                              <td><?php echo number_format($detail['quantity']); ?></td>
+                                              <td><?php echo htmlspecialchars($delivery['left_warehouse_date'] ?? 'N/A'); ?></td>
+                                              <td>-</td>
+                                          </tr>
+                                      <?php endforeach; ?>
+                                  <?php endif; ?>
                               <?php endforeach; ?>
                           <?php else: ?>
-                              <tr><td colspan="7">No outbound truckloads recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
+                              <tr><td colspan="6">No outbound truckloads recorded<?php echo $project_id ? ' for this project' : ''; ?> in this warehouse.</td></tr>
                           <?php endif; ?>
                       </tbody>
                   </table>
@@ -1802,8 +1998,88 @@ if ($conn) {
          const modal = document.getElementById('costModal');
          if (event.target === modal) {
              closeCostModal();
-         }
-     }
+                 }
+    }
+
+    // Toggle warehouse inbound delivery details
+    function toggleWarehouseInboundDetails(index) {
+        try {
+            var detailRows = document.querySelectorAll('[id^="wh-inbound-detail-' + index + '-"]');
+            var mainRow = document.querySelector('[data-delivery-index="' + index + '"]');
+            var expandIcon = document.getElementById('wh-inbound-expand-icon-' + index);
+            
+            if (!mainRow) {
+                console.error('Main row not found for index:', index);
+                return;
+            }
+            
+            // Check if any detail row is currently visible
+            var isExpanded = false;
+            detailRows.forEach(function(row) {
+                if (row.style.display !== 'none') {
+                    isExpanded = true;
+                }
+            });
+            
+            if (isExpanded) {
+                // Collapse
+                detailRows.forEach(function(row) {
+                    row.style.display = 'none';
+                });
+                mainRow.classList.remove('expanded');
+                if (expandIcon) expandIcon.textContent = '▶';
+            } else {
+                // Expand
+                detailRows.forEach(function(row) {
+                    row.style.display = 'table-row';
+                });
+                mainRow.classList.add('expanded');
+                if (expandIcon) expandIcon.textContent = '▼';
+            }
+        } catch (error) {
+            console.error('Error toggling warehouse inbound details:', error);
+        }
+    }
+
+    // Toggle warehouse outbound delivery details
+    function toggleWarehouseOutboundDetails(index) {
+        try {
+            var detailRows = document.querySelectorAll('[id^="wh-outbound-detail-' + index + '-"]');
+            var mainRow = document.querySelector('[data-delivery-index="' + index + '"]');
+            var expandIcon = document.getElementById('wh-outbound-expand-icon-' + index);
+            
+            if (!mainRow) {
+                console.error('Main row not found for index:', index);
+                return;
+            }
+            
+            // Check if any detail row is currently visible
+            var isExpanded = false;
+            detailRows.forEach(function(row) {
+                if (row.style.display !== 'none') {
+                    isExpanded = true;
+                }
+            });
+            
+            if (isExpanded) {
+                // Collapse
+                detailRows.forEach(function(row) {
+                    row.style.display = 'none';
+                });
+                mainRow.classList.remove('expanded');
+                if (expandIcon) expandIcon.textContent = '▶';
+            } else {
+                // Expand
+                detailRows.forEach(function(row) {
+                    row.style.display = 'table-row';
+                });
+                mainRow.classList.add('expanded');
+                if (expandIcon) expandIcon.textContent = '▼';
+            }
+        } catch (error) {
+            console.error('Error toggling warehouse outbound details:', error);
+        }
+    }
 
 </script>
 

@@ -273,6 +273,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             }
         }
         
+        // Check if this is an overseas shipment
+        $is_overseas_shipment = false;
+        $origin_country = 'USA'; // Default
+        $container_number = $_POST['container_number'] ?? '';
+        $master_bol = $_POST['master_bol'] ?? '';
+        $house_bol = $_POST['house_bol'] ?? '';
+        $port_of_entry_id = isset($_POST['port_of_entry_id']) && $_POST['port_of_entry_id'] !== '' ? intval($_POST['port_of_entry_id']) : null;
+        
+        if ($originType === 'manufacturer' && $originId) {
+            // Get the country for this manufacturer location
+            $stmt_country = $conn->prepare("SELECT country FROM manufacturer_locations WHERE id = ? LIMIT 1");
+            if ($stmt_country) {
+                $stmt_country->bind_param("i", $originId);
+                $stmt_country->execute();
+                $stmt_country->bind_result($origin_country);
+                if ($stmt_country->fetch()) {
+                    $is_overseas_shipment = (strtoupper(trim($origin_country)) !== 'USA');
+                }
+                $stmt_country->close();
+            }
+        }
+        
+        // Validate overseas shipment requirements
+        if ($is_overseas_shipment) {
+            if (empty($container_number)) {
+                throw new Exception('Container number is required for overseas shipments.');
+            }
+            if (!$port_of_entry_id) {
+                throw new Exception('Port of entry is required for overseas shipments.');
+            }
+            // Verify the selected port is actually marked as a port
+            $stmt_port_check = $conn->prepare("SELECT is_port FROM warehouses WHERE id = ? AND is_port = 1 LIMIT 1");
+            if ($stmt_port_check) {
+                $stmt_port_check->bind_param("i", $port_of_entry_id);
+                $stmt_port_check->execute();
+                if (!$stmt_port_check->get_result()->num_rows) {
+                    throw new Exception('Selected port of entry is not valid.');
+                }
+                $stmt_port_check->close();
+            }
+        }
 
         $palletsPerTruck = (isset($_POST['pallets_per_truck']) && is_numeric($_POST['pallets_per_truck']))
                            ? intval($_POST['pallets_per_truck'])
@@ -423,7 +464,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                 $deliveryParams[] = $estArrivalDate;
                 $deliveryTypes .= 's';
 
-                $statusOfDelivery = ($destinationType === 'project') ? 'In Transit to Project' : 'In Transit to Warehouse';
+                if ($is_overseas_shipment) {
+                    $statusOfDelivery = 'On Water';
+                } else {
+                    $statusOfDelivery = ($destinationType === 'project') ? 'In Transit to Project' : 'In Transit to Warehouse';
+                }
                 $deliveryColumns[] = 'status_of_delivery';
                 $deliveryParams[] = $statusOfDelivery;
                 $deliveryTypes .= 's';
@@ -463,7 +508,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                     $deliveryTypes .= 'i';
                 }
                 
-
+                // Add overseas shipment fields
+                $deliveryColumns[] = 'is_overseas_shipment';
+                $deliveryParams[] = $is_overseas_shipment ? 1 : 0;
+                $deliveryTypes .= 'i';
+                
+                if ($is_overseas_shipment) {
+                    $deliveryColumns[] = 'container_number';
+                    $deliveryParams[] = $container_number;
+                    $deliveryTypes .= 's';
+                    
+                    if (!empty($master_bol)) {
+                        $deliveryColumns[] = 'master_bol';
+                        $deliveryParams[] = $master_bol;
+                        $deliveryTypes .= 's';
+                    }
+                    
+                    if (!empty($house_bol)) {
+                        $deliveryColumns[] = 'house_bol';
+                        $deliveryParams[] = $house_bol;
+                        $deliveryTypes .= 's';
+                    }
+                    
+                    $deliveryColumns[] = 'port_of_entry_id';
+                    $deliveryParams[] = $port_of_entry_id;
+                    $deliveryTypes .= 'i';
+                }
 
                 $placeholders = implode(',', array_fill(0, count($deliveryParams), '?'));
                 $sqlDeliveryInsert = 'INSERT INTO deliveries (' . implode(',', $deliveryColumns) . ') VALUES (' . $placeholders . ')';
@@ -484,7 +554,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                         throw new Exception('Failed to link pallet ID ' . $pallet['id'] . ' to delivery ' . $deliveryId . ': ' . $stmtLink->error);
                     }
 
-                    $status = ($destinationType === 'project') ? 'In Transit to Project' : 'In Transit to Warehouse';
+                    if ($is_overseas_shipment) {
+                        $status = 'On Water';
+                    } else {
+                        $status = ($destinationType === 'project') ? 'In Transit to Project' : 'In Transit to Warehouse';
+                    }
                     $projectId = ($destinationType === 'project') ? $destinationId : null;
                     $warehouseId = ($destinationType === 'warehouse') ? $destinationId : null;
                     $stmtUp->bind_param('siisi', $status, $projectId, $warehouseId, $estArrivalDate, $pallet['id']);
@@ -775,7 +849,8 @@ try {
             ml.street_address, 
             ml.city, 
             ml.state, 
-            ml.zip_code 
+            ml.zip_code,
+            ml.country
         FROM manufacturers m
         LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
         WHERE m.is_active = 1 
@@ -784,7 +859,14 @@ try {
         $stmtM->execute();
         $resultM = $stmtM->get_result();
         while ($mfg = $resultM->fetch_assoc()) {
-            $address_parts = array_filter([$mfg['street_address'], $mfg['city'], $mfg['state'], $mfg['zip_code']]);
+            // For international addresses, include country; for USA, it's optional
+            $country = $mfg['country'] ?? 'USA';
+            if (strtoupper($country) === 'USA') {
+                $address_parts = array_filter([$mfg['street_address'], $mfg['city'], $mfg['state'], $mfg['zip_code']]);
+            } else {
+                // For international addresses, always include country for proper geocoding
+                $address_parts = array_filter([$mfg['street_address'], $mfg['city'], $mfg['state'], $mfg['zip_code'], $country]);
+            }
             $mfg['full_address'] = implode(', ', $address_parts);
             $all_manufacturers[] = $mfg;
         }
@@ -1392,6 +1474,33 @@ if (!empty($bolCompletionMessage)) {
                         </div>
                     </div>
                     
+                    <!-- Overseas Shipment Fields -->
+                    <div id="overseasFields" style="display: none; border: 2px solid #007cba; padding: 15px; margin: 15px 0; border-radius: 5px; background-color: #f0f8ff;">
+                        <h4 style="color: #007cba; margin-top: 0;">🚢 Overseas Shipment Details</h4>
+                        <div class="form-row">
+                            <div>
+                                <label for="container_number">Container Number: *</label>
+                                <input type="text" id="container_number" name="container_number" placeholder="e.g. MSKU7073334">
+                            </div>
+                            <div>
+                                <label for="port_of_entry_id">Port of Entry: *</label>
+                                <select id="port_of_entry_id" name="port_of_entry_id">
+                                    <option value="">Select Port...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div>
+                                <label for="master_bol">Master BOL:</label>
+                                <input type="text" id="master_bol" name="master_bol" placeholder="Optional">
+                            </div>
+                            <div>
+                                <label for="house_bol">House BOL:</label>
+                                <input type="text" id="house_bol" name="house_bol" placeholder="Optional">
+                            </div>
+                        </div>
+                    </div>
+                    
                     <!-- Origin and Destination Section -->
                     <div class="origin-destination-section">
                         <div class="location-container" style="display: flex; align-items: flex-start; gap: 20px;">
@@ -1479,6 +1588,33 @@ if (!empty($bolCompletionMessage)) {
                         <div>
                             <label for="customer_cost_multi">Customer Cost ($):</label>
                             <input type="number" id="customer_cost_multi" name="customer_cost_multi" step="0.01" min="0">
+                        </div>
+                    </div>
+                    
+                    <!-- Overseas Shipment Fields -->
+                    <div id="overseasFieldsMulti" style="display: none; border: 2px solid #007cba; padding: 15px; margin: 15px 0; border-radius: 5px; background-color: #f0f8ff;">
+                        <h4 style="color: #007cba; margin-top: 0;">🚢 Overseas Shipment Details</h4>
+                        <div class="form-row">
+                            <div>
+                                <label for="container_number_multi">Container Number: *</label>
+                                <input type="text" id="container_number_multi" name="container_number_multi" placeholder="e.g. MSKU7073334">
+                            </div>
+                            <div>
+                                <label for="port_of_entry_id_multi">Port of Entry: *</label>
+                                <select id="port_of_entry_id_multi" name="port_of_entry_id_multi">
+                                    <option value="">Select Port...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div>
+                                <label for="master_bol_multi">Master BOL:</label>
+                                <input type="text" id="master_bol_multi" name="master_bol_multi" placeholder="Optional">
+                            </div>
+                            <div>
+                                <label for="house_bol_multi">House BOL:</label>
+                                <input type="text" id="house_bol_multi" name="house_bol_multi" placeholder="Optional">
+                            </div>
                         </div>
                     </div>
                     
@@ -2114,6 +2250,9 @@ function updateOriginDisplay() {
         // Calculate distance
         calculateDistance();
         calculateDistanceMulti();
+        
+        // Check if this is an overseas shipment
+        checkOverseasShipment(result.origin);
     } else {
         const errorText = result.message;
         
@@ -2130,7 +2269,101 @@ function updateOriginDisplay() {
         const distanceDisplayMulti = document.getElementById('distanceDisplayMulti');
         if (distanceDisplay) distanceDisplay.innerHTML = '';
         if (distanceDisplayMulti) distanceDisplayMulti.innerHTML = '';
+        
+        // Hide overseas fields when origin is invalid
+        hideOverseasFields();
     }
+}
+
+// ----------------- OVERSEAS SHIPMENT DETECTION -----------------
+function checkOverseasShipment(origin, destination = null) {
+    // Check origin country (manufacturer location)
+    if (origin && origin.type === 'manufacturer' && origin.id) {
+        fetch('get_manufacturer_country.php?location_id=' + origin.id)
+            .then(response => response.json())
+            .then(data => {
+                const originCountry = data.country ? data.country.toUpperCase() : 'USA';
+                
+                // For now, assume all destinations (warehouses/projects) are USA
+                // In the future, we can add destination country detection here
+                const destinationCountry = 'USA';
+                
+                // Show overseas fields if:
+                // 1. Origin is not USA (international manufacturer), OR
+                // 2. Destination is not USA (international destination), OR  
+                // 3. Origin and destination are in different countries
+                if (originCountry !== 'USA' || destinationCountry !== 'USA' || originCountry !== destinationCountry) {
+                    showOverseasFields();
+                    loadPorts();
+                    
+                    // Update UI to show which type of international shipment this is
+                    updateOverseasShipmentType(originCountry, destinationCountry);
+                } else {
+                    hideOverseasFields();
+                }
+            })
+            .catch(error => {
+                console.error('Error checking manufacturer country:', error);
+                hideOverseasFields();
+            });
+    } else {
+        hideOverseasFields();
+    }
+}
+
+function updateOverseasShipmentType(originCountry, destinationCountry) {
+    // This function can be used to show different UI messages based on shipment type
+    // For example: "Import from India to USA", "Export from USA to Canada", etc.
+    const overseasElements = document.querySelectorAll('.overseas-shipment-info');
+    overseasElements.forEach(element => {
+        if (originCountry !== 'USA' && destinationCountry === 'USA') {
+            element.textContent = `Import shipment from ${originCountry} to ${destinationCountry}`;
+        } else if (originCountry === 'USA' && destinationCountry !== 'USA') {
+            element.textContent = `Export shipment from ${originCountry} to ${destinationCountry}`;
+        } else if (originCountry !== destinationCountry) {
+            element.textContent = `International shipment from ${originCountry} to ${destinationCountry}`;
+        }
+    });
+}
+
+function showOverseasFields() {
+    const singleFields = document.getElementById('overseasFields');
+    const multiFields = document.getElementById('overseasFieldsMulti');
+    if (singleFields) singleFields.style.display = 'block';
+    if (multiFields) multiFields.style.display = 'block';
+}
+
+function hideOverseasFields() {
+    const singleFields = document.getElementById('overseasFields');
+    const multiFields = document.getElementById('overseasFieldsMulti');
+    if (singleFields) singleFields.style.display = 'none';
+    if (multiFields) multiFields.style.display = 'none';
+}
+
+function loadPorts() {
+    fetch('get_ports.php')
+        .then(response => response.json())
+        .then(data => {
+            const singleSelect = document.getElementById('port_of_entry_id');
+            const multiSelect = document.getElementById('port_of_entry_id_multi');
+            
+            [singleSelect, multiSelect].forEach(select => {
+                if (select) {
+                    // Clear existing options except the first one
+                    select.innerHTML = '<option value="">Select Port...</option>';
+                    
+                    data.ports.forEach(port => {
+                        const option = document.createElement('option');
+                        option.value = port.id;
+                        option.textContent = port.name + ' - ' + port.city + ', ' + port.state;
+                        select.appendChild(option);
+                    });
+                }
+            });
+        })
+        .catch(error => {
+            console.error('Error loading ports:', error);
+        });
 }
 
 // ----------------- DESTINATION SELECTION FUNCTIONS -----------------
@@ -2196,6 +2429,9 @@ function calculateDistance() {
             distanceDisplay.innerHTML = `${distance} miles`;
             milesInput.value = distance;
         }
+        
+        // Check for overseas shipment requirements whenever distance is calculated
+        checkOverseasShipment(result.origin);
     });
 }
 
@@ -2236,6 +2472,9 @@ function calculateDistanceMulti() {
             distanceDisplay.innerHTML = `${distance} miles`;
             milesInput.value = distance;
         }
+        
+        // Check for overseas shipment requirements whenever distance is calculated
+        checkOverseasShipment(result.origin);
     });
 }
 
@@ -2415,6 +2654,20 @@ if (confirmShipmentBtn) {
             setOrCreateHidden(mainForm, 'customer_cost', customerCost);
             setOrCreateHidden(mainForm, 'miles', miles);
             setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
+            
+            // Add overseas shipment fields if visible
+            const overseasFields = document.getElementById('overseasFields');
+            if (overseasFields && overseasFields.style.display !== 'none') {
+                const containerNumber = document.getElementById('container_number').value;
+                const portOfEntry = document.getElementById('port_of_entry_id').value;
+                const masterBol = document.getElementById('master_bol').value;
+                const houseBol = document.getElementById('house_bol').value;
+                
+                setOrCreateHidden(mainForm, 'container_number', containerNumber);
+                setOrCreateHidden(mainForm, 'port_of_entry_id', portOfEntry);
+                setOrCreateHidden(mainForm, 'master_bol', masterBol);
+                setOrCreateHidden(mainForm, 'house_bol', houseBol);
+            }
 
             mainForm.submit();
         };
@@ -2534,6 +2787,20 @@ if (confirmMultiShipmentBtn) {
             // Also set the first BOL as fallback for bol_number field
             setOrCreateHidden(mainForm, 'bol_number', bolNumbers.length > 0 ? bolNumbers[0] : '');
             setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
+            
+            // Add overseas shipment fields if visible
+            const overseasFieldsMulti = document.getElementById('overseasFieldsMulti');
+            if (overseasFieldsMulti && overseasFieldsMulti.style.display !== 'none') {
+                const containerNumber = document.getElementById('container_number_multi').value;
+                const portOfEntry = document.getElementById('port_of_entry_id_multi').value;
+                const masterBol = document.getElementById('master_bol_multi').value;
+                const houseBol = document.getElementById('house_bol_multi').value;
+                
+                setOrCreateHidden(mainForm, 'container_number', containerNumber);
+                setOrCreateHidden(mainForm, 'port_of_entry_id', portOfEntry);
+                setOrCreateHidden(mainForm, 'master_bol', masterBol);
+                setOrCreateHidden(mainForm, 'house_bol', houseBol);
+            }
 
             mainForm.submit();
         };
@@ -2744,42 +3011,59 @@ function loadPersistedFilters() {
     const statusFromUrl = urlParams.get('status_filter');
     const projectFromUrl = urlParams.get('project_id');
     
-    // Load from localStorage
-    const search = localStorage.getItem('createShipment_palletSearch');
-    const project = localStorage.getItem('createShipment_projectFilter');
-    const wattage = localStorage.getItem('createShipment_wattageFilter');
-    const status = localStorage.getItem('createShipment_statusFilter');
-    const perPage = localStorage.getItem('createShipment_itemsPerPage');
-    const page = localStorage.getItem('createShipment_currentPage');
+    // Check if we're coming from project_overview.php (has project_id parameter)
+    const isFromProjectOverview = projectFromUrl && projectFromUrl !== '0';
     
-    if (search) document.getElementById('palletSearch').value = search;
-    if (project) document.getElementById('projectFilter').value = project;
-    if (wattage) document.getElementById('wattageFilter').value = wattage;
-    
-    // URL status filter takes priority over localStorage
-    if (statusFromUrl) {
-        document.getElementById('statusFilter').value = statusFromUrl;
-    } else if (status) {
-        document.getElementById('statusFilter').value = status;
-    }
-    
-    // URL project filter takes priority over localStorage
-    if (projectFromUrl && projectFromUrl !== '0') {
-        // Find the project name in the dropdown and select it
-        const projectSelect = document.getElementById('projectFilter');
-        for (let option of projectSelect.options) {
-            if (option.value.includes('project_id=' + projectFromUrl)) {
-                projectSelect.value = option.value;
-                break;
+    if (isFromProjectOverview) {
+        // Coming from project_overview.php - start with clean slate
+        // Clear all filters to defaults
+        document.getElementById('palletSearch').value = '';
+        document.getElementById('projectFilter').value = '';
+        document.getElementById('wattageFilter').value = '';
+        document.getElementById('statusFilter').value = '';
+        document.getElementById('itemsPerPage').value = '100'; // Default to 100
+        itemsPerPage = 100;
+        currentPage = 1;
+        
+        // Apply only the URL parameters
+        if (statusFromUrl) {
+            document.getElementById('statusFilter').value = statusFromUrl;
+        }
+        
+        if (projectFromUrl) {
+            // Find the project name in the dropdown and select it
+            const projectSelect = document.getElementById('projectFilter');
+            for (let option of projectSelect.options) {
+                if (option.value.includes('project_id=' + projectFromUrl)) {
+                    projectSelect.value = option.value;
+                    break;
+                }
             }
         }
+    } else {
+        // Not from project_overview.php - use localStorage as before
+        const search = localStorage.getItem('createShipment_palletSearch');
+        const project = localStorage.getItem('createShipment_projectFilter');
+        const wattage = localStorage.getItem('createShipment_wattageFilter');
+        const status = localStorage.getItem('createShipment_statusFilter');
+        const perPage = localStorage.getItem('createShipment_itemsPerPage');
+        const page = localStorage.getItem('createShipment_currentPage');
+        
+        if (search) document.getElementById('palletSearch').value = search;
+        if (project) document.getElementById('projectFilter').value = project;
+        if (wattage) document.getElementById('wattageFilter').value = wattage;
+        if (status) document.getElementById('statusFilter').value = status;
+        
+        if (perPage) {
+            document.getElementById('itemsPerPage').value = perPage;
+            itemsPerPage = parseInt(perPage);
+        } else {
+            // Default to 100 if no saved preference
+            document.getElementById('itemsPerPage').value = '100';
+            itemsPerPage = 100;
+        }
+        if (page) currentPage = parseInt(page);
     }
-    
-    if (perPage) {
-        document.getElementById('itemsPerPage').value = perPage;
-        itemsPerPage = parseInt(perPage);
-    }
-    if (page) currentPage = parseInt(page);
     
     // Apply filters after loading
     filterPallets();

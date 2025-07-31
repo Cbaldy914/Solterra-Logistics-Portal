@@ -284,9 +284,6 @@ class SunnyTools {
                     w.address,
                     w.city,
                     w.state,
-                    w.in_fee,
-                    w.out_fee,
-                    w.monthly_storage_fee,
                     -- Current inventory metrics
                     COUNT(CASE WHEN ip.status = 'In Warehouse' THEN ip.id END) as pallets_in_storage,
                     SUM(CASE WHEN ip.status = 'In Warehouse' THEN ip.quantity ELSE 0 END) as modules_in_storage,
@@ -332,12 +329,38 @@ class SunnyTools {
                         $warehouse = array_merge($warehouse, $deliveryResult['data'][0]);
                     }
                     
+                    // Fetch warehouse cost items
+                    $costSql = "SELECT trigger_event, amount FROM warehouse_cost_items WHERE warehouse_id = ? AND is_active = 1";
+                    $costResult = $this->queryExecutor->executeQuery($costSql, [$warehouseId]);
+                    
+                    $monthlyStorageFee = 0;
+                    $inFee = 0;
+                    $outFee = 0;
+                    
+                    if ($costResult['success'] && !empty($costResult['data'])) {
+                        foreach ($costResult['data'] as $cost) {
+                            switch ($cost['trigger_event']) {
+                                case 'entry':
+                                    $inFee = floatval($cost['amount']);
+                                    break;
+                                case 'exit':
+                                    $outFee = floatval($cost['amount']);
+                                    break;
+                                case 'monthly':
+                                    $monthlyStorageFee = floatval($cost['amount']);
+                                    break;
+                            }
+                        }
+                    }
+                    
+                    // Add cost data to warehouse array for API response
+                    $warehouse['in_fee'] = $inFee;
+                    $warehouse['out_fee'] = $outFee;
+                    $warehouse['monthly_storage_fee'] = $monthlyStorageFee;
+                    
                     // Calculate estimated costs based on warehouse_info.php logic
                     $palletsInStorage = intval($warehouse['pallets_in_storage'] ?? 0);
                     $avgDaysStored = floatval($warehouse['avg_days_stored'] ?? 0);
-                    $monthlyStorageFee = floatval($warehouse['monthly_storage_fee'] ?? 0);
-                    $inFee = floatval($warehouse['in_fee'] ?? 0);
-                    $outFee = floatval($warehouse['out_fee'] ?? 0);
                     $totalInbound = intval($warehouse['total_inbound'] ?? 0);
                     $totalOutbound = intval($warehouse['total_outbound'] ?? 0);
                     

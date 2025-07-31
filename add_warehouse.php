@@ -3,7 +3,7 @@ session_name("logistics_session");
 session_start();
 
 // Check if user is logged in and is an admin
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'global_admin') {
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
     header("Location: unauthorized");
     exit();
 }
@@ -30,9 +30,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit'])) {
         $city = trim($_POST['city']);
         $state = trim($_POST['state']);
         $zip_code = trim($_POST['zip_code']);
-        $in_fee = floatval($_POST['in_fee']);
-        $out_fee = floatval($_POST['out_fee']);
-        $monthly_storage_fee = floatval($_POST['monthly_storage_fee']);
+        $is_port = isset($_POST['is_port']) ? 1 : 0;
+        
+        // Cost structure fields
+        $entry_fee = floatval($_POST['entry_fee'] ?? 0);
+        $exit_fee = floatval($_POST['exit_fee'] ?? 0);
+        $monthly_storage_fee = floatval($_POST['monthly_storage_fee'] ?? 0);
+        $customs_clearance_fee = floatval($_POST['customs_clearance_fee'] ?? 0);
 
         if (empty($name)) {
             throw new Exception("Warehouse Name is required.");
@@ -80,13 +84,46 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit'])) {
         }
 
         // Insert into the database with separate address fields (trigger will populate address field)
-        $stmt = $conn->prepare("INSERT INTO warehouses (name, street_address, city, state, zip_code, image_url, in_fee, out_fee, monthly_storage_fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt = $conn->prepare("INSERT INTO warehouses (name, street_address, city, state, zip_code, image_url, is_port) VALUES (?, ?, ?, ?, ?, ?, ?)");
          if (!$stmt) {
             throw new Exception("Error preparing warehouse insert: " . $conn->error);
         }
-        $stmt->bind_param("ssssssddd", $name, $street_address, $city, $state, $zip_code, $image_url, $in_fee, $out_fee, $monthly_storage_fee);
+        $stmt->bind_param("ssssssi", $name, $street_address, $city, $state, $zip_code, $image_url, $is_port);
         if ($stmt->execute()) {
-            $successMessage = "Warehouse added successfully.";
+            $warehouse_id = $conn->insert_id;
+            
+            // Add cost structure items for any non-zero fees
+            $cost_items = [];
+            if ($entry_fee > 0) {
+                $cost_items[] = ['Entry Fee', 'entry', $entry_fee];
+            }
+            if ($exit_fee > 0) {
+                $cost_items[] = ['Exit Fee', 'exit', $exit_fee];
+            }
+            if ($monthly_storage_fee > 0) {
+                $cost_items[] = ['Monthly Storage', 'monthly', $monthly_storage_fee];
+            }
+            if ($customs_clearance_fee > 0 && $is_port) {
+                $cost_items[] = ['Customs Clearance Fee', 'customs_clearance', $customs_clearance_fee];
+            }
+            
+            // Insert cost items
+            if (!empty($cost_items)) {
+                $stmt_cost = $conn->prepare("INSERT INTO warehouse_cost_items (warehouse_id, label, trigger_event, amount) VALUES (?, ?, ?, ?)");
+                if (!$stmt_cost) {
+                    throw new Exception("Error preparing cost items insert: " . $conn->error);
+                }
+                
+                foreach ($cost_items as $cost_item) {
+                    $stmt_cost->bind_param("issd", $warehouse_id, $cost_item[0], $cost_item[1], $cost_item[2]);
+                    if (!$stmt_cost->execute()) {
+                        throw new Exception("Error adding cost item '{$cost_item[0]}': " . $stmt_cost->error);
+                    }
+                }
+                $stmt_cost->close();
+            }
+            
+            $successMessage = "Warehouse and cost structure added successfully.";
         } else {
             throw new Exception("Error adding warehouse: " . htmlspecialchars($stmt->error));
         }
@@ -228,14 +265,45 @@ $conn->close();
         <label for="image">Warehouse Image:</label>
         <input type="file" id="image" name="image" accept="image/*"> <!-- Accept only image files -->
 
-        <label for="in_fee">In Fee:</label>
-        <input type="number" id="in_fee" step="0.01" name="in_fee" required>
+        <div style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
+            <label style="display: flex; align-items: center; margin: 0; font-weight: 600; cursor: pointer;">
+                <input type="checkbox" id="is_port" name="is_port" style="margin-right: 8px; transform: scale(1.2);">
+                <span>🚢 This warehouse functions as a port of entry for overseas shipments</span>
+            </label>
+            <small style="color: #6c757d; margin-left: 24px; display: block; margin-top: 5px;">
+                Check this if this warehouse will receive overseas shipments and handle customs clearance
+            </small>
+        </div>
 
-        <label for="out_fee">Out Fee:</label>
-        <input type="number" id="out_fee" step="0.01" name="out_fee" required>
-
-        <label for="monthly_storage_fee">Monthly Storage Fee:</label>
-        <input type="number" id="monthly_storage_fee" step="0.01" name="monthly_storage_fee" required>
+        <div style="margin-top: 20px; padding: 15px; background-color: #e8f4f8; border-radius: 4px; border: 1px solid #bee5eb;">
+            <h4 style="margin-top: 0; color: #0c5460;">💰 Cost Structure</h4>
+            
+            <div class="form-row">
+                <div>
+                    <label for="entry_fee" style="margin-top: 0; font-size: 0.9em; color: #0c5460;">Entry Fee (per pallet):</label>
+                    <input type="number" id="entry_fee" name="entry_fee" step="0.01" min="0" value="0" placeholder="0.00">
+                </div>
+                <div>
+                    <label for="exit_fee" style="margin-top: 0; font-size: 0.9em; color: #0c5460;">Exit Fee (per pallet):</label>
+                    <input type="number" id="exit_fee" name="exit_fee" step="0.01" min="0" value="0" placeholder="0.00">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div>
+                    <label for="monthly_storage_fee" style="margin-top: 0; font-size: 0.9em; color: #0c5460;">Monthly Storage (per pallet):</label>
+                    <input type="number" id="monthly_storage_fee" name="monthly_storage_fee" step="0.01" min="0" value="0" placeholder="0.00">
+                </div>
+                <div>
+                    <label for="customs_clearance_fee" style="margin-top: 0; font-size: 0.9em; color: #0c5460;">Customs Clearance Fee (if port):</label>
+                    <input type="number" id="customs_clearance_fee" name="customs_clearance_fee" step="0.01" min="0" value="0" placeholder="0.00">
+                </div>
+            </div>
+            
+            <small style="color: #0c5460; font-size: 0.85em;">
+                💡 You can modify these costs anytime after creation. Leave at $0.00 if not applicable.
+            </small>
+        </div>
 
         <input type="submit" name="submit" value="Add Warehouse" class="btn-submit"> <!-- Added class -->
     </form>

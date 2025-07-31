@@ -263,12 +263,12 @@ if ($action === 'receive_truckload') {
             }
             
             try {
-                // Get all pallets for this delivery
+                // Get all pallets for this delivery (including overseas statuses)
                 $stmt_get_pallets = $conn->prepare("
                     SELECT ip.id 
                     FROM inventory_pallets ip
                     JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
-                    WHERE dp.delivery_id = ? AND ip.status = 'In Transit to Warehouse'
+                    WHERE dp.delivery_id = ? AND ip.status IN ('In Transit to Warehouse', 'On Water', 'Cleared Customs')
                 ");
                 if (!$stmt_get_pallets) {
                     throw new Exception("Failed to prepare pallet query for delivery $delivery_id: " . $conn->error);
@@ -408,8 +408,8 @@ if ($action === 'receive_truckload') {
                 $errors[] = "Missing delivery ID for pallet $pallet_id.";
                 continue;
             }
-            // 1. Update inventory_pallets table
-            $sql_update_pallet = "UPDATE inventory_pallets SET status = ?, current_warehouse_id = ?, arrival_date = ? WHERE id = ? AND status = 'In Transit to Warehouse'";
+            // 1. Update inventory_pallets table (handle overseas statuses too)
+            $sql_update_pallet = "UPDATE inventory_pallets SET status = ?, current_warehouse_id = ?, arrival_date = ? WHERE id = ? AND status IN ('In Transit to Warehouse', 'On Water', 'Cleared Customs')";
             $stmt_update_pallet = $conn->prepare($sql_update_pallet);
             if (!$stmt_update_pallet) {
                 $errors[] = "Error preparing pallet update for pallet $pallet_id: " . $conn->error;

@@ -20,7 +20,9 @@ if (isset($_GET['project_id']) && empty($_GET['filter_project_id'])) {
 $time_filter   = isset($_GET['time_filter']) ? $_GET['time_filter'] : 'all';
 $ref_date      = isset($_GET['ref_date']) ? $_GET['ref_date'] : date('Y-m-d');
 $status_filter = isset($_GET['status_filter']) ? $_GET['status_filter'] : '';
-$delivery_type = isset($_GET['delivery_type']) ? $_GET['delivery_type'] : 'all';
+$wattage_filter = isset($_GET['wattage_filter']) ? $_GET['wattage_filter'] : '';
+// Remove delivery_type - show all deliveries by default
+$delivery_type = 'all';
 
 // Handle delivery_id parameter for highlighting specific delivery
 $highlight_delivery_id = isset($_GET['delivery_id']) ? intval($_GET['delivery_id']) : null;
@@ -215,6 +217,73 @@ if ($stmt_all_proj) {
     $stmt_all_proj->close();
 }
 
+// Fetch all unique wattage values for the filter dropdown
+$all_wattages_for_filter = [];
+// --- MODIFIED: Filter wattages based on current project context ---
+$wattage_query_condition = "";
+$wattage_params = [];
+$wattage_param_types = "";
+
+if (is_numeric($filter_project_id)) {
+    $wattage_query_condition = " AND d.project_id = ?";
+    $wattage_param_types = "i";
+    $wattage_params[] = $filter_project_id;
+    // Add account check for admin
+    if (!$is_global_admin && $account_id_for_admin) {
+        $wattage_query_condition .= " AND p.account_id = ?";
+        $wattage_param_types .= "i";
+        $wattage_params[] = $account_id_for_admin;
+    }
+} elseif ($filter_project_id === 'unassigned') {
+    $wattage_query_condition = " AND d.project_id IS NULL";
+} elseif ($filter_project_id === 'all' && $is_global_admin) {
+    // No project condition for global admin viewing all
+    $wattage_query_condition = "";
+} else {
+    // Admin viewing their account's projects
+    if (!$is_global_admin && $account_id_for_admin) {
+        $wattage_query_condition = " AND p.account_id = ?";
+        $wattage_param_types = "i";
+        $wattage_params[] = $account_id_for_admin;
+    } else {
+        $wattage_query_condition = " AND 1=0"; // Prevent admin without account from seeing anything
+    }
+}
+
+// Use consistent query structure - always join with projects for account filtering when needed
+if (!$is_global_admin && $account_id_for_admin && $filter_project_id !== 'unassigned') {
+    // Admin users need project join for account filtering (except for unassigned)
+    $stmt_wattage = $conn->prepare("
+        SELECT DISTINCT d.wattage 
+        FROM deliveries d 
+        LEFT JOIN projects p ON d.project_id = p.id 
+        WHERE d.wattage IS NOT NULL 
+        $wattage_query_condition 
+        ORDER BY d.wattage ASC
+    ");
+} else {
+    // Global admin or unassigned deliveries
+    $stmt_wattage = $conn->prepare("
+        SELECT DISTINCT wattage 
+        FROM deliveries 
+        WHERE wattage IS NOT NULL 
+        $wattage_query_condition 
+        ORDER BY wattage ASC
+    ");
+}
+
+if ($stmt_wattage) {
+    if (!empty($wattage_params)) {
+        $stmt_wattage->bind_param($wattage_param_types, ...$wattage_params);
+    }
+    $stmt_wattage->execute();
+    $result_wattage = $stmt_wattage->get_result();
+    while ($wattage_row = $result_wattage->fetch_assoc()) {
+        $all_wattages_for_filter[] = $wattage_row['wattage'];
+    }
+    $stmt_wattage->close();
+}
+
 // Initialize messages
 if (!isset($_SESSION['messages'])) {
     $_SESSION['messages'] = [];
@@ -342,6 +411,7 @@ if (isset($_POST['bulk_edit_submit'])) {
 
                 // Update associated pallet statuses if delivery status was changed
                 $total_pallet_updates = 0;
+                $total_scheduling_updates = 0;
                 $new_delivery_status = null;
                 
                 // Check if status_of_delivery was updated
@@ -354,7 +424,8 @@ if (isset($_POST['bulk_edit_submit'])) {
                         'Delivered to Warehouse' => 'In Warehouse',
                         'In Transit to Project' => 'In Transit to Project', 
                         'In Transit to Warehouse' => 'In Transit to Warehouse',
-                        'Pending' => 'At Manufacturer' // Assume pallets go back to manufacturer if delivery is pending
+                        'Pending' => 'At Manufacturer', // Assume pallets go back to manufacturer if delivery is pending
+                        'Cancelled' => 'At Manufacturer' // Return to manufacturer if cancelled
                     ];
                     
                     if (isset($status_mapping[$new_delivery_status])) {
@@ -401,6 +472,31 @@ if (isset($_POST['bulk_edit_submit'])) {
                             }
                         }
                     }
+                    
+                    // Update scheduling records if status is "Delivered to Project"
+                    if ($new_delivery_status === 'Delivered to Project') {
+                        $current_time = date('Y-m-d H:i:s');
+                        $actual_delivery_date = isset($_POST['actual_delivery_date']) ? $_POST['actual_delivery_date'] : date('Y-m-d');
+                        $arrival_time = $actual_delivery_date . ' 08:00:00'; // Default arrival time
+                        $departure_time = $actual_delivery_date . ' 16:00:00'; // Default departure time
+                        
+                        // Update existing scheduling records for these deliveries
+                        $stmt_update_scheduling = $conn->prepare("
+                            UPDATE site_scheduling 
+                            SET arrival_time = ?, departure_time = ?, is_closed = 1
+                            WHERE delivery_id IN ($delivery_placeholders)
+                        ");
+                        
+                        if ($stmt_update_scheduling) {
+                            $scheduling_types = 'ss' . str_repeat('i', count($selected_ids));
+                            $scheduling_params = array_merge([$arrival_time, $departure_time], $selected_ids);
+                            $stmt_update_scheduling->bind_param($scheduling_types, ...$scheduling_params);
+                            if ($stmt_update_scheduling->execute()) {
+                                $total_scheduling_updates = $stmt_update_scheduling->affected_rows;
+                            }
+                            $stmt_update_scheduling->close();
+                        }
+                    }
                 }
 
                 $conn->commit();
@@ -408,6 +504,9 @@ if (isset($_POST['bulk_edit_submit'])) {
                 $success_msg = "Bulk update successful.";
                 if ($total_pallet_updates > 0) {
                     $success_msg .= " Also updated status for $total_pallet_updates associated pallet(s) to '$new_pallet_status'.";
+                }
+                if ($total_scheduling_updates > 0) {
+                    $success_msg .= " Updated $total_scheduling_updates scheduling record(s) with arrival and departure times.";
                 }
                 $_SESSION['messages'][] = "<p>$success_msg</p>";
                 
@@ -423,7 +522,7 @@ if (isset($_POST['bulk_edit_submit'])) {
     }
 
     // Redirect back
-    $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
+    $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&wattage_filter=" . urlencode($wattage_filter) . "&filter_project_id=" . urlencode($filter_project_id);
     header("Location: manage_deliveries?" . $redirect_params);
     exit();
 }
@@ -475,7 +574,7 @@ if (isset($_POST['delete_selected'])) {
              if (empty($selected_ids)) {
                  $_SESSION['messages'][] = "<p class='error-message'>Bulk delete failed: No valid deliveries selected for your account scope.</p>";
                  // Rebuild redirect_params for safety as it might not be set here
-                 $redirect_params_del = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
+                 $redirect_params_del = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&wattage_filter=" . urlencode($wattage_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
                  header("Location: manage_deliveries?" . $redirect_params_del);
                  exit();
              }
@@ -657,7 +756,7 @@ if (isset($_POST['upload_csv'])) {
                 } else {
                     // Potentially disallow CSV upload when "All Projects" is selected, or require a project_id column in CSV
                      $_SESSION['messages'][] = "<p>CSV Upload is not supported when 'All Projects' is selected without a project identifier in the CSV.</p>";
-                     $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
+                     $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&wattage_filter=" . urlencode($wattage_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
                      header("Location: manage_deliveries?" . $redirect_params);
                      exit();
                 }
@@ -754,19 +853,19 @@ if (isset($_POST['upload_csv'])) {
             }
 
             $_SESSION['messages'][] = "<p>Successfully imported $insertedRows new entries and updated $updatedRows existing entries.</p>";
-            $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
+            $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&wattage_filter=" . urlencode($wattage_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
             header("Location: manage_deliveries?" . $redirect_params);
             exit();
 
         } else {
             $_SESSION['messages'][] = "<p>Invalid file type or file too large. Please upload a valid CSV file (max 2MB).</p>";
-            $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
+            $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&wattage_filter=" . urlencode($wattage_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
             header("Location: manage_deliveries?" . $redirect_params);
             exit();
         }
     } else {
         $_SESSION['messages'][] = "<p>Error uploading the file. Please try again.</p>";
-        $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
+        $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&wattage_filter=" . urlencode($wattage_filter) . "&filter_project_id=" . urlencode($filter_project_id) . "&delivery_type=" . urlencode($delivery_type);
         header("Location: manage_deliveries?" . $redirect_params);
         exit();
     }
@@ -853,20 +952,27 @@ if ($time_filter === 'day') {
 }
 
 if (!empty($status_filter)) {
-    $statusCondition = " AND status_of_delivery = ?";
-    $paramTypes .= "s";
-    $params[] = $status_filter;
+    $selectedStatuses = explode(',', $status_filter);
+    $statusPlaceholders = implode(',', array_fill(0, count($selectedStatuses), '?'));
+    $statusCondition = " AND d.status_of_delivery IN ($statusPlaceholders)";
+    foreach ($selectedStatuses as $status) {
+        $paramTypes .= "s";
+        $params[] = trim($status);
+    }
 } else {
     $statusCondition = "";
 }
 
-// Add delivery type condition
-$deliveryTypeCondition = "";
-if ($delivery_type === 'project') {
-    $deliveryTypeCondition = " AND (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project')";
-} elseif ($delivery_type === 'warehouse') {
-    $deliveryTypeCondition = " AND d.warehouse_id IS NOT NULL";
+if (!empty($wattage_filter)) {
+    $wattageCondition = " AND d.wattage = ?";
+    $paramTypes .= "i";
+    $params[] = intval($wattage_filter);
+} else {
+    $wattageCondition = "";
 }
+
+// Remove delivery type condition - show all deliveries by default
+$deliveryTypeCondition = "";
 // For 'all', no additional condition needed
 
 $sql = "
@@ -897,6 +1003,7 @@ $sql = "
     $projectConditionSQL
     $dateCondition
     $statusCondition
+    $wattageCondition
     $deliveryTypeCondition
     GROUP BY d.id, p.project_name, ss.id
     ORDER BY $filterColumn DESC
@@ -1013,10 +1120,13 @@ if ($time_filter === 'day') {
     $count_params[] = $endOfMonth;
 }
 
-// Add status condition param if needed
+// Add status condition param if needed (support multiple statuses)
 if (!empty($status_filter)) {
-    $count_types .= "s";
-    $count_params[] = $status_filter;
+    $selectedStatuses = explode(',', $status_filter);
+    foreach ($selectedStatuses as $status) {
+        $count_types .= "s";
+        $count_params[] = trim($status);
+    }
 }
 
 $count_sql = "
@@ -1106,21 +1216,28 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         $export_params[] = $endOfMonth;
     }
     
-    // Add status condition
+    // Add status condition (support multiple statuses)
     $export_status_condition = "";
     if (!empty($status_filter)) {
-        $export_status_condition = " AND status_of_delivery = ?";
-        $export_param_types .= "s";
-        $export_params[] = $status_filter;
+        $selectedStatuses = explode(',', $status_filter);
+        $statusPlaceholders = implode(',', array_fill(0, count($selectedStatuses), '?'));
+        $export_status_condition = " AND d.status_of_delivery IN ($statusPlaceholders)";
+        foreach ($selectedStatuses as $status) {
+            $export_param_types .= "s";
+            $export_params[] = trim($status);
+        }
     }
     
-    // Add delivery type condition
-    $export_delivery_type_condition = "";
-    if ($delivery_type === 'project') {
-        $export_delivery_type_condition = " AND (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project')";
-    } elseif ($delivery_type === 'warehouse') {
-        $export_delivery_type_condition = " AND d.warehouse_id IS NOT NULL";
+    // Add wattage condition
+    $export_wattage_condition = "";
+    if (!empty($wattage_filter)) {
+        $export_wattage_condition = " AND d.wattage = ?";
+        $export_param_types .= "i";
+        $export_params[] = intval($wattage_filter);
     }
+    
+    // Remove delivery type condition - show all deliveries by default
+    $export_delivery_type_condition = "";
     
     // Export query
     $export_sql = "
@@ -1163,6 +1280,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         $export_project_condition
         $export_date_condition
         $export_status_condition
+        $export_wattage_condition
         $export_delivery_type_condition
         GROUP BY d.id, p.project_name, ss.id
         ORDER BY $filterColumn DESC
@@ -1856,52 +1974,60 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             top: 100%;
             right: 0;
             background: white;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e1e5e9;
+            border-radius: 12px;
+            box-shadow: 0px 12px 24px 0px rgba(0,0,0,0.15);
             z-index: 1000;
-            min-width: 300px;
-            max-width: 350px;
-            max-height: 400px;
+            min-width: 400px;
+            max-width: 500px;
+            max-height: 500px;
             overflow-y: auto;
+            backdrop-filter: blur(10px);
         }
         
         .filters-dropdown-header {
-            padding: 12px 16px;
-            background-color: #f8f9fa;
-            border-bottom: 1px solid #ddd;
-            font-weight: 600;
-            color: #293E4C;
+            padding: 16px 20px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a6e7f 100%);
+            color: white;
+            border-bottom: none;
+            font-weight: 700;
+            font-size: 1.1em;
+            text-align: center;
+            border-radius: 12px 12px 0 0;
         }
         
         .filter-item {
-            padding: 10px 16px;
-            border-bottom: 1px solid #eee;
+            padding: 16px 20px;
+            border-bottom: 1px solid #f1f3f4;
         }
         
         .filter-item:last-child {
             border-bottom: none;
+            border-radius: 0 0 12px 12px;
         }
         
         .filter-item label {
             display: block;
-            font-weight: 500;
-            color: #555;
-            margin-bottom: 5px;
+            font-weight: 600;
+            color: #293E4C;
+            margin-bottom: 8px;
+            font-size: 0.95em;
         }
         
         .filter-item input, .filter-item select {
-            width: 100%;
-            padding: 6px 10px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-            font-size: 0.9em;
+            width: 95%;
+            padding: 10px 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            background-color: white;
         }
         
         .filter-item input:focus, .filter-item select:focus {
-            border-color: #488C9A;
             outline: none;
-            box-shadow: 0 0 3px rgba(72, 140, 154, 0.3);
+            border-color: #488C9A;
+            box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
         }
 
         /* Column Chooser Styling */
@@ -2018,26 +2144,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
 
     <h1>Manage Deliveries: <?php echo htmlspecialchars($project_name); ?></h1>
 
-    <!-- Delivery Type Tabs -->
-    <div class="delivery-type-tabs" style="margin: 24px 0;">
-        <div style="display: flex; gap: 4px; background: var(--secondary-color); padding: 6px; border-radius: var(--border-radius); box-shadow: var(--box-shadow);">
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=all" 
-               class="delivery-tab modern-btn <?php echo ($delivery_type === 'all') ? 'primary' : 'secondary'; ?>"
-               style="flex: 1; text-align: center; font-weight: 500; transition: var(--transition); <?php echo ($delivery_type === 'all') ? 'background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%); color: white; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);' : ''; ?>">
-                📦 All Deliveries (<?php echo $delivery_counts['all']; ?>)
-            </a>
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=project" 
-               class="delivery-tab modern-btn <?php echo ($delivery_type === 'project') ? 'primary' : 'secondary'; ?>"
-               style="flex: 1; text-align: center; font-weight: 500; transition: var(--transition); <?php echo ($delivery_type === 'project') ? 'background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%); color: white; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);' : ''; ?>">
-                🏗️ Project Deliveries (<?php echo $delivery_counts['project']; ?>)
-            </a>
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo urlencode($time_filter); ?>&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=warehouse" 
-               class="delivery-tab modern-btn <?php echo ($delivery_type === 'warehouse') ? 'primary' : 'secondary'; ?>"
-               style="flex: 1; text-align: center; font-weight: 500; transition: var(--transition); <?php echo ($delivery_type === 'warehouse') ? 'background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%); color: white; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);' : ''; ?>">
-                🏢 Warehouse Deliveries (<?php echo $delivery_counts['warehouse']; ?>)
-            </a>
-        </div>
-    </div>
+
 
     <!-- Display Messages -->
     <?php
@@ -2049,38 +2156,16 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
     }
     ?>
 
-    <!-- Stats Overview -->
-    <div class="stats-container">
-        <div class="stats-card">
-            <h2>💰 Customer Cost</h2>
-            <div style="font-size: 2.2rem; font-weight: 700; color: var(--primary-color); margin: 16px 0;">
-                $<?php echo number_format($total_customer_cost, 2); ?>
-            </div>
-            <p style="color: var(--text-secondary); margin: 0; font-size: 0.9rem;">Total charged to customers</p>
-        </div>
-        
-        <div class="stats-card">
-            <h2>🚛 Carrier Cost</h2>
-            <div style="font-size: 2.2rem; font-weight: 700; color: var(--primary-color); margin: 16px 0;">
-                $<?php echo number_format($total_freight_cost, 2); ?>
-            </div>
-            <p style="color: var(--text-secondary); margin: 0; font-size: 0.9rem;">Total paid to carriers</p>
-        </div>
-        
-        <div class="stats-card">
-            <h2>📋 Accessorial Costs</h2>
-            <div style="font-size: 2.2rem; font-weight: 700; color: var(--primary-color); margin: 16px 0;">
-                $<?php echo number_format($total_accessorial_costs, 2); ?>
-            </div>
-            <p style="color: var(--text-secondary); margin: 0; font-size: 0.9rem;">Additional service charges</p>
-        </div>
-    </div>
+
 
     <!-- Bulk Actions -->
     <div class="bulk-actions-container">
         <div class="bulk-actions-header">
             <h2>🔧 Bulk Actions</h2>
-            <span id="selectedRowCount" class="selected-count" style="display: none;"></span>
+            <div style="display: flex; flex-direction: column; align-items: flex-end;">
+                <span id="totalDeliveryCount" class="total-count" style="font-size: 0.9em; color: #6c757d; margin-bottom: 5px;"></span>
+                <span id="selectedRowCount" class="selected-count" style="display: none;"></span>
+            </div>
         </div>
         <div class="bulk-actions-buttons">
             <button type="button" id="bulkEditBtn" class="bulk-action-btn edit" disabled onclick="openBulkEditModal()">
@@ -2100,27 +2185,27 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
     <div class="time-filter-header">
         <!-- Left: Time Filters -->
         <div class="time-filters">
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=all&delivery_type=<?php echo urlencode($delivery_type); ?>&status_filter=<?php echo urlencode($status_filter); ?>"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=all&status_filter=<?php echo urlencode($status_filter); ?>&wattage_filter=<?php echo urlencode($wattage_filter); ?>"
                class="<?php echo ($time_filter === 'all') ? 'active' : ''; ?>">All</a>
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=day&ref_date=<?php echo $ref_date; ?>&delivery_type=<?php echo urlencode($delivery_type); ?>&status_filter=<?php echo urlencode($status_filter); ?>"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=day&ref_date=<?php echo $ref_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&wattage_filter=<?php echo urlencode($wattage_filter); ?>"
                class="<?php echo ($time_filter === 'day') ? 'active' : ''; ?>">Day</a>
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=week&ref_date=<?php echo $ref_date; ?>&delivery_type=<?php echo urlencode($delivery_type); ?>&status_filter=<?php echo urlencode($status_filter); ?>"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=week&ref_date=<?php echo $ref_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&wattage_filter=<?php echo urlencode($wattage_filter); ?>"
                class="<?php echo ($time_filter === 'week') ? 'active' : ''; ?>">Week</a>
-            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=month&ref_date=<?php echo $ref_date; ?>&delivery_type=<?php echo urlencode($delivery_type); ?>&status_filter=<?php echo urlencode($status_filter); ?>"
+            <a href="?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=month&ref_date=<?php echo $ref_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&wattage_filter=<?php echo urlencode($wattage_filter); ?>"
                class="<?php echo ($time_filter === 'month') ? 'active' : ''; ?>">Month</a>
         </div>
         <!-- Center: Date Navigation -->
         <div class="date-navigation">
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=<?php echo urlencode($delivery_type); ?>'">
+                        onclick="window.location.href='?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&wattage_filter=<?php echo urlencode($wattage_filter); ?>'">
                     &larr;
                 </button>
             <?php endif; ?>
             <span class="date-label"><?php echo $dateLabel; ?></span>
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&delivery_type=<?php echo urlencode($delivery_type); ?>'">
+                        onclick="window.location.href='?filter_project_id=<?php echo urlencode($filter_project_id); ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&wattage_filter=<?php echo urlencode($wattage_filter); ?>'">
                     &rarr;
                 </button>
             <?php endif; ?>
@@ -2133,7 +2218,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                     <button type="button" id="filtersDropdownBtn" class="filters-dropdown-btn" onclick="toggleFiltersDropdown()">
                         🔽 Filters
                     </button>
-                    <div id="filtersDropdown" class="filters-dropdown-content" style="display: none;">
+                    <div id="filtersDropdown" class="filters-dropdown-content" style="display: none;" onclick="preventDropdownClose(event)">
                         <div class="filters-dropdown-header">Filter Options:</div>
                         
                         <!-- Search Input -->
@@ -2147,7 +2232,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                             <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
                             <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
                             <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
-                            <input type="hidden" name="delivery_type" value="<?php echo htmlspecialchars($delivery_type ?? ''); ?>">
+                            <input type="hidden" name="wattage_filter" value="<?php echo htmlspecialchars($wattage_filter ?? ''); ?>">
                             
                             <div class="filter-item">
                                 <label for="filter_project_id">Project:</label>
@@ -2165,17 +2250,61 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                             </div>
 
                             <div class="filter-item">
-                                <label for="status_filter">Status:</label>
-                                <select name="status_filter" id="status_filter" onchange="this.form.submit()">
-                                    <option value="">All</option>
-                                    <option value="Pending" <?php if($status_filter === 'Pending') echo 'selected'; ?>>Pending</option>
-                                    <option value="In Transit to Warehouse" <?php if($status_filter === 'In Transit to Warehouse') echo 'selected'; ?>>In Transit to Warehouse</option>
-                                    <option value="Delivered to Warehouse" <?php if($status_filter === 'Delivered to Warehouse') echo 'selected'; ?>>Delivered to Warehouse</option>
-                                    <option value="In Transit to Project" <?php if($status_filter === 'In Transit to Project') echo 'selected'; ?>>In Transit to Project</option>
-                                    <option value="Delivered to Project" <?php if($status_filter === 'Delivered to Project') echo 'selected'; ?>>Delivered to Project</option>
-                                    <option value="Canceled" <?php if($status_filter === 'Canceled') echo 'selected'; ?>>Canceled</option>
+                                <label style="font-weight: 600; margin-bottom: 8px; display: block; color: #293E4C;">Status:</label>
+                                <div class="status-dropdown-container" style="position: relative;">
+                                    <button type="button" id="statusDropdownBtn" onclick="toggleStatusDropdown(event)" style="width: 100%; padding: 10px 12px; border: 2px solid #e1e5e9; border-radius: 8px; background: white; text-align: left; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: border-color 0.2s ease;">
+                                        <span id="statusDropdownText"><?php echo empty($status_filter) ? 'All' : count(explode(',', $status_filter)) . ' selected'; ?></span>
+                                        <span style="font-size: 0.8em;">▼</span>
+                                    </button>
+                                    
+                                    <div id="statusDropdownContent" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 2px solid #e1e5e9; border-top: none; border-radius: 0 0 8px 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 1001; max-height: 250px; overflow-y: auto;" onclick="event.stopPropagation();">
+                                        
+                                        <!-- Select All option -->
+                                        <label class="status-option" style="display: flex; align-items: center; padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f1f3f4; background-color: #f8f9fa;" onmouseover="this.style.backgroundColor='#e9ecef'" onmouseout="this.style.backgroundColor='#f8f9fa'">
+                                            <input type="checkbox" id="statusSelectAll" <?php echo empty($status_filter) ? 'checked' : ''; ?> onchange="toggleAllStatuses()" style="margin-right: 10px; width: 16px; height: 16px; accent-color: #488C9A; cursor: pointer;">
+                                            <span style="color: #293E4C; font-weight: 600; font-size: 0.95em;">All</span>
+                                        </label>
+                                        
+                                        <?php 
+                                        $statuses = [
+                                            'Pending' => 'Pending',
+                                            'In Transit to Warehouse' => 'In Transit to Warehouse', 
+                                            'Delivered to Warehouse' => 'Delivered to Warehouse',
+                                            'In Transit to Project' => 'In Transit to Project',
+                                            'Delivered to Project' => 'Delivered to Project',
+                                            'Canceled' => 'Canceled'
+                                        ];
+                                        
+                                        // Parse current status filter (could be comma-separated)
+                                        $selectedStatuses = !empty($status_filter) ? explode(',', $status_filter) : [];
+                                        
+                                        foreach ($statuses as $value => $label): 
+                                            $isChecked = empty($status_filter) || in_array($value, $selectedStatuses);
+                                        ?>
+                                            <label class="status-option" style="display: flex; align-items: center; padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f1f3f4;" onmouseover="this.style.backgroundColor='#f8f9fa'" onmouseout="this.style.backgroundColor='white'">
+                                                <input type="checkbox" name="status_filters[]" value="<?php echo htmlspecialchars($value); ?>" 
+                                                       <?php echo $isChecked ? 'checked' : ''; ?> 
+                                                       onchange="updateStatusSelection()" 
+                                                       style="margin-right: 10px; width: 16px; height: 16px; accent-color: #488C9A; cursor: pointer;">
+                                                <span style="color: #293E4C; font-weight: 500; font-size: 0.9em;"><?php echo htmlspecialchars($label); ?></span>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="filter-item">
+                                <label for="wattage_filter">Wattage:</label>
+                                <select name="wattage_filter" id="wattage_filter" onchange="this.form.submit()">
+                                    <option value="">All Wattages</option>
+                                    <?php foreach ($all_wattages_for_filter as $wattage): ?>
+                                        <option value="<?php echo $wattage; ?>" <?php if ($wattage_filter == $wattage) echo 'selected'; ?>>
+                                            <?php echo $wattage; ?>W
+                                        </option>
+                                    <?php endforeach; ?>
                                 </select>
                             </div>
+
                         </form>
                     </div>
                 </div>
@@ -2278,6 +2407,7 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
         <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
         <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
+        <input type="hidden" name="wattage_filter" value="<?php echo htmlspecialchars($wattage_filter ?? ''); ?>">
         <input type="hidden" name="delivery_type" value="<?php echo htmlspecialchars($delivery_type ?? ''); ?>">
 
         <div class="table-responsive">
@@ -2621,54 +2751,31 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                 <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
                 <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
                 <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
+                <input type="hidden" name="wattage_filter" value="<?php echo htmlspecialchars($wattage_filter ?? ''); ?>">
                 <input type="hidden" name="delivery_type" value="<?php echo htmlspecialchars($delivery_type ?? ''); ?>">
 
                 <!-- Hidden checkboxes for selected_deliveries[] will be appended by JS -->
                 <div id="bulkEditSelectedIds"></div>
 
-                <!-- Two column layout for Delivery Details and Dates -->
+                <!-- Single column layout for allowed fields only -->
                 <div class="modal-sections">
                     <div class="modal-section">
-                        <div class="section-header">Delivery Details</div>
-                        <div class="modal-field">
-                            <label for="bulk_manufacturer">Manufacturer</label>
-                            <input type="text" id="bulk_manufacturer" name="manufacturer">
-                        </div>
-                        <div class="modal-field">
-                            <label for="bulk_wattage">Wattage</label>
-                            <input type="text" id="bulk_wattage" name="wattage">
-                        </div>
+                        <div class="section-header">Delivery Status</div>
                         <div class="modal-field">
                             <label for="bulk_status_of_delivery">Status</label>
                             <select id="bulk_status_of_delivery" name="status_of_delivery">
                                 <option value="">-- No Change --</option>
-                                <option value="Pending">Pending</option>
-                                <option value="In Transit to Warehouse">In Transit to Warehouse</option>
-                                <option value="Delivered to Warehouse">Delivered to Warehouse</option>
-                                <option value="In Transit to Project">In Transit to Project</option>
+                                <option value="Cancelled">Cancelled</option>
                                 <option value="Delivered to Project">Delivered to Project</option>
-                                <option value="Canceled">Canceled</option>
                             </select>
-                        </div>
-                        <div class="modal-field">
-                            <label for="bulk_quantity">Quantity</label>
-                            <input type="number" step="1" id="bulk_quantity" name="quantity">
                         </div>
                         <div class="modal-field">
                             <label for="bulk_bol_number">BOL #</label>
                             <input type="text" id="bulk_bol_number" name="bol_number">
                         </div>
-                    </div>
-                    
-                    <div class="modal-section">
-                        <div class="section-header">Dates</div>
                         <div class="modal-field">
                             <label for="bulk_anticipated_delivery_date">Anticipated Date</label>
                             <input type="date" id="bulk_anticipated_delivery_date" name="anticipated_delivery_date">
-                        </div>
-                        <div class="modal-field">
-                            <label for="bulk_warehouse_arrival_date">Warehouse Date</label>
-                            <input type="date" id="bulk_warehouse_arrival_date" name="warehouse_arrival_date">
                         </div>
                         <div class="modal-field">
                             <label for="bulk_actual_delivery_date">Actual Date</label>
@@ -2734,10 +2841,32 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
 <script>
     // Handle Select All
     document.getElementById('select-all').onclick = function() {
+        var isChecked = this.checked;
+        
+        // Handle regular delivery checkboxes
         var checkboxes = document.getElementsByName('selected_deliveries[]');
         for (var checkbox of checkboxes) {
-            checkbox.checked = this.checked;
+            checkbox.checked = isChecked;
         }
+        
+        // Handle grouped delivery checkboxes (visible ones that trigger toggleGroupedCheckboxes)
+        var groupedCheckboxes = document.querySelectorAll('tbody tr[data-delivery-index] td.select-column input[type="checkbox"]:not([name])');
+        groupedCheckboxes.forEach(function(checkbox) {
+            if (checkbox.onclick && checkbox.onclick.toString().includes('toggleGroupedCheckboxes')) {
+                checkbox.checked = isChecked;
+                // Extract the index from the onclick function and trigger toggleGroupedCheckboxes
+                var onclickStr = checkbox.onclick.toString();
+                var indexMatch = onclickStr.match(/toggleGroupedCheckboxes\((\d+)\)/);
+                if (indexMatch) {
+                    var index = indexMatch[1];
+                    var groupedCheckboxes = document.querySelectorAll('.grouped-checkbox-' + index);
+                    groupedCheckboxes.forEach(function(hiddenCheckbox) {
+                        hiddenCheckbox.checked = isChecked;
+                    });
+                }
+            }
+        });
+        
         updateBulkActionButtons();
     };
 
@@ -2775,33 +2904,45 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                 countDisplay.style.display = 'none';
             }
         }
+        
+        // Also update total count
+        updateTotalDeliveryCount();
     }
 
     // Toggle grouped delivery details
     function toggleDeliveryDetails(index) {
-        var detailRows = document.querySelectorAll('[id^="detail-' + index + '-"]');
-        var mainRow = document.querySelector('[data-delivery-index="' + index + '"]');
-        
-        var isExpanded = mainRow.classList.contains('expanded');
-        
-        if (isExpanded) {
-            // Collapse
-            detailRows.forEach(function(row) {
-                row.classList.remove('show');
-                setTimeout(function() {
-                    row.style.display = 'none';
-                }, 300);
-            });
-            mainRow.classList.remove('expanded');
-        } else {
-            // Expand
-            detailRows.forEach(function(row) {
-                row.style.display = 'table-row';
-                setTimeout(function() {
-                    row.classList.add('show');
-                }, 10);
-            });
-            mainRow.classList.add('expanded');
+        try {
+            var detailRows = document.querySelectorAll('[id^="detail-' + index + '-"]');
+            var mainRow = document.querySelector('[data-delivery-index="' + index + '"]');
+            
+            if (!mainRow) {
+                console.error('Main row not found for index:', index);
+                return;
+            }
+            
+            var isExpanded = mainRow.classList.contains('expanded');
+            
+            if (isExpanded) {
+                // Collapse
+                detailRows.forEach(function(row) {
+                    row.classList.remove('show');
+                    setTimeout(function() {
+                        row.style.display = 'none';
+                    }, 300);
+                });
+                mainRow.classList.remove('expanded');
+            } else {
+                // Expand
+                detailRows.forEach(function(row) {
+                    row.style.display = 'table-row';
+                    setTimeout(function() {
+                        row.classList.add('show');
+                    }, 10);
+                });
+                mainRow.classList.add('expanded');
+            }
+        } catch (error) {
+            console.error('Error in toggleDeliveryDetails:', error);
         }
     }
 
@@ -2833,6 +2974,99 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                 }
             }
             trs[i].style.display = show ? "" : "none";
+        }
+        // Update total count after search
+        updateTotalDeliveryCount();
+    }
+
+    // Toggle status dropdown
+    function toggleStatusDropdown(event) {
+        event.stopPropagation();
+        var dropdown = document.getElementById('statusDropdownContent');
+        var isVisible = dropdown.style.display === 'block';
+        
+        // Close other dropdowns (but NOT the main filters dropdown)
+        document.querySelectorAll('.column-chooser-dropdown').forEach(function(el) {
+            el.style.display = 'none';
+        });
+        
+        dropdown.style.display = isVisible ? 'none' : 'block';
+    }
+
+    // Toggle all statuses
+    function toggleAllStatuses() {
+        var selectAllCheckbox = document.getElementById('statusSelectAll');
+        var statusCheckboxes = document.querySelectorAll('input[name="status_filters[]"]');
+        
+        statusCheckboxes.forEach(function(checkbox) {
+            checkbox.checked = selectAllCheckbox.checked;
+        });
+        
+        updateStatusSelection();
+    }
+
+    // Update status selection and display
+    function updateStatusSelection() {
+        var statusCheckboxes = document.querySelectorAll('input[name="status_filters[]"]');
+        var checkedBoxes = document.querySelectorAll('input[name="status_filters[]"]:checked');
+        var selectAllCheckbox = document.getElementById('statusSelectAll');
+        var dropdownText = document.getElementById('statusDropdownText');
+        
+        // Update "Select All" checkbox state
+        if (checkedBoxes.length === 0) {
+            selectAllCheckbox.checked = false;
+            selectAllCheckbox.indeterminate = false;
+            dropdownText.textContent = 'None selected';
+        } else if (checkedBoxes.length === statusCheckboxes.length) {
+            selectAllCheckbox.checked = true;
+            selectAllCheckbox.indeterminate = false;
+            dropdownText.textContent = 'All';
+        } else {
+            selectAllCheckbox.checked = false;
+            selectAllCheckbox.indeterminate = true;
+            dropdownText.textContent = checkedBoxes.length + ' selected';
+        }
+        
+        // Update hidden field and submit form immediately
+        var values = Array.from(checkedBoxes).map(cb => cb.value);
+        var statusFilter = values.join(',');
+        
+        var hiddenField = document.querySelector('input[name="status_filter"]');
+        if (hiddenField) {
+            hiddenField.value = statusFilter;
+        }
+        
+        // Submit the form immediately for real-time filtering
+        document.getElementById('filterForm').submit();
+    }
+
+    // Prevent dropdown from closing when clicking inside
+    function preventDropdownClose(event) {
+        event.stopPropagation();
+    }
+
+    // Update total delivery count display
+    function updateTotalDeliveryCount() {
+        var table = document.getElementById("deliveriesTable");
+        if (!table) return;
+        
+        var trs = table.getElementsByTagName("tr");
+        var visibleMainRows = 0;
+        
+        // Skip header row (index 0) and only count main delivery rows (not detail rows)
+        for (var i = 1; i < trs.length; i++) {
+            var row = trs[i];
+            // Only count rows that are visible AND are main delivery rows (have data-delivery-index)
+            // This excludes detail rows from grouped deliveries
+            if (row.style.display !== "none" && row.hasAttribute('data-delivery-index')) {
+                visibleMainRows++;
+            }
+        }
+        
+        var countDisplay = document.getElementById('totalDeliveryCount');
+        if (countDisplay) {
+            var countText = visibleMainRows + (visibleMainRows === 1 ? " delivery" : " deliveries") + " showing";
+            countDisplay.textContent = countText;
         }
     }
 
@@ -3069,6 +3303,8 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             var columnDropdown = document.getElementById('columnChooserDropdown');
             var filtersContainer = document.querySelector('.filters-dropdown-container');
             var filtersDropdown = document.getElementById('filtersDropdown');
+            var statusDropdown = document.getElementById('statusDropdownContent');
+            var statusContainer = document.querySelector('.status-dropdown-container');
             
             if (columnContainer && !columnContainer.contains(event.target)) {
                 columnDropdown.style.display = 'none';
@@ -3077,8 +3313,21 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             if (filtersContainer && !filtersContainer.contains(event.target)) {
                 filtersDropdown.style.display = 'none';
             }
+            
+            // Close status dropdown if clicking outside of it
+            if (statusContainer && !statusContainer.contains(event.target)) {
+                statusDropdown.style.display = 'none';
+            }
         });
     });
+
+    // Initialize total delivery count on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        updateTotalDeliveryCount();
+    });
+
+
+
 
 </script>
 </body>

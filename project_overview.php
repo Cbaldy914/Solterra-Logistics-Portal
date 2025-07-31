@@ -449,7 +449,7 @@ function calcWarehousingCost($dv, $warehouse) {
 
 // fetch warehouse if any
 $stmt = $conn->prepare("
-    SELECT w.id, w.in_fee, w.out_fee, w.monthly_storage_fee
+    SELECT w.id
     FROM warehouses w
     INNER JOIN projects p ON p.warehouse_id = w.id
     WHERE p.id=?
@@ -460,7 +460,38 @@ $whres = $stmt->get_result();
 $stmt->close();
 $warehouse = null;
 if ($whres->num_rows > 0) {
-    $warehouse = $whres->fetch_assoc();
+    $warehouse_basic = $whres->fetch_assoc();
+    $warehouse_id = $warehouse_basic['id'];
+    
+    // Fetch cost items for this warehouse
+    $cost_stmt = $conn->prepare("
+        SELECT trigger_event, amount 
+        FROM warehouse_cost_items 
+        WHERE warehouse_id = ? AND is_active = 1
+    ");
+    $cost_stmt->bind_param("i", $warehouse_id);
+    $cost_stmt->execute();
+    $cost_result = $cost_stmt->get_result();
+    
+    $warehouse = ['id' => $warehouse_id];
+    $warehouse['in_fee'] = 0;
+    $warehouse['out_fee'] = 0;
+    $warehouse['monthly_storage_fee'] = 0;
+    
+    while ($cost = $cost_result->fetch_assoc()) {
+        switch ($cost['trigger_event']) {
+            case 'entry':
+                $warehouse['in_fee'] = $cost['amount'];
+                break;
+            case 'exit':
+                $warehouse['out_fee'] = $cost['amount'];
+                break;
+            case 'monthly':
+                $warehouse['monthly_storage_fee'] = $cost['amount'];
+                break;
+        }
+    }
+    $cost_stmt->close();
 }
 
 // Build actual total cost from deliveries

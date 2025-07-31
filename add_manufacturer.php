@@ -132,9 +132,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$stmt->execute()) {
             throw new Exception("Error inserting manufacturer: " . $stmt->error);
         }
+        
+        // Get the ID of the newly created manufacturer
+        $manufacturer_id = $conn->insert_id;
         $stmt->close();
+        
+        // Automatically create a "Main Location" entry in manufacturer_locations
+        $location_stmt = $conn->prepare("
+            INSERT INTO manufacturer_locations (
+                manufacturer_id,
+                location_name,
+                street_address,
+                city,
+                state,
+                zip_code,
+                country,
+                is_primary,
+                is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        
+        if (!$location_stmt) {
+            throw new Exception("Error preparing location insert: " . $conn->error);
+        }
+        
+        $location_name = "Main Location";
+        $is_primary = 1;
+        $location_is_active = 1;
+        
+        $location_stmt->bind_param(
+            "issssssii",
+            $manufacturer_id,
+            $location_name,
+            $street_address,
+            $city,
+            $state,
+            $zip_code,
+            $country,
+            $is_primary,
+            $location_is_active
+        );
+        
+        if (!$location_stmt->execute()) {
+            throw new Exception("Error inserting manufacturer location: " . $location_stmt->error);
+        }
+        $location_stmt->close();
 
-        $successMessage = "Manufacturer added successfully!";
+        $successMessage = "Manufacturer and main location added successfully!";
 
     } catch (Exception $ex) {
         $errorMessage = $ex->getMessage();
