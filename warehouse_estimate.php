@@ -183,8 +183,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             'square_feet' => $square_feet,
             'additional_documentation' => $uploaded_file_path,
             // Initialize cost fields (admin will fill these later)
-            'in_fee_per_pallet' => null,
-            'out_fee_per_pallet' => null,
+            'entry_fee_per_pallet' => null,
+            'exit_fee_per_pallet' => null,
             'monthly_storage_cost_per_pallet' => null,
         ];
 

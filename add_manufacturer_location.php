@@ -75,7 +75,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // If this is set as primary, we need to handle existing primary location
         if ($is_primary) {
-            // The database triggers will handle setting other locations to not primary
+            // Set all other locations for this manufacturer to non-primary
+            $update_stmt = $conn->prepare("UPDATE manufacturer_locations SET is_primary = FALSE WHERE manufacturer_id = ?");
+            if ($update_stmt) {
+                $update_stmt->bind_param("i", $manufacturer_id);
+                $update_stmt->execute();
+                $update_stmt->close();
+            }
         }
 
         // Insert into manufacturer_locations table
@@ -350,10 +356,10 @@ function initializeAddressAutocomplete() {
     const stateInput = document.getElementById('state');
     const zipInput = document.getElementById('zip_code');
     
-    // Create the autocomplete object, restricting the search to addresses
+    // Create the autocomplete object for international addresses
     const autocomplete = new google.maps.places.Autocomplete(streetAddressInput, {
-        types: ['address'],
-        componentRestrictions: { country: 'US' } // Restrict to US addresses
+        types: ['address']
+        // No country restrictions - allow international addresses
     });
     
     // When the user selects an address from the dropdown, populate the address fields
@@ -375,6 +381,7 @@ function initializeAddressAutocomplete() {
         // Get the address components and populate the form fields
         let streetNumber = '';
         let route = '';
+        const countryInput = document.getElementById('country');
         
         for (let i = 0; i < place.address_components.length; i++) {
             const addressType = place.address_components[i].types[0];
@@ -389,19 +396,34 @@ function initializeAddressAutocomplete() {
                     break;
                 case 'locality':
                 case 'administrative_area_level_3':
-                    cityInput.value = val;
+                case 'sublocality_level_1': // For international addresses
+                    if (!cityInput.value) cityInput.value = val;
                     break;
                 case 'administrative_area_level_1':
-                    stateInput.value = place.address_components[i].short_name; // Use short name for state (e.g., "CA" instead of "California")
+                    // For US: use short name (CA), for international: use long name (Gujarat)
+                    const isUS = place.address_components.some(comp => 
+                        comp.types.includes('country') && comp.short_name === 'US'
+                    );
+                    stateInput.value = isUS ? place.address_components[i].short_name : val;
                     break;
                 case 'postal_code':
                     zipInput.value = val;
+                    break;
+                case 'country':
+                    if (countryInput) {
+                        countryInput.value = val; // Full country name (e.g., "India", "United States")
+                    }
                     break;
             }
         }
         
         // Combine street number and route for full street address
-        streetAddressInput.value = (streetNumber + ' ' + route).trim();
+        if (streetNumber && route) {
+            streetAddressInput.value = (streetNumber + ' ' + route).trim();
+        } else if (route) {
+            streetAddressInput.value = route; // For addresses where only route is available
+        }
+        // If autocomplete doesn't provide street info, keep what user typed
     });
 }
 

@@ -240,6 +240,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
             'Delivered to Warehouse' => 'In Warehouse',
             'In Transit to Project' => 'In Transit to Project', 
             'In Transit to Warehouse' => 'In Transit to Warehouse',
+            'On Water' => 'On Water',
+            'Cleared Customs' => 'Cleared Customs',
             'Pending' => 'At Manufacturer' // Assume pallets go back to manufacturer if delivery is pending
         ];
         

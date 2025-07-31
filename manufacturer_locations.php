@@ -69,7 +69,15 @@ if (isset($_GET['action']) && $_GET['action'] === 'set_primary' && isset($_GET['
     try {
         $location_id = intval($_GET['location_id']);
         
-        // Set this location as primary (triggers will handle setting others to false)
+        // First, set all locations for this manufacturer to non-primary
+        $update_stmt = $conn->prepare("UPDATE manufacturer_locations SET is_primary = FALSE WHERE manufacturer_id = ?");
+        if ($update_stmt) {
+            $update_stmt->bind_param("i", $manufacturer_id);
+            $update_stmt->execute();
+            $update_stmt->close();
+        }
+        
+        // Then set this location as primary
         $stmt = $conn->prepare("UPDATE manufacturer_locations SET is_primary = TRUE WHERE id = ? AND manufacturer_id = ?");
         if (!$stmt) {
             throw new Exception("Error preparing update statement: " . $conn->error);
