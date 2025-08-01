@@ -96,7 +96,7 @@ try {
         LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
         LEFT JOIN modules m ON umi.unassigned_module_id = m.id
         LEFT JOIN projects p ON d.project_id = p.id
-        WHERE ip.status = 'In Transit to Warehouse' AND d.warehouse_id = ?
+        WHERE ip.status IN ('In Transit to Warehouse', 'On Water') AND d.warehouse_id = ?
         ORDER BY d.anticipated_delivery_date ASC, ip.id DESC
     ");
     if (!$stmtP_Transit) throw new Exception("Failed to prepare transit pallets query: " . $conn->error);
@@ -126,7 +126,7 @@ try {
         JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
         LEFT JOIN projects p ON d.project_id = p.id
         WHERE d.warehouse_id = ? 
-        AND ip.status = 'In Transit to Warehouse'
+        AND ip.status IN ('In Transit to Warehouse', 'On Water')
         GROUP BY d.id, d.bol_number, d.supplier, d.anticipated_delivery_date
         ORDER BY d.anticipated_delivery_date ASC
     ");
@@ -144,7 +144,7 @@ try {
                     SELECT COUNT(ip.id) as pallet_count, SUM(ip.quantity) as module_count
                     FROM inventory_pallets ip
                     JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
-                    WHERE dp.delivery_id = ? AND ip.wattage = ? AND ip.status = 'In Transit to Warehouse'
+                    WHERE dp.delivery_id = ? AND ip.wattage = ? AND ip.status IN ('In Transit to Warehouse', 'On Water')
                 ");
                 if ($stmtWattageDetail) {
                     $stmtWattageDetail->bind_param("ii", $truckload['delivery_id'], $wattage);
