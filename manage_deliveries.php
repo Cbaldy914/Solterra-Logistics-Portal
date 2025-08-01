@@ -355,9 +355,7 @@ if (isset($_POST['bulk_edit_submit'])) {
         $fields_to_update = [
             'manufacturer'            => 's',  // This will update the supplier field
             'wattage'                 => 's',
-            'status_of_delivery'      => 's',
             'quantity'                => 'i',
-            'bol_number'              => 's',
             'anticipated_delivery_date' => 's',
             'warehouse_arrival_date'  => 's',
             'actual_delivery_date'    => 's',
@@ -519,6 +517,184 @@ if (isset($_POST['bulk_edit_submit'])) {
         }
     } else {
         $_SESSION['messages'][] = "<p>No deliveries selected for bulk edit.</p>";
+    }
+
+    // Redirect back
+    $redirect_params = "time_filter=" . urlencode($time_filter) . "&ref_date=" . urlencode($ref_date) . "&status_filter=" . urlencode($status_filter) . "&wattage_filter=" . urlencode($wattage_filter) . "&filter_project_id=" . urlencode($filter_project_id);
+    header("Location: manage_deliveries?" . $redirect_params);
+    exit();
+}
+
+/*
+  -----------------------------------------------------------------------------
+  2.5) Handle Receive to Project
+  -----------------------------------------------------------------------------
+*/
+if (isset($_POST['receive_to_project_submit'])) {
+    if (isset($_POST['selected_deliveries']) && !empty($_POST['selected_deliveries'])) {
+        $selected_ids = array_map('intval', $_POST['selected_deliveries']);
+        $actual_delivery_date = trim($_POST['actual_delivery_date'] ?? date('Y-m-d'));
+
+        // --- NEW: Security check for admin role ---
+        if (!$is_global_admin && $account_id_for_admin) {
+            $valid_ids_for_receive = [];
+            $id_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            $check_stmt = $conn->prepare(
+                "SELECT d.id FROM deliveries d JOIN projects p ON d.project_id = p.id WHERE d.id IN ($id_placeholders) AND p.account_id = ?"
+            );
+            $check_types = str_repeat('i', count($selected_ids)) . 'i';
+            $check_params = array_merge($selected_ids, [$account_id_for_admin]);
+            $check_stmt->bind_param($check_types, ...$check_params);
+            $check_stmt->execute();
+            $result_check = $check_stmt->get_result();
+            while ($row = $result_check->fetch_assoc()) {
+                $valid_ids_for_receive[] = $row['id'];
+            }
+            $check_stmt->close();
+
+            $selected_ids = array_intersect($selected_ids, $valid_ids_for_receive);
+
+            if (empty($selected_ids)) {
+                $_SESSION['messages'][] = "<p class='error-message'>Receive to project failed: No valid deliveries selected for your account.</p>";
+                header("Location: manage_deliveries?" . $redirect_params);
+                exit();
+            }
+        }
+
+        // Start transaction for receive to project
+        $conn->begin_transaction();
+        try {
+            // Handle POD upload
+            $pod_path = null;
+            if (isset($_FILES['proof_of_delivery']) && $_FILES['proof_of_delivery']['error'] === UPLOAD_ERR_OK) {
+                $upload_dir = 'uploads/pods/';
+                if (!is_dir($upload_dir)) {
+                    mkdir($upload_dir, 0755, true);
+                }
+                
+                $file_ext = strtolower(pathinfo($_FILES['proof_of_delivery']['name'], PATHINFO_EXTENSION));
+                $allowed_exts = ['jpg', 'jpeg', 'png', 'pdf'];
+                
+                if (in_array($file_ext, $allowed_exts)) {
+                    $filename = 'bulk_pod_' . time() . '.' . $file_ext;
+                    $pod_path = $upload_dir . $filename;
+                    move_uploaded_file($_FILES['proof_of_delivery']['tmp_name'], $pod_path);
+                }
+            }
+
+            // Update delivery records
+            $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            $update_sql = "UPDATE deliveries SET status_of_delivery = 'Delivered to Project', actual_delivery_date = ?";
+            $update_params = [$actual_delivery_date];
+            $update_types = "s";
+
+            if ($pod_path) {
+                $update_sql .= ", proof_of_delivery = ?";
+                $update_params[] = $pod_path;
+                $update_types .= "s";
+            }
+
+            $update_sql .= " WHERE id IN ($placeholders)";
+            foreach ($selected_ids as $id) {
+                $update_params[] = $id;
+                $update_types .= "i";
+            }
+
+            $stmt = $conn->prepare($update_sql);
+            $stmt->bind_param($update_types, ...$update_params);
+            
+            if (!$stmt->execute()) {
+                throw new Exception("Failed to update deliveries: " . $stmt->error);
+            }
+            $updated_count = $stmt->affected_rows;
+            $stmt->close();
+
+            // Update associated pallet statuses to "Delivered to Project"
+            $total_pallet_updates = 0;
+            $new_pallet_status = 'Delivered to Project';
+            
+            // Get all pallets associated with these deliveries
+            $pallet_placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            $get_pallets_stmt = $conn->prepare("
+                SELECT DISTINCT dp.inventory_pallet_id 
+                FROM delivery_pallets dp 
+                WHERE dp.delivery_id IN ($pallet_placeholders)
+            ");
+            
+            if ($get_pallets_stmt) {
+                $types_pallets = str_repeat('i', count($selected_ids));
+                $get_pallets_stmt->bind_param($types_pallets, ...$selected_ids);
+                $get_pallets_stmt->execute();
+                $pallet_result = $get_pallets_stmt->get_result();
+                $pallet_ids_to_update = [];
+                
+                while ($pallet_row = $pallet_result->fetch_assoc()) {
+                    $pallet_ids_to_update[] = $pallet_row['inventory_pallet_id'];
+                }
+                $get_pallets_stmt->close();
+                
+                // Update pallet statuses if we found any pallets
+                if (!empty($pallet_ids_to_update)) {
+                    $pallet_placeholders_update = implode(',', array_fill(0, count($pallet_ids_to_update), '?'));
+                    $types_pallet_update = 's' . str_repeat('i', count($pallet_ids_to_update));
+                    
+                    $update_pallets_stmt = $conn->prepare("
+                        UPDATE inventory_pallets 
+                        SET status = ? 
+                        WHERE id IN ($pallet_placeholders_update)
+                    ");
+                    
+                    if ($update_pallets_stmt) {
+                        $update_pallets_stmt->bind_param($types_pallet_update, $new_pallet_status, ...$pallet_ids_to_update);
+                        if ($update_pallets_stmt->execute()) {
+                            $total_pallet_updates = $update_pallets_stmt->affected_rows;
+                        }
+                        $update_pallets_stmt->close();
+                    }
+                }
+            }
+
+            // Update scheduling records if they exist
+            $total_scheduling_updates = 0;
+            $arrival_time = $actual_delivery_date . ' 08:00:00'; // Default arrival time
+            $departure_time = $actual_delivery_date . ' 16:00:00'; // Default departure time
+            
+            $stmt_update_scheduling = $conn->prepare("
+                UPDATE site_scheduling 
+                SET arrival_time = ?, departure_time = ?, is_closed = 1
+                WHERE delivery_id IN ($placeholders)
+            ");
+            
+            if ($stmt_update_scheduling) {
+                $scheduling_types = 'ss' . str_repeat('i', count($selected_ids));
+                $scheduling_params = array_merge([$arrival_time, $departure_time], $selected_ids);
+                $stmt_update_scheduling->bind_param($scheduling_types, ...$scheduling_params);
+                if ($stmt_update_scheduling->execute()) {
+                    $total_scheduling_updates = $stmt_update_scheduling->affected_rows;
+                }
+                $stmt_update_scheduling->close();
+            }
+
+            $conn->commit();
+            
+            $success_msg = "Successfully received {$updated_count} delivery(ies) to project.";
+            if ($total_pallet_updates > 0) {
+                $success_msg .= " Updated status for {$total_pallet_updates} associated pallet(s).";
+            }
+            if ($total_scheduling_updates > 0) {
+                $success_msg .= " Updated {$total_scheduling_updates} scheduling record(s).";
+            }
+            if ($pod_path) {
+                $success_msg .= " POD uploaded successfully.";
+            }
+            $_SESSION['messages'][] = "<p>{$success_msg}</p>";
+            
+        } catch (Exception $e) {
+            $conn->rollback();
+            $_SESSION['messages'][] = "<p class='error-message'>Error receiving deliveries to project: " . $e->getMessage() . "</p>";
+        }
+    } else {
+        $_SESSION['messages'][] = "<p>No deliveries selected for receiving to project.</p>";
     }
 
     // Redirect back
@@ -1505,6 +1681,11 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             color: white;
         }
 
+        .bulk-action-btn.receive {
+            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+            color: white;
+        }
+
         .bulk-action-btn:not(:disabled):hover {
             transform: translateY(-2px);
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
@@ -1718,173 +1899,330 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             50% { background-color: #fffacd; }
             100% { background-color: #fffacd; }
         }
-        /* Modal styling for Bulk Edit */
+        /* Modern Bulk Edit Modal Styling */
         #bulkEditModal {
-            display: none; /* Hidden by default */
-            position: fixed; 
-            z-index: 9999; 
-            left: 0; 
-            top: 0; 
-            width: 100%; 
-            height: 100%; 
-            overflow: auto; 
-            background-color: rgba(0, 0, 0, 0.5);
+            display: none;
+            position: fixed;
+            z-index: 9999;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(4px);
+            animation: fadeIn 0.3s ease-out;
         }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes modalSlideIn {
+            from { 
+                opacity: 0;
+                transform: translateY(-20px) scale(0.95);
+            }
+            to { 
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
         #bulkEditModalContent {
-            background-color: #fff;
-            margin: 5% auto;
-            padding: 20px;
-            width: 600px; /* Increased width to prevent overlap */
-            max-width: 90%;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            background: #ffffff;
+            margin: 2% auto;
+            padding: 0;
+            width: 700px;
+            max-width: 95%;
+            border-radius: 16px;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.12), 0 8px 32px rgba(0, 0, 0, 0.08);
             position: relative;
+            animation: modalSlideIn 0.3s ease-out;
+            overflow: hidden;
         }
-        .modal-header {
+
+        /* Modern Header */
+        .bulk-edit-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-bottom: 1px solid #e9ecef;
+            padding: 32px 32px 24px 32px;
+        }
+
+        .header-content {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #eee;
+            gap: 16px;
+            margin-bottom: 12px;
         }
-        .modal-header h2 {
+
+        .header-icon {
+            font-size: 28px;
+            opacity: 0.8;
+        }
+
+        .header-text h2 {
             margin: 0;
-            color: #293E4C;
-        }
-        .close-modal {
-            position: absolute;
-            top: 15px;
-            right: 20px;
             font-size: 24px;
-            font-weight: bold;
-            color: #aaa;
-            cursor: pointer;
-            border: none;
-            background: transparent;
+            font-weight: 600;
+            color: #1d1d1f;
+            line-height: 1.2;
         }
-        .close-modal:hover {
+
+        .header-subtitle {
+            margin: 4px 0 0 0;
+            font-size: 15px;
+            color: #86868b;
+            font-weight: 400;
+        }
+
+        .delivery-count {
+            font-weight: 600;
             color: #488C9A;
         }
-        .modal-field {
-            margin-bottom: 12px;
+
+        .header-description {
+            font-size: 14px;
+            color: #6e6e73;
+            line-height: 1.4;
+        }
+
+        .close-modal {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: transparent;
+            border: none;
+            font-size: 18px;
+            color: #86868b;
+            cursor: pointer;
             display: flex;
             align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
         }
-        .modal-field label {
-            display: inline-block;
-            width: 150px;
-            font-weight: 500;
-            color: #555;
+
+        .close-modal:hover {
+            background: #f5f5f7;
+            color: #1d1d1f;
         }
-        .modal-field input {
-            flex: 1;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+
+        /* Content Area */
+        .bulk-edit-content {
+            padding: 32px;
+            background: #ffffff;
         }
-        .modal-field input:focus {
-            border-color: #488C9A;
-            outline: none;
-            box-shadow: 0 0 3px rgba(72, 140, 154, 0.3);
+
+        .field-group {
+            margin-bottom: 32px;
         }
-        .modal-sections {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 20px;
-            margin-bottom: 20px;
+
+        .field-group:last-child {
+            margin-bottom: 0;
         }
-        .modal-section {
-            flex: 1;
-            min-width: 200px; /* Increased minimum width */
-        }
-        .section-header {
+
+        .group-title {
+            font-size: 16px;
             font-weight: 600;
-            margin: 10px 0;
-            padding-bottom: 5px;
-            border-bottom: 1px solid #eee;
-            color: #555;
+            color: #1d1d1f;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-        .modal-cost-section {
-            width: 100%;
-            margin-top: 10px;
+
+        /* Field Grid Layouts */
+        .field-grid {
+            display: grid;
+            gap: 20px;
         }
-        .modal-cost-fields {
+
+        .dates-grid {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+
+        .logistics-grid {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+        
+        /* Special handling for logistics to prevent overlap */
+        @media screen and (max-width: 900px) {
+            .logistics-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        .field-item {
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 8px;
         }
-        .cost-row {
-            display: flex;
-            gap: 15px;
-        }
-        .cost-field-full {
-            width: 100%;
-        }
-        .cost-field-half {
-            flex: 1;
-            min-width: 160px;
-        }
-        .modal-buttons {
-            text-align: center; /* Changed to center */
-            margin-top: 20px;
-            padding-top: 15px;
-            border-top: 1px solid #eee;
-        }
-        .modal-buttons button {
-            background-color: #488C9A;
-            color: white;
-            border: none;
-            padding: 8px 20px; /* Slightly wider button */
-            border-radius: 4px;
-            cursor: pointer;
+
+        .field-item label {
+            font-size: 14px;
             font-weight: 500;
+            color: #1d1d1f;
+            margin-bottom: 6px;
         }
-        .modal-buttons button:hover {
-            background-color: #3A6E7F;
+
+        /* Modern Input Styling */
+        .modern-input {
+            padding: 12px 16px;
+            border: 1.5px solid #d2d2d7;
+            border-radius: 8px;
+            background: #ffffff;
+            font-size: 16px;
+            color: #1d1d1f;
+            transition: all 0.2s ease;
+            appearance: none;
         }
-        /* Modal styling for Miles & Costs section */
-        .modal-cost-section {
+
+        .modern-input:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
+        }
+
+        .modern-input::placeholder {
+            color: #86868b;
+        }
+
+        /* Currency Input with Prefix */
+        .input-with-prefix {
+            position: relative;
+            display: flex;
+            align-items: center;
             width: 100%;
-            margin-top: 10px;
         }
-        .modal-cost-fields {
+
+        .currency-prefix {
+            position: absolute;
+            left: 16px;
+            color: #86868b;
+            font-size: 16px;
+            font-weight: 500;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        .currency-input {
+            padding-left: 36px;
+            width: 100%;
+        }
+
+        /* Action Buttons */
+        .bulk-edit-actions {
+            padding: 24px 32px 32px 32px;
+            background: #f8f9fa;
             display: flex;
-            flex-direction: column;
+            justify-content: flex-end;
             gap: 12px;
+            border-top: 1px solid #e9ecef;
         }
-        .cost-row {
+
+        .action-btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
             display: flex;
-            gap: 15px;
-        }
-        /* Miles row styling */
-        .miles-row {
-            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 120px;
             justify-content: center;
         }
-        .miles-field {
-            width: 60%;
+
+        .action-btn.secondary {
+            background: transparent;
+            color: #1d1d1f;
+            border: 1.5px solid #d2d2d7;
         }
-        /* Costs row styling */
-        .costs-row {
-            display: flex;
-            gap: 15px;
+
+        .action-btn.secondary:hover {
+            background: #f5f5f7;
+            border-color: #a1a1a6;
         }
-        .cost-field-half {
-            flex: 1;
-            min-width: 160px;
+
+        .action-btn.primary {
+            background: linear-gradient(135deg, #488C9A 0%, #3A7580 100%);
+            color: white;
+            box-shadow: 0 2px 8px rgba(72, 140, 154, 0.25);
         }
-        /* Media query for mobile view */
-        @media screen and (max-width: 600px) {
-            .costs-row {
+
+        .action-btn.primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.35);
+        }
+
+        .btn-icon {
+            font-size: 14px;
+        }
+
+        /* Responsive Design */
+        @media screen and (max-width: 768px) {
+            #bulkEditModalContent {
+                margin: 5% auto;
+                width: 95%;
+                border-radius: 12px;
+            }
+
+            .bulk-edit-header {
+                padding: 24px 20px 20px 20px;
+            }
+
+            .bulk-edit-content {
+                padding: 24px 20px;
+            }
+
+            .bulk-edit-actions {
+                padding: 20px;
                 flex-direction: column;
+            }
+
+            .dates-grid,
+            .logistics-grid {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+
+            .header-content {
                 gap: 12px;
             }
-            .cost-field-half {
-                width: 100%;
+
+            .header-icon {
+                font-size: 24px;
             }
-            .miles-field {
-                width: 100%;
+
+            .header-text h2 {
+                font-size: 20px;
+            }
+        }
+
+        @media screen and (max-width: 480px) {
+            .close-modal {
+                top: 16px;
+                right: 16px;
+            }
+
+            .field-group {
+                margin-bottom: 24px;
+            }
+
+            .group-title {
+                font-size: 15px;
+            }
+
+            .action-btn {
+                font-size: 15px;
+                padding: 10px 20px;
             }
         }
         /* Associated Pallets Modal Styling */
@@ -2168,8 +2506,10 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             </div>
         </div>
         <div class="bulk-actions-buttons">
-            <button type="button" id="bulkEditBtn" class="bulk-action-btn edit" disabled onclick="openBulkEditModal()">
-                ✏️ Bulk Edit
+            <button type="button" id="receiveToProjectBtn" class="bulk-action-btn receive" disabled onclick="openReceiveToProjectModal()">
+                📦 Receive to Project
+            </button>
+            <button type="button" id="bulkEditBtn" class="bulk-action-btn edit" disabled onclick="openBulkEditModal()">Bulk Edit
             </button>
             <button type="submit" form="deliveriesForm" name="delete_selected" id="bulkDeleteBtn" class="bulk-action-btn delete" disabled
                 onclick="return confirm('Are you sure you want to delete the selected deliveries?');">
@@ -2268,6 +2608,8 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                         <?php 
                                         $statuses = [
                                             'Pending' => 'Pending',
+                                            'On Water' => 'On Water',
+                                            'Cleared Customs' => 'Cleared Customs',
                                             'In Transit to Warehouse' => 'In Transit to Warehouse', 
                                             'Delivered to Warehouse' => 'Delivered to Warehouse',
                                             'In Transit to Project' => 'In Transit to Project',
@@ -2740,11 +3082,18 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         <div id="bulkEditModalContent">
             <span class="close-modal" onclick="closeBulkEditModal()">&times;</span>
             
-            <div class="modal-header">
-                <h2>Bulk Edit</h2>
+            <!-- Modern Header with Delivery Count -->
+            <div class="bulk-edit-header">
+                <div class="header-content">
+                    <div class="header-text">
+                        <h2>Bulk Edit</h2>
+                        <p class="header-subtitle">Editing <span id="bulkEditDeliveryCount" class="delivery-count">0</span> deliveries</p>
+                    </div>
+                </div>
+                <div class="header-description">
+                    Update only the fields you want to change. Leave others blank to keep existing values.
+                </div>
             </div>
-            
-            <p>Fill in only the fields you want to update. Leave others blank.</p>
             
             <form method="post" action="manage_deliveries?filter_project_id=<?php echo urlencode($filter_project_id); ?>">
                 <!-- Keep time/status filters in case you want to preserve them after submit -->
@@ -2757,69 +3106,66 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                 <!-- Hidden checkboxes for selected_deliveries[] will be appended by JS -->
                 <div id="bulkEditSelectedIds"></div>
 
-                <!-- Single column layout for allowed fields only -->
-                <div class="modal-sections">
-                    <div class="modal-section">
-                        <div class="section-header">Delivery Status</div>
-                        <div class="modal-field">
-                            <label for="bulk_status_of_delivery">Status</label>
-                            <select id="bulk_status_of_delivery" name="status_of_delivery">
-                                <option value="">-- No Change --</option>
-                                <option value="Cancelled">Cancelled</option>
-                                <option value="Delivered to Project">Delivered to Project</option>
-                            </select>
-                        </div>
-                        <div class="modal-field">
-                            <label for="bulk_bol_number">BOL #</label>
-                            <input type="text" id="bulk_bol_number" name="bol_number">
-                        </div>
-                        <div class="modal-field">
-                            <label for="bulk_anticipated_delivery_date">Anticipated Date</label>
-                            <input type="date" id="bulk_anticipated_delivery_date" name="anticipated_delivery_date">
-                        </div>
-                        <div class="modal-field">
-                            <label for="bulk_actual_delivery_date">Actual Date</label>
-                            <input type="date" id="bulk_actual_delivery_date" name="actual_delivery_date">
+                <!-- Modern Field Groups -->
+                <div class="bulk-edit-content">
+                    <!-- Dates Section -->
+                    <div class="field-group">
+                        <div class="group-title">📅 Delivery Dates</div>
+                        <div class="field-grid dates-grid">
+                            <div class="field-item">
+                                <label for="bulk_anticipated_delivery_date">Anticipated</label>
+                                <input type="date" id="bulk_anticipated_delivery_date" name="anticipated_delivery_date" class="modern-input">
+                            </div>
+                            <div class="field-item">
+                                <label for="bulk_warehouse_arrival_date">Warehouse Arrival</label>
+                                <input type="date" id="bulk_warehouse_arrival_date" name="warehouse_arrival_date" class="modern-input">
+                            </div>
+                            <div class="field-item">
+                                <label for="bulk_actual_delivery_date">Actual Delivery</label>
+                                <input type="date" id="bulk_actual_delivery_date" name="actual_delivery_date" class="modern-input">
+                            </div>
                         </div>
                     </div>
-                </div>
-                
-                <!-- Miles & Costs section with improved layout -->
-                <div class="modal-cost-section">
-                    <div class="section-header">Miles & Costs</div>
-                    <div class="modal-cost-fields">
-                        <!-- Miles centered on its own line -->
-                        <div class="miles-row">
-                            <div class="modal-field miles-field">
+
+                    <!-- Logistics Section -->
+                    <div class="field-group">
+                        <div class="group-title">🚛 Logistics & Costs</div>
+                        <div class="field-grid logistics-grid">
+                            <div class="field-item miles-item">
                                 <label for="bulk_miles">Miles</label>
-                                <input type="number" step="0.01" id="bulk_miles" name="miles">
+                                <input type="number" step="0.01" id="bulk_miles" name="miles" class="modern-input" placeholder="0.00">
                             </div>
-                        </div>
-                        
-                        <!-- Costs on a second line that collapses on mobile -->
-                        <div class="costs-row">
-                            <div class="modal-field cost-field-half">
-                                <label for="bulk_freight_cost">Freight Cost ($)</label>
-                                <input type="number" step="0.01" id="bulk_freight_cost" name="freight_cost">
+                            <div class="field-item">
+                                <label for="bulk_freight_cost">Freight Cost</label>
+                                <div class="input-with-prefix">
+                                    <span class="currency-prefix">$</span>
+                                    <input type="number" step="0.01" id="bulk_freight_cost" name="freight_cost" class="modern-input currency-input" placeholder="0.00">
+                                </div>
                             </div>
-                            <div class="modal-field cost-field-half">
-                                <label for="bulk_accessorial_costs">Accessorial ($)</label>
-                                <input type="number" step="0.01" id="bulk_accessorial_costs" name="accessorial_costs">
+                            <div class="field-item">
+                                <label for="bulk_accessorial_costs">Accessorial</label>
+                                <div class="input-with-prefix">
+                                    <span class="currency-prefix">$</span>
+                                    <input type="number" step="0.01" id="bulk_accessorial_costs" name="accessorial_costs" class="modern-input currency-input" placeholder="0.00">
+                                </div>
                             </div>
-                        </div>
-                        
-                        <!-- Customer Cost on a separate line -->
-                        <div class="customer-cost-row">
-                            <div class="modal-field cost-field-half">
-                                <label for="bulk_customer_cost">Customer Cost ($)</label>
-                                <input type="number" step="0.01" id="bulk_customer_cost" name="customer_cost">
+                            <div class="field-item">
+                                <label for="bulk_customer_cost">Customer Cost</label>
+                                <div class="input-with-prefix">
+                                    <span class="currency-prefix">$</span>
+                                    <input type="number" step="0.01" id="bulk_customer_cost" name="customer_cost" class="modern-input currency-input" placeholder="0.00">
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="modal-buttons">
-                    <button type="submit" name="bulk_edit_submit">Save Changes</button>
+                <!-- Modern Action Buttons -->
+                <div class="bulk-edit-actions">
+                    <button type="button" onclick="closeBulkEditModal()" class="action-btn secondary">Cancel</button>
+                    <button type="submit" name="bulk_edit_submit" class="action-btn primary">
+                        Save Changes
+                    </button>
                 </div>
             </form>
         </div>
@@ -2833,6 +3179,53 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
             <div id="palletList"> 
                 <!-- Pallet details will be loaded here by JS -->
             </div>
+        </div>
+    </div>
+
+    <!-- Receive to Project Modal -->
+    <div id="receiveToProjectModal" style="display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0, 0, 0, 0.5);">
+        <div style="background-color: #fff; margin: 5% auto; padding: 20px; width: 500px; max-width: 90%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); position: relative;">
+            <span class="close-modal" onclick="closeReceiveToProjectModal()">&times;</span>
+            
+            <div class="modal-header">
+                <h2>📦 Receive Deliveries to Project</h2>
+            </div>
+            
+            <p style="margin-bottom: 20px; color: #6c757d;">
+                You are about to mark <span id="receiveDeliveryCount" style="font-weight: bold; color: #488C9A;">0</span> deliveries as "Delivered to Project".
+            </p>
+            
+            <form method="post" action="manage_deliveries?filter_project_id=<?php echo urlencode($filter_project_id); ?>" enctype="multipart/form-data">
+                <!-- Preserve filter parameters -->
+                <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
+                <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
+                <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
+                <input type="hidden" name="wattage_filter" value="<?php echo htmlspecialchars($wattage_filter ?? ''); ?>">
+                <input type="hidden" name="delivery_type" value="<?php echo htmlspecialchars($delivery_type ?? ''); ?>">
+
+                <!-- Hidden checkboxes for selected_deliveries[] will be appended by JS -->
+                <div id="receiveSelectedIds"></div>
+
+                <div class="modal-field">
+                    <label for="receive_actual_delivery_date">Actual Delivery Date:</label>
+                    <input type="date" id="receive_actual_delivery_date" name="actual_delivery_date" value="<?php echo date('Y-m-d'); ?>" required style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+
+                <div class="modal-field">
+                    <label for="receive_proof_of_delivery">Proof of Delivery (Optional):</label>
+                    <input type="file" id="receive_proof_of_delivery" name="proof_of_delivery" accept="image/*,.pdf" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                    <small style="color: #6c757d; font-size: 0.85rem;">Upload an image or PDF file</small>
+                </div>
+
+                <div class="modal-buttons">
+                    <button type="submit" name="receive_to_project_submit" style="background-color: #17a2b8; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-weight: 500; margin-right: 10px;">
+                        📦 Receive to Project
+                    </button>
+                    <button type="button" onclick="closeReceiveToProjectModal()" style="background-color: #6c757d; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-weight: 500;">
+                        Cancel
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -2874,14 +3267,28 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
     function updateBulkActionButtons() {
         var checkboxes = document.getElementsByName('selected_deliveries[]');
         var anyChecked = false;
+        var inTransitToProjectCount = 0;
+        
         for (var checkbox of checkboxes) {
             if (checkbox.checked) {
                 anyChecked = true;
-                break;
+                
+                // Check if this delivery is "In Transit to Project" for Receive button
+                var row = checkbox.closest('tr');
+                if (row) {
+                    var statusCell = row.querySelector('.status-column');
+                    if (statusCell && statusCell.textContent.trim() === 'In Transit to Project') {
+                        inTransitToProjectCount++;
+                    }
+                }
             }
         }
+        
         document.getElementById('bulkEditBtn').disabled = !anyChecked;
         document.getElementById('bulkDeleteBtn').disabled = !anyChecked;
+        
+        // Enable Receive to Project button only if there are "In Transit to Project" deliveries selected
+        document.getElementById('receiveToProjectBtn').disabled = inTransitToProjectCount === 0;
 
         // Update selected row count with modern styling
         // Count unique shipments (rows), not individual delivery records
@@ -3077,6 +3484,8 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         var container = document.getElementById('bulkEditSelectedIds');
         container.innerHTML = ''; // Clear old data
 
+        var selectedCount = 0;
+
         for (var checkbox of checkboxes) {
             if (checkbox.checked) {
                 var input = document.createElement('input');
@@ -3084,8 +3493,12 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                 input.name = 'selected_deliveries[]';
                 input.value = checkbox.value;
                 container.appendChild(input);
+                selectedCount++;
             }
         }
+
+        // Update delivery count in the new header
+        document.getElementById('bulkEditDeliveryCount').textContent = selectedCount;
 
         document.getElementById('bulkEditModal').style.display = 'block';
     }
@@ -3095,11 +3508,54 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         document.getElementById('bulkEditModal').style.display = 'none';
     }
 
+    // Open Receive to Project Modal
+    function openReceiveToProjectModal() {
+        // Copy selected delivery IDs into hidden inputs in the modal (only "In Transit to Project" ones)
+        var checkboxes = document.getElementsByName('selected_deliveries[]');
+        var container = document.getElementById('receiveSelectedIds');
+        container.innerHTML = ''; // Clear old data
+
+        var inTransitCount = 0;
+
+        for (var checkbox of checkboxes) {
+            if (checkbox.checked) {
+                // Check if this delivery is "In Transit to Project"
+                var row = checkbox.closest('tr');
+                if (row) {
+                    var statusCell = row.querySelector('.status-column');
+                    if (statusCell && statusCell.textContent.trim() === 'In Transit to Project') {
+                        var input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = 'selected_deliveries[]';
+                        input.value = checkbox.value;
+                        container.appendChild(input);
+                        inTransitCount++;
+                    }
+                }
+            }
+        }
+
+        // Update the delivery count display
+        document.getElementById('receiveDeliveryCount').textContent = inTransitCount;
+
+        document.getElementById('receiveToProjectModal').style.display = 'block';
+    }
+
+    // Close Receive to Project Modal
+    function closeReceiveToProjectModal() {
+        document.getElementById('receiveToProjectModal').style.display = 'none';
+    }
+
     // Close modal when clicking outside the modal content
     window.onclick = function(event) {
-        var modal = document.getElementById('bulkEditModal');
-        if (event.target == modal) {
+        var bulkModal = document.getElementById('bulkEditModal');
+        var receiveModal = document.getElementById('receiveToProjectModal');
+        
+        if (event.target == bulkModal) {
             closeBulkEditModal();
+        }
+        if (event.target == receiveModal) {
+            closeReceiveToProjectModal();
         }
     }
 

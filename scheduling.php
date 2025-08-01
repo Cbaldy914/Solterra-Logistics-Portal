@@ -459,7 +459,7 @@ if ($action) {
                 ];
             }
             $grouped_deliveries[$bol]['delivery_ids'][] = $delivery['id'];
-            $grouped_deliveries[$bol]['wattages'][] = $delivery['wattage'] . 'W (' . number_format($delivery['quantity']) . ')';
+            $grouped_deliveries[$bol]['wattages'][] = $delivery['wattage'] . 'W';
             $grouped_deliveries[$bol]['total_quantity'] += $delivery['quantity'];
         }
         
@@ -587,8 +587,10 @@ if ($action) {
             // First get the basic appointment info
             $stmt = $conn->prepare("
                 SELECT s.bol_number, s.start_time, s.reference_numbers, s.description, 
-                       s.arrival_time, s.departure_time, s.proof_of_delivery, s.is_closed
+                       s.arrival_time, s.departure_time, s.proof_of_delivery, s.is_closed,
+                       d.status_of_delivery
                 FROM site_scheduling s
+                LEFT JOIN deliveries d ON s.delivery_id = d.id
                 WHERE s.id = ? AND s.project_id = ?
             ");
             $stmt->bind_param("ii", $appointment_id, $project_id);
@@ -634,7 +636,7 @@ if ($action) {
                 
                 while ($related = $related_res->fetch_assoc()) {
                     $appointment_ids[] = $related['id'];
-                    $wattages[] = $related['delivery_wattage'] . 'W (' . number_format($related['delivery_quantity']) . ')';
+                    $wattages[] = $related['delivery_wattage'] . 'W';
                     $total_quantity += $related['delivery_quantity'];
                     if (empty($supplier)) $supplier = $related['supplier'];
                     if (empty($manufacturer_name)) $manufacturer_name = $related['manufacturer_name'];
@@ -654,6 +656,7 @@ if ($action) {
                     'description' => $appointment_base['description'],
                     'proof_of_delivery' => $appointment_base['proof_of_delivery'],
                     'is_closed' => $appointment_base['is_closed'],
+                    'status_of_delivery' => $appointment_base['status_of_delivery'],
                     'supplier' => $supplier,
                     'manufacturer_name' => $manufacturer_name,
                     'origin_name' => $origin_name,
@@ -679,6 +682,7 @@ if ($action) {
         $description = trim($_POST['description'] ?? '');
         $arrival_time = trim($_POST['arrival_time'] ?? '');
         $departure_time = trim($_POST['departure_time'] ?? '');
+        $is_delivered = isset($_POST['is_delivered']) ? intval($_POST['is_delivered']) : 0;
         $has_damages = $_POST['has_damages'] ?? 'no';
         $has_safety_incident = $_POST['has_safety_incident'] ?? 'no';
         
@@ -760,8 +764,8 @@ if ($action) {
                 $del_safety->close();
             }
             
-            // NEW: Update delivery status if appointment is completed (both arrival and departure times are set)
-            if ($arrival_utc && $departure_utc) {
+            // NEW: Update delivery status if appointment is marked as delivered
+            if ($is_delivered) {
                 // Get the BOL and start_time for this appointment to find ALL related appointments
                 $get_appointment_info_stmt = $conn->prepare("SELECT bol_number, start_time FROM site_scheduling WHERE id = ? AND project_id = ?");
                 $get_appointment_info_stmt->bind_param("ii", $appointment_id, $project_id);
@@ -794,7 +798,9 @@ if ($action) {
                             UPDATE deliveries 
                             SET status_of_delivery = 'Delivered to Project', 
                                 actual_delivery_date = ?";
-                        $delivery_params = [$arrival_time]; // Use local arrival time for delivery date
+                        // Use arrival time if provided, otherwise use current timestamp
+                        $delivery_date = !empty($arrival_time) ? $arrival_time : date('Y-m-d H:i:s');
+                        $delivery_params = [$delivery_date];
                         $delivery_param_types = "s";
                         
                         // If POD was uploaded, copy it to all delivery records
@@ -868,6 +874,102 @@ if ($action) {
                         }
                         
                         $update_delivery_stmt->close();
+                    }
+                } else {
+                    $get_appointment_info_stmt->close();
+                }
+            } else {
+                // NEW: Handle unmarking delivery as completed (revert to "In Transit to Project")
+                // Get the BOL and start_time for this appointment to find ALL related appointments
+                $get_appointment_info_stmt = $conn->prepare("SELECT bol_number, start_time FROM site_scheduling WHERE id = ? AND project_id = ?");
+                $get_appointment_info_stmt->bind_param("ii", $appointment_id, $project_id);
+                $get_appointment_info_stmt->execute();
+                $get_appointment_info_stmt->bind_result($appointment_bol, $appointment_start_time);
+                
+                if ($get_appointment_info_stmt->fetch() && $appointment_bol && $appointment_start_time) {
+                    $get_appointment_info_stmt->close();
+                    
+                    // Find ALL delivery_ids for appointments with the same BOL and start_time (grouped delivery)
+                    $get_all_deliveries_stmt = $conn->prepare("
+                        SELECT delivery_id 
+                        FROM site_scheduling 
+                        WHERE bol_number = ? AND start_time = ? AND project_id = ?
+                    ");
+                    $get_all_deliveries_stmt->bind_param("ssi", $appointment_bol, $appointment_start_time, $project_id);
+                    $get_all_deliveries_stmt->execute();
+                    $delivery_result = $get_all_deliveries_stmt->get_result();
+                    $delivery_ids_to_revert = [];
+                    
+                    while ($delivery_row = $delivery_result->fetch_assoc()) {
+                        $delivery_ids_to_revert[] = $delivery_row['delivery_id'];
+                    }
+                    $get_all_deliveries_stmt->close();
+                    
+                    if (!empty($delivery_ids_to_revert)) {
+                        // Revert ALL delivery records for this grouped shipment back to "In Transit to Project"
+                        $placeholders = implode(',', array_fill(0, count($delivery_ids_to_revert), '?'));
+                        $revert_delivery_sql = "
+                            UPDATE deliveries 
+                            SET status_of_delivery = 'In Transit to Project', 
+                                actual_delivery_date = NULL
+                            WHERE id IN ($placeholders)";
+                        
+                        $revert_delivery_stmt = $conn->prepare($revert_delivery_sql);
+                        $types_revert = str_repeat('i', count($delivery_ids_to_revert));
+                        $revert_delivery_stmt->bind_param($types_revert, ...$delivery_ids_to_revert);
+                        
+                        if (!$revert_delivery_stmt->execute()) {
+                            error_log("Failed to revert delivery statuses: " . $revert_delivery_stmt->error);
+                        } else {
+                            $reverted_delivery_count = $revert_delivery_stmt->affected_rows;
+                            
+                            // Revert associated pallet statuses back to "In Transit to Project" for ALL deliveries
+                            $pallet_revert_count = 0;
+                            $revert_pallet_status = 'In Transit to Project';
+                            
+                            // Get all pallets associated with ALL these deliveries
+                            $placeholders_pallets = implode(',', array_fill(0, count($delivery_ids_to_revert), '?'));
+                            $get_pallets_stmt = $conn->prepare("
+                                SELECT DISTINCT dp.inventory_pallet_id 
+                                FROM delivery_pallets dp 
+                                WHERE dp.delivery_id IN ($placeholders_pallets)
+                            ");
+                            
+                            if ($get_pallets_stmt) {
+                                $types_pallets = str_repeat('i', count($delivery_ids_to_revert));
+                                $get_pallets_stmt->bind_param($types_pallets, ...$delivery_ids_to_revert);
+                                $get_pallets_stmt->execute();
+                                $pallet_result = $get_pallets_stmt->get_result();
+                                
+                                $pallet_ids_to_revert = [];
+                                while ($pallet_row = $pallet_result->fetch_assoc()) {
+                                    $pallet_ids_to_revert[] = $pallet_row['inventory_pallet_id'];
+                                }
+                                $get_pallets_stmt->close();
+                                
+                                if (!empty($pallet_ids_to_revert)) {
+                                    $placeholders_pallet_revert = implode(',', array_fill(0, count($pallet_ids_to_revert), '?'));
+                                    $revert_pallets_stmt = $conn->prepare("
+                                        UPDATE inventory_pallets 
+                                        SET status = ? 
+                                        WHERE id IN ($placeholders_pallet_revert)
+                                    ");
+                                    if ($revert_pallets_stmt) {
+                                        $types_pallet_revert = 's' . str_repeat('i', count($pallet_ids_to_revert));
+                                        $revert_pallets_stmt->bind_param($types_pallet_revert, $revert_pallet_status, ...$pallet_ids_to_revert);
+                                        if ($revert_pallets_stmt->execute()) {
+                                            $pallet_revert_count = $revert_pallets_stmt->affected_rows;
+                                        }
+                                        $revert_pallets_stmt->close();
+                                    }
+                                }
+                            }
+                            
+                            // Log the successful revert for debugging
+                            error_log("Scheduling: Reverted {$reverted_delivery_count} delivery records to 'In Transit to Project' for BOL {$appointment_bol} and {$pallet_revert_count} associated pallets");
+                        }
+                        
+                        $revert_delivery_stmt->close();
                     }
                 } else {
                     $get_appointment_info_stmt->close();
@@ -1040,13 +1142,66 @@ if ($action) {
                 $stmt->close();
             }
             
-            // Update all related deliveries to mark as unscheduled
+            // Update all related deliveries to mark as unscheduled AND revert delivery status
             if (!empty($all_delivery_ids)) {
                 $placeholders_deliveries = implode(',', array_fill(0, count($all_delivery_ids), '?'));
-                $update_delivery = $conn->prepare("UPDATE deliveries SET scheduled = 0 WHERE id IN ($placeholders_deliveries)");
+                
+                // Mark as unscheduled and revert delivery status to "In Transit to Project"
+                $update_delivery = $conn->prepare("
+                    UPDATE deliveries 
+                    SET scheduled = 0, 
+                        status_of_delivery = 'In Transit to Project', 
+                        actual_delivery_date = NULL 
+                    WHERE id IN ($placeholders_deliveries)
+                ");
                 $update_delivery->bind_param(str_repeat('i', count($all_delivery_ids)), ...$all_delivery_ids);
                 $update_delivery->execute();
+                $delivery_revert_count = $update_delivery->affected_rows;
                 $update_delivery->close();
+                
+                // Also revert associated pallet statuses back to "In Transit to Project"
+                $pallet_revert_count = 0;
+                $revert_pallet_status = 'In Transit to Project';
+                
+                // Get all pallets associated with these deliveries
+                $get_pallets_stmt = $conn->prepare("
+                    SELECT DISTINCT dp.inventory_pallet_id 
+                    FROM delivery_pallets dp 
+                    WHERE dp.delivery_id IN ($placeholders_deliveries)
+                ");
+                
+                if ($get_pallets_stmt) {
+                    $types_pallets = str_repeat('i', count($all_delivery_ids));
+                    $get_pallets_stmt->bind_param($types_pallets, ...$all_delivery_ids);
+                    $get_pallets_stmt->execute();
+                    $pallet_result = $get_pallets_stmt->get_result();
+                    
+                    $pallet_ids_to_revert = [];
+                    while ($pallet_row = $pallet_result->fetch_assoc()) {
+                        $pallet_ids_to_revert[] = $pallet_row['inventory_pallet_id'];
+                    }
+                    $get_pallets_stmt->close();
+                    
+                    if (!empty($pallet_ids_to_revert)) {
+                        $placeholders_pallet_revert = implode(',', array_fill(0, count($pallet_ids_to_revert), '?'));
+                        $revert_pallets_stmt = $conn->prepare("
+                            UPDATE inventory_pallets 
+                            SET status = ? 
+                            WHERE id IN ($placeholders_pallet_revert)
+                        ");
+                        if ($revert_pallets_stmt) {
+                            $types_pallet_revert = 's' . str_repeat('i', count($pallet_ids_to_revert));
+                            $revert_pallets_stmt->bind_param($types_pallet_revert, $revert_pallet_status, ...$pallet_ids_to_revert);
+                            if ($revert_pallets_stmt->execute()) {
+                                $pallet_revert_count = $revert_pallets_stmt->affected_rows;
+                            }
+                            $revert_pallets_stmt->close();
+                        }
+                    }
+                }
+                
+                // Log the successful revert for debugging
+                error_log("Scheduling DELETE: Reverted {$delivery_revert_count} delivery records to 'In Transit to Project' for BOL {$bol_number} and {$pallet_revert_count} associated pallets");
             }
             
             $conn->commit();
@@ -1531,7 +1686,7 @@ include('header.php');
         .modal-content {
             position: relative;
             background: white;
-            padding: 32px;
+            padding: 24px;
             border-radius: 24px;
             max-width: 900px;
             width: 95%;
@@ -1559,25 +1714,25 @@ include('header.php');
         }
         
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 14px;
         }
         
         .form-group label {
             display: block;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             font-weight: 600;
             color: #495057;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
         
         .form-group input,
         .form-group textarea,
         .form-group select {
             width: 100%;
-            padding: 12px 16px;
+            padding: 10px 14px;
             border: 2px solid #e9ecef;
             border-radius: 12px;
-            font-size: 1rem;
+            font-size: 0.95rem;
             transition: all 0.3s ease;
             background: white;
         }
@@ -1692,13 +1847,19 @@ include('header.php');
                 margin: 20px;
                 padding: 24px;
             }
+            
+            /* Header button responsive */
+            #headerMarkDeliveredBtn {
+                font-size: 0.8rem !important;
+                padding: 6px 12px !important;
+            }
         }
         
                  /* Tab Navigation */
          .tab-navigation {
              display: flex;
              border-bottom: 2px solid #e9ecef;
-             margin-bottom: 24px;
+             margin-bottom: 16px;
              background: #f8f9fa;
              border-radius: 12px 12px 0 0;
              padding: 4px;
@@ -1775,8 +1936,9 @@ include('header.php');
              display: flex;
              gap: 12px;
              justify-content: center;
-             margin-top: 24px;
-             padding-top: 20px;
+             align-items: center;
+             margin-top: 16px;
+             padding-top: 16px;
              border-top: 1px solid #e9ecef;
          }
          
@@ -1962,6 +2124,8 @@ include('header.php');
          ::-webkit-scrollbar-thumb:hover {
              background: linear-gradient(135deg, #3a6e7f, #293E4C);
          }
+         
+
     </style>
 </head>
 <body>
@@ -2056,75 +2220,87 @@ include('header.php');
         <div id="editAppointmentModal" class="modal">
             <div class="modal-content">
                 <span class="close-modal" onclick="closeEditModal()">&times;</span>
-                <h2>Edit Appointment</h2>
+                <div style="margin-bottom: 16px;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
+                        <h2 style="margin: 0;">Edit Appointment</h2>
+                        <button type="button" id="headerMarkDeliveredBtn" class="login-btn" onclick="markAsDeliveredAndClose()" style="background: linear-gradient(135deg, #28a745, #20c997); font-size: 0.9rem; padding: 8px 16px; margin-right: 40px;">
+                            Mark as Delivered
+                        </button>
+                    </div>
+                    <div id="headerDateTimeDisplay" style="font-size: 0.85rem; color: #6c757d; font-weight: 500;"></div>
+                </div>
                 <form id="editApptForm">
                     <input type="hidden" name="action" value="edit_appointment">
                     <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
                     <input type="hidden" name="appointment_id" id="edit_appointment_id">
+                    <input type="hidden" name="is_delivered" id="edit_is_delivered" value="0">
 
                     <!-- Tab Navigation -->
                     <div class="tab-navigation">
-                        <button type="button" class="tab-btn active" onclick="showTab('details')">Details</button>
-                        <button type="button" class="tab-btn" onclick="showTab('delivery')">Delivery Status</button>
-                        <button type="button" class="tab-btn" onclick="showTab('damages')">Damage/Safety <span style="font-size: 0.8em; color: #dc3545;">*</span></button>
+                        <button type="button" class="tab-btn active" onclick="showTab('details')">Details & Delivery</button>
+                        <button type="button" class="tab-btn" onclick="showTab('damages')">Damage/Safety</button>
                     </div>
 
-                    <!-- Details Tab -->
+                    <!-- Details & Delivery Tab -->
                     <div id="details-tab" class="tab-content active">
-                        <div class="form-group">
-                            <label>BOL Number</label>
-                            <input type="text" name="bol_number" id="edit_bol_number" readonly>
-                        </div>
-
-                        <div class="form-group">
-                            <label>Delivery Date &amp; Time</label>
-                            <div id="editDateTimeDisplay"></div>
-                        </div>
-
-                        <div class="form-group" id="deliveryInfoEditGroup" style="display: none;">
-                            <label>Delivery Information</label>
-                            <div style="padding:10px; background:#f8f9fa; border:1px solid #ddd; border-radius:4px;">
-                                <div>Origin: <span id="editDeliveryOrigin">-</span></div>
-                                <div>Manufacturer: <span id="editDeliveryManufacturer">-</span></div>
-                                <div>Wattage: <span id="editDeliveryWattage">-</span></div>
-                                <div>Quantity: <span id="editDeliveryQuantity">-</span></div>
+                        <!-- Delivery Information Section -->
+                        <div id="deliveryInfoEditGroup" style="display: none; margin-bottom: 16px;">
+                            <!-- Top Row: Origin and Manufacturer -->
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px;">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label style="font-size: 0.9rem;">Origin</label>
+                                    <input type="text" id="editDeliveryOrigin" readonly style="background-color: #f8f9fa; color: #6c757d; cursor: not-allowed; padding: 10px 14px;">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label style="font-size: 0.9rem;">Manufacturer</label>
+                                    <input type="text" id="editDeliveryManufacturer" readonly style="background-color: #f8f9fa; color: #6c757d; cursor: not-allowed; padding: 10px 14px;">
+                                </div>
+                            </div>
+                            <!-- Bottom Row: BOL# and Specs -->
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label style="font-size: 0.9rem;">BOL Number</label>
+                                    <input type="text" name="bol_number" id="edit_bol_number" onchange="trackChanges()" style="padding: 10px 14px;">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label style="font-size: 0.9rem;">Specifications</label>
+                                    <input type="text" id="editDeliverySpecs" readonly style="background-color: #f8f9fa; color: #6c757d; cursor: not-allowed; padding: 10px 14px;">
+                                </div>
                             </div>
                         </div>
 
-                        <div class="form-group">
-                            <label>Reference Numbers</label>
-                            <input type="text" name="reference_numbers" id="edit_reference_numbers">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>Description</label>
-                            <textarea name="description" id="edit_description" rows="3"></textarea>
-                        </div>
-                    </div>
-
-                    <!-- Delivery Status Tab -->
-                    <div id="delivery-tab" class="tab-content">
-                        <div class="form-group">
-                            <label>Expected Delivery Time</label>
-                            <input type="datetime-local" id="edit_expected_time" readonly 
-                                   style="background-color: #f8f9fa; color: #6c757d; cursor: not-allowed;">
+                        <!-- Reference Numbers and Description in Two Columns -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label style="font-size: 0.9rem;">Reference Numbers</label>
+                                <input type="text" name="reference_numbers" id="edit_reference_numbers" onchange="trackChanges()" style="padding: 10px 14px;">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label style="font-size: 0.9rem;">Description</label>
+                                <input type="text" name="description" id="edit_description" onchange="trackChanges()" style="padding: 10px 14px;">
+                            </div>
                         </div>
 
-                        <div class="form-group">
-                            <label>Arrival Time</label>
-                            <input type="datetime-local" name="arrival_time" id="edit_arrival_time" onchange="checkLateness()">
-                            <div id="lateness_message" style="margin-top: 8px; font-weight: 600;"></div>
-                        </div>
-
-                        <div class="form-group">
-                            <label>Departure Time</label>
-                            <input type="datetime-local" name="departure_time" id="edit_departure_time">
-                        </div>
-
-                        <div class="form-group">
-                            <label>Proof of Delivery</label>
-                            <input type="file" name="proof_of_delivery" accept="image/*,.pdf">
-                            <div id="existing_pod_container" style="margin-top: 10px;"></div>
+                        <!-- Delivery Times Section -->
+                        <div style="border-top: 1px solid #e9ecef; padding-top: 16px;">
+                            <h4 style="margin: 0 0 12px 0; color: #293E4C; font-size: 1rem;">Delivery Times</h4>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px;">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label style="font-size: 0.9rem;">Arrival Time (Optional)</label>
+                                    <input type="datetime-local" name="arrival_time" id="edit_arrival_time" onchange="checkLateness(); trackChanges()" style="padding: 10px 14px;">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label style="font-size: 0.9rem;">Departure Time (Optional)</label>
+                                    <input type="datetime-local" name="departure_time" id="edit_departure_time" onchange="trackChanges()" style="padding: 10px 14px;">
+                                </div>
+                            </div>
+                            <div id="lateness_message" style="margin-bottom: 12px; font-weight: 600;"></div>
+                            
+                                                            <div class="form-group" style="margin-bottom: 0;">
+                                    <label style="font-size: 0.9rem;">Proof of Delivery (Optional)</label>
+                                    <input type="file" name="proof_of_delivery" id="edit_proof_of_delivery" accept="image/*,.pdf" onchange="trackChanges()" style="padding: 10px 14px;">
+                                    <div id="existing_pod_container" style="margin-top: 8px;"></div>
+                                </div>
                         </div>
                     </div>
 
@@ -2135,11 +2311,11 @@ include('header.php');
                             <label>Damages or Quantity Discrepancies</label>
                             <div class="radio-group">
                                 <label class="radio-label">
-                                    <input type="radio" name="has_damages" value="no" checked onchange="toggleDamageFields(false)">
+                                    <input type="radio" name="has_damages" value="no" checked onchange="toggleDamageFields(false); trackChanges();">
                                     <span>No</span>
                                 </label>
                                 <label class="radio-label">
-                                    <input type="radio" name="has_damages" value="yes" onchange="toggleDamageFields(true)">
+                                    <input type="radio" name="has_damages" value="yes" onchange="toggleDamageFields(true); trackChanges();">
                                     <span>Yes</span>
                                 </label>
                             </div>
@@ -2151,11 +2327,11 @@ include('header.php');
                             <label>Safety Incident</label>
                             <div class="radio-group">
                                 <label class="radio-label">
-                                    <input type="radio" name="has_safety_incident" value="no" checked onchange="toggleSafetyFields(false)">
+                                    <input type="radio" name="has_safety_incident" value="no" checked onchange="toggleSafetyFields(false); trackChanges();">
                                     <span>No</span>
                                 </label>
                                 <label class="radio-label">
-                                    <input type="radio" name="has_safety_incident" value="yes" onchange="toggleSafetyFields(true)">
+                                    <input type="radio" name="has_safety_incident" value="yes" onchange="toggleSafetyFields(true); trackChanges();">
                                     <span>Yes</span>
                                 </label>
                             </div>
@@ -2165,10 +2341,34 @@ include('header.php');
 
                     <!-- Form Actions -->
                     <div class="form-actions">
-                        <button type="submit" class="login-btn">Update Appointment</button>
+                        <button type="submit" id="saveChangesBtn" class="login-btn" disabled style="opacity: 0.6;">Save Changes</button>
                         <button type="button" class="login-btn danger" onclick="deleteAppointment()">Delete Appointment</button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        <!-- Damage/Safety Without Delivery Confirmation Modal -->
+        <div id="confirmDamageWithoutDeliveryModal" class="modal">
+            <div class="modal-content" style="max-width: 500px;">
+                <span class="close-modal" onclick="closeConfirmDamageModal()">&times;</span>
+                <h2>⚠️ Incomplete Delivery</h2>
+                <p style="margin-bottom: 20px; color: #6c757d; line-height: 1.6;">
+                    You have reported a damage/safety incident without marking the delivery as completed. 
+                    This may indicate an incomplete delivery process.
+                </p>
+                <p style="margin-bottom: 24px; font-weight: 600; color: #495057;">
+                    Do you wish to continue without marking the delivery as completed?
+                </p>
+                <div style="display: flex; gap: 12px; justify-content: center;">
+                    <button type="button" class="login-btn" onclick="proceedWithIncompleteDelivery()">
+                        Yes, Continue
+                    </button>
+                    <button type="button" class="login-btn" onclick="closeConfirmDamageModal()" 
+                            style="background: linear-gradient(135deg, #6c757d, #5a6268);">
+                        Cancel
+                    </button>
+                </div>
             </div>
         </div>
     </main>
@@ -2503,7 +2703,7 @@ include('header.php');
                                 aptClass += ' closed';
                                 cellContent += `<div class="${aptClass}">CLOSED</div>`;
                             } else {
-                                const isCompleted = apt.arrival_time && apt.departure_time;
+                                const isCompleted = (apt.arrival_time && apt.departure_time) || apt.status_of_delivery === 'Delivered to Project';
                                 const hasIssues = apt.has_warranty === 1 || apt.has_safety === 1;
                                 let statusIcon = '';
                                 
@@ -2558,7 +2758,7 @@ include('header.php');
             }
             
             // Determine status and color based on completion and issues
-            const isCompleted = appointment.arrival_time && appointment.departure_time;
+            const isCompleted = (appointment.arrival_time && appointment.departure_time) || appointment.status_of_delivery === 'Delivered to Project';
             const hasIssues = appointment.has_warranty === 1 || appointment.has_safety === 1;
             
             if (isCompleted) {
@@ -2686,12 +2886,12 @@ include('header.php');
                         document.getElementById('edit_description').value = appointment.description || '';
                         document.getElementById('editDateTimeDisplay').textContent = formatDateTime(appointment.start_time);
 
-                        // Format datetime for input fields
+                        // Format datetime for input fields - only set if actual times exist
                         if (appointment.arrival_time) {
                             document.getElementById('edit_arrival_time').value = appointment.arrival_time.replace(' ', 'T').substring(0, 16);
                         } else {
-                            // Default to expected delivery time if no arrival time is set
-                            document.getElementById('edit_arrival_time').value = appointment.start_time.replace(' ', 'T').substring(0, 16);
+                            // Leave arrival time empty if no actual arrival recorded
+                            document.getElementById('edit_arrival_time').value = '';
                         }
 
                         if (appointment.departure_time) {
@@ -2855,17 +3055,6 @@ include('header.php');
         
         // Tab Management
         function showTab(tabName) {
-            // Check if trying to access damages tab without required completion times
-            if (tabName === 'damages') {
-                const arrivalTime = document.getElementById('edit_arrival_time').value;
-                const departureTime = document.getElementById('edit_departure_time').value;
-                
-                if (!arrivalTime || !departureTime) {
-                    alert('Please enter both Arrival Time and Departure Time in the Delivery Status tab before reporting damages or safety incidents.\n\nDamage and safety reporting can only be done after delivery completion.');
-                    return; // Don't switch to damages tab
-                }
-            }
-            
             // Hide all tab contents
             document.querySelectorAll('.tab-content').forEach(tab => {
                 tab.classList.remove('active');
@@ -2881,6 +3070,206 @@ include('header.php');
             
             // Add active class to clicked tab button
             document.querySelector(`.tab-btn[onclick="showTab('${tabName}')"]`).classList.add('active');
+        }
+        
+        // Change tracking functionality
+        let originalFormData = {};
+        let hasUnsavedChanges = false;
+        
+        function trackChanges() {
+            const saveBtn = document.getElementById('saveChangesBtn');
+            const currentFormData = getCurrentFormData();
+            
+            // Check if current data differs from original
+            hasUnsavedChanges = !formDataEquals(originalFormData, currentFormData);
+            
+            // Enable/disable save button
+            if (hasUnsavedChanges) {
+                saveBtn.disabled = false;
+                saveBtn.style.opacity = '1';
+            } else {
+                saveBtn.disabled = true;
+                saveBtn.style.opacity = '0.6';
+            }
+        }
+        
+        function getCurrentFormData() {
+            const podInput = document.getElementById('edit_proof_of_delivery');
+            return {
+                bol_number: document.getElementById('edit_bol_number').value,
+                reference_numbers: document.getElementById('edit_reference_numbers').value,
+                description: document.getElementById('edit_description').value,
+                arrival_time: document.getElementById('edit_arrival_time').value,
+                departure_time: document.getElementById('edit_departure_time').value,
+                is_delivered: document.getElementById('edit_is_delivered').value,
+                has_damages: document.querySelector('input[name="has_damages"]:checked')?.value || 'no',
+                has_safety_incident: document.querySelector('input[name="has_safety_incident"]:checked')?.value || 'no',
+                proof_of_delivery: podInput.files.length > 0 ? podInput.files[0].name : ''
+            };
+        }
+        
+        function formDataEquals(obj1, obj2) {
+            const keys1 = Object.keys(obj1);
+            const keys2 = Object.keys(obj2);
+            
+            if (keys1.length !== keys2.length) return false;
+            
+            for (let key of keys1) {
+                if (obj1[key] !== obj2[key]) return false;
+            }
+            return true;
+        }
+        
+        function saveOriginalFormData() {
+            originalFormData = getCurrentFormData();
+            hasUnsavedChanges = false;
+            
+            // Initially disable save button
+            const saveBtn = document.getElementById('saveChangesBtn');
+            saveBtn.disabled = true;
+            saveBtn.style.opacity = '0.6';
+        }
+        
+        // Mark as Delivered functionality  
+        function markAsDeliveredAndClose() {
+            const currentStatus = document.getElementById('edit_is_delivered').value === '1';
+            const newStatus = !currentStatus;
+            
+            // Update the hidden field
+            document.getElementById('edit_is_delivered').value = newStatus ? '1' : '0';
+            
+            // Update the header button display
+            updateHeaderDeliveryButton(newStatus);
+            
+            // If marking as delivered, submit the change and close modal
+            if (newStatus) {
+                // Auto-set arrival time to appointment time if not already set
+                const arrivalTimeInput = document.getElementById('edit_arrival_time');
+                if (!arrivalTimeInput.value && window.currentAppointmentExpectedTime) {
+                    arrivalTimeInput.value = window.currentAppointmentExpectedTime;
+                }
+                
+                // Create form data with just the delivery status change
+                const formData = new FormData();
+                formData.append('action', 'edit_appointment');
+                formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+                formData.append('appointment_id', document.getElementById('edit_appointment_id').value);
+                formData.append('is_delivered', '1');
+                formData.append('bol_number', document.getElementById('edit_bol_number').value);
+                formData.append('reference_numbers', document.getElementById('edit_reference_numbers').value);
+                formData.append('description', document.getElementById('edit_description').value);
+                formData.append('arrival_time', document.getElementById('edit_arrival_time').value);
+                formData.append('departure_time', document.getElementById('edit_departure_time').value);
+                formData.append('has_damages', 'no');
+                formData.append('has_safety_incident', 'no');
+                
+                // Submit the change
+                fetch(`scheduling.php?project_id=${projectId}`, {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Delivery marked as completed!');
+                        closeEditModal();
+                        loadAppointments(currentView, currentDate);
+                    } else {
+                        alert('Error: ' + (data.error || 'Unknown error'));
+                        // Revert the status on error
+                        document.getElementById('edit_is_delivered').value = '0';
+                        updateHeaderDeliveryButton(false);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Network error occurred.');
+                    // Revert the status on error
+                    document.getElementById('edit_is_delivered').value = '0';
+                    updateHeaderDeliveryButton(false);
+                });
+            } else {
+                // Mark as not delivered - also auto-submit to revert delivery status
+                const formData = new FormData();
+                formData.append('action', 'edit_appointment');
+                formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+                formData.append('appointment_id', document.getElementById('edit_appointment_id').value);
+                formData.append('is_delivered', '0');
+                formData.append('bol_number', document.getElementById('edit_bol_number').value);
+                formData.append('reference_numbers', document.getElementById('edit_reference_numbers').value);
+                formData.append('description', document.getElementById('edit_description').value);
+                formData.append('arrival_time', document.getElementById('edit_arrival_time').value);
+                formData.append('departure_time', document.getElementById('edit_departure_time').value);
+                formData.append('has_damages', 'no');
+                formData.append('has_safety_incident', 'no');
+                
+                // Submit the change
+                fetch(`scheduling.php?project_id=${projectId}`, {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Delivery marked as not completed!');
+                        closeEditModal();
+                        loadAppointments(currentView, currentDate);
+                    } else {
+                        alert('Error: ' + (data.error || 'Unknown error'));
+                        // Revert the status on error
+                        document.getElementById('edit_is_delivered').value = '1';
+                        updateHeaderDeliveryButton(true);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Network error occurred.');
+                    // Revert the status on error
+                    document.getElementById('edit_is_delivered').value = '1';
+                    updateHeaderDeliveryButton(true);
+                });
+            }
+        }
+        
+        function updateHeaderDeliveryButton(isDelivered) {
+            const button = document.getElementById('headerMarkDeliveredBtn');
+            
+            if (isDelivered) {
+                button.textContent = 'Unmark as Delivered';
+                button.style.background = 'linear-gradient(135deg, #dc3545, #c82333)';
+                button.title = 'Click to revert delivery status and change back to In Transit to Project';
+            } else {
+                button.textContent = 'Mark as Delivered';
+                button.style.background = 'linear-gradient(135deg, #28a745, #20c997)';
+                button.title = 'Click to mark as delivered';
+            }
+        }
+        
+        // Confirmation modal functions
+        function closeConfirmDamageModal() {
+            document.getElementById('confirmDamageWithoutDeliveryModal').style.display = 'none';
+        }
+        
+        function proceedWithIncompleteDelivery() {
+            closeConfirmDamageModal();
+            // Set a flag to bypass the confirmation and proceed with submission
+            window.proceedWithoutDeliveryConfirmation = true;
+            submitEditAppointment();
+        }
+        
+        // Check if delivery completion confirmation is needed
+        function checkDeliveryCompletionForDamageReporting() {
+            const isDelivered = document.getElementById('edit_is_delivered').value === '1';
+            const hasDamages = document.querySelector('input[name="has_damages"]:checked')?.value === 'yes';
+            const hasSafety = document.querySelector('input[name="has_safety_incident"]:checked')?.value === 'yes';
+            
+            // If reporting damage/safety but not marked as delivered, show confirmation
+            if ((hasDamages || hasSafety) && !isDelivered && !window.proceedWithoutDeliveryConfirmation) {
+                document.getElementById('confirmDamageWithoutDeliveryModal').style.display = 'flex';
+                return false; // Don't proceed with submission
+            }
+            
+            return true; // Proceed with submission
         }
         
         // Damage Fields Management
@@ -3064,10 +3453,18 @@ include('header.php');
         
         // Enhanced Submit Edit Appointment
         function submitEditAppointment() {
+            // Check if delivery completion confirmation is needed
+            if (!checkDeliveryCompletionForDamageReporting()) {
+                return; // Don't proceed if confirmation modal is shown
+            }
+            
+            // Reset the confirmation flag
+            window.proceedWithoutDeliveryConfirmation = false;
+            
             const formData = new FormData(document.getElementById('editApptForm'));
             
             // Handle damage reporting
-            const hasDamages = document.querySelector('input[name="has_damages"]:checked').value;
+            const hasDamages = document.querySelector('input[name="has_damages"]:checked')?.value;
             if (hasDamages === 'yes') {
                 // Collect pallet-level damage data
                 const palletDamages = {};
@@ -3102,8 +3499,8 @@ include('header.php');
             }
             
             // Handle safety incident
-            const hasSafety = document.querySelector('input[name="has_safety_incident"]:checked').value;
-            formData.append('has_safety_incident', hasSafety);
+            const hasSafety = document.querySelector('input[name="has_safety_incident"]:checked')?.value;
+            formData.append('has_safety_incident', hasSafety || 'no');
             
             fetch(`scheduling.php?project_id=${projectId}`, {
                 method: 'POST',
@@ -3112,7 +3509,9 @@ include('header.php');
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    alert('Appointment updated successfully!');
+                    alert('Changes saved successfully!');
+                    // Reset change tracking
+                    hasUnsavedChanges = false;
                     closeEditModal();
                     loadAppointments(currentView, currentDate);
                 } else {
@@ -3149,30 +3548,33 @@ include('header.php');
                         document.getElementById('edit_reference_numbers').value = appointment.reference_numbers || '';
                         document.getElementById('edit_description').value = appointment.description || '';
 
-                        document.getElementById('editDateTimeDisplay').textContent = formatDateTime(appointment.start_time);
+                        // Set header date/time display
+                        document.getElementById('headerDateTimeDisplay').textContent = formatDateTime(appointment.start_time);
+                        
+                        // Store expected time for lateness checking
+                        window.currentAppointmentExpectedTime = appointment.start_time.replace(' ', 'T').substring(0, 16);
                         
                         // Show delivery information if available
                         if (appointment.origin_name || appointment.total_quantity || appointment.wattage_display) {
-                            document.getElementById('editDeliveryOrigin').textContent = appointment.origin_name || 'Unknown';
-                            document.getElementById('editDeliveryManufacturer').textContent = appointment.manufacturer_name || 'Unknown';
+                            document.getElementById('editDeliveryOrigin').value = appointment.origin_name || 'Unknown';
+                            document.getElementById('editDeliveryManufacturer').value = appointment.manufacturer_name || 'Unknown';
                             
-                            // Use the combined wattage display from the updated get_appointment
-                            document.getElementById('editDeliveryWattage').innerHTML = appointment.wattage_display || 'Unknown';
-                            document.getElementById('editDeliveryQuantity').textContent = parseInt(appointment.total_quantity || 0).toLocaleString();
+                            // Combined specs display: wattage / quantity modules
+                            const specsText = `${appointment.wattage_display || 'Unknown'} / ${parseInt(appointment.total_quantity || 0).toLocaleString()} modules`;
+                            document.getElementById('editDeliverySpecs').value = specsText;
                             document.getElementById('deliveryInfoEditGroup').style.display = 'block';
                         } else {
                             document.getElementById('deliveryInfoEditGroup').style.display = 'none';
                         }
                         
-                        // Set expected time (read-only)
-                        document.getElementById('edit_expected_time').value = appointment.start_time.replace(' ', 'T').substring(0, 16);
+
                         
-                        // Format datetime for input fields
+                        // Format datetime for input fields - only set if actual times exist
                         if (appointment.arrival_time) {
                             document.getElementById('edit_arrival_time').value = appointment.arrival_time.replace(' ', 'T').substring(0, 16);
                         } else {
-                            // Default to expected delivery time if no arrival time is set
-                            document.getElementById('edit_arrival_time').value = appointment.start_time.replace(' ', 'T').substring(0, 16);
+                            // Leave arrival time empty if no actual arrival recorded
+                            document.getElementById('edit_arrival_time').value = '';
                         }
                         
                         if (appointment.departure_time) {
@@ -3184,17 +3586,10 @@ include('header.php');
                         // Check lateness after setting arrival time (including default)
                         checkLateness();
                         
-                        // Add event listeners to update damage tab state when times change
-                        document.getElementById('edit_arrival_time').addEventListener('change', function() {
-                            checkLateness(); // This will also call updateDamageTabState
-                        });
-                        
-                        document.getElementById('edit_departure_time').addEventListener('change', function() {
-                            updateDamageTabState(); // Update tab state when departure time changes
-                        });
-                        
-                        // Initial update of damage tab state
-                        updateDamageTabState();
+                        // Determine if delivery is completed based on arrival/departure times OR delivery status
+                        const isCompleted = (appointment.arrival_time && appointment.departure_time) || appointment.status_of_delivery === 'Delivered to Project';
+                        document.getElementById('edit_is_delivered').value = isCompleted ? '1' : '0';
+                        updateHeaderDeliveryButton(isCompleted);
                         
                         // Handle existing POD
                         const podContainer = document.getElementById('existing_pod_container');
@@ -3206,6 +3601,9 @@ include('header.php');
                         
                         // Check for existing damage reports
                         checkExistingDamageReports(appointmentId);
+                        
+                        // Save original form data for change tracking
+                        setTimeout(() => saveOriginalFormData(), 100);
                         
                         // Show modal
                         document.getElementById('editAppointmentModal').style.display = 'flex';
@@ -3323,17 +3721,15 @@ include('header.php');
         
         // Check if driver is late
         function checkLateness() {
-            const expectedTime = document.getElementById('edit_expected_time').value;
             const arrivalTime = document.getElementById('edit_arrival_time').value;
             const messageDiv = document.getElementById('lateness_message');
             
-            if (!arrivalTime || !expectedTime) {
+            if (!arrivalTime || !window.currentAppointmentExpectedTime) {
                 messageDiv.innerHTML = '';
-                updateDamageTabState(); // Update tab state when times change
                 return;
             }
             
-            const expectedDate = new Date(expectedTime);
+            const expectedDate = new Date(window.currentAppointmentExpectedTime);
             const arrivalDate = new Date(arrivalTime);
             
             if (arrivalDate > expectedDate) {
@@ -3376,15 +3772,14 @@ include('header.php');
                 // Driver is on time
                 messageDiv.innerHTML = `<span style="color: #155724; background: #d4edda; padding: 6px 12px; border-radius: 6px; border: 1px solid #c3e6cb;">✅ Driver arrived <strong>on time</strong></span>`;
             }
-            
-            // Update damage tab state whenever times change
-            updateDamageTabState();
+
         }
         
         // Close modals when clicking outside
         window.addEventListener('click', function(event) {
             const addModal = document.getElementById('addAppointmentModal');
             const editModal = document.getElementById('editAppointmentModal');
+            const confirmModal = document.getElementById('confirmDamageWithoutDeliveryModal');
             
             if (event.target === addModal) {
                 closeAddModal();
@@ -3392,37 +3787,12 @@ include('header.php');
             if (event.target === editModal) {
                 closeEditModal();
             }
+            if (event.target === confirmModal) {
+                closeConfirmDamageModal();
+            }
         });
         
-        // Update the visual state of the Damage/Safety tab based on completion status
-        function updateDamageTabState() {
-            const arrivalTime = document.getElementById('edit_arrival_time').value;
-            const departureTime = document.getElementById('edit_departure_time').value;
-            const damageTab = document.querySelector('.tab-btn[onclick="showTab(\'damages\')"]');
-            const isDamageTabActive = document.getElementById('damages-tab').classList.contains('active');
-            const asterisk = damageTab.querySelector('span');
-            
-            if (arrivalTime && departureTime) {
-                // Enable the tab
-                damageTab.style.opacity = '1';
-                damageTab.style.cursor = 'pointer';
-                damageTab.style.color = '';
-                damageTab.title = '';
-                if (asterisk) asterisk.style.display = 'none'; // Hide asterisk when enabled
-            } else {
-                // Disable the tab visually
-                damageTab.style.opacity = '0.5';
-                damageTab.style.cursor = 'not-allowed';
-                damageTab.style.color = '#999';
-                damageTab.title = 'Complete delivery (enter arrival and departure times) before reporting damages or safety incidents';
-                if (asterisk) asterisk.style.display = 'inline'; // Show asterisk when disabled
-                
-                // If currently on damage tab and times are incomplete, switch to delivery status tab
-                if (isDamageTabActive) {
-                    showTab('delivery');
-                }
-            }
-        }
+
     </script>
 </body>
 </html>
