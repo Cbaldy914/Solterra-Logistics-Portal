@@ -280,6 +280,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         $master_bol = $_POST['master_bol'] ?? '';
         $house_bol = $_POST['house_bol'] ?? '';
         $port_of_entry_id = isset($_POST['port_of_entry_id']) && $_POST['port_of_entry_id'] !== '' ? intval($_POST['port_of_entry_id']) : null;
+        $origin_port_id = isset($_POST['origin_port_id']) && $_POST['origin_port_id'] !== '' ? intval($_POST['origin_port_id']) : null;
         
         if ($originType === 'manufacturer' && $originId) {
             // Get the country for this manufacturer location
@@ -313,6 +314,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                 }
                 $stmt_port_check->close();
             }
+        }
+        
+        // For overseas shipments, destination is always a warehouse (port), regardless of radio button selection
+        if ($is_overseas_shipment) {
+            $destinationType = 'warehouse';
         }
 
         $palletsPerTruck = (isset($_POST['pallets_per_truck']) && is_numeric($_POST['pallets_per_truck']))
@@ -351,17 +357,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
         $types        = str_repeat('i', count($palletIds));
         $stmtFetchPallets = $conn->prepare("
-            SELECT ip.id, ip.wattage, ip.quantity,
+            SELECT ip.id, ip.wattage, ip.quantity, ip.manufacturer_location_id, ip.assigned_project_id,
                    COALESCE(ip.manufacturer, 
                        CASE 
                            WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
                            ELSE m.vendor_name
                        END,
                        'Unknown Manufacturer'
-                   ) as manufacturer
+                   ) as manufacturer,
+                   ml.country as origin_vendor_country
             FROM inventory_pallets ip
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN manufacturer_locations ml ON ip.manufacturer_location_id = ml.id
             WHERE ip.id IN ($placeholders)
         ");
         if (!$stmtFetchPallets) throw new Exception("Failed to prepare pallet fetch: " . $conn->error);
@@ -435,6 +443,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                 if (!empty($palletsForWatt) && isset($palletsForWatt[0]['manufacturer'])) {
                     $groupManufacturer = $palletsForWatt[0]['manufacturer'];
                 }
+                
+                // Get assigned project ID for this group (should be consistent within a group)
+                $groupAssignedProjectId = null;
+                if (!empty($palletsForWatt) && isset($palletsForWatt[0]['assigned_project_id'])) {
+                    $groupAssignedProjectId = $palletsForWatt[0]['assigned_project_id'];
+                }
 
                 $deliveryColumns = [
                     'supplier',
@@ -499,9 +513,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                         $deliveryTypes .= 'i';
                     }
                 } else { // Destination is another warehouse
-                    $deliveryColumns[] = 'project_id';
-                    $deliveryParams[] = $source_project_id_for_delivery;
-                    $deliveryTypes .= 'i';
+                    if ($is_overseas_shipment) {
+                        // For overseas shipments to ports, use the assigned project ID from the pallets
+                        // This tracks what project these pallets are ultimately destined for
+                        $deliveryColumns[] = 'project_id';
+                        $deliveryParams[] = $groupAssignedProjectId;
+                        $deliveryTypes .= 'i';
+                    } else {
+                        // For domestic warehouse-to-warehouse transfers, use source project ID
+                        $deliveryColumns[] = 'project_id';
+                        $deliveryParams[] = $source_project_id_for_delivery;
+                        $deliveryTypes .= 'i';
+                    }
 
                     $deliveryColumns[] = 'warehouse_id';
                     $deliveryParams[] = $destinationId;
@@ -530,9 +553,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                         $deliveryTypes .= 's';
                     }
                     
+                    // For overseas shipments, port_of_entry_id should be the destination (US port)
+                    // not the origin port. The destination port is where the shipment enters the US.
                     $deliveryColumns[] = 'port_of_entry_id';
-                    $deliveryParams[] = $port_of_entry_id;
+                    $deliveryParams[] = $destinationId; // Use destination port, not origin port
                     $deliveryTypes .= 'i';
+                    
+                    // Add origin port ID (where the shipment departed from)
+                    if ($origin_port_id) {
+                        $deliveryColumns[] = 'origin_port_id';
+                        $deliveryParams[] = $origin_port_id;
+                        $deliveryTypes .= 'i';
+                    }
                 }
 
                 $placeholders = implode(',', array_fill(0, count($deliveryParams), '?'));
@@ -624,7 +656,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             $deliveryWord = ($totalDeliveries === 1) ? 'delivery' : 'deliveries';
             
             if ($destinationType === 'warehouse') {
-                $shipMessage = "{$totalDeliveries} {$deliveryWord} successfully created for {$totalPallets} pallets. Pallets are now in transit to the selected warehouse. To receive modules into the warehouse when they arrive, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>click here</a>.{$bolLink}";
+                if ($is_overseas_shipment) {
+                    $shipMessage = "{$totalDeliveries} {$deliveryWord} successfully created for {$totalPallets} pallets. Pallets are now on water to the selected port. To receive modules into the port when they arrive, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>click here</a>.{$bolLink}";
+                } else {
+                    $shipMessage = "{$totalDeliveries} {$deliveryWord} successfully created for {$totalPallets} pallets. Pallets are now in transit to the selected warehouse. To receive modules into the warehouse when they arrive, <a href='manage_warehouse_inventory.php?warehouse_id={$destinationId}' style='color: #488C9A; text-decoration: underline;'>click here</a>.{$bolLink}";
+                }
             } else {
                 // Project delivery - offer scheduling
                 $shipMessage = "{$totalDeliveries} {$deliveryWord} successfully created for {$totalPallets} pallets.";
@@ -672,6 +708,7 @@ try {
                 ip.current_warehouse_id,
                 ip.current_project_id,
                 ip.assigned_project_id,
+                ip.manufacturer_location_id,
                 m.vendor_name AS origin_vendor,
                 COALESCE(
                     CONCAT(ml.street_address, ', ', ml.city, ', ', ml.state, ' ', ml.zip_code),
@@ -686,6 +723,7 @@ try {
                 COALESCE(ml.location_name, '') AS origin_location_name,
                 COALESCE(ml.city, '') AS origin_vendor_city,
                 COALESCE(ml.state, '') AS origin_vendor_state,
+                COALESCE(ml.country, 'USA') AS origin_vendor_country,
                 m.account_id AS pallet_account_id,
                 w.name AS current_warehouse_name,
                 w.street_address as warehouse_street, w.city as warehouse_city, w.state as warehouse_state, w.zip_code as warehouse_zip,
@@ -712,7 +750,7 @@ try {
         $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?)";
     }
     
-    $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, m.vendor_name, m.account_id, ml.street_address, ml.city, ml.state, ml.zip_code, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
+    $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.manufacturer_location_id, m.vendor_name, m.account_id, ml.street_address, ml.city, ml.state, ml.zip_code, ml.country, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
               ORDER BY ip.id ASC";
     
     if ($role === 'admin' && $account_id_for_admin) {
@@ -826,9 +864,9 @@ try {
         }
     }
 
-    // Fetch Warehouses (with addresses)
+    // Fetch Warehouses (with addresses) - exclude ports for domestic use
     $all_warehouses = [];
-    $stmtW = $conn->prepare("SELECT id, name, street_address, city, state, zip_code FROM warehouses ORDER BY name ASC");
+    $stmtW = $conn->prepare("SELECT id, name, street_address, city, state, zip_code FROM warehouses WHERE is_port = 0 OR is_port IS NULL ORDER BY name ASC");
     if ($stmtW) {
         $stmtW->execute();
         $resultW = $stmtW->get_result();
@@ -1451,8 +1489,28 @@ if (!empty($bolCompletionMessage)) {
             <!-- SINGLE SHIPMENT SECTION -->
             <div id="singleShipmentSection">
                 <form id="singleShipmentForm" onsubmit="return false;">
-                    <label for="bol_number">BOL Number:</label>
-                    <input type="text" id="bol_number" name="bol_number" required>
+                    <!-- BOL Number for Domestic Shipments -->
+                    <div id="domesticBolField">
+                        <label for="bol_number">BOL Number:</label>
+                        <input type="text" id="bol_number" name="bol_number" required>
+                    </div>
+                    
+                    <!-- Container Number for Overseas Shipments -->
+                    <div id="overseasContainerField" style="display: none;">
+                        <label for="container_number">Container Number: *</label>
+                        <input type="text" id="container_number" name="container_number" placeholder="e.g. MSKU7073334" required>
+                        
+                        <div class="form-row" style="margin-top: 10px;">
+                            <div>
+                                <label for="master_bol">Master BOL:</label>
+                                <input type="text" id="master_bol" name="master_bol" placeholder="Optional">
+                            </div>
+                            <div>
+                                <label for="house_bol">House BOL:</label>
+                                <input type="text" id="house_bol" name="house_bol" placeholder="Optional">
+                            </div>
+                        </div>
+                    </div>
                     <div class="form-row">
                         <div>
                             <label for="departure_date">Departure Date:</label>
@@ -1474,32 +1532,7 @@ if (!empty($bolCompletionMessage)) {
                         </div>
                     </div>
                     
-                    <!-- Overseas Shipment Fields -->
-                    <div id="overseasFields" style="display: none; border: 2px solid #007cba; padding: 15px; margin: 15px 0; border-radius: 5px; background-color: #f0f8ff;">
-                        <h4 style="color: #007cba; margin-top: 0;">🚢 Overseas Shipment Details</h4>
-                        <div class="form-row">
-                            <div>
-                                <label for="container_number">Container Number: *</label>
-                                <input type="text" id="container_number" name="container_number" placeholder="e.g. MSKU7073334">
-                            </div>
-                            <div>
-                                <label for="port_of_entry_id">Port of Entry: *</label>
-                                <select id="port_of_entry_id" name="port_of_entry_id">
-                                    <option value="">Select Port...</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div>
-                                <label for="master_bol">Master BOL:</label>
-                                <input type="text" id="master_bol" name="master_bol" placeholder="Optional">
-                            </div>
-                            <div>
-                                <label for="house_bol">House BOL:</label>
-                                <input type="text" id="house_bol" name="house_bol" placeholder="Optional">
-                            </div>
-                        </div>
-                    </div>
+
                     
                     <!-- Origin and Destination Section -->
                     <div class="origin-destination-section">
@@ -1509,6 +1542,15 @@ if (!empty($bolCompletionMessage)) {
                                 <div id="originDisplay" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
                                     <strong id="originLocationText">Select pallets to see origin</strong>
                                 </div>
+                                
+                                <!-- Origin Port for Overseas Shipments -->
+                                <div id="originPortSection" style="display: none; margin-top: 10px;">
+                                    <label for="origin_port_id" style="margin-bottom: 5px; display: block; font-weight: 500;">Origin Port: *</label>
+                                    <select id="origin_port_id" name="origin_port_id" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                        <option value="">Select departure port...</option>
+                                    </select>
+                                </div>
+                                
                                 <input type="hidden" id="origin_type" name="origin_type" value="">
                                 <input type="hidden" id="origin_id" name="origin_id" value="">
                             </div>
@@ -1521,15 +1563,20 @@ if (!empty($bolCompletionMessage)) {
                             </div>
                             
                             <div class="destination-section" style="flex: 1;">
-                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Destination:</label>
-                                <div class="destination-radio-group" style="display: flex; gap: 15px; margin-bottom: 10px;">
-                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
-                                        <input type="radio" name="destination_type" value="project" checked onchange="toggleDestinationSelectSingle()" style="margin-right: 5px;"> Project
-                                    </label>
-                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
-                                        <input type="radio" name="destination_type" value="warehouse" onchange="toggleDestinationSelectSingle()" style="margin-right: 5px;"> Warehouse
-                                    </label>
+                                <label id="destinationLabel" style="margin-bottom: 10px; display:block; font-weight: 600;">Destination:</label>
+                                
+                                <!-- Domestic Destination Selection -->
+                                <div id="domesticDestinationGroup">
+                                    <div class="destination-radio-group" style="display: flex; gap: 15px; margin-bottom: 10px;">
+                                        <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                            <input type="radio" name="destination_type" value="project" checked onchange="toggleDestinationSelectSingle()" style="margin-right: 5px;"> Project
+                                        </label>
+                                        <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                            <input type="radio" name="destination_type" value="warehouse" onchange="toggleDestinationSelectSingle()" style="margin-right: 5px;"> Warehouse
+                                        </label>
+                                    </div>
                                 </div>
+                                
                                 <div id="destinationSelectContainer">
                                     <select name="destination_id" id="destination_id" required onchange="calculateDistance()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                                         <!-- Filled by JS -->
@@ -1592,20 +1639,7 @@ if (!empty($bolCompletionMessage)) {
                     </div>
                     
                     <!-- Overseas Shipment Fields -->
-                    <div id="overseasFieldsMulti" style="display: none; border: 2px solid #007cba; padding: 15px; margin: 15px 0; border-radius: 5px; background-color: #f0f8ff;">
-                        <h4 style="color: #007cba; margin-top: 0;">🚢 Overseas Shipment Details</h4>
-                        <div class="form-row">
-                            <div>
-                                <label for="container_number_multi">Container Number: *</label>
-                                <input type="text" id="container_number_multi" name="container_number_multi" placeholder="e.g. MSKU7073334">
-                            </div>
-                            <div>
-                                <label for="port_of_entry_id_multi">Port of Entry: *</label>
-                                <select id="port_of_entry_id_multi" name="port_of_entry_id_multi">
-                                    <option value="">Select Port...</option>
-                                </select>
-                            </div>
-                        </div>
+                    <div id="overseasContainerFieldsMulti" style="display: none; margin-top: 15px;">
                         <div class="form-row">
                             <div>
                                 <label for="master_bol_multi">Master BOL:</label>
@@ -1626,6 +1660,15 @@ if (!empty($bolCompletionMessage)) {
                                 <div id="originDisplayMulti" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
                                     <strong id="originLocationTextMulti">Select pallets to see origin</strong>
                                 </div>
+                                
+                                <!-- Origin Port for Overseas Shipments -->
+                                <div id="originPortSectionMulti" style="display: none; margin-top: 10px;">
+                                    <label for="origin_port_id_multi" style="margin-bottom: 5px; display: block; font-weight: 500;">Origin Port: *</label>
+                                    <select id="origin_port_id_multi" name="origin_port_id_multi" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                                        <option value="">Select departure port...</option>
+                                    </select>
+                                </div>
+                                
                                 <input type="hidden" id="origin_type_multi" name="origin_type_multi" value="">
                                 <input type="hidden" id="origin_id_multi" name="origin_id_multi" value="">
                             </div>
@@ -1638,15 +1681,20 @@ if (!empty($bolCompletionMessage)) {
                             </div>
                             
                             <div class="destination-section" style="flex: 1;">
-                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Destination:</label>
-                                <div class="destination-radio-group" style="display: flex; gap: 15px; margin-bottom: 10px;">
-                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
-                                        <input type="radio" name="destination_type_multi" value="project" checked onchange="toggleDestinationSelectMulti()" style="margin-right: 5px;"> Project
-                                    </label>
-                                    <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
-                                        <input type="radio" name="destination_type_multi" value="warehouse" onchange="toggleDestinationSelectMulti()" style="margin-right: 5px;"> Warehouse
-                                    </label>
+                                <label id="destinationLabelMulti" style="margin-bottom: 10px; display:block; font-weight: 600;">Destination:</label>
+                                
+                                <!-- Domestic Destination Selection -->
+                                <div id="domesticDestinationGroupMulti">
+                                    <div class="destination-radio-group" style="display: flex; gap: 15px; margin-bottom: 10px;">
+                                        <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                            <input type="radio" name="destination_type_multi" value="project" checked onchange="toggleDestinationSelectMulti()" style="margin-right: 5px;"> Project
+                                        </label>
+                                        <label class="radio-label" style="display: flex; align-items: center; margin: 0; font-weight: normal;">
+                                            <input type="radio" name="destination_type_multi" value="warehouse" onchange="toggleDestinationSelectMulti()" style="margin-right: 5px;"> Warehouse
+                                        </label>
+                                    </div>
                                 </div>
+                                
                                 <div id="destinationSelectContainerMulti">
                                     <select name="destination_id_multi" id="destination_id_multi" required onchange="calculateDistanceMulti()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                                         <!-- Filled by JS -->
@@ -1707,9 +1755,12 @@ if (!empty($bolCompletionMessage)) {
 </script>
 
 <!-- Load the Google Maps JavaScript API with Places library -->
-<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places,geometry"></script>
 
 <script>
+// ----------------- GLOBAL STATE TRACKING -----------------
+let currentOverseasState = null; // Track current overseas state to prevent unnecessary UI updates
+
 // ----------------- PALLET TABLE CHECKBOXES -----------------
 function toggleAllPalletCheckboxes(isChecked) {
     document.querySelectorAll('.pallets-section table tbody tr').forEach(function(row) {
@@ -2169,8 +2220,10 @@ function determineOriginFromSelectedPallets() {
             originInfo = {
                 type: 'manufacturer',
                 id: manufacturer.id,
+                location_id: firstPallet.manufacturer_location_id,
                 name: manufacturer.name,
                 address: manufacturerAddress,
+                country: firstPallet.origin_vendor_country,
                 displayText: `Manufacturer: ${locationDisplay}`
             };
         } else {
@@ -2278,36 +2331,73 @@ function updateOriginDisplay() {
 // ----------------- OVERSEAS SHIPMENT DETECTION -----------------
 function checkOverseasShipment(origin, destination = null) {
     // Check origin country (manufacturer location)
-    if (origin && origin.type === 'manufacturer' && origin.id) {
-        fetch('get_manufacturer_country.php?location_id=' + origin.id)
-            .then(response => response.json())
-            .then(data => {
-                const originCountry = data.country ? data.country.toUpperCase() : 'USA';
-                
-                // For now, assume all destinations (warehouses/projects) are USA
-                // In the future, we can add destination country detection here
-                const destinationCountry = 'USA';
-                
-                // Show overseas fields if:
-                // 1. Origin is not USA (international manufacturer), OR
-                // 2. Destination is not USA (international destination), OR  
-                // 3. Origin and destination are in different countries
-                if (originCountry !== 'USA' || destinationCountry !== 'USA' || originCountry !== destinationCountry) {
+    if (origin && origin.type === 'manufacturer') {
+        // If country is already available from pallet data, use it directly
+        if (origin.country) {
+            const originCountry = origin.country.toUpperCase();
+            const destinationCountry = 'USA'; // For now, assume all destinations are USA
+            
+            console.log('Overseas check:', originCountry, 'to', destinationCountry);
+            
+            // Show overseas fields if origin is not USA
+            const isOverseas = originCountry !== 'USA';
+            if (currentOverseasState !== isOverseas) {
+                // Only update UI if overseas state has changed
+                currentOverseasState = isOverseas;
+                if (isOverseas) {
+                    console.log('Overseas shipment detected:', originCountry);
                     showOverseasFields();
                     loadPorts();
-                    
-                    // Update UI to show which type of international shipment this is
                     updateOverseasShipmentType(originCountry, destinationCountry);
                 } else {
+                    console.log('Domestic shipment detected');
                     hideOverseasFields();
                 }
-            })
-            .catch(error => {
-                console.error('Error checking manufacturer country:', error);
+            }
+        } else if (origin.location_id) {
+            // Fallback: fetch country if not available in pallet data
+            fetch('get_manufacturer_country.php?location_id=' + origin.location_id)
+                .then(response => response.json())
+                .then(data => {
+                    const originCountry = data.country ? data.country.toUpperCase() : 'USA';
+                    const destinationCountry = 'USA';
+                    
+                    console.log('Overseas check (fallback):', originCountry, 'to', destinationCountry);
+                    
+                    const isOverseas = originCountry !== 'USA';
+                    if (currentOverseasState !== isOverseas) {
+                        // Only update UI if overseas state has changed
+                        currentOverseasState = isOverseas;
+                        if (isOverseas) {
+                            console.log('Overseas shipment detected (fallback):', originCountry);
+                            showOverseasFields();
+                            loadPorts();
+                            updateOverseasShipmentType(originCountry, destinationCountry);
+                        } else {
+                            console.log('Domestic shipment detected (fallback)');
+                            hideOverseasFields();
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking manufacturer country:', error);
+                    if (currentOverseasState !== false) {
+                        currentOverseasState = false;
+                        hideOverseasFields();
+                    }
+                });
+        } else {
+            console.log('No location data available for overseas check');
+            if (currentOverseasState !== false) {
+                currentOverseasState = false;
                 hideOverseasFields();
-            });
+            }
+        }
     } else {
-        hideOverseasFields();
+        if (currentOverseasState !== false) {
+            currentOverseasState = false;
+            hideOverseasFields();
+        }
     }
 }
 
@@ -2327,43 +2417,193 @@ function updateOverseasShipmentType(originCountry, destinationCountry) {
 }
 
 function showOverseasFields() {
-    const singleFields = document.getElementById('overseasFields');
-    const multiFields = document.getElementById('overseasFieldsMulti');
-    if (singleFields) singleFields.style.display = 'block';
-    if (multiFields) multiFields.style.display = 'block';
+    // Show overseas container fields instead of domestic BOL fields
+    const domesticBolField = document.getElementById('domesticBolField');
+    const overseasContainerField = document.getElementById('overseasContainerField');
+    const overseasContainerFieldsMulti = document.getElementById('overseasContainerFieldsMulti');
+    
+    if (domesticBolField) domesticBolField.style.display = 'none';
+    if (overseasContainerField) overseasContainerField.style.display = 'block';
+    if (overseasContainerFieldsMulti) overseasContainerFieldsMulti.style.display = 'block';
+    
+    // Show origin port sections
+    const originPortSection = document.getElementById('originPortSection');
+    const originPortSectionMulti = document.getElementById('originPortSectionMulti');
+    if (originPortSection) originPortSection.style.display = 'block';
+    if (originPortSectionMulti) originPortSectionMulti.style.display = 'block';
+    
+    // Update destination for ports only
+    updateDestinationForOverseas(true);
+    
+    // Hide Generate BOL checkbox for overseas shipments
+    const generateBolSingle = document.querySelector('#singleShipmentSection .action-button')?.previousElementSibling;
+    const generateBolMulti = document.getElementById('generate_bol_multi')?.closest('div');
+    if (generateBolSingle) generateBolSingle.style.display = 'none';
+    if (generateBolMulti) generateBolMulti.style.display = 'none';
+    
+    // Load ports
+    loadPorts();
 }
 
 function hideOverseasFields() {
-    const singleFields = document.getElementById('overseasFields');
-    const multiFields = document.getElementById('overseasFieldsMulti');
-    if (singleFields) singleFields.style.display = 'none';
-    if (multiFields) multiFields.style.display = 'none';
+    // Hide overseas container fields and show domestic BOL fields
+    const domesticBolField = document.getElementById('domesticBolField');
+    const overseasContainerField = document.getElementById('overseasContainerField');
+    const overseasContainerFieldsMulti = document.getElementById('overseasContainerFieldsMulti');
+    
+    if (domesticBolField) domesticBolField.style.display = 'block';
+    if (overseasContainerField) overseasContainerField.style.display = 'none';
+    if (overseasContainerFieldsMulti) overseasContainerFieldsMulti.style.display = 'none';
+    
+    // Hide origin port sections
+    const originPortSection = document.getElementById('originPortSection');
+    const originPortSectionMulti = document.getElementById('originPortSectionMulti');
+    if (originPortSection) originPortSection.style.display = 'none';
+    if (originPortSectionMulti) originPortSectionMulti.style.display = 'none';
+    
+    // Restore domestic destination options
+    updateDestinationForOverseas(false);
+    
+    // Show Generate BOL checkbox for domestic shipments
+    const generateBolSingle = document.querySelector('#singleShipmentSection .action-button')?.previousElementSibling;
+    const generateBolMulti = document.getElementById('generate_bol_multi')?.closest('div');
+    if (generateBolSingle) generateBolSingle.style.display = 'block';
+    if (generateBolMulti) generateBolMulti.style.display = 'block';
 }
 
 function loadPorts() {
     fetch('get_ports.php')
         .then(response => response.json())
         .then(data => {
-            const singleSelect = document.getElementById('port_of_entry_id');
-            const multiSelect = document.getElementById('port_of_entry_id_multi');
+            // Origin port selects
+            const originPortSingle = document.getElementById('origin_port_id');
+            const originPortMulti = document.getElementById('origin_port_id_multi');
             
-            [singleSelect, multiSelect].forEach(select => {
+            [originPortSingle, originPortMulti].forEach(select => {
                 if (select) {
-                    // Clear existing options except the first one
-                    select.innerHTML = '<option value="">Select Port...</option>';
+                    // Store current selection to prevent clearing
+                    const currentValue = select.value;
+                    select.innerHTML = '<option value="">Select departure port...</option>';
                     
                     data.ports.forEach(port => {
                         const option = document.createElement('option');
                         option.value = port.id;
                         option.textContent = port.name + ' - ' + port.city + ', ' + port.state;
+                        // Add address data for distance calculation
+                        option.setAttribute('data-address', port.address || `${port.city}, ${port.state}`);
                         select.appendChild(option);
                     });
+                    
+                    // Restore previous selection
+                    if (currentValue) select.value = currentValue;
                 }
             });
+            
+            // Store ports data globally for destination dropdown use
+            window.portsData = data.ports;
+            
+            // Update destination dropdowns if we're in overseas mode
+            const overseasContainerField = document.getElementById('overseasContainerField');
+            const isOverseas = overseasContainerField && overseasContainerField.style.display !== 'none';
+            if (isOverseas) {
+                updateDestinationForOverseas(true);
+            }
         })
         .catch(error => {
             console.error('Error loading ports:', error);
         });
+}
+
+function updateDestinationForOverseas(isOverseas) {
+    const destinationLabel = document.getElementById('destinationLabel');
+    const destinationLabelMulti = document.getElementById('destinationLabelMulti');
+    const domesticDestinationGroup = document.getElementById('domesticDestinationGroup');
+    const domesticDestinationGroupMulti = document.getElementById('domesticDestinationGroupMulti');
+    const destinationSelect = document.getElementById('destination_id');
+    const destinationSelectMulti = document.getElementById('destination_id_multi');
+    
+    if (isOverseas) {
+        // Update labels
+        if (destinationLabel) destinationLabel.textContent = 'Destination Port:';
+        if (destinationLabelMulti) destinationLabelMulti.textContent = 'Destination Port:';
+        
+        // Hide radio buttons for overseas shipments
+        if (domesticDestinationGroup) domesticDestinationGroup.style.display = 'none';
+        if (domesticDestinationGroupMulti) domesticDestinationGroupMulti.style.display = 'none';
+        
+        // Populate with ports only
+        if (window.portsData) {
+            [destinationSelect, destinationSelectMulti].forEach(select => {
+                if (select) {
+                    // Store current selection
+                    const currentValue = select.value;
+                    select.innerHTML = '<option value="">Select arrival port...</option>';
+                    
+                    window.portsData.forEach(port => {
+                        const option = document.createElement('option');
+                        option.value = port.id;
+                        option.textContent = port.name + ' - ' + port.city + ', ' + port.state;
+                        option.setAttribute('data-address', port.address || `${port.city}, ${port.state}`);
+                        option.setAttribute('data-type', 'port');
+                        select.appendChild(option);
+                    });
+                    
+                    // Restore previous selection
+                    if (currentValue) select.value = currentValue;
+                }
+            });
+        }
+    } else {
+        // Restore domestic labels
+        if (destinationLabel) destinationLabel.textContent = 'Destination:';
+        if (destinationLabelMulti) destinationLabelMulti.textContent = 'Destination:';
+        
+        // Show radio buttons for domestic shipments
+        if (domesticDestinationGroup) domesticDestinationGroup.style.display = 'block';
+        if (domesticDestinationGroupMulti) domesticDestinationGroupMulti.style.display = 'block';
+        
+        // Restore normal dropdown functionality
+        toggleDestinationSelectSingle();
+        toggleDestinationSelectMulti();
+    }
+}
+
+// ----------------- INTERNATIONAL DISTANCE CALCULATION -----------------
+function calculateApproximateInternationalDistance(originAddress, destAddress, callback) {
+    if (!window.google || !window.google.maps) {
+        console.error('Google Maps API not loaded');
+        callback(null, 'Google Maps API not available');
+        return;
+    }
+    
+    const geocoder = new google.maps.Geocoder();
+    
+    // Geocode origin address
+    geocoder.geocode({ address: originAddress }, function(originResults, originStatus) {
+        if (originStatus === 'OK' && originResults[0]) {
+            const originLocation = originResults[0].geometry.location;
+            
+            // Geocode destination address
+            geocoder.geocode({ address: destAddress }, function(destResults, destStatus) {
+                if (destStatus === 'OK' && destResults[0]) {
+                    const destLocation = destResults[0].geometry.location;
+                    
+                    // Calculate air distance using spherical geometry
+                    const airDistanceMeters = google.maps.geometry.spherical.computeDistanceBetween(originLocation, destLocation);
+                    const airDistanceMiles = Math.round(airDistanceMeters * 0.000621371); // Convert meters to miles
+                    
+                    console.log(`International distance: ${originAddress} to ${destAddress} = ${airDistanceMiles} miles (air distance)`);
+                    callback(airDistanceMiles, null);
+                } else {
+                    console.error('Could not geocode destination address:', destAddress, destStatus);
+                    callback(null, 'Could not find destination location');
+                }
+            });
+        } else {
+            console.error('Could not geocode origin address:', originAddress, originStatus);
+            callback(null, 'Could not find origin location');
+        }
+    });
 }
 
 // ----------------- DESTINATION SELECTION FUNCTIONS -----------------
@@ -2406,33 +2646,67 @@ function calculateDistance() {
         return;
     }
 
-    const originAddress = result.origin.address;
-    const destAddress = getAddressFromSelection(destSelect, 'destination');
-
-    if (!originAddress || !destAddress) {
-        distanceDisplay.innerHTML = '';
-        milesInput.value = '';
-        return;
-    }
-
-    distanceDisplay.innerHTML = '<span style="color: #666;">Calculating distance...</span>';
-
-    calculateDistanceFromAddresses(originAddress, destAddress, function(distance, error) {
-        if (error) {
-            if (error.includes('cannot be the same')) {
-                distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Same location</span>';
-            } else {
-                distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error</span>';
-            }
+    // Check if overseas fields are visible
+    const overseasContainerField = document.getElementById('overseasContainerField');
+    const isOverseas = overseasContainerField && overseasContainerField.style.display !== 'none';
+    
+    let originAddress, destAddress;
+    
+    if (isOverseas) {
+        // Use port addresses for overseas shipments
+        const originPortSelect = document.getElementById('origin_port_id');
+        originAddress = originPortSelect ? getAddressFromSelection(originPortSelect, 'port') : '';
+        destAddress = getAddressFromSelection(destSelect, 'destination');
+        
+        if (!originAddress || !destAddress) {
+            distanceDisplay.innerHTML = '<span style="color: #666;">Select both ports</span>';
             milesInput.value = '';
-        } else {
-            distanceDisplay.innerHTML = `${distance} miles`;
-            milesInput.value = distance;
+            return;
         }
         
-        // Check for overseas shipment requirements whenever distance is calculated
-        checkOverseasShipment(result.origin);
-    });
+        distanceDisplay.innerHTML = '<span style="color: #488C9A;">Calculating ocean route...</span>';
+        
+        // Use international distance calculation for overseas shipments
+        calculateApproximateInternationalDistance(originAddress, destAddress, function(distance, error) {
+            if (distance && distance > 0) {
+                distanceDisplay.innerHTML = `<span style="color: #488C9A; font-weight: bold;">${distance} miles</span><br><span style="font-size: 0.8em; color: #666;">(Air Distance)</span>`;
+                milesInput.value = distance;
+            } else {
+                distanceDisplay.innerHTML = '<span style="color: #f39c12;">🌊 Enter miles manually</span>';
+                milesInput.value = '';
+                console.error('International distance calculation failed:', error);
+            }
+        });
+    } else {
+        // Use manufacturer/warehouse address for domestic shipments
+        originAddress = result.origin.address;
+        destAddress = getAddressFromSelection(destSelect, 'destination');
+
+        if (!originAddress || !destAddress) {
+            distanceDisplay.innerHTML = '';
+            milesInput.value = '';
+            return;
+        }
+
+        distanceDisplay.innerHTML = '<span style="color: #666;">Calculating distance...</span>';
+
+        calculateDistanceFromAddresses(originAddress, destAddress, function(distance, error) {
+            if (error) {
+                if (error.includes('cannot be the same')) {
+                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Same location</span>';
+                } else {
+                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error</span>';
+                }
+                milesInput.value = '';
+            } else {
+                distanceDisplay.innerHTML = `${distance} miles`;
+                milesInput.value = distance;
+            }
+        });
+    }
+    
+    // Check for overseas shipment requirements whenever distance is calculated
+    checkOverseasShipment(result.origin);
 }
 
 function calculateDistanceMulti() {
@@ -2449,33 +2723,67 @@ function calculateDistanceMulti() {
         return;
     }
 
-    const originAddress = result.origin.address;
-    const destAddress = getAddressFromSelection(destSelect, 'destination');
-
-    if (!originAddress || !destAddress) {
-        distanceDisplay.innerHTML = '';
-        milesInput.value = '';
-        return;
-    }
-
-    distanceDisplay.innerHTML = '<span style="color: #666;">Calculating distance...</span>';
-
-    calculateDistanceFromAddresses(originAddress, destAddress, function(distance, error) {
-        if (error) {
-            if (error.includes('cannot be the same')) {
-                distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Same location</span>';
-            } else {
-                distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error</span>';
-            }
+    // Check if overseas fields are visible
+    const overseasContainerFieldsMulti = document.getElementById('overseasContainerFieldsMulti');
+    const isOverseas = overseasContainerFieldsMulti && overseasContainerFieldsMulti.style.display !== 'none';
+    
+    let originAddress, destAddress;
+    
+    if (isOverseas) {
+        // Use port addresses for overseas shipments
+        const originPortSelect = document.getElementById('origin_port_id_multi');
+        originAddress = originPortSelect ? getAddressFromSelection(originPortSelect, 'port') : '';
+        destAddress = getAddressFromSelection(destSelect, 'destination');
+        
+        if (!originAddress || !destAddress) {
+            distanceDisplay.innerHTML = '<span style="color: #666;">Select both ports</span>';
             milesInput.value = '';
-        } else {
-            distanceDisplay.innerHTML = `${distance} miles`;
-            milesInput.value = distance;
+            return;
         }
         
-        // Check for overseas shipment requirements whenever distance is calculated
-        checkOverseasShipment(result.origin);
-    });
+        distanceDisplay.innerHTML = '<span style="color: #488C9A;">Calculating ocean route...</span>';
+        
+        // Use international distance calculation for overseas shipments
+        calculateApproximateInternationalDistance(originAddress, destAddress, function(distance, error) {
+            if (distance && distance > 0) {
+                distanceDisplay.innerHTML = `<span style="color: #488C9A; font-weight: bold;">${distance} miles</span><br><span style="font-size: 0.8em; color: #666;">(Air Distance)</span>`;
+                milesInput.value = distance;
+            } else {
+                distanceDisplay.innerHTML = '<span style="color: #f39c12;">🌊 Enter miles manually</span>';
+                milesInput.value = '';
+                console.error('International distance calculation failed:', error);
+            }
+        });
+    } else {
+        // Use manufacturer/warehouse address for domestic shipments
+        originAddress = result.origin.address;
+        destAddress = getAddressFromSelection(destSelect, 'destination');
+
+        if (!originAddress || !destAddress) {
+            distanceDisplay.innerHTML = '';
+            milesInput.value = '';
+            return;
+        }
+
+        distanceDisplay.innerHTML = '<span style="color: #666;">Calculating distance...</span>';
+
+        calculateDistanceFromAddresses(originAddress, destAddress, function(distance, error) {
+            if (error) {
+                if (error.includes('cannot be the same')) {
+                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">⚠️ Same location</span>';
+                } else {
+                    distanceDisplay.innerHTML = '<span style="color: #d32f2f;">Error</span>';
+                }
+                milesInput.value = '';
+            } else {
+                distanceDisplay.innerHTML = `${distance} miles`;
+                milesInput.value = distance;
+            }
+        });
+    }
+    
+    // Check for overseas shipment requirements whenever distance is calculated
+    checkOverseasShipment(result.origin);
 }
 
 // ----------------- BOL DUPLICATE WARNING SYSTEM -----------------
@@ -2610,12 +2918,43 @@ if (confirmShipmentBtn) {
         const originId = document.getElementById('origin_id').value;
         const destinationType = document.querySelector('input[name="destination_type"]:checked').value;
         const destinationId = document.getElementById('destination_id').value;
-        const bol = document.getElementById('bol_number').value;
         const departure = document.getElementById('departure_date').value;
         const arrival = document.getElementById('est_arrival_date').value;
         const freightCost = document.getElementById('freight_cost').value;
         const customerCost = document.getElementById('customer_cost').value;
         const miles = document.getElementById('miles').value;
+
+        // Check if overseas fields are visible
+        const overseasContainerField = document.getElementById('overseasContainerField');
+        const isOverseas = overseasContainerField && overseasContainerField.style.display !== 'none';
+        
+        let bol, containerNumber, originPortId, masterBol, houseBol;
+        
+        if (isOverseas) {
+            // Overseas shipment validation
+            containerNumber = document.getElementById('container_number').value;
+            originPortId = document.getElementById('origin_port_id').value;
+            masterBol = document.getElementById('master_bol').value;
+            houseBol = document.getElementById('house_bol').value;
+            bol = containerNumber; // Use container number as BOL for database compatibility
+            
+            if (!containerNumber || containerNumber.trim() === '') {
+                alert('Container Number is required for overseas shipments.');
+                return;
+            }
+            if (!originPortId) {
+                alert('Origin Port is required for overseas shipments.');
+                return;
+            }
+        } else {
+            // Domestic shipment validation
+            bol = document.getElementById('bol_number').value;
+            
+            if (!bol || bol.trim() === '') {
+                alert('BOL Number is required for domestic shipments.');
+                return;
+            }
+        }
 
         if (!originId) {
             alert('Please select pallets to determine origin location.');
@@ -2623,10 +2962,6 @@ if (confirmShipmentBtn) {
         }
         if (!destinationId) {
             alert('Please select a destination location.');
-            return;
-        }
-        if (!bol || bol.trim() === '') {
-            alert('BOL Number is required.');
             return;
         }
 
@@ -2655,16 +2990,11 @@ if (confirmShipmentBtn) {
             setOrCreateHidden(mainForm, 'miles', miles);
             setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
             
-            // Add overseas shipment fields if visible
-            const overseasFields = document.getElementById('overseasFields');
-            if (overseasFields && overseasFields.style.display !== 'none') {
-                const containerNumber = document.getElementById('container_number').value;
-                const portOfEntry = document.getElementById('port_of_entry_id').value;
-                const masterBol = document.getElementById('master_bol').value;
-                const houseBol = document.getElementById('house_bol').value;
-                
+            // Add overseas shipment fields if this is an overseas shipment
+            if (isOverseas) {
                 setOrCreateHidden(mainForm, 'container_number', containerNumber);
-                setOrCreateHidden(mainForm, 'port_of_entry_id', portOfEntry);
+                setOrCreateHidden(mainForm, 'origin_port_id', originPortId);  // Departure port
+                setOrCreateHidden(mainForm, 'port_of_entry_id', originPortId); // For validation (kept for compatibility)
                 setOrCreateHidden(mainForm, 'master_bol', masterBol);
                 setOrCreateHidden(mainForm, 'house_bol', houseBol);
             }
@@ -2739,23 +3069,61 @@ if (confirmMultiShipmentBtn) {
             return;
         }
 
-        // Validate all BOL fields
-        const bolFields = document.querySelectorAll('#bolFieldsGrid input[name^="bol_number_"]');
-        const bolNumbers = [];
-        let missingBol = false;
+        // Check if overseas fields are visible
+        const overseasContainerFieldsMulti = document.getElementById('overseasContainerFieldsMulti');
+        const isOverseas = overseasContainerFieldsMulti && overseasContainerFieldsMulti.style.display !== 'none';
         
-        bolFields.forEach((field, index) => {
-            const bolValue = field.value.trim();
-            if (!bolValue) {
-                missingBol = true;
+        let bolNumbers = [];
+        let containerNumbers = [];
+        let originPortId, masterBol, houseBol;
+        
+        if (isOverseas) {
+            // Validate container numbers for overseas shipments
+            const containerFields = document.querySelectorAll('#bolFieldsGrid input[name^="container_number_"]');
+            let missingContainer = false;
+            
+            containerFields.forEach((field, index) => {
+                const containerValue = field.value.trim();
+                if (!containerValue) {
+                    missingContainer = true;
+                    return;
+                }
+                containerNumbers.push(containerValue);
+                bolNumbers.push(containerValue); // Use container numbers as BOL for database compatibility
+            });
+            
+            if (missingContainer) {
+                alert('All Container Numbers are required for overseas shipments.');
                 return;
             }
-            bolNumbers.push(bolValue);
-        });
-        
-        if (missingBol) {
-            alert('All BOL Numbers are required.');
-            return;
+            
+            // Validate overseas-specific fields
+            originPortId = document.getElementById('origin_port_id_multi').value;
+            masterBol = document.getElementById('master_bol_multi').value;
+            houseBol = document.getElementById('house_bol_multi').value;
+            
+            if (!originPortId) {
+                alert('Origin Port is required for overseas shipments.');
+                return;
+            }
+        } else {
+            // Validate BOL numbers for domestic shipments
+            const bolFields = document.querySelectorAll('#bolFieldsGrid input[name^="bol_number_"]');
+            let missingBol = false;
+            
+            bolFields.forEach((field, index) => {
+                const bolValue = field.value.trim();
+                if (!bolValue) {
+                    missingBol = true;
+                    return;
+                }
+                bolNumbers.push(bolValue);
+            });
+            
+            if (missingBol) {
+                alert('All BOL Numbers are required for domestic shipments.');
+                return;
+            }
         }
 
         // Check if origin and destination are the same
@@ -2788,16 +3156,11 @@ if (confirmMultiShipmentBtn) {
             setOrCreateHidden(mainForm, 'bol_number', bolNumbers.length > 0 ? bolNumbers[0] : '');
             setOrCreateHidden(mainForm, 'generate_bol', generateBol ? '1' : '0');
             
-            // Add overseas shipment fields if visible
-            const overseasFieldsMulti = document.getElementById('overseasFieldsMulti');
-            if (overseasFieldsMulti && overseasFieldsMulti.style.display !== 'none') {
-                const containerNumber = document.getElementById('container_number_multi').value;
-                const portOfEntry = document.getElementById('port_of_entry_id_multi').value;
-                const masterBol = document.getElementById('master_bol_multi').value;
-                const houseBol = document.getElementById('house_bol_multi').value;
-                
-                setOrCreateHidden(mainForm, 'container_number', containerNumber);
-                setOrCreateHidden(mainForm, 'port_of_entry_id', portOfEntry);
+            // Add overseas shipment fields if this is an overseas shipment
+            if (isOverseas) {
+                setOrCreateHidden(mainForm, 'container_numbers', JSON.stringify(containerNumbers));
+                setOrCreateHidden(mainForm, 'origin_port_id', originPortId);  // Departure port
+                setOrCreateHidden(mainForm, 'port_of_entry_id', originPortId); // For validation (kept for compatibility)
                 setOrCreateHidden(mainForm, 'master_bol', masterBol);
                 setOrCreateHidden(mainForm, 'house_bol', houseBol);
             }
@@ -2883,27 +3246,48 @@ function updateMultiShipSummary() {
 
 function updateBolFields(numDeliveries) {
     const bolFieldsGrid = document.getElementById('bolFieldsGrid');
+    const bolFieldsLabel = document.querySelector('#bolFieldsContainer label');
     if (!bolFieldsGrid) return;
+    
+    // Check if overseas fields are visible
+    const overseasContainerFieldsMulti = document.getElementById('overseasContainerFieldsMulti');
+    const isOverseas = overseasContainerFieldsMulti && overseasContainerFieldsMulti.style.display !== 'none';
+    
+    // Update the label based on shipment type
+    if (bolFieldsLabel) {
+        bolFieldsLabel.textContent = isOverseas ? 'Container Numbers:' : 'BOL Numbers:';
+    }
     
     // Clear existing fields
     bolFieldsGrid.innerHTML = '';
     
-    // Create BOL fields for each delivery
+    // Create fields for each delivery
     for (let i = 1; i <= numDeliveries; i++) {
         const fieldDiv = document.createElement('div');
         fieldDiv.style.cssText = 'display: flex; flex-direction: column;';
         
         const label = document.createElement('label');
-        label.textContent = `Truck ${i} BOL:`;
+        if (isOverseas) {
+            label.textContent = `Container ${i}:`;
+        } else {
+            label.textContent = `Truck ${i} BOL:`;
+        }
         label.style.cssText = 'font-weight: 500; margin-bottom: 5px; font-size: 0.9em;';
         
         const input = document.createElement('input');
         input.type = 'text';
-        input.name = `bol_number_${i}`;
-        input.id = `bol_number_${i}`;
         input.required = true;
         input.style.cssText = 'padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em;';
-        input.placeholder = `BOL for truck ${i}`;
+        
+        if (isOverseas) {
+            input.name = `container_number_${i}`;
+            input.id = `container_number_${i}`;
+            input.placeholder = `Container ${i} (e.g. MSKU${7073334 + i})`;
+        } else {
+            input.name = `bol_number_${i}`;
+            input.id = `bol_number_${i}`;
+            input.placeholder = `BOL for truck ${i}`;
+        }
         
         fieldDiv.appendChild(label);
         fieldDiv.appendChild(input);
@@ -2992,6 +3376,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if (projectFilter && projectFilter.value) {
         // Apply the filter without opening the filters dropdown
         filterPallets();
+    }
+    
+    // Add event listeners for port selections to trigger distance recalculation
+    const originPortSingle = document.getElementById('origin_port_id');
+    const originPortMulti = document.getElementById('origin_port_id_multi');
+    
+    if (originPortSingle) {
+        originPortSingle.addEventListener('change', function() {
+            if (this.value) {
+                calculateDistance();
+            }
+        });
+    }
+    
+    if (originPortMulti) {
+        originPortMulti.addEventListener('change', function() {
+            if (this.value) {
+                calculateDistanceMulti();
+            }
+        });
     }
 });
 

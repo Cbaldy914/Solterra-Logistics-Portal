@@ -283,11 +283,15 @@ $stmt->close();
 $total_order_combined      = 0;
 $delivered_combined        = 0;
 $in_warehouse_combined     = 0;
+$on_water_combined         = 0;
+$cleared_customs_combined  = 0;
 $pending_combined          = 0;
 
 $pieChartData = [
     'Delivered to Project' => 0,
     'In Warehouse'      => 0,
+    'On Water'         => 0,
+    'Cleared Customs'  => 0,
     'Pending'          => 0,
 ];
 
@@ -300,8 +304,10 @@ foreach ($total_orders as $lbl => $info) {
 
     $del = $delivery_totals[$lbl]['Delivered to Project'] ?? 0;
     $inw = $delivery_totals[$lbl]['In Warehouse'] ?? 0;
-    // Calculate pending as total order minus delivered and in warehouse
-    $pending = $to - ($del + $inw);
+    $onw = $delivery_totals[$lbl]['On Water'] ?? 0;
+    $clr = $delivery_totals[$lbl]['Cleared Customs'] ?? 0;
+    // Calculate pending as total order minus all known statuses
+    $pending = $to - ($del + $inw + $onw + $clr);
     // Ensure pending is never negative  
     $pending = max(0, $pending);
 
@@ -318,16 +324,22 @@ foreach ($total_orders as $lbl => $info) {
         'total_order'        => $to,
         'delivered'          => $del,
         'in_warehouse'       => $inw,
+        'on_water'           => $onw,
+        'cleared_customs'    => $clr,
         'pending'            => $pending,
     ];
 
     $total_order_combined      += $to;
     $delivered_combined        += $del;
     $in_warehouse_combined     += $inw;
+    $on_water_combined         += $onw;
+    $cleared_customs_combined  += $clr;
     $pending_combined          += $pending;
 
     $pieChartData['Delivered to Project'] += $del;
     $pieChartData['In Warehouse']      += $inw;
+    $pieChartData['On Water']         += $onw;
+    $pieChartData['Cleared Customs']  += $clr;
     $pieChartData['Pending']          += $pending;
 }
 $total_pie = array_sum($pieChartData);
@@ -800,6 +812,8 @@ $stmt_warehouses->close();
 // --- Shipping Status Breakdown ---
 $status_totals = [
     'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
+    'On Water' => ['pallets' => 0, 'modules' => 0],
+    'Cleared Customs' => ['pallets' => 0, 'modules' => 0],
     'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
     'In Warehouse' => ['pallets' => 0, 'modules' => 0],
     'In Transit to Project' => ['pallets' => 0, 'modules' => 0]
@@ -906,10 +920,27 @@ $stmt_delivered->close();
 $step1_completed = true; // Project always created
 $step2_completed = $total_raw_modules > 0;
 $step3_completed = $actual_palletized_count >= $expected_pallets && $total_raw_modules > 0;
-$step4_completed = ($status_totals['At Manufacturer']['pallets'] ?? 0) == 0 && 
+
+// Step 4 (Shipping) is completed when:
+// 1. Some shipping has actually occurred (deliveries exist for this project)
+// 2. AND no pallets are currently in shipping statuses
+$has_shipping_started = false;
+$stmt_shipping_check = $conn->prepare("SELECT COUNT(*) as delivery_count FROM deliveries WHERE project_id = ?");
+$stmt_shipping_check->bind_param("i", $project_id);
+$stmt_shipping_check->execute();
+$stmt_shipping_check->bind_result($delivery_count);
+$stmt_shipping_check->fetch();
+$stmt_shipping_check->close();
+$has_shipping_started = $delivery_count > 0;
+
+$step4_completed = $has_shipping_started && 
+                  ($status_totals['At Manufacturer']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['On Water']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['Cleared Customs']['pallets'] ?? 0) == 0 && 
                   ($status_totals['In Transit to Warehouse']['pallets'] ?? 0) == 0 && 
                   ($status_totals['In Warehouse']['pallets'] ?? 0) == 0 && 
                   ($status_totals['In Transit to Project']['pallets'] ?? 0) == 0;
+
 $step5_completed = $delivered_raw_total >= $total_raw_modules && $total_raw_modules > 0;
 
 // Determine current step (the next step that needs to be completed)
@@ -2680,6 +2711,22 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 </div>
                                 <?php endif; ?>
                                 
+                                <?php if(($status_totals['On Water']['pallets'] ?? 0) > 0): ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('On Water')">
+                                    <div class="status-label">On Water</div>
+                                    <div class="status-count"><?php echo $status_totals['On Water']['pallets']; ?></div>
+                                    <div class="status-unit">pallets</div>
+                                </div>
+                                <?php endif; ?>
+                                
+                                <?php if(($status_totals['Cleared Customs']['pallets'] ?? 0) > 0): ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('Cleared Customs')">
+                                    <div class="status-label">Cleared Customs</div>
+                                    <div class="status-count"><?php echo $status_totals['Cleared Customs']['pallets']; ?></div>
+                                    <div class="status-unit">pallets</div>
+                                </div>
+                                <?php endif; ?>
+                                
                                 <?php if(($status_totals['In Transit to Warehouse']['pallets'] ?? 0) > 0): ?>
                                 <div class="shipping-box" onclick="showShippingBreakdown('In Transit to Warehouse')">
                                     <div class="status-label">In Transit to Warehouse</div>
@@ -3076,6 +3123,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                         <th>Total Order</th>
                                         <th>Delivered to Project</th>
                                         <th>In Warehouse</th>
+                                        <?php if ($on_water_combined > 0): ?>
+                                        <th>On Water</th>
+                                        <?php endif; ?>
+                                        <?php if ($cleared_customs_combined > 0): ?>
+                                        <th>Cleared Customs</th>
+                                        <?php endif; ?>
                                         <th>Pending</th>
                                     </tr>
                                 </thead>
@@ -3086,6 +3139,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                         <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
                                         <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
                                         <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
+                                        <?php if ($on_water_combined > 0): ?>
+                                        <td><?php echo number_format($on_water_combined,($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <?php if ($cleared_customs_combined > 0): ?>
+                                        <td><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
                                         <td><?php echo number_format($pending_combined,($view_mode=='mw')?2:0);?></td>
                                     </tr>
                                     <?php foreach($sub_rows_status as $lbl=>$srs): ?>
@@ -3095,6 +3154,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                             <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
                                             <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
                                             <td><?php echo number_format($srs['in_warehouse'],($view_mode=='mw')?2:0);?></td>
+                                            <?php if ($on_water_combined > 0): ?>
+                                            <td><?php echo number_format($srs['on_water'],($view_mode=='mw')?2:0);?></td>
+                                            <?php endif; ?>
+                                            <?php if ($cleared_customs_combined > 0): ?>
+                                            <td><?php echo number_format($srs['cleared_customs'],($view_mode=='mw')?2:0);?></td>
+                                            <?php endif; ?>
                                             <td><?php echo number_format($srs['pending'],($view_mode=='mw')?2:0);?></td>
                                         </tr>
                                     <?php endforeach;?>
@@ -3281,6 +3346,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <th>Total Order</th>
                                     <th>Delivered to Project</th>
                                     <th>In Warehouse</th>
+                                    <?php if ($on_water_combined > 0): ?>
+                                    <th>On Water</th>
+                                    <?php endif; ?>
+                                    <?php if ($cleared_customs_combined > 0): ?>
+                                    <th>Cleared Customs</th>
+                                    <?php endif; ?>
                                     <th>Pending</th>
                                 </tr>
                             </thead>
@@ -3291,6 +3362,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
                                     <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
                                     <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php if ($on_water_combined > 0): ?>
+                                    <td><?php echo number_format($on_water_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
+                                    <?php if ($cleared_customs_combined > 0): ?>
+                                    <td><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
                                     <td><?php echo number_format($pending_combined,($view_mode=='mw')?2:0);?></td>
                                 </tr>
                                 <?php foreach($sub_rows_status as $lbl=>$srs): ?>
@@ -3300,6 +3377,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                         <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
                                         <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
                                         <td><?php echo number_format($srs['in_warehouse'],($view_mode=='mw')?2:0);?></td>
+                                        <?php if ($on_water_combined > 0): ?>
+                                        <td><?php echo number_format($srs['on_water'],($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <?php if ($cleared_customs_combined > 0): ?>
+                                        <td><?php echo number_format($srs['cleared_customs'],($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
                                         <td><?php echo number_format($srs['pending'],($view_mode=='mw')?2:0);?></td>
                                     </tr>
                                 <?php endforeach;?>
@@ -3634,6 +3717,20 @@ function generateShippingContent(filter){
         // Add action buttons for different statuses
         if(filter==='At Manufacturer'){
             html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=At%20Manufacturer" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
+        }else if(filter==='On Water'){
+            // For On Water status, link to the appropriate port warehouse for receiving
+            html+=`<div style="text-align:center;margin-top:15px;">`;
+            html+=`<p style="color:#666;margin-bottom:10px;">Pallets are in ocean transit. When they arrive at port, they will be available for receiving.</p>`;
+            // Find the port warehouse for this project's overseas pallets
+            for(const key in shippingBreakdown){
+                if(key.includes('On Water') && shippingBreakdown[key].warehouse_id){
+                    html+=`<a href="manage_warehouse_inventory.php?warehouse_id=${shippingBreakdown[key].warehouse_id}&project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;margin:5px;">Receive at Port</a>`;
+                    break;
+                }
+            }
+            html+=`</div>`;
+        }else if(filter==='Cleared Customs'){
+            html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=Cleared%20Customs" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
         }else if(filter==='In Warehouse'){
             html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=In%20Warehouse" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
         }else if(filter==='In Transit to Project'){

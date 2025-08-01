@@ -30,6 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit'])) {
         $city = trim($_POST['city']);
         $state = trim($_POST['state']);
         $zip_code = trim($_POST['zip_code']);
+        $country = trim($_POST['country'] ?? 'USA');
         $is_port = isset($_POST['is_port']) ? 1 : 0;
         
         // Cost structure fields
@@ -84,11 +85,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit'])) {
         }
 
         // Insert into the database with separate address fields (trigger will populate address field)
-        $stmt = $conn->prepare("INSERT INTO warehouses (name, street_address, city, state, zip_code, image_url, is_port) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        $stmt = $conn->prepare("INSERT INTO warehouses (name, street_address, city, state, zip_code, country, image_url, is_port) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
          if (!$stmt) {
             throw new Exception("Error preparing warehouse insert: " . $conn->error);
         }
-        $stmt->bind_param("ssssssi", $name, $street_address, $city, $state, $zip_code, $image_url, $is_port);
+        $stmt->bind_param("sssssssi", $name, $street_address, $city, $state, $zip_code, $country, $image_url, $is_port);
         if ($stmt->execute()) {
             $warehouse_id = $conn->insert_id;
             
@@ -168,7 +169,7 @@ $conn->close();
         /* Address grid layout */
         .address-grid {
             display: grid;
-            grid-template-columns: 2fr 1fr 1fr;
+            grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
             gap: 15px;
             margin-top: 5px;
         }
@@ -253,12 +254,16 @@ $conn->close();
                 <input type="text" id="city" name="city" placeholder="Charlotte">
             </div>
             <div>
-                <label for="state" style="margin-top: 0; font-size: 0.9em; color: #666;">State:</label>
+                <label for="state" style="margin-top: 0; font-size: 0.9em; color: #666;">State/Province:</label>
                 <input type="text" id="state" name="state" placeholder="NC">
             </div>
             <div>
-                <label for="zip_code" style="margin-top: 0; font-size: 0.9em; color: #666;">Zip Code:</label>
+                <label for="zip_code" style="margin-top: 0; font-size: 0.9em; color: #666;">Zip/Postal Code:</label>
                 <input type="text" id="zip_code" name="zip_code" placeholder="28217">
+            </div>
+            <div>
+                <label for="country" style="margin-top: 0; font-size: 0.9em; color: #666;">Country:</label>
+                <input type="text" id="country" name="country" placeholder="USA" value="USA">
             </div>
         </div>
 
@@ -323,11 +328,12 @@ function initializeAddressAutocomplete() {
     const cityInput = document.getElementById('city');
     const stateInput = document.getElementById('state');
     const zipInput = document.getElementById('zip_code');
+    const countryInput = document.getElementById('country');
     
-    // Create the autocomplete object, restricting the search to addresses
+    // Create the autocomplete object for international addresses
     const autocomplete = new google.maps.places.Autocomplete(streetAddressInput, {
-        types: ['address'],
-        componentRestrictions: { country: 'US' } // Restrict to US addresses
+        types: ['address']
+        // No country restrictions - allow international addresses
     });
     
     // When the user selects an address from the dropdown, populate the address fields
@@ -339,6 +345,7 @@ function initializeAddressAutocomplete() {
         cityInput.value = '';
         stateInput.value = '';
         zipInput.value = '';
+        countryInput.value = '';
         
         if (!place.geometry) {
             // User entered the name of a Place that was not suggested and pressed Enter
@@ -366,16 +373,26 @@ function initializeAddressAutocomplete() {
                     cityInput.value = val;
                     break;
                 case 'administrative_area_level_1':
-                    stateInput.value = place.address_components[i].short_name; // Use short name for state (e.g., "CA" instead of "California")
+                    // For international addresses, use long name; for US use short name
+                    const shortName = place.address_components[i].short_name;
+                    stateInput.value = shortName && shortName.length <= 3 ? shortName : val;
                     break;
                 case 'postal_code':
                     zipInput.value = val;
+                    break;
+                case 'country':
+                    countryInput.value = val;
                     break;
             }
         }
         
         // Combine street number and route for full street address
-        streetAddressInput.value = (streetNumber + ' ' + route).trim();
+        if (streetNumber && route) {
+            streetAddressInput.value = (streetNumber + ' ' + route).trim();
+        } else if (route) {
+            streetAddressInput.value = route; // For addresses where only route is available
+        }
+        // If autocomplete doesn't provide street info, keep what user typed
     });
 }
 
