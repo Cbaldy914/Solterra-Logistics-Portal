@@ -32,6 +32,23 @@ if ($receiving_warehouse_id <= 0) {
 
 $conn = getDBConnection();
 
+// 🚢 PORT DETECTION - Check if receiving warehouse is a port
+$is_port = false;
+$stmt_check_port = $conn->prepare("SELECT is_port FROM warehouses WHERE id = ?");
+if ($stmt_check_port) {
+    $stmt_check_port->bind_param("i", $receiving_warehouse_id);
+    $stmt_check_port->execute();
+    $stmt_check_port->bind_result($port_flag);
+    if ($stmt_check_port->fetch()) {
+        $is_port = ($port_flag == 1);
+    }
+    $stmt_check_port->close();
+}
+
+// Set status based on facility type
+$received_pallet_status = $is_port ? 'Cleared Customs' : 'In Warehouse';
+$delivery_status = $is_port ? 'Cleared Customs' : 'Delivered to Warehouse';
+
 if ($action === 'receive_truckload') {
     // Handle truckload receiving
     $delivery_id = isset($_POST['delivery_id']) ? intval($_POST['delivery_id']) : 0;
@@ -143,7 +160,7 @@ if ($action === 'receive_truckload') {
         // Update all pallets in the truckload
         $stmt_update_pallets = $conn->prepare("
             UPDATE inventory_pallets 
-            SET status = 'In Warehouse', current_warehouse_id = ?, arrival_date = ? 
+            SET status = ?, current_warehouse_id = ?, arrival_date = ? 
             WHERE id = ?
         ");
         if (!$stmt_update_pallets) {
@@ -152,7 +169,7 @@ if ($action === 'receive_truckload') {
         
         $updated_count = 0;
         foreach ($pallet_ids as $pallet_id) {
-            $stmt_update_pallets->bind_param("isi", $receiving_warehouse_id, $actual_arrival_date, $pallet_id);
+            $stmt_update_pallets->bind_param("sisi", $received_pallet_status, $receiving_warehouse_id, $actual_arrival_date, $pallet_id);
             if ($stmt_update_pallets->execute()) {
                 $updated_count++;
             } else {
@@ -164,7 +181,7 @@ if ($action === 'receive_truckload') {
         // Update delivery record
         $stmt_update_delivery = $conn->prepare("
             UPDATE deliveries 
-            SET status_of_delivery = 'Delivered to Warehouse', 
+            SET status_of_delivery = ?, 
                 warehouse_arrival_date = ?,
                 bol_number = ?,
                 proof_of_delivery = ?
@@ -174,7 +191,7 @@ if ($action === 'receive_truckload') {
             throw new Exception("Failed to prepare delivery update: " . $conn->error);
         }
         
-        $stmt_update_delivery->bind_param("sssi", $actual_arrival_date, $bol_number, $pod_path, $delivery_id);
+        $stmt_update_delivery->bind_param("ssssi", $delivery_status, $actual_arrival_date, $bol_number, $pod_path, $delivery_id);
         if (!$stmt_update_delivery->execute()) {
             throw new Exception("Failed to update delivery: " . $stmt_update_delivery->error);
         }
@@ -292,7 +309,7 @@ if ($action === 'receive_truckload') {
                 // Update all pallets in this truckload
                 $stmt_update_pallets = $conn->prepare("
                     UPDATE inventory_pallets 
-                    SET status = 'In Warehouse', current_warehouse_id = ?, arrival_date = ? 
+                    SET status = ?, current_warehouse_id = ?, arrival_date = ? 
                     WHERE id = ?
                 ");
                 if (!$stmt_update_pallets) {
@@ -301,7 +318,7 @@ if ($action === 'receive_truckload') {
                 
                 $delivery_pallet_count = 0;
                 foreach ($pallet_ids as $pallet_id) {
-                    $stmt_update_pallets->bind_param("isi", $receiving_warehouse_id, $actual_arrival_date, $pallet_id);
+                    $stmt_update_pallets->bind_param("sisi", $received_pallet_status, $receiving_warehouse_id, $actual_arrival_date, $pallet_id);
                     if ($stmt_update_pallets->execute()) {
                         $delivery_pallet_count++;
                         $total_pallets_updated++;
@@ -329,7 +346,7 @@ if ($action === 'receive_truckload') {
                 // Update delivery record
                 $stmt_update_delivery = $conn->prepare("
                     UPDATE deliveries 
-                    SET status_of_delivery = 'Delivered to Warehouse', 
+                    SET status_of_delivery = ?, 
                         warehouse_arrival_date = ?,
                         bol_number = ?,
                         proof_of_delivery = ?
@@ -339,7 +356,7 @@ if ($action === 'receive_truckload') {
                     throw new Exception("Failed to prepare delivery update for delivery $delivery_id: " . $conn->error);
                 }
                 
-                $stmt_update_delivery->bind_param("sssi", $actual_arrival_date, $bol_to_use, $pod_path, $delivery_id);
+                $stmt_update_delivery->bind_param("ssssi", $delivery_status, $actual_arrival_date, $bol_to_use, $pod_path, $delivery_id);
                 if (!$stmt_update_delivery->execute()) {
                     throw new Exception("Failed to update delivery $delivery_id: " . $stmt_update_delivery->error);
                 }
@@ -392,8 +409,8 @@ if ($action === 'receive_truckload') {
     $successes = [];
     $errors = [];
     $current_timestamp = date('Y-m-d H:i:s');
-    $new_pallet_status = 'In Warehouse';
-    $new_delivery_status = 'Delivered to Warehouse';
+    $new_pallet_status = $received_pallet_status;
+    $new_delivery_status = $delivery_status;
     
     try {
         foreach ($pallet_ids as $pallet_id) {
