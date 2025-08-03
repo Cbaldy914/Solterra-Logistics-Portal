@@ -264,11 +264,11 @@ if (!$is_global_admin && $account_id_for_admin && $filter_project_id !== 'unassi
 } else {
     // Global admin or unassigned deliveries
     $stmt_wattage = $conn->prepare("
-        SELECT DISTINCT wattage 
-        FROM deliveries 
-        WHERE wattage IS NOT NULL 
+        SELECT DISTINCT d.wattage 
+        FROM deliveries d 
+        WHERE d.wattage IS NOT NULL 
         $wattage_query_condition 
-        ORDER BY wattage ASC
+        ORDER BY d.wattage ASC
     ");
 }
 

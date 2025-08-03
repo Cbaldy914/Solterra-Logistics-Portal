@@ -276,7 +276,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         // Check if this is an overseas shipment
         $is_overseas_shipment = false;
         $origin_country = 'USA'; // Default
-        $container_number = $_POST['container_number'] ?? '';
+        // Handle both single and multiple container numbers
+$container_number = $_POST['container_number'] ?? '';
+$container_numbers_json = $_POST['container_numbers'] ?? '';
+$container_numbers_array = [];
+
+if (!empty($container_numbers_json)) {
+    // Multiple shipments: decode JSON array
+    $container_numbers_array = json_decode($container_numbers_json, true);
+    if (json_last_error() === JSON_ERROR_NONE && is_array($container_numbers_array) && !empty($container_numbers_array)) {
+        $container_number = $container_numbers_array[0]; // Set first container as primary for validation
+    }
+} elseif (!empty($container_number)) {
+    // Single shipment: use single container number
+    $container_numbers_array = [$container_number];
+}
         $master_bol = $_POST['master_bol'] ?? '';
         $house_bol = $_POST['house_bol'] ?? '';
         $port_of_entry_id = isset($_POST['port_of_entry_id']) && $_POST['port_of_entry_id'] !== '' ? intval($_POST['port_of_entry_id']) : null;
@@ -298,7 +312,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
         
         // Validate overseas shipment requirements
         if ($is_overseas_shipment) {
-            if (empty($container_number)) {
+            if (empty($container_number) && empty($container_numbers_array)) {
                 throw new Exception('Container number is required for overseas shipments.');
             }
             if (!$port_of_entry_id) {
@@ -536,11 +550,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
                 $deliveryParams[] = $is_overseas_shipment ? 1 : 0;
                 $deliveryTypes .= 'i';
                 
-                if ($is_overseas_shipment) {
+                // Add container_number for overseas shipments or when explicitly provided (e.g., drayage)
+                if ($is_overseas_shipment || !empty($container_number)) {
                     $deliveryColumns[] = 'container_number';
                     $deliveryParams[] = $container_number;
                     $deliveryTypes .= 's';
-                    
+                }
+                
+                if ($is_overseas_shipment) {
                     if (!empty($master_bol)) {
                         $deliveryColumns[] = 'master_bol';
                         $deliveryParams[] = $master_bol;
@@ -2446,6 +2463,9 @@ function showOverseasFields() {
 }
 
 function hideOverseasFields() {
+    // 🚢 RESET overseas state when hiding fields
+    currentOverseasState = false;
+    
     // Hide overseas container fields and show domestic BOL fields
     const domesticBolField = document.getElementById('domesticBolField');
     const overseasContainerField = document.getElementById('overseasContainerField');
