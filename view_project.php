@@ -203,15 +203,7 @@ if (!empty($status_filter)) {
     $params[]        = $status_filter;
 }
 
-// DELIVERY TYPE FILTER
-$delivery_type = isset($_GET['delivery_type']) ? $_GET['delivery_type'] : 'all';
-$deliveryTypeCondition = "";
-if ($delivery_type === 'project') {
-    $deliveryTypeCondition = " AND (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project')";
-} elseif ($delivery_type === 'warehouse') {
-    $deliveryTypeCondition = " AND d.warehouse_id IS NOT NULL";
-}
-// For 'all', no additional condition needed
+// Show all deliveries by default - no delivery type filtering needed
 
 // Build WHERE clause like in manage_deliveries.php
 $whereClause = "WHERE 1=1";
@@ -223,9 +215,6 @@ if (!empty($dateCondition)) {
 }
 if (!empty($statusCondition)) {
     $whereClause .= $statusCondition;
-}
-if (!empty($deliveryTypeCondition)) {
-    $whereClause .= $deliveryTypeCondition;
 }
 
 // Handle CSV Export
@@ -304,81 +293,7 @@ if ($stmt) {
     $stmt->close();
 }
 
-// Get delivery counts for tabs
-$delivery_counts = ['project' => 0, 'warehouse' => 0, 'all' => 0];
-
-// Build base query for counts (without delivery type filter)
-$count_base_query = "
-    SELECT 
-        SUM(CASE WHEN (d.status_of_delivery = 'In Transit to Project' OR d.status_of_delivery = 'Delivered to Project') THEN 1 ELSE 0 END) as project_count,
-        SUM(CASE WHEN d.warehouse_id IS NOT NULL THEN 1 ELSE 0 END) as warehouse_count,
-        COUNT(d.id) as total_count
-    FROM deliveries d
-    $joinClause
-";
-
-// Build count query WHERE clause (excluding delivery type condition)
-$count_where_clause = "WHERE 1=1";
-if (!empty($baseQueryConditions)) {
-    $count_where_clause .= " AND " . implode(" AND ", $baseQueryConditions);
-}
-if (!empty($dateCondition)) {
-    $count_where_clause .= $dateCondition;
-}
-if (!empty($statusCondition)) {
-    $count_where_clause .= $statusCondition;
-}
-
-// Build count query parameters (excluding delivery type parameters)
-$count_params = [];
-$count_param_types = "";
-
-// Add base query parameters
-if (!empty($baseQueryConditions)) {
-    if ($project_id) {
-        $count_params[] = $project_id;
-        $count_param_types .= "i";
-    } elseif ($origin_batch_id && $source_vendor_name_for_batch) {
-        $count_params[] = $source_vendor_name_for_batch;
-        $count_param_types .= "s";
-    }
-}
-
-// Add date condition parameters
-if ($time_filter === 'day') {
-    $count_params[] = $ref_date;
-    $count_param_types .= "s";
-} elseif ($time_filter === 'week') {
-    $count_params[] = $startOfWeek;
-    $count_params[] = $endOfWeek;
-    $count_param_types .= "ss";
-} elseif ($time_filter === 'month') {
-    $count_params[] = $startOfMonth;
-    $count_params[] = $endOfMonth;
-    $count_param_types .= "ss";
-}
-
-// Add status condition parameter
-if (!empty($status_filter)) {
-    $count_params[] = $status_filter;
-    $count_param_types .= "s";
-}
-
-$count_sql = $count_base_query . " " . $count_where_clause;
-$count_stmt = $conn->prepare($count_sql);
-if ($count_stmt) {
-    if (!empty($count_param_types)) {
-        $count_stmt->bind_param($count_param_types, ...$count_params);
-    }
-    $count_stmt->execute();
-    $count_stmt->bind_result($project_count, $warehouse_count, $total_count);
-    $count_stmt->fetch();
-    $count_stmt->close();
-
-    $delivery_counts['project'] = $project_count ?: 0;
-    $delivery_counts['warehouse'] = $warehouse_count ?: 0;
-    $delivery_counts['all'] = $total_count ?: 0;
-}
+// No need for delivery counts since we removed the tabs
 
 // Don't close connection yet - we need it for pallet fetching in the HTML section
 ?>
@@ -507,6 +422,187 @@ if ($count_stmt) {
                 box-shadow: 0 0 25px rgba(72, 140, 154, 0.5);
             }
         }
+        
+        /* Filters Dropdown Styling */
+        .filters-dropdown-container {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .filters-dropdown-btn {
+            background: linear-gradient(135deg, #488C9A 0%, #3a6e7f 100%);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 0.95em;
+            font-weight: 600;
+            transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+        
+        .filters-dropdown-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(72, 140, 154, 0.4);
+        }
+        
+        .filters-dropdown-content {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: white;
+            border: 1px solid #e1e5e9;
+            border-radius: 12px;
+            box-shadow: 0px 12px 24px 0px rgba(0,0,0,0.15);
+            z-index: 1000;
+            min-width: 400px;
+            max-width: 500px;
+            max-height: 500px;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+        }
+        
+        .filters-dropdown-header {
+            padding: 16px 20px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a6e7f 100%);
+            color: white;
+            border-bottom: none;
+            font-weight: 700;
+            font-size: 1.1em;
+            text-align: center;
+            border-radius: 12px 12px 0 0;
+        }
+        
+        .filter-item {
+            padding: 16px 20px;
+            border-bottom: 1px solid #f1f3f4;
+        }
+        
+        .filter-item:last-child {
+            border-bottom: none;
+            border-radius: 0 0 12px 12px;
+        }
+        
+        .filter-item label {
+            display: block;
+            font-weight: 600;
+            color: #293E4C;
+            margin-bottom: 8px;
+            font-size: 0.95em;
+        }
+        
+        .filter-item input, .filter-item select {
+            width: 95%;
+            padding: 10px 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            background-color: white;
+        }
+        
+        .filter-item input:focus, .filter-item select:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
+        }
+
+        /* Column Chooser Styling */
+        .column-chooser-container {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .column-chooser-btn {
+            background-color: #488C9A;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background-color 0.3s ease;
+        }
+        
+        .column-chooser-btn:hover {
+            background-color: #3A6E7F;
+        }
+        
+        .column-chooser-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            min-width: 250px;
+            max-width: 300px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .column-chooser-header {
+            padding: 12px 16px;
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #ddd;
+            font-weight: 600;
+            color: #293E4C;
+        }
+        
+        .column-chooser-options {
+            padding: 8px 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .column-option {
+            display: flex;
+            align-items: center;
+            padding: 6px 16px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        
+        .column-option:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .column-option input[type="checkbox"] {
+            margin-right: 8px;
+            cursor: pointer;
+        }
+        
+        .column-chooser-footer {
+            padding: 8px 16px;
+            border-top: 1px solid #ddd;
+            background-color: #f8f9fa;
+        }
+        
+        .reset-columns-btn {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.8em;
+            transition: background-color 0.3s ease;
+        }
+        
+        .reset-columns-btn:hover {
+            background-color: #5a6268;
+        }
+        
+        /* Hidden column styling */
+        .column-hidden {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
@@ -528,38 +624,7 @@ if ($count_stmt) {
     <div class="container">
         <h1><?php echo $page_title_info; ?></h1>
 
-        <!-- Delivery Type Tabs -->
-        <div class="delivery-type-tabs" style="margin: 20px 0; border-bottom: 2px solid #eee;">
-            <div style="display: flex; gap: 0;">
-                <?php
-                // Build base parameters for tab links
-                $base_params = $_GET;
-                $base_params['delivery_type'] = 'project';
-                $project_link = '?' . http_build_query($base_params);
-                
-                $base_params['delivery_type'] = 'warehouse'; 
-                $warehouse_link = '?' . http_build_query($base_params);
-                
-                $base_params['delivery_type'] = 'all';
-                $all_link = '?' . http_build_query($base_params);
-                ?>
-                <a href="<?php echo $project_link; ?>" 
-                   class="delivery-tab <?php echo ($delivery_type === 'project') ? 'active' : ''; ?>"
-                   style="padding: 12px 24px; background: <?php echo ($delivery_type === 'project') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'project') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; margin-right: 2px;">
-                    🏗️ Project Deliveries (<?php echo $delivery_counts['project']; ?>)
-                </a>
-                <a href="<?php echo $warehouse_link; ?>" 
-                   class="delivery-tab <?php echo ($delivery_type === 'warehouse') ? 'active' : ''; ?>"
-                   style="padding: 12px 24px; background: <?php echo ($delivery_type === 'warehouse') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'warehouse') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; margin-right: 2px;">
-                    🏢 Warehouse Deliveries (<?php echo $delivery_counts['warehouse']; ?>)
-                </a>
-                <a href="<?php echo $all_link; ?>" 
-                   class="delivery-tab <?php echo ($delivery_type === 'all') ? 'active' : ''; ?>"
-                   style="padding: 12px 24px; background: <?php echo ($delivery_type === 'all') ? '#488C9A' : '#f8f9fa'; ?>; color: <?php echo ($delivery_type === 'all') ? '#fff' : '#333'; ?>; text-decoration: none; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0;">
-                    📦 All Deliveries (<?php echo $delivery_counts['all']; ?>)
-                </a>
-            </div>
-        </div>
+
 
         <!-- Time Filter Header -->
         <div class="time-filter-header">
@@ -590,36 +655,107 @@ if ($count_stmt) {
                 <?php endif; ?>
             </div>
 
+            <!-- Right: Filters Dropdown and Column Chooser -->
             <div class="right-filters">
-                <div style="display: flex; gap: 10px;" class="mobile-hide">
-                    <label for="searchInput" style="align-self: center;">Search in Table:</label>
-                    <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <!-- Filters Dropdown -->
+                    <div class="filters-dropdown-container">
+                        <button type="button" id="filtersDropdownBtn" class="filters-dropdown-btn" onclick="toggleFiltersDropdown()">
+                            🔽 Filters
+                        </button>
+                        <div id="filtersDropdown" class="filters-dropdown-content" style="display: none;" onclick="preventDropdownClose(event)">
+                            <div class="filters-dropdown-header">Filter Options:</div>
+                            
+                            <!-- Search Input -->
+                            <div class="filter-item">
+                                <label for="searchInput">Search in Table:</label>
+                                <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
+                            </div>
+                            
+                            <!-- Filter Form -->
+                            <form method="get" action="" id="filterForm">
+                                <?php if ($project_id): ?>
+                                <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+                                <?php elseif ($origin_batch_id): ?>
+                                <input type="hidden" name="origin_batch_id" value="<?php echo $origin_batch_id; ?>">
+                                <?php endif; ?>
+                                <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter ?? ''); ?>">
+                                <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date ?? ''); ?>">
+                                <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter ?? ''); ?>">
+                                
+                                <div class="filter-item">
+                                    <label for="status_filter">Filter by Status:</label>
+                                    <select name="status_filter" id="status_filter" onchange="this.form.submit()">
+                                        <option value="">All</option>
+                                        <option value="Pending" <?php if($status_filter === 'Pending') echo 'selected'; ?>>Pending</option>
+                                        <option value="In Transit to Warehouse" <?php if($status_filter === 'In Transit to Warehouse') echo 'selected'; ?>>In Transit to Warehouse</option>
+                                        <option value="Delivered to Warehouse" <?php if($status_filter === 'Delivered to Warehouse') echo 'selected'; ?>>Delivered to Warehouse</option>
+                                        <option value="In Transit to Project" <?php if($status_filter === 'In Transit to Project') echo 'selected'; ?>>In Transit to Project</option>
+                                        <option value="Delivered to Project" <?php if($status_filter === 'Delivered to Project') echo 'selected'; ?>>Delivered to Project</option>
+                                        <option value="Canceled" <?php if($status_filter === 'Canceled') echo 'selected'; ?>>Canceled</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="filter-item">
+                                    <span class="mobile-hide">
+                                        <button type="submit" name="export" value="1" style="background-color: #488C9A; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Export to CSV</button>
+                                    </span>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Column Chooser -->
+                    <div class="column-chooser-container">
+                        <button type="button" id="columnChooserBtn" class="column-chooser-btn" onclick="toggleColumnChooser()">
+                            📋 Choose Columns
+                        </button>
+                        <div id="columnChooserDropdown" class="column-chooser-dropdown" style="display: none;">
+                            <div class="column-chooser-header">Select Columns to Show:</div>
+                            <div class="column-chooser-options">
+                                <label class="column-option">
+                                    <input type="checkbox" class="column-toggle" data-column="supplier-column" checked>
+                                    Supplier
+                                </label>
+                                <label class="column-option">
+                                    <input type="checkbox" class="column-toggle" data-column="wattage-column" checked>
+                                    Wattage
+                                </label>
+                                <label class="column-option">
+                                    <input type="checkbox" class="column-toggle" data-column="status-column" checked>
+                                    Status of Delivery
+                                </label>
+                                <label class="column-option">
+                                    <input type="checkbox" class="column-toggle" data-column="quantity-column" checked>
+                                    Quantity
+                                </label>
+                                <label class="column-option">
+                                    <input type="checkbox" class="column-toggle" data-column="bol-column" checked>
+                                    BOL Number
+                                </label>
+                                <label class="column-option">
+                                    <input type="checkbox" class="column-toggle" data-column="anticipated-column" checked>
+                                    Anticipated Delivery Date
+                                </label>
+                                <label class="column-option">
+                                    <input type="checkbox" class="column-toggle" data-column="actual-column" checked>
+                                    Actual Delivery Date
+                                </label>
+                                <label class="column-option">
+                                    <input type="checkbox" class="column-toggle" data-column="pallets-column" checked>
+                                    Associated Pallets
+                                </label>
+                                <label class="column-option">
+                                    <input type="checkbox" class="column-toggle" data-column="pod-column" checked>
+                                    Proof of Delivery
+                                </label>
+                            </div>
+                            <div class="column-chooser-footer">
+                                <button type="button" onclick="resetColumns()" class="reset-columns-btn">Reset to Default</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <form method="get" action="" style="display: flex; gap: 10px;">
-                    <?php if ($project_id): ?>
-                    <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-                    <?php elseif ($origin_batch_id): ?>
-                    <input type="hidden" name="origin_batch_id" value="<?php echo $origin_batch_id; ?>">
-                    <?php endif; ?>
-                    <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
-                    <input type="hidden" name="ref_date" value="<?php echo $ref_date; ?>">
-                    <input type="hidden" name="delivery_type" value="<?php echo $delivery_type; ?>">
-
-                    <label for="status_filter" style="align-self: center;">Filter by Status:</label>
-                    <select name="status_filter" id="status_filter" onchange="this.form.submit()">
-                        <option value="">All</option>
-                        <option value="Pending" <?php if($status_filter === 'Pending') echo 'selected'; ?>>Pending</option>
-                        <option value="In Transit to Warehouse" <?php if($status_filter === 'In Transit to Warehouse') echo 'selected'; ?>>In Transit to Warehouse</option>
-                        <option value="Delivered to Warehouse" <?php if($status_filter === 'Delivered to Warehouse') echo 'selected'; ?>>Delivered to Warehouse</option>
-                        <option value="In Transit to Project" <?php if($status_filter === 'In Transit to Project') echo 'selected'; ?>>In Transit to Project</option>
-                        <option value="Delivered to Project" <?php if($status_filter === 'Delivered to Project') echo 'selected'; ?>>Delivered to Project</option>
-                        <option value="Canceled" <?php if($status_filter === 'Canceled') echo 'selected'; ?>>Canceled</option>
-                    </select>
-
-                    <span class="mobile-hide">
-                        <button type="submit" name="export" value="1">Export to CSV</button>
-                    </span>
-                </form>
             </div>
         </div>
 
@@ -628,15 +764,15 @@ if ($count_stmt) {
             <table id="deliveriesTable">
                 <thead>
                     <tr>
-                        <th>Supplier</th>
-                        <th>Wattage</th>
-                        <th>Status of Delivery</th>
-                        <th>Quantity</th>
-                        <th>BOL Number</th>
-                        <th>Anticipated Delivery Date</th>
-                        <th>Actual Delivery Date</th>
-                        <th>Associated Pallets</th>
-                        <th>Proof of Delivery</th>
+                        <th class="supplier-column">Supplier</th>
+                        <th class="wattage-column">Wattage</th>
+                        <th class="status-column">Status of Delivery</th>
+                        <th class="quantity-column">Quantity</th>
+                        <th class="bol-column">BOL Number</th>
+                        <th class="anticipated-column">Anticipated Delivery Date</th>
+                        <th class="actual-column">Actual Delivery Date</th>
+                        <th class="pallets-column">Associated Pallets</th>
+                        <th class="pod-column">Proof of Delivery</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -679,14 +815,14 @@ if ($count_stmt) {
                                 <?php if ($highlight_delivery_id && $delivery['id'] == $highlight_delivery_id): ?>
                                     class="highlighted-delivery" id="highlighted-delivery"
                                 <?php endif; ?>>
-                                <td><?php echo htmlspecialchars($delivery['supplier'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($delivery['wattage'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($delivery['status_of_delivery'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($delivery['quantity'] ?? ''); ?></td>
-                                <td><?php echo htmlspecialchars($delivery['bol_number'] ?? ''); ?></td>
-                                <td><?php echo !empty($delivery['anticipated_delivery_date']) ? date('m-d-Y', strtotime($delivery['anticipated_delivery_date'])) : ''; ?></td>
-                                <td><?php echo !empty($delivery['actual_delivery_date']) ? date('m-d-Y', strtotime($delivery['actual_delivery_date'])) : ''; ?></td>
-                                <td>
+                                <td class="supplier-column"><?php echo htmlspecialchars($delivery['supplier'] ?? ''); ?></td>
+                                <td class="wattage-column"><?php echo htmlspecialchars($delivery['wattage'] ?? ''); ?></td>
+                                <td class="status-column"><?php echo htmlspecialchars($delivery['status_of_delivery'] ?? ''); ?></td>
+                                <td class="quantity-column"><?php echo htmlspecialchars($delivery['quantity'] ?? ''); ?></td>
+                                <td class="bol-column"><?php echo htmlspecialchars($delivery['bol_number'] ?? ''); ?></td>
+                                <td class="anticipated-column"><?php echo !empty($delivery['anticipated_delivery_date']) ? date('m-d-Y', strtotime($delivery['anticipated_delivery_date'])) : ''; ?></td>
+                                <td class="actual-column"><?php echo !empty($delivery['actual_delivery_date']) ? date('m-d-Y', strtotime($delivery['actual_delivery_date'])) : ''; ?></td>
+                                <td class="pallets-column">
                                     <?php if ($stmtPallets && $palletCount > 0): ?>
                                         <button type="button" class="action-buttons" 
                                                 onclick="showPalletModal(this)" 
@@ -700,7 +836,7 @@ if ($count_stmt) {
                                         Error
                                     <?php endif; ?>
                                 </td>
-                                <td>
+                                <td class="pod-column">
                                     <?php if (!empty($delivery['proof_of_delivery'])): ?>
                                         <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">
                                             View POD
@@ -730,7 +866,7 @@ if ($count_stmt) {
                         }
                         ?>
                     <?php else: ?>
-                        <tr>
+                        <tr id="no-entries-row">
                             <td colspan="9">No delivery entries found.</td>
                         </tr>
                     <?php endif; ?>
@@ -752,6 +888,11 @@ if ($count_stmt) {
 </main>
 
 <script>
+// Define all global variables first
+var associatedPalletsModal;
+var palletListDiv;
+
+// Define all functions first to ensure they're available when HTML loads
 function searchTable() {
     var input = document.getElementById("searchInput");
     if (!input) return;
@@ -773,11 +914,101 @@ function searchTable() {
     }
 }
 
-// --- Associated Pallets Modal --- 
-var associatedPalletsModal = document.getElementById('associatedPalletsModal');
-var palletListDiv = document.getElementById('palletList');
+// Filters Dropdown Functions
+function toggleFiltersDropdown() {
+    var dropdown = document.getElementById('filtersDropdown');
+    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+    
+    // Close column chooser if open
+    var columnDropdown = document.getElementById('columnChooserDropdown');
+    if (columnDropdown) {
+        columnDropdown.style.display = 'none';
+    }
+}
+
+// Column Chooser Functions
+function toggleColumnChooser() {
+    var dropdown = document.getElementById('columnChooserDropdown');
+    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+    
+    // Close filters dropdown if open
+    var filtersDropdown = document.getElementById('filtersDropdown');
+    if (filtersDropdown) {
+        filtersDropdown.style.display = 'none';
+    }
+}
+
+function toggleColumn(columnClass, isVisible) {
+    var elements = document.querySelectorAll('.' + columnClass);
+    elements.forEach(function(element) {
+        if (isVisible) {
+            element.classList.remove('column-hidden');
+        } else {
+            element.classList.add('column-hidden');
+        }
+    });
+    
+    // Update the no-entries row colspan if it exists
+    updateNoEntriesColspan();
+}
+
+function updateNoEntriesColspan() {
+    var noEntriesRow = document.getElementById('no-entries-row');
+    if (noEntriesRow) {
+        var visibleColumns = document.querySelectorAll('th:not(.column-hidden)').length;
+        noEntriesRow.querySelector('td').setAttribute('colspan', visibleColumns);
+    }
+}
+
+function resetColumns() {
+    // Reset all checkboxes to checked
+    var checkboxes = document.querySelectorAll('.column-toggle');
+    checkboxes.forEach(function(checkbox) {
+        checkbox.checked = true;
+        toggleColumn(checkbox.getAttribute('data-column'), true);
+    });
+    
+    // Save to localStorage
+    saveColumnPreferences();
+}
+
+function saveColumnPreferences() {
+    var preferences = {};
+    var checkboxes = document.querySelectorAll('.column-toggle');
+    checkboxes.forEach(function(checkbox) {
+        preferences[checkbox.getAttribute('data-column')] = checkbox.checked;
+    });
+    localStorage.setItem('viewProjectColumnPreferences', JSON.stringify(preferences));
+}
+
+function loadColumnPreferences() {
+    var saved = localStorage.getItem('viewProjectColumnPreferences');
+    if (saved) {
+        var preferences = JSON.parse(saved);
+        var checkboxes = document.querySelectorAll('.column-toggle');
+        checkboxes.forEach(function(checkbox) {
+            var columnClass = checkbox.getAttribute('data-column');
+            if (preferences.hasOwnProperty(columnClass)) {
+                checkbox.checked = preferences[columnClass];
+                toggleColumn(columnClass, preferences[columnClass]);
+            }
+        });
+    }
+}
+
+// Prevent dropdown from closing when clicking inside
+function preventDropdownClose(event) {
+    event.stopPropagation();
+}
+
+// --- Associated Pallets Modal Functions ---
 
 function showPalletModal(buttonElement) {
+    // Initialize modal elements if not already done
+    if (!associatedPalletsModal) {
+        associatedPalletsModal = document.getElementById('associatedPalletsModal');
+        palletListDiv = document.getElementById('palletList');
+    }
     var palletsJson = buttonElement.getAttribute('data-pallets');
     try {
         var pallets = JSON.parse(palletsJson);
@@ -850,19 +1081,78 @@ function showPalletModal(buttonElement) {
 }
 
 function closeAssociatedPalletModal() {
-     associatedPalletsModal.style.display = 'none';
-     palletListDiv.innerHTML = ''; // Clear list on close
+    // Initialize modal elements if not already done
+    if (!associatedPalletsModal) {
+        associatedPalletsModal = document.getElementById('associatedPalletsModal');
+        palletListDiv = document.getElementById('palletList');
+    }
+    associatedPalletsModal.style.display = 'none';
+    palletListDiv.innerHTML = ''; // Clear list on close
 }
 
-// Add event listener for clicks outside the associated pallets modal
-window.addEventListener('click', function(event) {
-    if (event.target == associatedPalletsModal) {
-        closeAssociatedPalletModal();
-    }
-});
-
-// Auto-scroll to highlighted delivery
+// Initialize everything when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
+    // Add fade out animation styles
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes fadeOutHighlight {
+            0% { 
+                background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+                border: 3px solid #488C9A;
+                box-shadow: 0 0 15px rgba(72, 140, 154, 0.3);
+            }
+            100% { 
+                background: #f1f1f1;
+                border: 1px solid #ccc;
+                box-shadow: none;
+                transform: scale(1);
+            }
+        }
+    `;
+    document.head.appendChild(style);
+    
+    // Initialize column chooser functionality
+    loadColumnPreferences();
+    
+    // Add event listeners to column toggles
+    var checkboxes = document.querySelectorAll('.column-toggle');
+    checkboxes.forEach(function(checkbox) {
+        checkbox.addEventListener('change', function() {
+            var columnClass = this.getAttribute('data-column');
+            toggleColumn(columnClass, this.checked);
+            saveColumnPreferences();
+        });
+    });
+    
+    // Close dropdowns when clicking outside
+    document.addEventListener('click', function(event) {
+        var columnContainer = document.querySelector('.column-chooser-container');
+        var columnDropdown = document.getElementById('columnChooserDropdown');
+        var filtersContainer = document.querySelector('.filters-dropdown-container');
+        var filtersDropdown = document.getElementById('filtersDropdown');
+        
+        if (columnContainer && !columnContainer.contains(event.target)) {
+            if (columnDropdown) columnDropdown.style.display = 'none';
+        }
+        
+        if (filtersContainer && !filtersContainer.contains(event.target)) {
+            if (filtersDropdown) filtersDropdown.style.display = 'none';
+        }
+    });
+    
+    // Add event listener for clicks outside the associated pallets modal
+    window.addEventListener('click', function(event) {
+        // Initialize modal elements if not already done
+        if (!associatedPalletsModal) {
+            associatedPalletsModal = document.getElementById('associatedPalletsModal');
+            palletListDiv = document.getElementById('palletList');
+        }
+        if (event.target == associatedPalletsModal) {
+            closeAssociatedPalletModal();
+        }
+    });
+
+    // Auto-scroll to highlighted delivery
     const highlightedDelivery = document.getElementById('highlighted-delivery');
     if (highlightedDelivery) {
         // Wait a bit for the page to fully render, then scroll to the highlighted delivery
@@ -883,25 +1173,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 800);
     }
 });
-
-// Add fade out animation
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes fadeOutHighlight {
-        0% { 
-            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-            border: 3px solid #488C9A;
-            box-shadow: 0 0 15px rgba(72, 140, 154, 0.3);
-        }
-        100% { 
-            background: #f1f1f1;
-            border: 1px solid #ccc;
-            box-shadow: none;
-            transform: scale(1);
-        }
-    }
-`;
-document.head.appendChild(style);
 </script>
 </body>
 </html>
