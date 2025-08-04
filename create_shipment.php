@@ -2984,6 +2984,16 @@ if (confirmShipmentBtn) {
             alert('Please select a destination location.');
             return;
         }
+        
+        // Validate required date fields
+        if (!departure || departure.trim() === '') {
+            alert('Departure Date is required.');
+            return;
+        }
+        if (!arrival || arrival.trim() === '') {
+            alert('Est. Arrival Date is required.');
+            return;
+        }
 
         // Check if origin and destination are the same
         if (originType === destinationType && originId === destinationId) {
@@ -3086,6 +3096,16 @@ if (confirmMultiShipmentBtn) {
         }
         if (!destinationId) {
             alert('Please select a destination location.');
+            return;
+        }
+        
+        // Validate required date fields
+        if (!departure || departure.trim() === '') {
+            alert('Departure Date is required.');
+            return;
+        }
+        if (!arrival || arrival.trim() === '') {
+            alert('Est. Arrival Date is required.');
             return;
         }
 
@@ -3440,30 +3460,21 @@ function loadPersistedFilters() {
     
     if (isFromProjectOverview) {
         // Coming from project_overview.php - start with clean slate
-        // Clear all filters to defaults
+        // Clear search and non-URL filters to defaults
         document.getElementById('palletSearch').value = '';
-        document.getElementById('projectFilter').value = '';
         document.getElementById('wattageFilter').value = '';
-        document.getElementById('statusFilter').value = '';
         document.getElementById('itemsPerPage').value = '100'; // Default to 100
         itemsPerPage = 100;
         currentPage = 1;
         
-        // Apply only the URL parameters
+        // Don't clear projectFilter and statusFilter - they should already be set by PHP
+        // Apply only the URL parameters that might not be set by PHP
         if (statusFromUrl) {
             document.getElementById('statusFilter').value = statusFromUrl;
         }
         
-        if (projectFromUrl) {
-            // Find the project name in the dropdown and select it
-            const projectSelect = document.getElementById('projectFilter');
-            for (let option of projectSelect.options) {
-                if (option.value.includes('project_id=' + projectFromUrl)) {
-                    projectSelect.value = option.value;
-                    break;
-                }
-            }
-        }
+        // Project filter should already be correctly set by PHP via the selected attribute
+        // No need to manipulate it further
     } else {
         // Not from project_overview.php - use localStorage as before
         const search = localStorage.getItem('createShipment_palletSearch');
