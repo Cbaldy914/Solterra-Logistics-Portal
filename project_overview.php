@@ -4679,22 +4679,64 @@ function updateDeliveryTables(filterType) {
         
         // Convert sub_rows data
         for (const [key, data] of Object.entries(window.originalTableData.mw.sub_rows)) {
+            const wattageMatch = key.match(/(\d+)W/);
+            const wattage = wattageMatch ? parseFloat(wattageMatch[1]) : avgWattage;
+
             window.originalTableData.modules.sub_rows[key] = {
-                total_order: Math.round(data.total_order * 1000000 / avgWattage),
-                delivered: Math.round(data.delivered * 1000000 / avgWattage),
-                weeks: data.weeks.map(w => Math.round(w * 1000000 / avgWattage))
+                total_order: Math.round(data.total_order * 1000000 / wattage),
+                delivered: Math.round(data.delivered * 1000000 / wattage),
+                weeks: data.weeks.map(w => Math.round(w * 1000000 / wattage))
+            };
+
+            window.originalTableData.pallets.sub_rows[key] = {
+                total_order: Math.round(window.originalTableData.modules.sub_rows[key].total_order / modulesPerPallet),
+                delivered: Math.round(window.originalTableData.modules.sub_rows[key].delivered / modulesPerPallet),
+                weeks: window.originalTableData.modules.sub_rows[key].weeks.map(w => Math.round(w / modulesPerPallet))
+            };
+
+            window.originalTableData.truckloads.sub_rows[key] = {
+                total_order: (window.originalTableData.pallets.sub_rows[key].total_order / palletsPerTruck).toFixed(1),
+                delivered: (window.originalTableData.pallets.sub_rows[key].delivered / palletsPerTruck).toFixed(1),
+                weeks: window.originalTableData.pallets.sub_rows[key].weeks.map(w => (w / palletsPerTruck).toFixed(1))
             };
         }
-        
-        // Convert sub_rows_status data  
+
+        // Convert sub_rows_status data
         for (const [key, data] of Object.entries(window.originalTableData.mw.sub_rows_status)) {
+            const wattageMatch = key.match(/(\d+)W/);
+            const wattage = wattageMatch ? parseFloat(wattageMatch[1]) : avgWattage;
+
             window.originalTableData.modules.sub_rows_status[key] = {
-                total_order: Math.round(data.total_order * 1000000 / avgWattage),
-                delivered: Math.round(data.delivered * 1000000 / avgWattage),
-                in_warehouse: Math.round(data.in_warehouse * 1000000 / avgWattage),
-                on_water: Math.round(data.on_water * 1000000 / avgWattage),
-                cleared_customs: Math.round(data.cleared_customs * 1000000 / avgWattage),
-                pending: Math.round(data.pending * 1000000 / avgWattage)
+                total_order: Math.round(data.total_order * 1000000 / wattage),
+                delivered: Math.round(data.delivered * 1000000 / wattage),
+                at_manufacturer: Math.round(data.at_manufacturer * 1000000 / wattage),
+                in_warehouse: Math.round(data.in_warehouse * 1000000 / wattage),
+                on_water: Math.round(data.on_water * 1000000 / wattage),
+                cleared_customs: Math.round(data.cleared_customs * 1000000 / wattage),
+                in_transit_to_warehouse: Math.round(data.in_transit_to_warehouse * 1000000 / wattage),
+                in_transit_to_project: Math.round(data.in_transit_to_project * 1000000 / wattage)
+            };
+
+            window.originalTableData.pallets.sub_rows_status[key] = {
+                total_order: Math.round(window.originalTableData.modules.sub_rows_status[key].total_order / modulesPerPallet),
+                delivered: Math.round(window.originalTableData.modules.sub_rows_status[key].delivered / modulesPerPallet),
+                at_manufacturer: Math.round(window.originalTableData.modules.sub_rows_status[key].at_manufacturer / modulesPerPallet),
+                in_warehouse: Math.round(window.originalTableData.modules.sub_rows_status[key].in_warehouse / modulesPerPallet),
+                on_water: Math.round(window.originalTableData.modules.sub_rows_status[key].on_water / modulesPerPallet),
+                cleared_customs: Math.round(window.originalTableData.modules.sub_rows_status[key].cleared_customs / modulesPerPallet),
+                in_transit_to_warehouse: Math.round(window.originalTableData.modules.sub_rows_status[key].in_transit_to_warehouse / modulesPerPallet),
+                in_transit_to_project: Math.round(window.originalTableData.modules.sub_rows_status[key].in_transit_to_project / modulesPerPallet)
+            };
+
+            window.originalTableData.truckloads.sub_rows_status[key] = {
+                total_order: (window.originalTableData.pallets.sub_rows_status[key].total_order / palletsPerTruck).toFixed(1),
+                delivered: (window.originalTableData.pallets.sub_rows_status[key].delivered / palletsPerTruck).toFixed(1),
+                at_manufacturer: (window.originalTableData.pallets.sub_rows_status[key].at_manufacturer / palletsPerTruck).toFixed(1),
+                in_warehouse: (window.originalTableData.pallets.sub_rows_status[key].in_warehouse / palletsPerTruck).toFixed(1),
+                on_water: (window.originalTableData.pallets.sub_rows_status[key].on_water / palletsPerTruck).toFixed(1),
+                cleared_customs: (window.originalTableData.pallets.sub_rows_status[key].cleared_customs / palletsPerTruck).toFixed(1),
+                in_transit_to_warehouse: (window.originalTableData.pallets.sub_rows_status[key].in_transit_to_warehouse / palletsPerTruck).toFixed(1),
+                in_transit_to_project: (window.originalTableData.pallets.sub_rows_status[key].in_transit_to_project / palletsPerTruck).toFixed(1)
             };
         }
     }
@@ -4763,6 +4805,59 @@ function updateDeliveryTables(filterType) {
                 cellIndex++;
             }
         }
+    }
+
+    // Update sub rows in table1 (Next 5 Weeks)
+    const subRows1 = table1.querySelectorAll('tr.delivery-row');
+    subRows1.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 3) {
+            const wattageLabel = cells[0].textContent;
+            const subData = data.sub_rows[wattageLabel];
+            if (subData) {
+                cells[1].textContent = formatNumber(subData.total_order, decimals);
+                cells[2].textContent = formatNumber(subData.delivered, decimals);
+                for (let i = 0; i < subData.weeks.length && i + 3 < cells.length; i++) {
+                    cells[i + 3].textContent = formatNumber(subData.weeks[i], decimals);
+                }
+            }
+        }
+    });
+
+    // Update sub rows in Module Delivery Status table
+    const subRows2 = table2.querySelectorAll('tr.status-row');
+    subRows2.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 4) {
+            const wattageLabel = cells[0].textContent;
+            const subData = data.sub_rows_status[wattageLabel];
+            if (subData) {
+                cells[1].textContent = formatNumber(subData.total_order, decimals);
+                cells[2].textContent = formatNumber((subData.at_manufacturer || 0), decimals);
+                cells[3].textContent = formatNumber(subData.delivered, decimals);
+                let idx = 4;
+                if (data.on_water > 0 && cells[idx]) {
+                    cells[idx].textContent = formatNumber((subData.on_water || 0), decimals);
+                    idx++;
+                }
+                if (data.cleared_customs > 0 && cells[idx]) {
+                    cells[idx].textContent = formatNumber((subData.cleared_customs || 0), decimals);
+                    idx++;
+                }
+                if (data.in_transit_to_warehouse > 0 && cells[idx]) {
+                    cells[idx].textContent = formatNumber((subData.in_transit_to_warehouse || 0), decimals);
+                    idx++;
+                }
+                if (data.in_transit_to_project > 0 && cells[idx]) {
+                    cells[idx].textContent = formatNumber((subData.in_transit_to_project || 0), decimals);
+                    idx++;
+                }
+            }
+        }
+    });
+
+    if (window.updatePieChart) {
+        window.updatePieChart(filterType);
     }
 }
 
