@@ -1107,7 +1107,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     opacity: 0.7;
 }
 
-<?php if ($role === 'admin' || $role === 'global_admin'): ?>
 /* Enhanced Timeline Styles - Jony Ive Inspired */
 .timeline-container {
     background: linear-gradient(135deg, #fafbfc 0%, #f1f3f4 100%);
@@ -1138,11 +1137,13 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 }
 
 /* Add connecting element from tabs to container */
-.admin-content-wrapper {
+.admin-content-wrapper,
+.customer-content-wrapper {
     position: relative;
 }
 
-.admin-content-wrapper::before {
+.admin-content-wrapper::before,
+.customer-content-wrapper::before {
     content: '';
     position: absolute;
     top: -15px;
@@ -1261,7 +1262,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     box-shadow: 0 12px 35px rgba(255, 193, 7, 0.5);
 }
 
-.timeline-item .label {
+.timeline-item .label,
+.timeline-content h3 {
     font-weight: 600;
     color: #293E4C;
     font-size: 16px;
@@ -1269,28 +1271,33 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     transition: color 0.3s ease;
 }
 
-.timeline-item .label a {
+.timeline-item .label a,
+.timeline-content h3 a {
     color: inherit;
     text-decoration: none;
     transition: color 0.3s ease;
 }
 
-.timeline-item .label a:hover {
+.timeline-item .label a:hover,
+.timeline-content h3 a:hover {
     color: #488C9A;
 }
 
-.timeline-item.completed .label {
+.timeline-item.completed .label,
+.timeline-item.completed .timeline-content h3 {
     color: #488C9A;
     font-weight: 700;
 }
 
-.timeline-item .description {
+.timeline-item .description,
+.timeline-content p {
     font-size: 12px;
     color: #6c757d;
     font-weight: 400;
     margin-top: 5px;
 }
 
+<?php if ($role === 'admin' || $role === 'global_admin'): ?>
 /* Enhanced Shipping Statuses */
 .shipping-statuses {
     display: grid;
@@ -1548,7 +1555,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         min-width: auto;
     }
     
-    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
     /* Timeline Mobile Responsiveness */
     .timeline-container {
         margin: 0 15px 20px 15px;
@@ -1601,15 +1607,19 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         margin-bottom: 15px;
     }
     
-    .timeline-item .label {
+    .timeline-item .label,
+    .timeline-content h3 {
         font-size: 18px;
         margin-bottom: 5px;
     }
     
-    .timeline-item .description {
+    .timeline-item .description,
+    .timeline-content p {
         font-size: 14px;
         margin-bottom: 15px;
     }
+    
+    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
     
     .shipping-statuses {
         grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -2577,6 +2587,214 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     color: white;
 }
 
+/* ===== CUSTOMER CONTENT WRAPPER ===== */
+.customer-content-wrapper {
+    background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+    border-radius: 15px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+    padding: 30px;
+    margin: 20px;
+    border: 1px solid rgba(72, 140, 154, 0.1);
+}
+
+/* ===== CUSTOMER TIMELINE STYLING ===== */
+.timeline-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.timeline-header h2 {
+    font-size: 2rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #488C9A 0%, #2c5f7a 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 15px;
+}
+
+/* ===== UNIT FILTERS STYLING ===== */
+.unit-filters-container {
+    margin-bottom: 30px;
+    padding: 0 20px;
+}
+
+.unit-filters {
+    display: inline-flex;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    padding: 6px;
+    border-radius: 15px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(72, 140, 154, 0.1);
+    gap: 4px;
+}
+
+.unit-filter-btn {
+    padding: 12px 20px;
+    border: none;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: transparent;
+    color: #6c757d;
+    position: relative;
+    overflow: hidden;
+    z-index: 2;
+}
+
+.unit-filter-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    border-radius: 12px;
+}
+
+.unit-filter-btn.active::before {
+    opacity: 1;
+}
+
+.unit-filter-btn.active {
+    color: white !important;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(72, 140, 154, 0.3);
+    font-weight: 700;
+}
+
+.unit-filter-btn:hover:not(.active) {
+    background: rgba(72, 140, 154, 0.1);
+    transform: translateY(-1px);
+}
+
+/* Customer Modal Button */
+.customer-modal-btn {
+    display: inline-block;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 25px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(72, 140, 154, 0.3);
+}
+
+.customer-modal-btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(72, 140, 154, 0.4);
+    text-decoration: none;
+    color: white;
+}
+
+/* ===== CUSTOMER SHIPPING BOXES ===== */
+.shipping-section {
+    margin-top: 30px;
+}
+
+.shipping-statuses {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 15px;
+    margin-top: 25px;
+    max-width: 800px;
+    margin-left: auto;
+    margin-right: auto;
+    position: relative;
+}
+
+/* Connection line from timeline to shipping boxes */
+.shipping-statuses::before {
+    content: '';
+    position: absolute;
+    top: -25px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2px;
+    height: 20px;
+    background: linear-gradient(to bottom, #488C9A, rgba(72, 140, 154, 0.3));
+}
+
+.shipping-box-customer {
+    background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+    border: 2px solid rgba(72, 140, 154, 0.1);
+    border-radius: 12px;
+    padding: 20px 15px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+}
+
+.shipping-box-customer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s ease;
+}
+
+.shipping-box-customer:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 12px 35px rgba(72, 140, 154, 0.2);
+    border-color: rgba(72, 140, 154, 0.3);
+}
+
+.shipping-box-customer:hover::before {
+    transform: scaleX(1);
+}
+
+.shipping-box-customer .status-label {
+    font-weight: 600;
+    color: #293E4C;
+    font-size: 0.9rem;
+    margin-bottom: 8px;
+    line-height: 1.3;
+}
+
+.shipping-box-customer .status-count {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #488C9A;
+    margin-bottom: 2px;
+}
+
+.shipping-box-customer .status-unit {
+    font-size: 0.8rem;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 500;
+}
+
+/* ===== PULSE ANIMATION ===== */
+@keyframes pulse {
+    0% {
+        box-shadow: 0 8px 30px rgba(243, 156, 18, 0.3);
+    }
+    50% {
+        box-shadow: 0 8px 30px rgba(243, 156, 18, 0.6);
+    }
+    100% {
+        box-shadow: 0 8px 30px rgba(243, 156, 18, 0.3);
+    }
+}
+
+/* ===== RESPONSIVE DESIGN ===== */
 @media (max-width: 768px) {
     .modal-form-grid {
         grid-template-columns: 1fr;
@@ -2585,6 +2803,60 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     .wattage-entry {
         grid-template-columns: 1fr;
         gap: 10px;
+    }
+    
+    .timeline-header h2 {
+        font-size: 2rem;
+    }
+    
+    .customer-timeline-item {
+        margin-bottom: 40px;
+    }
+    
+    .customer-circle {
+        width: 80px;
+        height: 80px;
+    }
+    
+    .step-icon {
+        font-size: 2rem;
+    }
+    
+    .step-content {
+        margin-left: 25px;
+        padding-top: 10px;
+    }
+    
+    .step-title {
+        font-size: 1.4rem;
+    }
+    
+    .step-description {
+        font-size: 1rem;
+    }
+    
+    .shipping-statuses-customer {
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
+        padding: 15px;
+    }
+    
+    .shipping-box-customer {
+        padding: 15px 10px;
+    }
+    
+    .shipping-box-customer .status-count {
+        font-size: 1.5rem;
+    }
+    
+    .unit-filters {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    
+    .unit-filter-btn {
+        padding: 10px 16px;
+        font-size: 0.9rem;
     }
 }
 </style>
@@ -3445,28 +3717,188 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                 <div class="modal-body" id="shippingModalContent"></div>
             </div>
         </div>
+
     <?php else: ?>
-        <!-- Regular User Delivery/Financial View -->
+        <!-- Regular User View -->
         <div class="toggle-buttons">
-            <button id="delivery-info-btn" class="active" onclick="showView('delivery-info')">Delivery View</button>
+            <button id="project-progress-btn" class="active" onclick="showView('project-progress')">Project Progress</button>
+            <button id="delivery-info-btn" onclick="showView('delivery-info')">Delivery Metrics</button>
             <button id="financial-info-btn" onclick="showView('financial-info')">Financial View</button>
         </div>
 
-        <!-- Delivery Info -->
-        <div id="delivery-info">
-            <form method="GET" id="filter-form">
-                <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-                <label>
-                    <input type="radio" name="view_mode" value="mw"
-                           <?php if($view_mode=='mw') echo 'checked';?>
-                           onchange="this.form.submit();"> MWs
-                </label>
-                <label>
-                    <input type="radio" name="view_mode" value="modules"
-                           <?php if($view_mode=='modules') echo 'checked';?>
-                           onchange="this.form.submit();"> Number of Modules
-                </label>
-            </form>
+        <!-- Project Progress Section -->
+        <div id="project-progress">
+            <!-- Unit Filters - Top Left -->
+            <div class="unit-filters-container">
+                <div class="unit-filters">
+                                                <button type="button" class="unit-filter-btn active" data-unit="mws">MWs</button>
+                            <button type="button" class="unit-filter-btn" data-unit="modules">Modules</button>
+                            <button type="button" class="unit-filter-btn" data-unit="pallets">Pallets</button>
+                            <button type="button" class="unit-filter-btn" data-unit="truckloads">Truckloads</button>
+                </div>
+            </div>
+
+            <!-- Project Timeline -->
+            <div class="customer-content-wrapper">
+                <div class="timeline-header">
+                    <h2>Project Timeline</h2>
+                </div>
+                
+                <div class="timeline-container">
+                    <ul class="timeline" style="--progress-width: <?php echo $progress_percentage; ?>%">
+                        <li class="timeline-item<?php echo $step1_completed ? ' completed' : ''; ?><?php echo $current_step == 1 ? ' current' : ''; ?>">
+                            <div class="circle clickable" onclick="window.location.href='project_information.php?project_id=<?php echo $project_id; ?>'">1</div>
+                            <div class="timeline-content">
+                                <h3>Project Created</h3>
+                                <p>Your solar project has been established</p>
+                            </div>
+                        </li>
+                        <li class="timeline-item<?php echo $step2_completed ? ' completed' : ''; ?><?php echo $current_step == 2 ? ' current' : ''; ?>">
+                            <div class="circle<?php echo $step2_completed ? ' clickable' : ''; ?>" <?php echo $step2_completed ? "onclick=\"window.location.href='module_overview.php?project_id={$project_id}';\"" : ''; ?>>2</div>
+                            <div class="timeline-content">
+                                <h3>Modules Added</h3>
+                                <p>Solar modules have been added to your project</p>
+                            </div>
+                        </li>
+                        <li class="timeline-item<?php echo $step3_completed ? ' completed' : ''; ?><?php echo $current_step == 3 ? ' current' : ''; ?>">
+                            <div class="circle<?php echo $step3_completed ? ' clickable' : ''; ?>" <?php echo $step3_completed ? "onclick=\"window.location.href='manage_pallets.php?project_id={$project_id}';\"" : ''; ?>>3</div>
+                            <div class="timeline-content">
+                                <h3>Modules Palletized</h3>
+                                <p>Modules organized and prepared for shipping</p>
+                            </div>
+                        </li>
+                        <li class="timeline-item<?php echo $step4_completed ? ' completed' : ''; ?><?php echo $current_step == 4 ? ' current' : ''; ?>">
+                            <div class="circle clickable" onclick="window.location.href='view_project.php?project_id=<?php echo $project_id; ?>'">4</div>
+                            <div class="timeline-content">
+                                <h3>Shipping</h3>
+                                
+                                <?php if ($current_step == 4): ?>
+                                <div class="shipping-statuses">
+                                    <?php if(($status_totals['At Manufacturer']['pallets'] ?? 0) > 0): 
+                                        $pallets = $status_totals['At Manufacturer']['pallets'];
+                                        $modules = $status_totals['At Manufacturer']['modules'];
+                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                        $mws = 0;
+                                        if (!empty($wattages) && $modules > 0) {
+                                            $total_watts = 0;
+                                            $total_modules_for_avg = 0;
+                                            foreach ($wattages as $w) {
+                                                $total_watts += $w;
+                                                $total_modules_for_avg++;
+                                            }
+                                            $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                            $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                        }
+                                    ?>
+                                    <div class="shipping-box-customer" onclick="showCustomerShippingModal('At Manufacturer')" 
+                                         data-pallets="<?php echo $pallets; ?>" 
+                                         data-modules="<?php echo $modules; ?>" 
+                                         data-truckloads="<?php echo $truckloads; ?>" 
+                                         data-mws="<?php echo $mws; ?>">
+                                        <div class="status-label">At Manufacturer</div>
+                                        <div class="status-count"><?php echo $mws; ?></div>
+                                        <div class="status-unit">MWs</div>
+                                    </div>
+                                    <?php endif; ?>
+                                    
+                                    <?php 
+                                    $shipping_statuses = [
+                                        'On Water' => 'On Water',
+                                        'Cleared Customs' => 'Cleared Customs', 
+                                        'In Transit to Warehouse' => 'In Transit to Warehouse',
+                                        'In Warehouse' => 'In Warehouse',
+                                        'In Transit to Project' => 'In Transit to Project'
+                                    ];
+                                    
+                                    foreach ($shipping_statuses as $status_key => $status_label):
+                                        if (($status_totals[$status_key]['pallets'] ?? 0) > 0):
+                                            $pallets = $status_totals[$status_key]['pallets'];
+                                            $modules = $status_totals[$status_key]['modules'];
+                                            $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                            $mws = 0;
+                                            if (!empty($wattages) && $modules > 0) {
+                                                $total_watts = 0;
+                                                $total_modules_for_avg = 0;
+                                                foreach ($wattages as $w) {
+                                                    $total_watts += $w;
+                                                    $total_modules_for_avg++;
+                                                }
+                                                $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                                $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                            }
+                                    ?>
+                                    <div class="shipping-box-customer" onclick="showCustomerShippingModal('<?php echo $status_key; ?>')" 
+                                         data-pallets="<?php echo $pallets; ?>" 
+                                         data-modules="<?php echo $modules; ?>" 
+                                         data-truckloads="<?php echo $truckloads; ?>" 
+                                         data-mws="<?php echo $mws; ?>">
+                                        <div class="status-label"><?php echo $status_label; ?></div>
+                                        <div class="status-count"><?php echo $mws; ?></div>
+                                        <div class="status-unit">MWs</div>
+                                    </div>
+                                    <?php 
+                                        endif;
+                                    endforeach; 
+                                    ?>
+                                    
+                                    <!-- Delivered to Project -->
+                                    <?php if(($delivered_raw_total > 0)): 
+                                        $pallets = ceil($delivered_raw_total / 30);
+                                        $modules = $delivered_raw_total;
+                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                        $mws = 0;
+                                        if (!empty($wattages) && $modules > 0) {
+                                            $total_watts = 0;
+                                            $total_modules_for_avg = 0;
+                                            foreach ($wattages as $w) {
+                                                $total_watts += $w;
+                                                $total_modules_for_avg++;
+                                            }
+                                            $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                            $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                        }
+                                    ?>
+                                    <div class="shipping-box-customer" onclick="showCustomerShippingModal('Delivered')" 
+                                         data-pallets="<?php echo $pallets; ?>" 
+                                         data-modules="<?php echo $modules; ?>" 
+                                         data-truckloads="<?php echo $truckloads; ?>" 
+                                         data-mws="<?php echo $mws; ?>">
+                                        <div class="status-label">Delivered to Project</div>
+                                        <div class="status-count"><?php echo $mws; ?></div>
+                                        <div class="status-unit">MWs</div>
+                                    </div>
+                                    <?php endif; ?>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </li>
+                        <li class="timeline-item<?php echo $step5_completed ? ' completed' : ''; ?><?php echo $current_step == 5 ? ' current' : ''; ?>">
+                            <div class="circle">5</div>
+                            <div class="timeline-content">
+                                <h3>Project Completed</h3>
+                                <p>All modules delivered and project finalized</p>
+                            </div>
+                        </li>
+                    </ul>
+                    
+
+                </div>
+            </div>
+        </div>
+
+        <!-- Delivery Metrics -->
+        <div id="delivery-info" style="display: none;">
+            <!-- Unit Filters - Top Left -->
+            <div class="unit-filters-container">
+                <div class="unit-filters">
+                                                <button type="button" class="unit-filter-btn active" data-unit="mws">MWs</button>
+                            <button type="button" class="unit-filter-btn" data-unit="modules">Modules</button>
+                            <button type="button" class="unit-filter-btn" data-unit="pallets">Pallets</button>
+                            <button type="button" class="unit-filter-btn" data-unit="truckloads">Truckloads</button>
+                </div>
+            </div>
+            
+            <div class="customer-content-wrapper">
             <div class="tables-and-charts">
                 <div class="left-side">
                     <h2>Next 5 Weeks of Deliveries</h2>
@@ -3569,12 +4001,14 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                     <div class="chart-container">
                         <canvas id="pieChart"></canvas>
                     </div>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Financial Info -->
-        <div id="financial-info">
+        <div id="financial-info" style="display: none;">
+            <div class="customer-content-wrapper">
             <div class="tables-and-charts">
                 <div class="left-side">
                     <h2>Invoices and Cashflow Forecast</h2>
@@ -3653,7 +4087,19 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                     <div class="chart-container">
                         <canvas id="costPieChart"></canvas>
                     </div>
+                    </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Customer Shipping Modal -->
+        <div id="customerShippingModal" class="warehouse-selection-modal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="customerShippingModalTitle"></h3>
+                    <span class="close-modal" onclick="closeCustomerShippingModal()">&times;</span>
+                </div>
+                <div class="modal-body" id="customerShippingModalContent"></div>
             </div>
         </div>
     <?php endif; ?>
@@ -3731,9 +4177,15 @@ var pieChart = new Chart(ctxPie,{
         datasets:[{
             data: pieChartData,
             backgroundColor:[
-                '#488C9A',
-                '#293E4C',
-                '#fbb040'
+                '#488C9A',  // Delivered to Project
+                '#293E4C',  // In Warehouse  
+                '#fbb040',  // On Water
+                '#66B2FF',  // Cleared Customs
+                '#32CD32',  // Pending
+                '#FF6B6B',  // In Transit to Warehouse
+                '#9370DB',  // In Transit to Project
+                '#FF8C00',  // At Manufacturer
+                '#20B2AA'   // Additional colors if needed
             ]
         }]
     },
@@ -3978,6 +4430,40 @@ function goToWarehouseManagement(warehouseId) {
 <?php endif; ?>
 
 <?php if ($role !== 'admin' && $role !== 'global_admin'): ?>
+// Customer view functions
+let currentFilter = 'mws'; // Global filter state
+
+function showView(viewId) {
+    // Hide all sections
+    document.getElementById('project-progress').style.display = 'none';
+    document.getElementById('delivery-info').style.display = 'none';
+    document.getElementById('financial-info').style.display = 'none';
+
+    // Remove active class from all buttons
+    document.getElementById('project-progress-btn').classList.remove('active');
+    document.getElementById('delivery-info-btn').classList.remove('active');
+    document.getElementById('financial-info-btn').classList.remove('active');
+
+    // Show selected section and activate button
+    if(viewId === 'project-progress'){
+        document.getElementById('project-progress').style.display = 'block';
+        document.getElementById('project-progress-btn').classList.add('active');
+    } else if(viewId === 'delivery-info'){
+        document.getElementById('delivery-info').style.display = 'block';
+        document.getElementById('delivery-info-btn').classList.add('active');
+        // Initialize charts if needed
+        initializeFinancialCharts();
+    } else {
+        document.getElementById('financial-info').style.display = 'block';
+        document.getElementById('financial-info-btn').classList.add('active');
+        // Initialize charts if needed
+        initializeFinancialCharts();
+    }
+    
+    // Apply the current filter to the new section
+    syncFiltersToState();
+}
+
 function toggleSubRows(cls){
     var rows = document.getElementsByClassName(cls);
     for(var i=0; i<rows.length; i++){
@@ -3988,6 +4474,423 @@ function toggleSubRows(cls){
         }
     }
 }
+
+// Sync all filter buttons and data to the current state
+function syncFiltersToState() {
+    // Update all filter buttons to match current state
+    document.querySelectorAll('.unit-filter-btn').forEach(btn => {
+        if (btn.getAttribute('data-unit') === currentFilter) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    
+    // Update all sections with current filter
+    updateCustomerShippingBoxes(currentFilter, document.getElementById('project-progress'));
+    updateCustomerShippingBoxes(currentFilter, document.getElementById('delivery-info'));
+}
+
+// Customer Unit Filter functionality
+function initializeCustomerUnitFilters() {
+    const filterSections = document.querySelectorAll('.unit-filters');
+    
+    filterSections.forEach(section => {
+        const filterButtons = section.querySelectorAll('.unit-filter-btn');
+        
+        filterButtons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const filterType = this.getAttribute('data-unit');
+                
+                // Update global filter state
+                currentFilter = filterType;
+                
+                // Sync all sections to new filter
+                syncFiltersToState();
+            });
+        });
+    });
+}
+
+function updateCustomerShippingBoxes(filterType, section) {
+    if (!section) return;
+    
+    // Update shipping boxes
+    const shippingBoxes = section.querySelectorAll('.shipping-box-customer');
+    
+    shippingBoxes.forEach(box => {
+        const statusCount = box.querySelector('.status-count');
+        const statusUnit = box.querySelector('.status-unit');
+        
+        if (statusCount && statusUnit) {
+            let value, unit;
+            
+            switch(filterType) {
+                case 'modules':
+                    value = parseInt(box.getAttribute('data-modules') || 0);
+                    unit = 'modules';
+                    break;
+                case 'truckloads':
+                    value = parseFloat(box.getAttribute('data-truckloads') || 0);
+                    unit = 'truckloads';
+                    break;
+                case 'mws':
+                    value = parseFloat(box.getAttribute('data-mws') || 0);
+                    unit = 'MWs';
+                    break;
+                case 'pallets':
+                default:
+                    value = parseInt(box.getAttribute('data-pallets') || 0);
+                    unit = 'pallets';
+                    break;
+            }
+            
+            // Format the value
+            if (filterType === 'truckloads' || filterType === 'mws') {
+                statusCount.textContent = value % 1 === 0 ? value.toString() : value.toFixed(1);
+            } else {
+                statusCount.textContent = Math.round(value).toLocaleString();
+            }
+            
+            statusUnit.textContent = unit;
+        }
+    });
+    
+    // Update table data if this is the delivery-info section
+    if (section.id === 'delivery-info') {
+        updateDeliveryTables(filterType);
+    }
+}
+
+function updateDeliveryTables(filterType) {
+    // Update table data based on filter type
+    const table1 = document.getElementById('table1');
+    const table2 = document.getElementById('table2');
+    
+    if (!table1 || !table2) return;
+    
+    // Store original data if not already stored
+    if (!window.originalTableData) {
+        window.originalTableData = {
+            mw: {
+                total_order: <?php echo $total_order_combined; ?>,
+                delivered: <?php echo $delivered_combined; ?>,
+                in_warehouse: <?php echo $in_warehouse_combined; ?>,
+                on_water: <?php echo $on_water_combined; ?>,
+                cleared_customs: <?php echo $cleared_customs_combined; ?>,
+                pending: <?php echo $pending_combined; ?>,
+                weeks: [<?php foreach($anticipated_quantities_combined as $q): ?><?php echo $q; ?>,<?php endforeach; ?>],
+                sub_rows: {
+                    <?php foreach($sub_rows as $lbl => $sr): ?>
+                    '<?php echo addslashes($lbl); ?>': {
+                        total_order: <?php echo $sr['total_order']; ?>,
+                        delivered: <?php echo $sr['delivered']; ?>,
+                        weeks: [<?php foreach($sr['anticipated_quantities'] as $v): ?><?php echo $v; ?>,<?php endforeach; ?>]
+                    },
+                    <?php endforeach; ?>
+                },
+                sub_rows_status: {
+                    <?php foreach($sub_rows_status as $lbl => $srs): ?>
+                    '<?php echo addslashes($lbl); ?>': {
+                        total_order: <?php echo $srs['total_order']; ?>,
+                        delivered: <?php echo $srs['delivered']; ?>,
+                        in_warehouse: <?php echo $srs['in_warehouse']; ?>,
+                        on_water: <?php echo $srs['on_water']; ?>,
+                        cleared_customs: <?php echo $srs['cleared_customs']; ?>,
+                        pending: <?php echo $srs['pending']; ?>
+                    },
+                    <?php endforeach; ?>
+                }
+            }
+        };
+        
+        // Convert MWs to modules for module data
+        const avgWattage = <?php 
+            if (!empty($wattages)) {
+                echo array_sum($wattages) / count($wattages);
+            } else {
+                echo 555; // Default wattage if none available
+            }
+        ?>;
+        
+        window.originalTableData.modules = {
+            total_order: Math.round(window.originalTableData.mw.total_order * 1000000 / avgWattage),
+            delivered: Math.round(window.originalTableData.mw.delivered * 1000000 / avgWattage),
+            in_warehouse: Math.round(window.originalTableData.mw.in_warehouse * 1000000 / avgWattage),
+            on_water: Math.round(window.originalTableData.mw.on_water * 1000000 / avgWattage),
+            cleared_customs: Math.round(window.originalTableData.mw.cleared_customs * 1000000 / avgWattage),
+            pending: Math.round(window.originalTableData.mw.pending * 1000000 / avgWattage),
+            weeks: window.originalTableData.mw.weeks.map(w => Math.round(w * 1000000 / avgWattage)),
+            sub_rows: {},
+            sub_rows_status: {}
+        };
+        
+        // Calculate pallets data (assuming 30 modules per pallet)
+        const modulesPerPallet = 30;
+        window.originalTableData.pallets = {
+            total_order: Math.round(window.originalTableData.modules.total_order / modulesPerPallet),
+            delivered: Math.round(window.originalTableData.modules.delivered / modulesPerPallet),
+            in_warehouse: Math.round(window.originalTableData.modules.in_warehouse / modulesPerPallet),
+            on_water: Math.round(window.originalTableData.modules.on_water / modulesPerPallet),
+            cleared_customs: Math.round(window.originalTableData.modules.cleared_customs / modulesPerPallet),
+            pending: Math.round(window.originalTableData.modules.pending / modulesPerPallet),
+            weeks: window.originalTableData.modules.weeks.map(w => Math.round(w / modulesPerPallet)),
+            sub_rows: {},
+            sub_rows_status: {}
+        };
+        
+        // Calculate truckloads data (using average pallets per truck)
+        const palletsPerTruck = <?php echo $average_pallets_per_truck; ?>;
+        window.originalTableData.truckloads = {
+            total_order: (window.originalTableData.pallets.total_order / palletsPerTruck).toFixed(1),
+            delivered: (window.originalTableData.pallets.delivered / palletsPerTruck).toFixed(1),
+            in_warehouse: (window.originalTableData.pallets.in_warehouse / palletsPerTruck).toFixed(1),
+            on_water: (window.originalTableData.pallets.on_water / palletsPerTruck).toFixed(1),
+            cleared_customs: (window.originalTableData.pallets.cleared_customs / palletsPerTruck).toFixed(1),
+            pending: (window.originalTableData.pallets.pending / palletsPerTruck).toFixed(1),
+            weeks: window.originalTableData.pallets.weeks.map(w => (w / palletsPerTruck).toFixed(1)),
+            sub_rows: {},
+            sub_rows_status: {}
+        };
+        
+        // Convert sub_rows data
+        for (const [key, data] of Object.entries(window.originalTableData.mw.sub_rows)) {
+            window.originalTableData.modules.sub_rows[key] = {
+                total_order: Math.round(data.total_order * 1000000 / avgWattage),
+                delivered: Math.round(data.delivered * 1000000 / avgWattage),
+                weeks: data.weeks.map(w => Math.round(w * 1000000 / avgWattage))
+            };
+        }
+        
+        // Convert sub_rows_status data  
+        for (const [key, data] of Object.entries(window.originalTableData.mw.sub_rows_status)) {
+            window.originalTableData.modules.sub_rows_status[key] = {
+                total_order: Math.round(data.total_order * 1000000 / avgWattage),
+                delivered: Math.round(data.delivered * 1000000 / avgWattage),
+                in_warehouse: Math.round(data.in_warehouse * 1000000 / avgWattage),
+                on_water: Math.round(data.on_water * 1000000 / avgWattage),
+                cleared_customs: Math.round(data.cleared_customs * 1000000 / avgWattage),
+                pending: Math.round(data.pending * 1000000 / avgWattage)
+            };
+        }
+    }
+    
+    // Determine which data to use based on filter
+    let dataType, decimals;
+    switch(filterType) {
+        case 'mws':
+            dataType = 'mw';
+            decimals = 2;
+            break;
+        case 'modules':
+            dataType = 'modules';
+            decimals = 0;
+            break;
+        case 'pallets':
+            dataType = 'pallets';
+            decimals = 0;
+            break;
+        case 'truckloads':
+            dataType = 'truckloads';
+            decimals = 1;
+            break;
+        default:
+            dataType = 'mw';
+            decimals = 2;
+    }
+    const data = window.originalTableData[dataType];
+    
+    // Update main rows in both tables
+    const mainRow1 = table1.querySelector('tbody tr:first-child');
+    if (mainRow1) {
+        const cells = mainRow1.querySelectorAll('td');
+        if (cells.length >= 4) {
+            cells[2].textContent = formatNumber(data.total_order, decimals);
+            cells[3].textContent = formatNumber(data.delivered, decimals);
+            // Update week cells
+            for (let i = 0; i < data.weeks.length && i + 4 < cells.length; i++) {
+                cells[i + 4].textContent = formatNumber(data.weeks[i], decimals);
+            }
+        }
+    }
+    
+    const mainRow2 = table2.querySelector('tbody tr:first-child');
+    if (mainRow2) {
+        const cells = mainRow2.querySelectorAll('td');
+        if (cells.length >= 6) {
+            cells[2].textContent = formatNumber(data.total_order, decimals);
+            cells[3].textContent = formatNumber(data.delivered, decimals);
+            cells[4].textContent = formatNumber(data.in_warehouse, decimals);
+            let cellIndex = 5;
+            if (data.on_water > 0) {
+                cells[cellIndex].textContent = formatNumber(data.on_water, decimals);
+                cellIndex++;
+            }
+            if (data.cleared_customs > 0) {
+                cells[cellIndex].textContent = formatNumber(data.cleared_customs, decimals);
+                cellIndex++;
+            }
+            cells[cellIndex].textContent = formatNumber(data.pending, decimals);
+        }
+    }
+}
+
+function formatNumber(num, decimals) {
+    return Number(num).toLocaleString(undefined, {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+    });
+}
+
+// Customer Shipping Modal functionality
+function showCustomerShippingModal(status) {
+    const modal = document.getElementById('customerShippingModal');
+    const title = document.getElementById('customerShippingModalTitle');
+    const content = document.getElementById('customerShippingModalContent');
+    
+    if (!modal || !title || !content) {
+        console.error('Customer shipping modal elements not found');
+        return;
+    }
+    
+    title.textContent = status + ' - Details';
+    content.innerHTML = generateCustomerShippingContent(status);
+    modal.style.display = 'block';
+}
+
+function closeCustomerShippingModal() {
+    const modal = document.getElementById('customerShippingModal');
+    if(modal) modal.style.display = 'none';
+}
+
+function generateCustomerShippingContent(status) {
+    const shippingBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
+    let html = '<div style="max-height:400px;overflow-y:auto;">';
+    let has = false;
+    
+    // Handle special case for "Delivered" status
+    if(status === 'Delivered') {
+        has = true;
+        const totalDeliveredRaw = <?php echo $delivered_raw_total; ?>;
+        const totalPallets = Math.round(totalDeliveredRaw / 30);
+        
+        // Calculate MWs
+        const wattages = <?php echo json_encode($wattages); ?>;
+        let totalMWs = 0;
+        if (wattages.length > 0 && totalDeliveredRaw > 0) {
+            const avgWattage = wattages.reduce((a, b) => a + b) / wattages.length;
+            totalMWs = ((totalDeliveredRaw * avgWattage) / 1000000).toFixed(2);
+        }
+        
+        html += `<div style="margin-bottom:20px;padding:20px;background:#e8f5e8;border-radius:12px;border-left:4px solid #28a745;">` +
+               `<h4 style="margin-top:0;color:#28a745;">🎉 Delivered to Project</h4>` +
+               `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin:15px 0;">` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalPallets}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">Pallets</div></div>` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalDeliveredRaw.toLocaleString()}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">Modules</div></div>` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalMWs}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">MWs</div></div>` +
+               `</div>`;
+        
+        // Show wattage breakdown
+        const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage); ?>;
+        if(deliveredBreakdown.length > 0) {
+            html += '<div style="margin-top:20px;"><h5 style="color:#28a745;">Wattage Breakdown:</h5><ul style="list-style:none;padding:0;">';
+            deliveredBreakdown.forEach(function(item) {
+                const pallets = Math.round(item.modules / 30);
+                const mws = ((item.modules * item.wattage) / 1000000).toFixed(2);
+                html += `<li style="padding:8px 0;border-bottom:1px solid #eee;">${item.wattage}W: ${pallets} pallets • ${item.modules.toLocaleString()} modules • ${mws} MWs</li>`;
+            });
+            html += '</ul></div>';
+        }
+        
+        html += `<div style="text-align:center;margin-top:20px;">` +
+               `<a href="view_project.php?project_id=<?php echo $project_id; ?>&status_filter=Delivered" class="customer-modal-btn">View Deliveries</a>` +
+               `</div>`;
+        html += '</div>';
+    } else {
+        // Handle other shipping statuses
+        for(const key in shippingBreakdown){
+            if(key.includes(status)){
+                has = true;
+                const data = shippingBreakdown[key];
+                
+                // Calculate MWs and truckloads
+                const wattages = <?php echo json_encode($wattages); ?>;
+                let totalMWs = 0;
+                if (wattages.length > 0 && data.total_modules > 0) {
+                    const avgWattage = wattages.reduce((a, b) => a + b) / wattages.length;
+                    totalMWs = ((data.total_modules * avgWattage) / 1000000).toFixed(2);
+                }
+                const truckloads = (data.pallet_count / <?php echo $average_pallets_per_truck; ?>).toFixed(1);
+                
+                html += `<div style="margin-bottom:20px;padding:20px;background:#f8f9fa;border-radius:12px;border-left:4px solid #488C9A;">`+
+                       `<h4 style="margin-top:0;color:#488C9A;">${key}</h4>`+
+                       `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:15px;margin:15px 0;">` +
+                       `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+                       `<div style="font-size:1.5rem;font-weight:700;color:#488C9A;">${data.pallet_count}</div>` +
+                       `<div style="font-size:0.8rem;color:#666;">Pallets</div></div>` +
+                       `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+                       `<div style="font-size:1.5rem;font-weight:700;color:#488C9A;">${data.total_modules.toLocaleString()}</div>` +
+                       `<div style="font-size:0.8rem;color:#666;">Modules</div></div>` +
+                       `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+                       `<div style="font-size:1.5rem;font-weight:700;color:#488C9A;">${totalMWs}</div>` +
+                       `<div style="font-size:0.8rem;color:#666;">MWs</div></div>` +
+                       `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+                       `<div style="font-size:1.5rem;font-weight:700;color:#488C9A;">${truckloads}</div>` +
+                       `<div style="font-size:0.8rem;color:#666;">Truckloads</div></div>` +
+                       `</div>`;
+                
+                if(data.wattage_breakdown && Object.keys(data.wattage_breakdown).length>0){
+                    html+='<div style="margin-top:20px;"><h5 style="color:#488C9A;">Wattage Breakdown:</h5><ul style="list-style:none;padding:0;">';
+                    for(const w in data.wattage_breakdown){
+                        const d = data.wattage_breakdown[w];
+                        const mws = ((d.modules * parseFloat(w)) / 1000000).toFixed(2);
+                        html+=`<li style="padding:8px 0;border-bottom:1px solid #eee;">${w}W: ${d.pallets} pallets • ${d.modules.toLocaleString()} modules • ${mws} MWs</li>`;
+                    }
+                    html+='</ul></div>';
+                }
+                
+                // Add appropriate action buttons
+                if(status === 'At Manufacturer') {
+                    html += `<div style="text-align:center;margin-top:20px;">` +
+                           `<a href="manage_pallets.php?project_id=<?php echo $project_id; ?>&status_filter=At%20Manufacturer" class="customer-modal-btn">View Pallets</a>` +
+                           `</div>`;
+                } else if(status === 'In Transit to Warehouse' || status === 'In Transit to Project') {
+                    html += `<div style="text-align:center;margin-top:20px;">` +
+                           `<a href="view_project.php?project_id=<?php echo $project_id; ?>&status_filter=${encodeURIComponent(status)}" class="customer-modal-btn">View Shipments</a>` +
+                           `</div>`;
+                } else if(status === 'In Warehouse') {
+                    if(data.warehouse_id) {
+                        html += `<div style="text-align:center;margin-top:20px;">` +
+                               `<a href="warehouse_info.php?project_id=<?php echo $project_id; ?>&warehouse_id=${data.warehouse_id}" class="customer-modal-btn">View Inventory</a>` +
+                               `</div>`;
+                    } else {
+                        html += `<div style="text-align:center;margin-top:20px;">` +
+                               `<a href="warehouse_info.php?project_id=<?php echo $project_id; ?>" class="customer-modal-btn">View Inventory</a>` +
+                               `</div>`;
+                    }
+                }
+                html+='</div>';
+            }
+        }
+        
+        if(!has){html+='<p style="text-align:center;color:#666;font-style:italic;">No data available.</p>';}
+    }
+    
+    html+='</div>';
+    return html;
+}
+
+// Initialize customer filters when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    initializeCustomerUnitFilters();
+    syncFiltersToState(); // Set initial state
+});
 
 // Prepare costPie + budgetLineChart (for regular users)
 var pieChartDataFinancial = <?php echo json_encode($pieChartDataFinancial);?>;
