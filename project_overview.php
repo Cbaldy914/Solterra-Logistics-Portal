@@ -214,26 +214,50 @@ $lineChartDataJSON = json_encode($lineChartData);
 
 // --------------- Delivery Status Table ---------------
 // Gather pallet statuses directly from inventory_pallets
-$stmt = $conn->prepare(
-    "SELECT ip.status, ip.wattage, SUM(ip.quantity) AS total_quantity
-     FROM inventory_pallets ip
-     LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
-     LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-     WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
-     GROUP BY ip.status, ip.wattage"
-);
-$stmt->bind_param("iii", $project_id, $project_id, $project_id);
-$stmt->execute();
-$status_result = $stmt->get_result();
 
+// First get detailed breakdown from inventory_pallets
+$status_totals = [
+    'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
+    'On Water' => ['pallets' => 0, 'modules' => 0],
+    'Delivered to Project' => ['pallets' => 0, 'modules' => 0],
+    'Cleared Customs' => ['pallets' => 0, 'modules' => 0],
+    'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
+    'In Warehouse' => ['pallets' => 0, 'modules' => 0],
+    'In Transit to Project' => ['pallets' => 0, 'modules' => 0]
+];
+$detailed_breakdown = [];
+
+$stmt_status = $conn->prepare(
+    "SELECT ip.status, ip.wattage, ip.quantity, ip.current_warehouse_id, w.name AS warehouse_name,
+            ip.current_project_id, p.project_name
+       FROM inventory_pallets ip
+       LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+       LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+       LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+       LEFT JOIN projects p ON ip.current_project_id = p.id
+       WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)"
+);
+$stmt_status->bind_param('iii', $project_id, $project_id, $project_id);
+$stmt_status->execute();
+$res_status = $stmt_status->get_result();
+
+// Build delivery_totals structure to match expected format
 $delivery_totals = [];
 $delivered_raw_total = 0; // Raw module count for timeline calculations
-while ($row = $status_result->fetch_assoc()) {
+
+while ($row = $res_status->fetch_assoc()) {
     $status  = $row['status'];
-    $w       = (float)$row['wattage'];
-    $lbl     = $w . 'W';
-    $raw_qty = (int)$row['total_quantity'];
-    $q_calc  = calculateQuantity($raw_qty, $w, $view_mode);
+    $wattage = (int)$row['wattage'];
+    $qty     = (int)$row['quantity'];
+    $wh_id   = $row['current_warehouse_id'];
+    $wh_name = $row['warehouse_name'];
+    $proj_id = $row['current_project_id'];
+    $proj_name = $row['project_name'];
+
+    // Build delivery_totals by wattage for the main table
+    $w = (float)$wattage;
+    $lbl = $w . 'W';
+    $q_calc = calculateQuantity($qty, $w, $view_mode);
 
     if (!isset($delivery_totals[$lbl])) {
         $delivery_totals[$lbl] = [
@@ -246,12 +270,49 @@ while ($row = $status_result->fetch_assoc()) {
             'Delivered to Project'   => 0,
         ];
     }
-    $delivery_totals[$lbl][$status] = $q_calc;
+    $delivery_totals[$lbl][$status] += $q_calc;
     if ($status === 'Delivered to Project') {
-        $delivered_raw_total += $raw_qty;
+        $delivered_raw_total += $qty;
     }
+
+    // Build status_totals for overall tracking
+    if (!isset($status_totals[$status])) {
+        $status_totals[$status] = ['pallets' => 0, 'modules' => 0];
+    }
+    $status_totals[$status]['pallets'] += 1;
+    $status_totals[$status]['modules'] += $qty;
+
+    // Build detailed_breakdown for the overview section
+    if ($status === 'In Warehouse' && $wh_name) {
+        $key = 'In Warehouse - ' . $wh_name;
+    } elseif ($status === 'In Transit to Warehouse' && $wh_name) {
+        $key = 'In Transit to Warehouse - ' . $wh_name;
+    } elseif ($status === 'In Transit to Project' && $proj_name) {
+        $key = 'In Transit to Project - ' . $proj_name;
+    } elseif ($status === 'At Manufacturer') {
+        $key = 'At Manufacturer';
+    } else {
+        $key = $status;
+    }
+
+    if (!isset($detailed_breakdown[$key])) {
+        $detailed_breakdown[$key] = [
+            'pallet_count' => 0,
+            'total_modules' => 0,
+            'wattage_breakdown' => [],
+            'warehouse_id' => $wh_id,
+            'project_id' => $proj_id
+        ];
+    }
+    $detailed_breakdown[$key]['pallet_count']++;
+    $detailed_breakdown[$key]['total_modules'] += $qty;
+    if (!isset($detailed_breakdown[$key]['wattage_breakdown'][$wattage])) {
+        $detailed_breakdown[$key]['wattage_breakdown'][$wattage] = ['pallets' => 0, 'modules' => 0];
+    }
+    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['pallets']++;
+    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['modules'] += $qty;
 }
-$stmt->close();
+$stmt_status->close();
 
 // Summaries and pie chart data
 $total_order_combined             = 0;
@@ -278,7 +339,25 @@ $pieChartData = [
 $sub_rows        = [];
 $sub_rows_status = [];
 
+// First, create a comprehensive list of all wattages (both from orders and from actual inventory)
+$all_wattages = [];
 foreach ($total_orders as $lbl => $info) {
+    $all_wattages[$lbl] = $info;
+}
+// Add any wattages that exist in inventory but not in orders
+foreach ($delivery_totals as $lbl => $statuses) {
+    if (!isset($all_wattages[$lbl])) {
+        // Extract wattage from label (e.g., "555W" -> 555)
+        $w = (float)str_replace('W', '', $lbl);
+        $all_wattages[$lbl] = [
+            'wattage' => $w,
+            'total_order' => 0, // No formal order, but inventory exists
+            'raw_quantity' => 0,
+        ];
+    }
+}
+
+foreach ($all_wattages as $lbl => $info) {
     $w  = (float)$info['wattage'];
     $to = (float)$info['total_order'];
 
@@ -800,74 +879,7 @@ while ($wh = $result_warehouses->fetch_assoc()) {
 $stmt_warehouses->close();
 
 // --- Shipping Status Breakdown ---
-$status_totals = [
-    'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
-    'On Water' => ['pallets' => 0, 'modules' => 0],
-    'Cleared Customs' => ['pallets' => 0, 'modules' => 0],
-    'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
-    'In Warehouse' => ['pallets' => 0, 'modules' => 0],
-    'In Transit to Project' => ['pallets' => 0, 'modules' => 0]
-];
-$detailed_breakdown = [];
-
-$stmt_status = $conn->prepare(
-    "SELECT ip.status, ip.wattage, ip.quantity, ip.current_warehouse_id, w.name AS warehouse_name,
-            ip.current_project_id, p.project_name
-       FROM inventory_pallets ip
-       LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
-       LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-       LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
-       LEFT JOIN projects p ON ip.current_project_id = p.id
-       WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)"
-);
-$stmt_status->bind_param('iii', $project_id, $project_id, $project_id);
-$stmt_status->execute();
-$res_status = $stmt_status->get_result();
-while ($row = $res_status->fetch_assoc()) {
-    $status  = $row['status'];
-    $wattage = (int)$row['wattage'];
-    $qty     = (int)$row['quantity'];
-    $wh_id   = $row['current_warehouse_id'];
-    $wh_name = $row['warehouse_name'];
-    $proj_id = $row['current_project_id'];
-    $proj_name = $row['project_name'];
-
-    if (!isset($status_totals[$status])) {
-        $status_totals[$status] = ['pallets' => 0, 'modules' => 0];
-    }
-    $status_totals[$status]['pallets'] += 1;
-    $status_totals[$status]['modules'] += $qty;
-
-    if ($status === 'In Warehouse' && $wh_name) {
-        $key = 'In Warehouse - ' . $wh_name;
-    } elseif ($status === 'In Transit to Warehouse' && $wh_name) {
-        $key = 'In Transit to Warehouse - ' . $wh_name;
-    } elseif ($status === 'In Transit to Project' && $proj_name) {
-        $key = 'In Transit to Project - ' . $proj_name;
-    } elseif ($status === 'At Manufacturer') {
-        $key = 'At Manufacturer';
-    } else {
-        $key = $status;
-    }
-
-    if (!isset($detailed_breakdown[$key])) {
-        $detailed_breakdown[$key] = [
-            'pallet_count' => 0,
-            'total_modules' => 0,
-            'wattage_breakdown' => [],
-            'warehouse_id' => $wh_id,
-            'project_id' => $proj_id
-        ];
-    }
-    $detailed_breakdown[$key]['pallet_count']++;
-    $detailed_breakdown[$key]['total_modules'] += $qty;
-    if (!isset($detailed_breakdown[$key]['wattage_breakdown'][$wattage])) {
-        $detailed_breakdown[$key]['wattage_breakdown'][$wattage] = ['pallets' => 0, 'modules' => 0];
-    }
-    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['pallets']++;
-    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['modules'] += $qty;
-}
-$stmt_status->close();
+// Data already calculated above in the delivery status section
 
 // Move all remaining database queries here before HTML output
 // Better calculation for palletized modules - count actual pallets in inventory_pallets
@@ -4583,12 +4595,12 @@ function updateDeliveryTables(filterType) {
             mw: {
                 total_order: <?php echo $total_order_combined; ?>,
                 delivered: <?php echo $delivered_combined; ?>,
-                at_manufacturer: <?php echo ($status_totals['At Manufacturer']['mws'] ?? 0); ?>,
+                at_manufacturer: <?php echo $at_manufacturer_combined; ?>,
                 in_warehouse: <?php echo $in_warehouse_combined; ?>,
                 on_water: <?php echo $on_water_combined; ?>,
                 cleared_customs: <?php echo $cleared_customs_combined; ?>,
-                in_transit_to_warehouse: <?php echo ($status_totals['In Transit to Warehouse']['mws'] ?? 0); ?>,
-                in_transit_to_project: <?php echo ($status_totals['In Transit to Project']['mws'] ?? 0); ?>,
+                in_transit_to_warehouse: <?php echo $in_transit_to_warehouse_combined; ?>,
+                in_transit_to_project: <?php echo $in_transit_to_project_combined; ?>,
                 pending: <?php echo $pending_combined; ?>,
                 weeks: [<?php foreach($anticipated_quantities_combined as $q): ?><?php echo $q; ?>,<?php endforeach; ?>],
                 sub_rows: {
