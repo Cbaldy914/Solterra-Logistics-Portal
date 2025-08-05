@@ -37,14 +37,35 @@ $successMessage = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'generate_pallets') {
     $itemId           = intval($_POST['item_id']);
     $modulesPerPallet = max(1, intval($_POST['modules_per_pallet']));
+    $updateModulesTable = isset($_POST['update_modules_table']) && $_POST['update_modules_table'] === 'true';
     
-    // Get wattage and total modules for this item
-    $stmtW = $conn->prepare("SELECT wattage, quantity FROM unassigned_module_items WHERE id = ? LIMIT 1");
+    // Get wattage and total modules for this item, plus the current modules_per_pallet from modules table
+    $stmtW = $conn->prepare("
+        SELECT umi.wattage, umi.quantity, m.modules_per_pallet 
+        FROM unassigned_module_items umi 
+        JOIN modules m ON umi.unassigned_module_id = m.id 
+        WHERE umi.id = ? LIMIT 1
+    ");
     $stmtW->bind_param("i", $itemId);
     $stmtW->execute();
-    $stmtW->bind_result($wattage, $orderedQuantity);
+    $stmtW->bind_result($wattage, $orderedQuantity, $currentModulesPerPallet);
     $stmtW->fetch();
     $stmtW->close();
+    
+    // Check if we need to update the modules table
+    if ($updateModulesTable || ($currentModulesPerPallet === null && $modulesPerPallet > 0)) {
+        // Update the modules_per_pallet in the modules table
+        $stmtUpdate = $conn->prepare("
+            UPDATE modules 
+            SET modules_per_pallet = ? 
+            WHERE id = (SELECT unassigned_module_id FROM unassigned_module_items WHERE id = ?)
+        ");
+        if ($stmtUpdate) {
+            $stmtUpdate->bind_param("ii", $modulesPerPallet, $itemId);
+            $stmtUpdate->execute();
+            $stmtUpdate->close();
+        }
+    }
     
     // Calculate already palletized quantity for this item
     $stmtP = $conn->prepare("SELECT COALESCE(SUM(quantity), 0) FROM inventory_pallets WHERE unassigned_module_item_id = ?");
@@ -544,13 +565,39 @@ try {
                     'ordered_quantity' => 0,
                     'palletized_quantity' => 0,
                     'remaining_quantity' => 0,
-                    'pallet_distribution' => []
+                    'pallet_distribution' => [],
+                    'modules_per_pallet' => null,
+                    'batch_id' => $item['unassigned_module_id']
                 ];
             }
             $wattage_summary[$wattage]['ordered_quantity'] += $item['quantity'];
             $batch_items[] = $item; // Still store raw items if needed later
         }
         $stmtItems->close();
+        
+        // Fetch modules_per_pallet values for each batch
+        if (!empty($batch_ids)) {
+            $stmtModulesPerPallet = $conn->prepare("SELECT id, modules_per_pallet FROM modules WHERE id IN ($placeholders_batches)");
+            if ($stmtModulesPerPallet) {
+                $stmtModulesPerPallet->bind_param($types_batches, ...$batch_ids);
+                $stmtModulesPerPallet->execute();
+                $resultModulesPerPallet = $stmtModulesPerPallet->get_result();
+                $modules_per_pallet_data = [];
+                while ($mpp = $resultModulesPerPallet->fetch_assoc()) {
+                    $modules_per_pallet_data[$mpp['id']] = $mpp['modules_per_pallet'];
+                }
+                $stmtModulesPerPallet->close();
+                
+                // Associate modules_per_pallet with wattage summary
+                foreach ($wattage_summary as $wattage => &$data) {
+                    $batch_id = $data['batch_id'];
+                    if (isset($modules_per_pallet_data[$batch_id])) {
+                        $data['modules_per_pallet'] = $modules_per_pallet_data[$batch_id];
+                    }
+                }
+                unset($data); // Clean up reference
+            }
+        }
     }
 
     // Fetch associated pallets and aggregate palletized quantity by wattage
@@ -1360,9 +1407,12 @@ $conn->close();
                                         <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
                                         <input type="hidden" name="remaining_modules" value="<?php echo $data['remaining_quantity']; ?>">
                                         <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                        <input type="hidden" name="batch_id" value="<?php echo $data['batch_id']; ?>">
+                                        <input type="hidden" name="current_modules_per_pallet" value="<?php echo $data['modules_per_pallet'] ?? ''; ?>">
+                                        <input type="hidden" name="update_modules_table" value="false">
                                         <div>
                                             <label for="modules_per_pallet_<?php echo $wattage; ?>">Modules per Pallet:</label>
-                                            <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $wattage; ?>" min="1" value="1" required>
+                                            <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $wattage; ?>" min="1" value="<?php echo $data['modules_per_pallet'] ?? 1; ?>" required data-original-value="<?php echo $data['modules_per_pallet'] ?? ''; ?>" data-batch-id="<?php echo $data['batch_id']; ?>">
                                             <button type="submit">Generate</button>
                                         </div>
                                     </form>
@@ -1613,6 +1663,23 @@ $conn->close();
     </div>
 </div>
 
+<!-- Modal for Modules Per Pallet Change Confirmation -->
+<div id="modulesPerPalletModal" class="modal">
+    <div class="modal-content">
+        <span class="close-modal-btn" onclick="closeModulesPerPalletModal()">&times;</span>
+        <h2>Update Modules Per Pallet?</h2>
+        <div id="modulesPerPalletMessage"></div>
+        <div style="margin-top: 20px; text-align: right;">
+            <button type="button" onclick="closeModulesPerPalletModal()" style="background-color: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 4px; margin-right: 10px; cursor: pointer;">
+                Keep Original
+            </button>
+            <button type="button" onclick="confirmModulesPerPalletUpdate()" style="background-color: #488C9A; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer;">
+                Update & Proceed
+            </button>
+        </div>
+    </div>
+</div>
+
 
 
 
@@ -1778,12 +1845,29 @@ function handlePalletizationSubmit(event) {
     const modulesPerPallet = parseInt(form.querySelector('input[name="modules_per_pallet"]').value);
     const remainingModules = parseInt(form.querySelector('input[name="remaining_modules"]').value);
     const wattage = form.querySelector('input[name="wattage"]').value;
+    const currentModulesPerPallet = form.querySelector('input[name="current_modules_per_pallet"]').value;
+    const originalValue = form.querySelector('input[name="modules_per_pallet"]').getAttribute('data-original-value');
     
     if (isNaN(modulesPerPallet) || modulesPerPallet <= 0) {
         alert('Please enter a valid number of modules per pallet.');
         return false;
     }
     
+    // Check if the entered value differs from the database value
+    const dbValue = currentModulesPerPallet ? parseInt(currentModulesPerPallet) : null;
+    if (dbValue !== null && dbValue !== modulesPerPallet) {
+        // Show modules per pallet confirmation modal
+        currentForm = form;
+        showModulesPerPalletModal(dbValue, modulesPerPallet, wattage);
+        return false;
+    }
+    
+    // If no database value exists, mark to update the modules table
+    if (dbValue === null && modulesPerPallet > 0) {
+        form.querySelector('input[name="update_modules_table"]').value = 'true';
+    }
+    
+    // Proceed with palletization checks
     const fullPallets = Math.floor(remainingModules / modulesPerPallet);
     const remainder = remainingModules % modulesPerPallet;
     
@@ -1836,11 +1920,66 @@ function confirmPalletization() {
     }
 }
 
+// ----------------- MODULES PER PALLET MODAL -----------------
+function showModulesPerPalletModal(originalValue, newValue, wattage) {
+    const modal = document.getElementById('modulesPerPalletModal');
+    const messageDiv = document.getElementById('modulesPerPalletMessage');
+    
+    const message = `<div style="background-color: #e3f2fd; border: 1px solid #bbdefb; border-radius: 4px; padding: 15px; margin-bottom: 15px;">
+        <h4 style="margin-top: 0; color: #1976d2;">⚠️ Modules Per Pallet Difference Detected</h4>
+        <p style="margin-bottom: 10px; color: #1976d2;">The modules per pallet you entered is different than what was set up for this project:</p>
+        <ul style="margin: 10px 0; padding-left: 20px; color: #1976d2;">
+            <li><strong>Original (Project Setting):</strong> ${originalValue} modules per pallet</li>
+            <li><strong>Your Entry:</strong> ${newValue} modules per pallet</li>
+        </ul>
+        <p style="margin-bottom: 0; color: #1976d2;"><strong>Do you want to change this to ${newValue} modules per pallet for this ${wattage}W module batch?</strong></p>
+        <p style="margin: 10px 0 0 0; font-size: 0.9em; color: #666;">This will update the project settings for future palletizations.</p>
+    </div>`;
+    
+    messageDiv.innerHTML = message;
+    modal.style.display = 'block';
+}
+
+function closeModulesPerPalletModal() {
+    const modal = document.getElementById('modulesPerPalletModal');
+    modal.style.display = 'none';
+    currentForm = null;
+}
+
+function confirmModulesPerPalletUpdate() {
+    if (currentForm) {
+        // Set flag to update modules table
+        currentForm.querySelector('input[name="update_modules_table"]').value = 'true';
+        closeModulesPerPalletModal();
+        
+        // Continue with normal palletization flow
+        const modulesPerPallet = parseInt(currentForm.querySelector('input[name="modules_per_pallet"]').value);
+        const remainingModules = parseInt(currentForm.querySelector('input[name="remaining_modules"]').value);
+        const wattage = currentForm.querySelector('input[name="wattage"]').value;
+        
+        const fullPallets = Math.floor(remainingModules / modulesPerPallet);
+        const remainder = remainingModules % modulesPerPallet;
+        
+        if (remainder === 0) {
+            // Even distribution, proceed without warning
+            showLoadingModal();
+            currentForm.submit();
+        } else {
+            // Uneven distribution, show warning
+            showWarningModal(fullPallets, modulesPerPallet, remainder, wattage);
+        }
+    }
+}
+
 // Close modal when clicking outside of it
 window.onclick = function(event) {
     const warningModal = document.getElementById('warningModal');
+    const modulesPerPalletModal = document.getElementById('modulesPerPalletModal');
+    
     if (event.target === warningModal) {
         closeWarningModal();
+    } else if (event.target === modulesPerPalletModal) {
+        closeModulesPerPalletModal();
     }
 }
 
