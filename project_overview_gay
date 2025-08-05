@@ -246,53 +246,63 @@ while ($row = $delivered_result->fetch_assoc()) {
 }
 $stmt->close();
 
-// Get currently in warehouse using inventory_pallets status (matching module_movements.php logic)
+// Get all statuses from inventory_pallets (like the shipping timeline does)
 $stmt = $conn->prepare("
-    SELECT ip.wattage, SUM(ip.quantity) AS total_quantity
+    SELECT ip.status, ip.wattage, SUM(ip.quantity) AS total_quantity
     FROM inventory_pallets ip
     LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
     LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-    WHERE ip.status = 'In Warehouse' 
-    AND (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
-    GROUP BY ip.wattage
+    WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
+    GROUP BY ip.status, ip.wattage
 ");
 $stmt->bind_param("iii", $project_id, $project_id, $project_id);
 $stmt->execute();
-$warehouse_result = $stmt->get_result();
+$inventory_result = $stmt->get_result();
 
-while ($row = $warehouse_result->fetch_assoc()) {
+// Initialize delivery_totals with all possible statuses
+while ($row = $inventory_result->fetch_assoc()) {
     $w   = (float)$row['wattage'];
     $lbl = $w . 'W';
+    $status = $row['status'];
     $q_calc = calculateQuantity((int)$row['total_quantity'], $w, $view_mode);
 
     if (!isset($delivery_totals[$lbl])) {
         $delivery_totals[$lbl] = [
             'Delivered to Project' => 0,
+            'At Manufacturer' => 0,
+            'On Water' => 0,
+            'Cleared Customs' => 0,
+            'In Transit to Warehouse' => 0,
             'In Warehouse' => 0,
-            'Pending' => 0,
+            'In Transit to Project' => 0,
         ];
     }
-    $delivery_totals[$lbl]['In Warehouse'] = $q_calc;
+    
+    // Map the status to our array keys
+    if (isset($delivery_totals[$lbl][$status])) {
+        $delivery_totals[$lbl][$status] = $q_calc;
+    }
 }
 $stmt->close();
-
-// Note: We calculate pending as Total Order - Delivered to Project - In Warehouse
-// This ensures we don't double-count modules that have moved through the system
 
 // Summaries
 $total_order_combined      = 0;
 $delivered_combined        = 0;
+$at_manufacturer_combined  = 0;
 $in_warehouse_combined     = 0;
 $on_water_combined         = 0;
 $cleared_customs_combined  = 0;
-$pending_combined          = 0;
+$in_transit_to_warehouse_combined = 0;
+$in_transit_to_project_combined = 0;
 
 $pieChartData = [
     'Delivered to Project' => 0,
-    'In Warehouse'      => 0,
+    'At Manufacturer'   => 0,
     'On Water'         => 0,
     'Cleared Customs'  => 0,
-    'Pending'          => 0,
+    'In Transit to Warehouse' => 0,
+    'In Warehouse'      => 0,
+    'In Transit to Project' => 0,
 ];
 
 $sub_rows        = [];
@@ -303,13 +313,12 @@ foreach ($total_orders as $lbl => $info) {
     $to = (float)$info['total_order'];
 
     $del = $delivery_totals[$lbl]['Delivered to Project'] ?? 0;
+    $at_man = $delivery_totals[$lbl]['At Manufacturer'] ?? 0;
     $inw = $delivery_totals[$lbl]['In Warehouse'] ?? 0;
     $onw = $delivery_totals[$lbl]['On Water'] ?? 0;
     $clr = $delivery_totals[$lbl]['Cleared Customs'] ?? 0;
-    // Calculate pending as total order minus all known statuses
-    $pending = $to - ($del + $inw + $onw + $clr);
-    // Ensure pending is never negative  
-    $pending = max(0, $pending);
+    $in_transit_wh = $delivery_totals[$lbl]['In Transit to Warehouse'] ?? 0;
+    $in_transit_proj = $delivery_totals[$lbl]['In Transit to Project'] ?? 0;
 
     // Next 5 Weeks
     $sub_rows[$lbl] = [
@@ -318,30 +327,43 @@ foreach ($total_orders as $lbl => $info) {
         'delivered'          => $del,
         'anticipated_quantities'=> [],
     ];
+    // Calculate pending for this wattage
+    $pending = max(0, $to - ($del + $at_man + $inw + $onw + $clr + $in_transit_wh + $in_transit_proj));
+    
     // Delivery Status
     $sub_rows_status[$lbl] = [
         'wattage_label'      => $lbl,
         'total_order'        => $to,
         'delivered'          => $del,
+        'at_manufacturer'    => $at_man,
         'in_warehouse'       => $inw,
         'on_water'           => $onw,
         'cleared_customs'    => $clr,
+        'in_transit_to_warehouse' => $in_transit_wh,
+        'in_transit_to_project' => $in_transit_proj,
         'pending'            => $pending,
     ];
 
     $total_order_combined      += $to;
     $delivered_combined        += $del;
+    $at_manufacturer_combined  += $at_man;
     $in_warehouse_combined     += $inw;
     $on_water_combined         += $onw;
     $cleared_customs_combined  += $clr;
-    $pending_combined          += $pending;
+    $in_transit_to_warehouse_combined += $in_transit_wh;
+    $in_transit_to_project_combined += $in_transit_proj;
 
     $pieChartData['Delivered to Project'] += $del;
+    $pieChartData['At Manufacturer']   += $at_man;
     $pieChartData['In Warehouse']      += $inw;
     $pieChartData['On Water']         += $onw;
     $pieChartData['Cleared Customs']  += $clr;
-    $pieChartData['Pending']          += $pending;
+    $pieChartData['In Transit to Warehouse'] += $in_transit_wh;
+    $pieChartData['In Transit to Project'] += $in_transit_proj;
 }
+
+// Calculate pending_combined (for backward compatibility with JavaScript)
+$pending_combined = max(0, $total_order_combined - ($delivered_combined + $at_manufacturer_combined + $in_warehouse_combined + $on_water_combined + $cleared_customs_combined + $in_transit_to_warehouse_combined + $in_transit_to_project_combined));
 $total_pie = array_sum($pieChartData);
 $pieChartPercentages = [];
 foreach ($pieChartData as $k => $v) {
@@ -878,6 +900,16 @@ while ($row = $res_status->fetch_assoc()) {
     $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['modules'] += $qty;
 }
 $stmt_status->close();
+
+// Calculate MWs for status_totals
+foreach ($status_totals as $status => &$data) {
+    $data['mws'] = 0;
+    if (!empty($wattages) && $data['modules'] > 0) {
+        $avg_wattage = array_sum($wattages) / count($wattages);
+        $data['mws'] = ($data['modules'] * $avg_wattage) / 1000000;
+    }
+}
+unset($data);
 
 // Move all remaining database queries here before HTML output
 // Better calculation for palletized modules - count actual pallets in inventory_pallets
@@ -3949,58 +3981,67 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <th>Module Type</th>
                                     <th>Total Order</th>
                                     <th>At Manufacturer</th>
-                                    <th>Delivered to Project</th>
-                                    <?php if (($status_totals['On Water']['modules'] ?? 0) > 0): ?>
+                                    <?php if ($on_water_combined > 0): ?>
                                     <th>On Water</th>
                                     <?php endif; ?>
-                                    <?php if (($status_totals['Cleared Customs']['modules'] ?? 0) > 0): ?>
+                                    <?php if ($cleared_customs_combined > 0): ?>
                                     <th>Cleared Customs</th>
                                     <?php endif; ?>
-                                    <?php if (($status_totals['In Transit to Warehouse']['modules'] ?? 0) > 0): ?>
+                                    <?php if ($in_transit_to_warehouse_combined > 0): ?>
                                     <th>In Transit to Warehouse</th>
                                     <?php endif; ?>
-                                    <?php if (($status_totals['In Transit to Project']['modules'] ?? 0) > 0): ?>
+                                    <?php if ($in_warehouse_combined > 0): ?>
+                                    <th>In Warehouse</th>
+                                    <?php endif; ?>
+                                    <?php if ($in_transit_to_project_combined > 0): ?>
                                     <th>In Transit to Project</th>
                                     <?php endif; ?>
+                                    <th>Delivered to Project</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr onclick="toggleSubRows('status-row')">
+                                <tr onclick="toggleSubRows('status-row')" class="main-status-row">
                                     <td><?php echo htmlspecialchars($module_type_combined);?></td>
-                                    <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format(($status_totals['At Manufacturer']['modules'] ?? 0),($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
-                                    <?php if (($status_totals['On Water']['modules'] ?? 0) > 0): ?>
-                                    <td><?php echo number_format(($status_totals['On Water']['modules'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                    <td class="status-total-order"><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td class="status-at-manufacturer"><?php echo number_format($at_manufacturer_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php if ($on_water_combined > 0): ?>
+                                    <td class="status-on-water"><?php echo number_format($on_water_combined,($view_mode=='mw')?2:0);?></td>
                                     <?php endif; ?>
-                                    <?php if (($status_totals['Cleared Customs']['modules'] ?? 0) > 0): ?>
-                                    <td><?php echo number_format(($status_totals['Cleared Customs']['modules'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                    <?php if ($cleared_customs_combined > 0): ?>
+                                    <td class="status-cleared-customs"><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?></td>
                                     <?php endif; ?>
-                                    <?php if (($status_totals['In Transit to Warehouse']['modules'] ?? 0) > 0): ?>
-                                    <td><?php echo number_format(($status_totals['In Transit to Warehouse']['modules'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                    <?php if ($in_transit_to_warehouse_combined > 0): ?>
+                                    <td class="status-in-transit-warehouse"><?php echo number_format($in_transit_to_warehouse_combined,($view_mode=='mw')?2:0);?></td>
                                     <?php endif; ?>
-                                    <?php if (($status_totals['In Transit to Project']['modules'] ?? 0) > 0): ?>
-                                    <td><?php echo number_format(($status_totals['In Transit to Project']['modules'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                    <?php if ($in_warehouse_combined > 0): ?>
+                                    <td class="status-in-warehouse"><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
                                     <?php endif; ?>
+                                    <?php if ($in_transit_to_project_combined > 0): ?>
+                                    <td class="status-in-transit-project"><?php echo number_format($in_transit_to_project_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
+                                    <td class="status-delivered"><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
                                 </tr>
                                 <?php foreach($sub_rows_status as $lbl=>$srs): ?>
-                                    <tr class="status-row" style="display:none;">
+                                    <tr class="status-row sub-status-row" style="display:none;">
                                         <td><?php echo htmlspecialchars($srs['wattage_label']);?></td>
-                                        <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format(($srs['at_manufacturer'] ?? 0),($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
-                                        <?php if (($status_totals['On Water']['modules'] ?? 0) > 0): ?>
-                                        <td><?php echo number_format(($srs['on_water'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <td class="sub-total-order"><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
+                                        <td class="sub-at-manufacturer"><?php echo number_format(($srs['at_manufacturer'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <?php if ($on_water_combined > 0): ?>
+                                        <td class="sub-on-water"><?php echo number_format(($srs['on_water'] ?? 0),($view_mode=='mw')?2:0);?></td>
                                         <?php endif; ?>
-                                        <?php if (($status_totals['Cleared Customs']['modules'] ?? 0) > 0): ?>
-                                        <td><?php echo number_format(($srs['cleared_customs'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <?php if ($cleared_customs_combined > 0): ?>
+                                        <td class="sub-cleared-customs"><?php echo number_format(($srs['cleared_customs'] ?? 0),($view_mode=='mw')?2:0);?></td>
                                         <?php endif; ?>
-                                        <?php if (($status_totals['In Transit to Warehouse']['modules'] ?? 0) > 0): ?>
-                                        <td><?php echo number_format(($srs['in_transit_to_warehouse'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <?php if ($in_transit_to_warehouse_combined > 0): ?>
+                                        <td class="sub-in-transit-warehouse"><?php echo number_format(($srs['in_transit_to_warehouse'] ?? 0),($view_mode=='mw')?2:0);?></td>
                                         <?php endif; ?>
-                                        <?php if (($status_totals['In Transit to Project']['modules'] ?? 0) > 0): ?>
-                                        <td><?php echo number_format(($srs['in_transit_to_project'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <?php if ($in_warehouse_combined > 0): ?>
+                                        <td class="sub-in-warehouse"><?php echo number_format(($srs['in_warehouse'] ?? 0),($view_mode=='mw')?2:0);?></td>
                                         <?php endif; ?>
+                                        <?php if ($in_transit_to_project_combined > 0): ?>
+                                        <td class="sub-in-transit-project"><?php echo number_format(($srs['in_transit_to_project'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <td class="sub-delivered"><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
                                     </tr>
                                 <?php endforeach;?>
                             </tbody>
@@ -4176,6 +4217,23 @@ var lineChart = new Chart(ctxLine, {
 // Delivery Overview pie (for regular users)
 var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages));?>;
 var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages));?>;
+
+// Create color mapping based on status labels
+var statusColors = {
+    'Delivered to Project': '#488C9A',     // Teal
+    'At Manufacturer': '#FF8C00',          // Orange
+    'On Water': '#66B2FF',                 // Light Blue
+    'Cleared Customs': '#C0C0C0',          // Silver
+    'In Transit to Warehouse': '#9370DB',  // Medium Purple
+    'In Warehouse': '#293E4C',             // Dark Blue-Gray
+    'In Transit to Project': '#FFD700'     // Gold
+};
+
+// Map colors to match the data order
+var pieColors = pieChartLabels.map(function(label) {
+    return statusColors[label] || '#999999';
+});
+
 var ctxPieEl       = document.getElementById('pieChart');
 if(ctxPieEl){
 var ctxPie         = ctxPieEl.getContext('2d');
@@ -4185,17 +4243,9 @@ var pieChart = new Chart(ctxPie,{
         labels: pieChartLabels,
         datasets:[{
             data: pieChartData,
-            backgroundColor:[
-                '#488C9A',  // Delivered to Project
-                '#FF8C00',  // At Manufacturer
-                '#2E86C1',  // On Water (blue)
-                '#66B2FF',  // Cleared Customs
-                '#9370DB',  // In Transit to Warehouse
-                '#C0C0C0',  // In Transit to Project (silver)
-                '#FF6B6B',  // Additional if needed
-                '#20B2AA',  // Additional if needed
-                '#32CD32'   // Additional if needed
-            ]
+            backgroundColor: pieColors,
+            borderWidth: 2,
+            borderColor: '#ffffff'
         }]
     },
     options:{
@@ -4208,15 +4258,80 @@ var pieChart = new Chart(ctxPie,{
                         return lab+': '+ val.toFixed(2)+'%';
                     }
                 }
+            },
+            legend: {
+                position: 'bottom',
+                labels: {
+                    padding: 15,
+                    usePointStyle: true,
+                    font: {
+                        size: 11
+                    }
+                }
             }
-        }
+        },
+        responsive: true,
+        maintainAspectRatio: true
     }
 });
+
+// Update pie chart when filter changes
+window.updatePieChart = function(filterType) {
+    if (!pieChart) return;
+    
+    // Calculate pie data based on current filter
+    const statusTotals = {
+        'Delivered to Project': 0,
+        'At Manufacturer': 0,
+        'On Water': 0,
+        'Cleared Customs': 0,
+        'In Transit to Warehouse': 0,
+        'In Warehouse': 0,
+        'In Transit to Project': 0
+    };
+    
+    // Get data based on filter type
+    const data = window.originalTableData[filterType === 'mws' ? 'mw' : 
+                                         filterType === 'modules' ? 'modules' :
+                                         filterType === 'pallets' ? 'pallets' : 'truckloads'];
+    
+    if (data) {
+        statusTotals['Delivered to Project'] = parseFloat(data.delivered) || 0;
+        statusTotals['At Manufacturer'] = parseFloat(data.at_manufacturer) || 0;
+        statusTotals['On Water'] = parseFloat(data.on_water) || 0;
+        statusTotals['Cleared Customs'] = parseFloat(data.cleared_customs) || 0;
+        statusTotals['In Transit to Warehouse'] = parseFloat(data.in_transit_to_warehouse) || 0;
+        statusTotals['In Warehouse'] = parseFloat(data.in_warehouse) || 0;
+        statusTotals['In Transit to Project'] = parseFloat(data.in_transit_to_project) || 0;
+    }
+    
+    // Calculate percentages
+    const total = Object.values(statusTotals).reduce((a, b) => a + b, 0);
+    const percentages = [];
+    const labels = [];
+    const colors = [];
+    
+    for (const [status, value] of Object.entries(statusTotals)) {
+        if (value > 0) {
+            labels.push(status);
+            percentages.push(total > 0 ? (value / total) * 100 : 0);
+            colors.push(statusColors[status] || '#999999');
+        }
+    }
+    
+    // Update chart
+    pieChart.data.labels = labels;
+    pieChart.data.datasets[0].data = percentages;
+    pieChart.data.datasets[0].backgroundColor = colors;
+    pieChart.update();
+};
 }
 <?php endif; ?>
 
+
+
+<?php if ($role === 'admin' || $role === 'global_admin'): ?>
 function showView(viewId) {
-    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
     // Admin view logic
     ['progress-info','site-info','module-info'].forEach(function(id){
         var sec = document.getElementById(id);
@@ -4234,26 +4349,8 @@ function showView(viewId) {
     } else if(viewId === 'module-info') {
         loadModuleInfo();
     }
-    <?php else: ?>
-    // Regular user view logic
-    document.getElementById('delivery-info').style.display='none';
-    document.getElementById('financial-info').style.display='none';
-
-    document.getElementById('delivery-info-btn').classList.remove('active');
-    document.getElementById('financial-info-btn').classList.remove('active');
-
-    if(viewId==='delivery-info'){
-        document.getElementById('delivery-info').style.display='block';
-        document.getElementById('delivery-info-btn').classList.add('active');
-    } else {
-        document.getElementById('financial-info').style.display='block';
-        document.getElementById('financial-info-btn').classList.add('active');
-        initializeFinancialCharts();
-    }
-    <?php endif; ?>
 }
 
-<?php if ($role === 'admin' || $role === 'global_admin'): ?>
 function loadSiteInfo() {
     var siteSection = document.getElementById('site-info');
     if(siteSection && siteSection.innerHTML.trim() === '') {
@@ -4591,30 +4688,45 @@ function updateDeliveryTables(filterType) {
                 in_transit_to_warehouse: <?php echo ($status_totals['In Transit to Warehouse']['mws'] ?? 0); ?>,
                 in_transit_to_project: <?php echo ($status_totals['In Transit to Project']['mws'] ?? 0); ?>,
                 pending: <?php echo $pending_combined; ?>,
-                weeks: [<?php foreach($anticipated_quantities_combined as $q): ?><?php echo $q; ?>,<?php endforeach; ?>],
+                weeks: [<?php 
+                    $week_values = [];
+                    foreach($anticipated_quantities_combined as $q) {
+                        $week_values[] = $q;
+                    }
+                    echo implode(',', $week_values);
+                ?>],
                 sub_rows: {
-                    <?php foreach($sub_rows as $lbl => $sr): ?>
-                    '<?php echo addslashes($lbl); ?>': {
-                        total_order: <?php echo $sr['total_order']; ?>,
-                        delivered: <?php echo $sr['delivered']; ?>,
-                        weeks: [<?php foreach($sr['anticipated_quantities'] as $v): ?><?php echo $v; ?>,<?php endforeach; ?>]
-                    },
-                    <?php endforeach; ?>
+                    <?php 
+                    $sub_rows_js = [];
+                    foreach($sub_rows as $lbl => $sr) {
+                        $week_values_str = implode(',', $sr['anticipated_quantities']);
+                        $sub_rows_js[] = "'" . addslashes($lbl) . "': {
+                            total_order: " . $sr['total_order'] . ",
+                            delivered: " . $sr['delivered'] . ",
+                            weeks: [" . $week_values_str . "]
+                        }";
+                    }
+                    echo implode(',', $sub_rows_js);
+                    ?>
                 },
                 sub_rows_status: {
-                    <?php foreach($sub_rows_status as $lbl => $srs): ?>
-                    '<?php echo addslashes($lbl); ?>': {
-                        total_order: <?php echo $srs['total_order']; ?>,
-                        delivered: <?php echo $srs['delivered']; ?>,
-                        at_manufacturer: <?php echo ($srs['at_manufacturer'] ?? 0); ?>,
-                        in_warehouse: <?php echo $srs['in_warehouse']; ?>,
-                        on_water: <?php echo $srs['on_water']; ?>,
-                        cleared_customs: <?php echo $srs['cleared_customs']; ?>,
-                        in_transit_to_warehouse: <?php echo ($srs['in_transit_to_warehouse'] ?? 0); ?>,
-                        in_transit_to_project: <?php echo ($srs['in_transit_to_project'] ?? 0); ?>,
-                        pending: <?php echo $srs['pending']; ?>
-                    },
-                    <?php endforeach; ?>
+                    <?php 
+                    $sub_status_js = [];
+                    foreach($sub_rows_status as $lbl => $srs) {
+                        $sub_status_js[] = "'" . addslashes($lbl) . "': {
+                            total_order: " . $srs['total_order'] . ",
+                            delivered: " . $srs['delivered'] . ",
+                            at_manufacturer: " . ($srs['at_manufacturer'] ?? 0) . ",
+                            in_warehouse: " . $srs['in_warehouse'] . ",
+                            on_water: " . $srs['on_water'] . ",
+                            cleared_customs: " . $srs['cleared_customs'] . ",
+                            in_transit_to_warehouse: " . ($srs['in_transit_to_warehouse'] ?? 0) . ",
+                            in_transit_to_project: " . ($srs['in_transit_to_project'] ?? 0) . ",
+                            pending: " . $srs['pending'] . "
+                        }";
+                    }
+                    echo implode(',', $sub_status_js);
+                    ?>
                 }
             }
         };
@@ -4679,33 +4791,36 @@ function updateDeliveryTables(filterType) {
         
         // Convert sub_rows data
         for (const [key, data] of Object.entries(window.originalTableData.mw.sub_rows)) {
+            // Extract the wattage from the key (e.g., "555W" -> 555)
             const wattageMatch = key.match(/(\d+)W/);
             const wattage = wattageMatch ? parseFloat(wattageMatch[1]) : avgWattage;
-
+            
             window.originalTableData.modules.sub_rows[key] = {
                 total_order: Math.round(data.total_order * 1000000 / wattage),
                 delivered: Math.round(data.delivered * 1000000 / wattage),
                 weeks: data.weeks.map(w => Math.round(w * 1000000 / wattage))
             };
-
+            
+            // Also populate pallets and truckloads sub_rows
             window.originalTableData.pallets.sub_rows[key] = {
                 total_order: Math.round(window.originalTableData.modules.sub_rows[key].total_order / modulesPerPallet),
                 delivered: Math.round(window.originalTableData.modules.sub_rows[key].delivered / modulesPerPallet),
                 weeks: window.originalTableData.modules.sub_rows[key].weeks.map(w => Math.round(w / modulesPerPallet))
             };
-
+            
             window.originalTableData.truckloads.sub_rows[key] = {
                 total_order: (window.originalTableData.pallets.sub_rows[key].total_order / palletsPerTruck).toFixed(1),
                 delivered: (window.originalTableData.pallets.sub_rows[key].delivered / palletsPerTruck).toFixed(1),
                 weeks: window.originalTableData.pallets.sub_rows[key].weeks.map(w => (w / palletsPerTruck).toFixed(1))
             };
         }
-
-        // Convert sub_rows_status data
+        
+        // Convert sub_rows_status data  
         for (const [key, data] of Object.entries(window.originalTableData.mw.sub_rows_status)) {
+            // Extract the wattage from the key (e.g., "555W" -> 555)
             const wattageMatch = key.match(/(\d+)W/);
             const wattage = wattageMatch ? parseFloat(wattageMatch[1]) : avgWattage;
-
+            
             window.originalTableData.modules.sub_rows_status[key] = {
                 total_order: Math.round(data.total_order * 1000000 / wattage),
                 delivered: Math.round(data.delivered * 1000000 / wattage),
@@ -4716,7 +4831,8 @@ function updateDeliveryTables(filterType) {
                 in_transit_to_warehouse: Math.round(data.in_transit_to_warehouse * 1000000 / wattage),
                 in_transit_to_project: Math.round(data.in_transit_to_project * 1000000 / wattage)
             };
-
+            
+            // Also populate pallets and truckloads sub_rows_status
             window.originalTableData.pallets.sub_rows_status[key] = {
                 total_order: Math.round(window.originalTableData.modules.sub_rows_status[key].total_order / modulesPerPallet),
                 delivered: Math.round(window.originalTableData.modules.sub_rows_status[key].delivered / modulesPerPallet),
@@ -4727,7 +4843,7 @@ function updateDeliveryTables(filterType) {
                 in_transit_to_warehouse: Math.round(window.originalTableData.modules.sub_rows_status[key].in_transit_to_warehouse / modulesPerPallet),
                 in_transit_to_project: Math.round(window.originalTableData.modules.sub_rows_status[key].in_transit_to_project / modulesPerPallet)
             };
-
+            
             window.originalTableData.truckloads.sub_rows_status[key] = {
                 total_order: (window.originalTableData.pallets.sub_rows_status[key].total_order / palletsPerTruck).toFixed(1),
                 delivered: (window.originalTableData.pallets.sub_rows_status[key].delivered / palletsPerTruck).toFixed(1),
@@ -4780,38 +4896,11 @@ function updateDeliveryTables(filterType) {
         }
     }
     
-    const mainRow2 = table2.querySelector('tbody tr:first-child');
-    if (mainRow2) {
-        const cells = mainRow2.querySelectorAll('td');
-        if (cells.length >= 4) {
-            cells[1].textContent = formatNumber(data.total_order, decimals);
-            cells[2].textContent = formatNumber((data.at_manufacturer || 0), decimals);
-            cells[3].textContent = formatNumber(data.delivered, decimals);
-            let cellIndex = 4;
-            if (data.on_water > 0 && cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.on_water, decimals);
-                cellIndex++;
-            }
-            if (data.cleared_customs > 0 && cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.cleared_customs, decimals);
-                cellIndex++;
-            }
-            if (data.in_transit_to_warehouse > 0 && cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.in_transit_to_warehouse, decimals);
-                cellIndex++;
-            }
-            if (data.in_transit_to_project > 0 && cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.in_transit_to_project, decimals);
-                cellIndex++;
-            }
-        }
-    }
-
     // Update sub rows in table1 (Next 5 Weeks)
     const subRows1 = table1.querySelectorAll('tr.delivery-row');
     subRows1.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 3) {
+        if (cells.length >= 1) {
             const wattageLabel = cells[0].textContent;
             const subData = data.sub_rows[wattageLabel];
             if (subData) {
@@ -4823,39 +4912,73 @@ function updateDeliveryTables(filterType) {
             }
         }
     });
-
+    
+    // Update main row in Module Delivery Status table
+    const mainRow2 = table2.querySelector('.main-status-row');
+    if (mainRow2) {
+        if (mainRow2.querySelector('.status-total-order')) {
+            mainRow2.querySelector('.status-total-order').textContent = formatNumber(data.total_order, decimals);
+        }
+        if (mainRow2.querySelector('.status-at-manufacturer')) {
+            mainRow2.querySelector('.status-at-manufacturer').textContent = formatNumber((data.at_manufacturer || 0), decimals);
+        }
+        if (mainRow2.querySelector('.status-on-water')) {
+            mainRow2.querySelector('.status-on-water').textContent = formatNumber((data.on_water || 0), decimals);
+        }
+        if (mainRow2.querySelector('.status-cleared-customs')) {
+            mainRow2.querySelector('.status-cleared-customs').textContent = formatNumber((data.cleared_customs || 0), decimals);
+        }
+        if (mainRow2.querySelector('.status-in-transit-warehouse')) {
+            mainRow2.querySelector('.status-in-transit-warehouse').textContent = formatNumber((data.in_transit_to_warehouse || 0), decimals);
+        }
+        if (mainRow2.querySelector('.status-in-warehouse')) {
+            mainRow2.querySelector('.status-in-warehouse').textContent = formatNumber((data.in_warehouse || 0), decimals);
+        }
+        if (mainRow2.querySelector('.status-in-transit-project')) {
+            mainRow2.querySelector('.status-in-transit-project').textContent = formatNumber((data.in_transit_to_project || 0), decimals);
+        }
+        if (mainRow2.querySelector('.status-delivered')) {
+            mainRow2.querySelector('.status-delivered').textContent = formatNumber(data.delivered, decimals);
+        }
+    }
+    
     // Update sub rows in Module Delivery Status table
-    const subRows2 = table2.querySelectorAll('tr.status-row');
+    const subRows2 = table2.querySelectorAll('tr.sub-status-row');
     subRows2.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 4) {
+        if (cells.length >= 1) {
             const wattageLabel = cells[0].textContent;
             const subData = data.sub_rows_status[wattageLabel];
             if (subData) {
-                cells[1].textContent = formatNumber(subData.total_order, decimals);
-                cells[2].textContent = formatNumber((subData.at_manufacturer || 0), decimals);
-                cells[3].textContent = formatNumber(subData.delivered, decimals);
-                let idx = 4;
-                if (data.on_water > 0 && cells[idx]) {
-                    cells[idx].textContent = formatNumber((subData.on_water || 0), decimals);
-                    idx++;
+                if (row.querySelector('.sub-total-order')) {
+                    row.querySelector('.sub-total-order').textContent = formatNumber(subData.total_order, decimals);
                 }
-                if (data.cleared_customs > 0 && cells[idx]) {
-                    cells[idx].textContent = formatNumber((subData.cleared_customs || 0), decimals);
-                    idx++;
+                if (row.querySelector('.sub-at-manufacturer')) {
+                    row.querySelector('.sub-at-manufacturer').textContent = formatNumber((subData.at_manufacturer || 0), decimals);
                 }
-                if (data.in_transit_to_warehouse > 0 && cells[idx]) {
-                    cells[idx].textContent = formatNumber((subData.in_transit_to_warehouse || 0), decimals);
-                    idx++;
+                if (row.querySelector('.sub-on-water')) {
+                    row.querySelector('.sub-on-water').textContent = formatNumber((subData.on_water || 0), decimals);
                 }
-                if (data.in_transit_to_project > 0 && cells[idx]) {
-                    cells[idx].textContent = formatNumber((subData.in_transit_to_project || 0), decimals);
-                    idx++;
+                if (row.querySelector('.sub-cleared-customs')) {
+                    row.querySelector('.sub-cleared-customs').textContent = formatNumber((subData.cleared_customs || 0), decimals);
+                }
+                if (row.querySelector('.sub-in-transit-warehouse')) {
+                    row.querySelector('.sub-in-transit-warehouse').textContent = formatNumber((subData.in_transit_to_warehouse || 0), decimals);
+                }
+                if (row.querySelector('.sub-in-warehouse')) {
+                    row.querySelector('.sub-in-warehouse').textContent = formatNumber((subData.in_warehouse || 0), decimals);
+                }
+                if (row.querySelector('.sub-in-transit-project')) {
+                    row.querySelector('.sub-in-transit-project').textContent = formatNumber((subData.in_transit_to_project || 0), decimals);
+                }
+                if (row.querySelector('.sub-delivered')) {
+                    row.querySelector('.sub-delivered').textContent = formatNumber(subData.delivered, decimals);
                 }
             }
         }
-    });
-
+    }
+    
+    // Update pie chart to match the table data
     if (window.updatePieChart) {
         window.updatePieChart(filterType);
     }
