@@ -993,6 +993,36 @@ while ($module = $modules_result->fetch_assoc()) {
 }
 $stmt_modules->close();
 
+// Calculate average pallets_per_truck for truckload calculations
+$pallets_per_truck_values = [];
+$total_modules_for_ppt = 0;
+$weighted_ppt_sum = 0;
+
+foreach ($module_batches as $batch) {
+    if (!empty($batch['pallets_per_truck']) && $batch['pallets_per_truck'] > 0) {
+        $ppt = (int)$batch['pallets_per_truck'];
+        // Calculate total modules for this batch to weight the average
+        $batch_modules = 0;
+        foreach ($batch['wattages'] as $wattage_info) {
+            $batch_modules += (int)$wattage_info['quantity'];
+        }
+        
+        $pallets_per_truck_values[] = $ppt;
+        $weighted_ppt_sum += ($ppt * $batch_modules);
+        $total_modules_for_ppt += $batch_modules;
+    }
+}
+
+// Use weighted average if available, otherwise use 26 as default
+$default_pallets_per_truck = 26;
+if ($total_modules_for_ppt > 0 && $weighted_ppt_sum > 0) {
+    $average_pallets_per_truck = round($weighted_ppt_sum / $total_modules_for_ppt);
+} elseif (!empty($pallets_per_truck_values)) {
+    $average_pallets_per_truck = round(array_sum($pallets_per_truck_values) / count($pallets_per_truck_values));
+} else {
+    $average_pallets_per_truck = $default_pallets_per_truck;
+}
+
 // Fetch manufacturers for modal dropdown
 $manufacturers = [];
 $stmt_manufacturers = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
@@ -2702,59 +2732,205 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                             <div class="description">Logistics in progress</div>
                             
                             <?php if ($current_step == 4): ?>
+                            <!-- Shipping Filters for Admin/Global Admin -->
+                            <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+                            <div class="shipping-filters" style="margin: 20px auto 15px; text-align: center; max-width: 800px;">
+                                <div class="filter-buttons" style="display: inline-flex; background: #f8f9fa; border-radius: 8px; padding: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                    <button type="button" class="filter-btn active" data-filter="pallets" style="background: #488C9A; color: white; border: none; padding: 8px 16px; border-radius: 6px; margin: 0 2px; cursor: pointer; font-weight: 600; transition: all 0.3s ease;">Pallets</button>
+                                    <button type="button" class="filter-btn" data-filter="modules" style="background: transparent; color: #293E4C; border: none; padding: 8px 16px; border-radius: 6px; margin: 0 2px; cursor: pointer; font-weight: 600; transition: all 0.3s ease;">Modules</button>
+                                    <button type="button" class="filter-btn" data-filter="truckloads" style="background: transparent; color: #293E4C; border: none; padding: 8px 16px; border-radius: 6px; margin: 0 2px; cursor: pointer; font-weight: 600; transition: all 0.3s ease;">Truckloads</button>
+                                    <button type="button" class="filter-btn" data-filter="mws" style="background: transparent; color: #293E4C; border: none; padding: 8px 16px; border-radius: 6px; margin: 0 2px; cursor: pointer; font-weight: 600; transition: all 0.3s ease;">MWs</button>
+                                </div>
+                            </div>
+                            <?php endif; ?>
                             <div class="shipping-statuses">
-                                <?php if(($status_totals['At Manufacturer']['pallets'] ?? 0) > 0): ?>
-                                <div class="shipping-box" onclick="showShippingBreakdown('At Manufacturer')">
+                                <?php if(($status_totals['At Manufacturer']['pallets'] ?? 0) > 0): 
+                                    $pallets = $status_totals['At Manufacturer']['pallets'];
+                                    $modules = $status_totals['At Manufacturer']['modules'];
+                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $mws = 0;
+                                    // Calculate MWs - we need wattage information
+                                    // For now, we'll calculate based on average wattage if available
+                                    if (!empty($wattages) && $modules > 0) {
+                                        $total_watts = 0;
+                                        $total_modules_for_avg = 0;
+                                        foreach ($wattages as $w) {
+                                            $total_watts += $w;
+                                            $total_modules_for_avg++;
+                                        }
+                                        $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                        $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                    }
+                                ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('At Manufacturer')" 
+                                     data-pallets="<?php echo $pallets; ?>" 
+                                     data-modules="<?php echo $modules; ?>" 
+                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">At Manufacturer</div>
-                                    <div class="status-count"><?php echo $status_totals['At Manufacturer']['pallets']; ?></div>
+                                    <div class="status-count"><?php echo $pallets; ?></div>
                                     <div class="status-unit">pallets</div>
                                 </div>
                                 <?php endif; ?>
                                 
-                                <?php if(($status_totals['On Water']['pallets'] ?? 0) > 0): ?>
-                                <div class="shipping-box" onclick="showShippingBreakdown('On Water')">
+                                <?php if(($status_totals['On Water']['pallets'] ?? 0) > 0): 
+                                    $pallets = $status_totals['On Water']['pallets'];
+                                    $modules = $status_totals['On Water']['modules'];
+                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $mws = 0;
+                                    if (!empty($wattages) && $modules > 0) {
+                                        $total_watts = 0;
+                                        $total_modules_for_avg = 0;
+                                        foreach ($wattages as $w) {
+                                            $total_watts += $w;
+                                            $total_modules_for_avg++;
+                                        }
+                                        $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                        $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                    }
+                                ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('On Water')" 
+                                     data-pallets="<?php echo $pallets; ?>" 
+                                     data-modules="<?php echo $modules; ?>" 
+                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">On Water</div>
-                                    <div class="status-count"><?php echo $status_totals['On Water']['pallets']; ?></div>
+                                    <div class="status-count"><?php echo $pallets; ?></div>
                                     <div class="status-unit">pallets</div>
                                 </div>
                                 <?php endif; ?>
                                 
-                                <?php if(($status_totals['Cleared Customs']['pallets'] ?? 0) > 0): ?>
-                                <div class="shipping-box" onclick="showShippingBreakdown('Cleared Customs')">
+                                <?php if(($status_totals['Cleared Customs']['pallets'] ?? 0) > 0): 
+                                    $pallets = $status_totals['Cleared Customs']['pallets'];
+                                    $modules = $status_totals['Cleared Customs']['modules'];
+                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $mws = 0;
+                                    if (!empty($wattages) && $modules > 0) {
+                                        $total_watts = 0;
+                                        $total_modules_for_avg = 0;
+                                        foreach ($wattages as $w) {
+                                            $total_watts += $w;
+                                            $total_modules_for_avg++;
+                                        }
+                                        $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                        $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                    }
+                                ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('Cleared Customs')" 
+                                     data-pallets="<?php echo $pallets; ?>" 
+                                     data-modules="<?php echo $modules; ?>" 
+                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">Cleared Customs</div>
-                                    <div class="status-count"><?php echo $status_totals['Cleared Customs']['pallets']; ?></div>
+                                    <div class="status-count"><?php echo $pallets; ?></div>
                                     <div class="status-unit">pallets</div>
                                 </div>
                                 <?php endif; ?>
                                 
-                                <?php if(($status_totals['In Transit to Warehouse']['pallets'] ?? 0) > 0): ?>
-                                <div class="shipping-box" onclick="showShippingBreakdown('In Transit to Warehouse')">
+                                <?php if(($status_totals['In Transit to Warehouse']['pallets'] ?? 0) > 0): 
+                                    $pallets = $status_totals['In Transit to Warehouse']['pallets'];
+                                    $modules = $status_totals['In Transit to Warehouse']['modules'];
+                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $mws = 0;
+                                    if (!empty($wattages) && $modules > 0) {
+                                        $total_watts = 0;
+                                        $total_modules_for_avg = 0;
+                                        foreach ($wattages as $w) {
+                                            $total_watts += $w;
+                                            $total_modules_for_avg++;
+                                        }
+                                        $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                        $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                    }
+                                ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('In Transit to Warehouse')" 
+                                     data-pallets="<?php echo $pallets; ?>" 
+                                     data-modules="<?php echo $modules; ?>" 
+                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">In Transit to Warehouse</div>
-                                    <div class="status-count"><?php echo $status_totals['In Transit to Warehouse']['pallets']; ?></div>
+                                    <div class="status-count"><?php echo $pallets; ?></div>
                                     <div class="status-unit">pallets</div>
                                 </div>
                                 <?php endif; ?>
                                 
-                                <?php if(($status_totals['In Warehouse']['pallets'] ?? 0) > 0): ?>
-                                <div class="shipping-box" onclick="showShippingBreakdown('In Warehouse')">
+                                <?php if(($status_totals['In Warehouse']['pallets'] ?? 0) > 0): 
+                                    $pallets = $status_totals['In Warehouse']['pallets'];
+                                    $modules = $status_totals['In Warehouse']['modules'];
+                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $mws = 0;
+                                    if (!empty($wattages) && $modules > 0) {
+                                        $total_watts = 0;
+                                        $total_modules_for_avg = 0;
+                                        foreach ($wattages as $w) {
+                                            $total_watts += $w;
+                                            $total_modules_for_avg++;
+                                        }
+                                        $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                        $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                    }
+                                ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('In Warehouse')" 
+                                     data-pallets="<?php echo $pallets; ?>" 
+                                     data-modules="<?php echo $modules; ?>" 
+                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">In Warehouse</div>
-                                    <div class="status-count"><?php echo $status_totals['In Warehouse']['pallets']; ?></div>
+                                    <div class="status-count"><?php echo $pallets; ?></div>
                                     <div class="status-unit">pallets</div>
                                 </div>
                                 <?php endif; ?>
                                 
-                                <?php if(($status_totals['In Transit to Project']['pallets'] ?? 0) > 0): ?>
-                                <div class="shipping-box" onclick="showShippingBreakdown('In Transit to Project')">
+                                <?php if(($status_totals['In Transit to Project']['pallets'] ?? 0) > 0): 
+                                    $pallets = $status_totals['In Transit to Project']['pallets'];
+                                    $modules = $status_totals['In Transit to Project']['modules'];
+                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $mws = 0;
+                                    if (!empty($wattages) && $modules > 0) {
+                                        $total_watts = 0;
+                                        $total_modules_for_avg = 0;
+                                        foreach ($wattages as $w) {
+                                            $total_watts += $w;
+                                            $total_modules_for_avg++;
+                                        }
+                                        $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                        $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                    }
+                                ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('In Transit to Project')" 
+                                     data-pallets="<?php echo $pallets; ?>" 
+                                     data-modules="<?php echo $modules; ?>" 
+                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">In Transit to Project</div>
-                                    <div class="status-count"><?php echo $status_totals['In Transit to Project']['pallets']; ?></div>
+                                    <div class="status-count"><?php echo $pallets; ?></div>
                                     <div class="status-unit">pallets</div>
                                 </div>
                                 <?php endif; ?>
                                 
-                                <?php if(($delivered_raw_total > 0)): ?>
-                                <div class="shipping-box" onclick="showShippingBreakdown('Delivered')">
+                                <?php if(($delivered_raw_total > 0)): 
+                                    $pallets = ceil($delivered_raw_total / 30);
+                                    $modules = $delivered_raw_total;
+                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $mws = 0;
+                                    if (!empty($wattages) && $modules > 0) {
+                                        $total_watts = 0;
+                                        $total_modules_for_avg = 0;
+                                        foreach ($wattages as $w) {
+                                            $total_watts += $w;
+                                            $total_modules_for_avg++;
+                                        }
+                                        $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                        $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                    }
+                                ?>
+                                <div class="shipping-box" onclick="showShippingBreakdown('Delivered')" 
+                                     data-pallets="<?php echo $pallets; ?>" 
+                                     data-modules="<?php echo $modules; ?>" 
+                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">Delivered to Project</div>
-                                    <div class="status-count"><?php echo number_format($delivered_raw_total / 30, 0); ?></div>
+                                    <div class="status-count"><?php echo $pallets; ?></div>
                                     <div class="status-unit">pallets</div>
                                 </div>
                                 <?php endif; ?>
@@ -4190,6 +4366,82 @@ function initializeAdminFinancialCharts() {
         ctxBudgetEl.chartInitialized = true;
     }
 }
+
+// Shipping Filter functionality
+function initializeShippingFilters() {
+    const filterButtons = document.querySelectorAll('.filter-btn');
+    const shippingBoxes = document.querySelectorAll('.shipping-box');
+    
+    filterButtons.forEach(btn => {
+        btn.addEventListener('click', function() {
+            const filterType = this.getAttribute('data-filter');
+            
+            // Update active button
+            filterButtons.forEach(b => {
+                b.style.background = 'transparent';
+                b.style.color = '#293E4C';
+                b.classList.remove('active');
+            });
+            
+            this.style.background = '#488C9A';
+            this.style.color = 'white';
+            this.classList.add('active');
+            
+            // Update all shipping boxes
+            updateShippingBoxes(filterType);
+        });
+    });
+}
+
+function updateShippingBoxes(filterType) {
+    const shippingBoxes = document.querySelectorAll('.shipping-box');
+    
+    shippingBoxes.forEach(box => {
+        const statusCount = box.querySelector('.status-count');
+        const statusUnit = box.querySelector('.status-unit');
+        
+        if (statusCount && statusUnit) {
+            let value, unit;
+            
+            switch(filterType) {
+                case 'modules':
+                    value = parseInt(box.getAttribute('data-modules') || 0);
+                    unit = 'modules';
+                    break;
+                case 'truckloads':
+                    value = parseFloat(box.getAttribute('data-truckloads') || 0);
+                    unit = 'truckloads';
+                    break;
+                case 'mws':
+                    value = parseFloat(box.getAttribute('data-mws') || 0);
+                    unit = 'MWs';
+                    break;
+                case 'pallets':
+                default:
+                    value = parseInt(box.getAttribute('data-pallets') || 0);
+                    unit = 'pallets';
+                    break;
+            }
+            
+            // Format the value based on type
+            if (filterType === 'truckloads' || filterType === 'mws') {
+                statusCount.textContent = value % 1 === 0 ? value.toString() : value.toFixed(1);
+            } else {
+                statusCount.textContent = Math.round(value).toLocaleString();
+            }
+            
+            statusUnit.textContent = unit;
+        }
+    });
+}
+
+// Initialize shipping filters when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    if (document.querySelector('.shipping-filters')) {
+        initializeShippingFilters();
+    }
+});
+
 <?php endif; ?>
 
 // Dropdown functionality
