@@ -213,66 +213,32 @@ $dateLabelsJSON    = json_encode($date_labels);
 $lineChartDataJSON = json_encode($lineChartData);
 
 // --------------- Delivery Status Table ---------------
-// Get delivered to project
-$stmt = $conn->prepare("
-    SELECT wattage, SUM(quantity) AS total_quantity
-    FROM deliveries
-    WHERE project_id=? AND status_of_delivery = 'Delivered to Project'
-    GROUP BY wattage
-");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$delivered_result = $stmt->get_result();
-
-$delivery_totals = [];
-$delivered_raw_total = 0; // Raw module count for timeline calculations
-while ($row = $delivered_result->fetch_assoc()) {
-    $w   = (float)$row['wattage'];
-    $lbl = $w . 'W';
-    $raw_qty = (int)$row['total_quantity'];
-    $q_calc = calculateQuantity($raw_qty, $w, $view_mode);
-
-    // Track raw delivered total for timeline
-    $delivered_raw_total += $raw_qty;
-
-    if (!isset($delivery_totals[$lbl])) {
-        $delivery_totals[$lbl] = [
-            'Delivered to Project' => 0,
-            'In Warehouse' => 0,
-            'Pending' => 0,
-        ];
-    }
-    $delivery_totals[$lbl]['Delivered to Project'] = $q_calc;
-}
-$stmt->close();
-
-// Get currently in warehouse using inventory_pallets status (matching module_movements.php logic)
-$stmt = $conn->prepare("
-    SELECT ip.wattage, SUM(ip.quantity) AS total_quantity
-    FROM inventory_pallets ip
-    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
-    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-    WHERE ip.status = 'In Warehouse' 
-    AND (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
-    GROUP BY ip.wattage
-");
+$stmt = $conn->prepare("\n    SELECT ip.wattage, ip.status, SUM(ip.quantity) AS total_quantity\n    FROM inventory_pallets ip\n    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id\n    LEFT JOIN modules m ON umi.unassigned_module_id = m.id\n    WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)\n    GROUP BY ip.wattage, ip.status\n");
 $stmt->bind_param("iii", $project_id, $project_id, $project_id);
 $stmt->execute();
-$warehouse_result = $stmt->get_result();
+$status_result = $stmt->get_result();
 
-while ($row = $warehouse_result->fetch_assoc()) {
-    $w   = (float)$row['wattage'];
-    $lbl = $w . 'W';
-    $q_calc = calculateQuantity((int)$row['total_quantity'], $w, $view_mode);
+$delivery_totals = [];
+while ($row = $status_result->fetch_assoc()) {
+    $w      = (float)$row['wattage'];
+    $lbl    = $w . 'W';
+    $status = $row['status'];
+    $qty    = (int)$row['total_quantity'];
 
     if (!isset($delivery_totals[$lbl])) {
         $delivery_totals[$lbl] = [
-            'Delivered to Project' => 0,
-            'In Warehouse' => 0,
-            'Pending' => 0,
+            'At Manufacturer'         => 0,
+            'On Water'                => 0,
+            'Cleared Customs'         => 0,
+            'In Transit to Warehouse' => 0,
+            'In Warehouse'            => 0,
+            'In Transit to Project'   => 0,
+            'Delivered to Project'    => 0,
         ];
     }
-    $delivery_totals[$lbl]['In Warehouse'] = $q_calc;
+    if (isset($delivery_totals[$lbl][$status])) {
+        $delivery_totals[$lbl][$status] = $qty;
+    }
 }
 $stmt->close();
 
@@ -280,75 +246,109 @@ $stmt->close();
 // This ensures we don't double-count modules that have moved through the system
 
 // Summaries
-$total_order_combined      = 0;
-$delivered_combined        = 0;
-$in_warehouse_combined     = 0;
-$on_water_combined         = 0;
-$cleared_customs_combined  = 0;
-$pending_combined          = 0;
+$total_order_combined            = 0;
+$at_manufacturer_combined        = 0;
+$on_water_combined               = 0;
+$cleared_customs_combined        = 0;
+$in_transit_wh_combined          = 0;
+$in_warehouse_combined           = 0;
+$in_transit_proj_combined        = 0;
+$delivered_combined              = 0;
+$pending_combined                = 0; // legacy
 
 $pieChartData = [
-    'Delivered to Project' => 0,
-    'In Warehouse'      => 0,
-    'On Water'         => 0,
-    'Cleared Customs'  => 0,
-    'Pending'          => 0,
+    'Delivered to Project'   => 0,
+    'At Manufacturer'        => 0,
+    'On Water'               => 0,
+    'Cleared Customs'        => 0,
+    'In Transit to Warehouse'=> 0,
+    'In Warehouse'           => 0,
+    'In Transit to Project'  => 0,
 ];
 
 $sub_rows        = [];
 $sub_rows_status = [];
 
 foreach ($total_orders as $lbl => $info) {
-    $w  = (float)$info['wattage'];
-    $to = (float)$info['total_order'];
+    $w        = (float)$info['wattage'];
+    $to_raw   = (int)$info['total_order'];
+    $to       = calculateQuantity($to_raw, $w, $view_mode);
 
-    $del = $delivery_totals[$lbl]['Delivered to Project'] ?? 0;
-    $inw = $delivery_totals[$lbl]['In Warehouse'] ?? 0;
-    $onw = $delivery_totals[$lbl]['On Water'] ?? 0;
-    $clr = $delivery_totals[$lbl]['Cleared Customs'] ?? 0;
-    // Calculate pending as total order minus all known statuses
-    $pending = $to - ($del + $inw + $onw + $clr);
-    // Ensure pending is never negative  
-    $pending = max(0, $pending);
+    $atm_raw  = $delivery_totals[$lbl]['At Manufacturer'] ?? 0;
+    $onw_raw  = $delivery_totals[$lbl]['On Water'] ?? 0;
+    $clr_raw  = $delivery_totals[$lbl]['Cleared Customs'] ?? 0;
+    $itw_raw  = $delivery_totals[$lbl]['In Transit to Warehouse'] ?? 0;
+    $inw_raw  = $delivery_totals[$lbl]['In Warehouse'] ?? 0;
+    $itp_raw  = $delivery_totals[$lbl]['In Transit to Project'] ?? 0;
+    $del_raw  = $delivery_totals[$lbl]['Delivered to Project'] ?? 0;
 
-    // Next 5 Weeks
+    $total_order_combined       += $to;
+    $at_manufacturer_combined   += calculateQuantity($atm_raw, $w, $view_mode);
+    $on_water_combined          += calculateQuantity($onw_raw, $w, $view_mode);
+    $cleared_customs_combined   += calculateQuantity($clr_raw, $w, $view_mode);
+    $in_transit_wh_combined     += calculateQuantity($itw_raw, $w, $view_mode);
+    $in_warehouse_combined      += calculateQuantity($inw_raw, $w, $view_mode);
+    $in_transit_proj_combined   += calculateQuantity($itp_raw, $w, $view_mode);
+    $delivered_combined         += calculateQuantity($del_raw, $w, $view_mode);
+
     $sub_rows[$lbl] = [
-        'wattage_label'      => $lbl,
-        'total_order'        => $to,
-        'delivered'          => $del,
+        'wattage_label'        => $lbl,
+        'wattage'              => $w,
+        'total_order_raw'      => $to_raw,
+        'delivered_raw'        => $del_raw,
+        'total_order'          => $to,
+        'delivered'            => calculateQuantity($del_raw,$w,$view_mode),
         'anticipated_quantities'=> [],
     ];
-    // Delivery Status
+
     $sub_rows_status[$lbl] = [
-        'wattage_label'      => $lbl,
-        'total_order'        => $to,
-        'delivered'          => $del,
-        'in_warehouse'       => $inw,
-        'on_water'           => $onw,
-        'cleared_customs'    => $clr,
-        'pending'            => $pending,
+        'wattage_label'        => $lbl,
+        'wattage'              => $w,
+        'total_order_raw'      => $to_raw,
+        'total_order'          => $to,
+        'at_manufacturer_raw'  => $atm_raw,
+        'on_water_raw'         => $onw_raw,
+        'cleared_customs_raw'  => $clr_raw,
+        'in_transit_wh_raw'    => $itw_raw,
+        'in_warehouse_raw'     => $inw_raw,
+        'in_transit_proj_raw'  => $itp_raw,
+        'delivered_raw'        => $del_raw,
+        // legacy fields for JS unit conversions
+        'delivered'            => calculateQuantity($del_raw,$w,$view_mode),
+        'in_warehouse'         => calculateQuantity($inw_raw,$w,$view_mode),
+        'on_water'             => calculateQuantity($onw_raw,$w,$view_mode),
+        'cleared_customs'      => calculateQuantity($clr_raw,$w,$view_mode),
+        'pending'              => 0,
     ];
 
-    $total_order_combined      += $to;
-    $delivered_combined        += $del;
-    $in_warehouse_combined     += $inw;
-    $on_water_combined         += $onw;
-    $cleared_customs_combined  += $clr;
-    $pending_combined          += $pending;
-
-    $pieChartData['Delivered to Project'] += $del;
-    $pieChartData['In Warehouse']      += $inw;
-    $pieChartData['On Water']         += $onw;
-    $pieChartData['Cleared Customs']  += $clr;
-    $pieChartData['Pending']          += $pending;
+    $pieChartData['Delivered to Project']    += calculateQuantity($del_raw, $w, $view_mode);
+    $pieChartData['At Manufacturer']         += calculateQuantity($atm_raw, $w, $view_mode);
+    $pieChartData['On Water']                += calculateQuantity($onw_raw, $w, $view_mode);
+    $pieChartData['Cleared Customs']         += calculateQuantity($clr_raw, $w, $view_mode);
+    $pieChartData['In Transit to Warehouse'] += calculateQuantity($itw_raw, $w, $view_mode);
+    $pieChartData['In Warehouse']            += calculateQuantity($inw_raw, $w, $view_mode);
+    $pieChartData['In Transit to Project']   += calculateQuantity($itp_raw, $w, $view_mode);
 }
+
 $total_pie = array_sum($pieChartData);
 $pieChartPercentages = [];
+$pieChartColorsMap = [
+    'Delivered to Project'   => '#488C9A',
+    'At Manufacturer'        => '#FF8C00',
+    'On Water'               => '#66B2FF',
+    'Cleared Customs'        => '#C0C0C0',
+    'In Transit to Warehouse'=> '#FFD700',
+    'In Warehouse'           => '#293E4C',
+    'In Transit to Project'  => '#8A2BE2',
+];
+$pieChartColorsOrdered = [];
 foreach ($pieChartData as $k => $v) {
-    $perc = ($total_pie>0)?(($v/$total_pie)*100):0;
-    $pieChartPercentages[$k] = $perc;
+    if ($v > 0) {
+        $perc = ($total_pie>0)?(($v/$total_pie)*100):0;
+        $pieChartPercentages[$k] = $perc;
+        $pieChartColorsOrdered[] = $pieChartColorsMap[$k];
+    }
 }
-
 // Next 5 weeks
 $today2 = new DateTime();
 $weeks  = [];
@@ -382,12 +382,10 @@ while ($r2 = $res2->fetch_assoc()) {
     $lbl = $w . 'W';
     $d   = $r2['ddate'];
     $raw = (int)$r2['q'];
-    $qcalc = calculateQuantity($raw, $w, $view_mode);
-
     if (!isset($anticipated_deliveries_by_lbl[$lbl][$d])) {
         $anticipated_deliveries_by_lbl[$lbl][$d] = 0;
     }
-    $anticipated_deliveries_by_lbl[$lbl][$d] += $qcalc;
+    $anticipated_deliveries_by_lbl[$lbl][$d] += $raw;
 }
 $stmt->close();
 
@@ -3536,23 +3534,23 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <tr onclick="toggleSubRowsAdmin('delivery-row-admin')">
                                         <td><?php echo htmlspecialchars($project['project_name']);?></td>
                                         <td><?php echo htmlspecialchars($module_type_combined);?></td>
-                                        <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
-                                        <?php foreach($anticipated_quantities_combined as $qq): ?>
-                                            <td><?php echo number_format($qq,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php foreach($anticipated_quantities_combined as $qq): ?>
+                                        <td><?php echo number_format($qq,($view_mode=='mw')?2:0);?></td>
+                                    <?php endforeach;?>
+                                </tr>
+                                <?php foreach($sub_rows as $lbl=>$sr): ?>
+                                    <tr class="delivery-row-admin" style="display:none;">
+                                        <td><?php echo htmlspecialchars($project['project_name']);?></td>
+                                        <td><?php echo htmlspecialchars($sr['wattage_label']);?></td>
+                                        <td><?php echo number_format(calculateQuantity($sr['total_order_raw'],$sr['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(calculateQuantity($sr['delivered_raw'],$sr['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <?php foreach($sr['anticipated_quantities'] as $val): ?>
+                                            <td><?php echo number_format(calculateQuantity($val,$sr['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
                                         <?php endforeach;?>
                                     </tr>
-                                    <?php foreach($sub_rows as $lbl=>$sr): ?>
-                                        <tr class="delivery-row-admin" style="display:none;">
-                                            <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                            <td><?php echo htmlspecialchars($sr['wattage_label']);?></td>
-                                            <td><?php echo number_format($sr['total_order'],($view_mode=='mw')?2:0);?></td>
-                                            <td><?php echo number_format($sr['delivered'],($view_mode=='mw')?2:0);?></td>
-                                            <?php foreach($sr['anticipated_quantities'] as $val): ?>
-                                                <td><?php echo number_format($val,($view_mode=='mw')?2:0);?></td>
-                                            <?php endforeach;?>
-                                        </tr>
-                                    <?php endforeach;?>
+                                <?php endforeach;?>
                                 </tbody>
                             </table>
                         </div>
@@ -3569,46 +3567,70 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                         <th>Project</th>
                                         <th>Module Type</th>
                                         <th>Total Order</th>
-                                        <th>Delivered to Project</th>
-                                        <th>In Warehouse</th>
+                                        <th>At Manufacturer</th>
                                         <?php if ($on_water_combined > 0): ?>
                                         <th>On Water</th>
                                         <?php endif; ?>
                                         <?php if ($cleared_customs_combined > 0): ?>
                                         <th>Cleared Customs</th>
                                         <?php endif; ?>
-                                        <th>Pending</th>
+                                        <?php if ($in_transit_wh_combined > 0): ?>
+                                        <th>In Transit to Warehouse</th>
+                                        <?php endif; ?>
+                                        <?php if ($in_warehouse_combined > 0): ?>
+                                        <th>In Warehouse</th>
+                                        <?php endif; ?>
+                                        <?php if ($in_transit_proj_combined > 0): ?>
+                                        <th>In Transit to Project</th>
+                                        <?php endif; ?>
+                                        <th>Delivered to Project</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr onclick="toggleSubRowsAdmin('status-row-admin')">
                                         <td><?php echo htmlspecialchars($project['project_name']);?></td>
                                         <td><?php echo htmlspecialchars($module_type_combined);?></td>
-                                        <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
-                                        <?php if ($on_water_combined > 0): ?>
-                                        <td><?php echo number_format($on_water_combined,($view_mode=='mw')?2:0);?></td>
-                                        <?php endif; ?>
-                                        <?php if ($cleared_customs_combined > 0): ?>
-                                        <td><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?></td>
-                                        <?php endif; ?>
-                                        <td><?php echo number_format($pending_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($at_manufacturer_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php if ($on_water_combined > 0): ?>
+                                    <td><?php echo number_format($on_water_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
+                                    <?php if ($cleared_customs_combined > 0): ?>
+                                    <td><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
+                                    <?php if ($in_transit_wh_combined > 0): ?>
+                                    <td><?php echo number_format($in_transit_wh_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
+                                    <?php if ($in_warehouse_combined > 0): ?>
+                                    <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
+                                    <?php if ($in_transit_proj_combined > 0): ?>
+                                    <td><?php echo number_format($in_transit_proj_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
+                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
                                     </tr>
                                     <?php foreach($sub_rows_status as $lbl=>$srs): ?>
                                         <tr class="status-row-admin" style="display:none;">
                                             <td><?php echo htmlspecialchars($project['project_name']);?></td>
                                             <td><?php echo htmlspecialchars($srs['wattage_label']);?></td>
-                                            <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
-                                            <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
-                                            <td><?php echo number_format($srs['in_warehouse'],($view_mode=='mw')?2:0);?></td>
-                                            <?php if ($on_water_combined > 0): ?>
-                                            <td><?php echo number_format($srs['on_water'],($view_mode=='mw')?2:0);?></td>
-                                            <?php endif; ?>
-                                            <?php if ($cleared_customs_combined > 0): ?>
-                                            <td><?php echo number_format($srs['cleared_customs'],($view_mode=='mw')?2:0);?></td>
-                                            <?php endif; ?>
-                                            <td><?php echo number_format($srs['pending'],($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(calculateQuantity($srs['total_order_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(calculateQuantity($srs['at_manufacturer_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <?php if ($on_water_combined > 0): ?>
+                                        <td><?php echo number_format(calculateQuantity($srs['on_water_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <?php if ($cleared_customs_combined > 0): ?>
+                                        <td><?php echo number_format(calculateQuantity($srs['cleared_customs_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <?php if ($in_transit_wh_combined > 0): ?>
+                                        <td><?php echo number_format(calculateQuantity($srs['in_transit_wh_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <?php if ($in_warehouse_combined > 0): ?>
+                                        <td><?php echo number_format(calculateQuantity($srs['in_warehouse_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <?php if ($in_transit_proj_combined > 0): ?>
+                                        <td><?php echo number_format(calculateQuantity($srs['in_transit_proj_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <td><?php echo number_format(calculateQuantity($srs['delivered_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
                                         </tr>
                                     <?php endforeach;?>
                                 </tbody>
@@ -3929,10 +3951,10 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <tr class="delivery-row" style="display:none;">
                                         <td><?php echo htmlspecialchars($project['project_name']);?></td>
                                         <td><?php echo htmlspecialchars($sr['wattage_label']);?></td>
-                                        <td><?php echo number_format($sr['total_order'],($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format($sr['delivered'],($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(calculateQuantity($sr['total_order_raw'],$sr['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(calculateQuantity($sr['delivered_raw'],$sr['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
                                         <?php foreach($sr['anticipated_quantities'] as $val): ?>
-                                            <td><?php echo number_format($val,($view_mode=='mw')?2:0);?></td>
+                                            <td><?php echo number_format(calculateQuantity($val,$sr['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
                                         <?php endforeach;?>
                                     </tr>
                                 <?php endforeach;?>
@@ -3952,15 +3974,23 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <th>Project</th>
                                     <th>Module Type</th>
                                     <th>Total Order</th>
-                                    <th>Delivered to Project</th>
-                                    <th>In Warehouse</th>
+                                    <th>At Manufacturer</th>
                                     <?php if ($on_water_combined > 0): ?>
                                     <th>On Water</th>
                                     <?php endif; ?>
                                     <?php if ($cleared_customs_combined > 0): ?>
                                     <th>Cleared Customs</th>
                                     <?php endif; ?>
-                                    <th>Pending</th>
+                                    <?php if ($in_transit_wh_combined > 0): ?>
+                                    <th>In Transit to Warehouse</th>
+                                    <?php endif; ?>
+                                    <?php if ($in_warehouse_combined > 0): ?>
+                                    <th>In Warehouse</th>
+                                    <?php endif; ?>
+                                    <?php if ($in_transit_proj_combined > 0): ?>
+                                    <th>In Transit to Project</th>
+                                    <?php endif; ?>
+                                    <th>Delivered to Project</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -3968,30 +3998,46 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <td><?php echo htmlspecialchars($project['project_name']);?></td>
                                     <td><?php echo htmlspecialchars($module_type_combined);?></td>
                                     <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($at_manufacturer_combined,($view_mode=='mw')?2:0);?></td>
                                     <?php if ($on_water_combined > 0): ?>
                                     <td><?php echo number_format($on_water_combined,($view_mode=='mw')?2:0);?></td>
                                     <?php endif; ?>
                                     <?php if ($cleared_customs_combined > 0): ?>
                                     <td><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?></td>
                                     <?php endif; ?>
-                                    <td><?php echo number_format($pending_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php if ($in_transit_wh_combined > 0): ?>
+                                    <td><?php echo number_format($in_transit_wh_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
+                                    <?php if ($in_warehouse_combined > 0): ?>
+                                    <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
+                                    <?php if ($in_transit_proj_combined > 0): ?>
+                                    <td><?php echo number_format($in_transit_proj_combined,($view_mode=='mw')?2:0);?></td>
+                                    <?php endif; ?>
+                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
                                 </tr>
                                 <?php foreach($sub_rows_status as $lbl=>$srs): ?>
                                     <tr class="status-row" style="display:none;">
                                         <td><?php echo htmlspecialchars($project['project_name']);?></td>
                                         <td><?php echo htmlspecialchars($srs['wattage_label']);?></td>
-                                        <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format($srs['in_warehouse'],($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(calculateQuantity($srs['total_order_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(calculateQuantity($srs['at_manufacturer_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
                                         <?php if ($on_water_combined > 0): ?>
-                                        <td><?php echo number_format($srs['on_water'],($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(calculateQuantity($srs['on_water_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
                                         <?php endif; ?>
                                         <?php if ($cleared_customs_combined > 0): ?>
-                                        <td><?php echo number_format($srs['cleared_customs'],($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(calculateQuantity($srs['cleared_customs_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
                                         <?php endif; ?>
-                                        <td><?php echo number_format($srs['pending'],($view_mode=='mw')?2:0);?></td>
+                                        <?php if ($in_transit_wh_combined > 0): ?>
+                                        <td><?php echo number_format(calculateQuantity($srs['in_transit_wh_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <?php if ($in_warehouse_combined > 0): ?>
+                                        <td><?php echo number_format(calculateQuantity($srs['in_warehouse_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <?php if ($in_transit_proj_combined > 0): ?>
+                                        <td><?php echo number_format(calculateQuantity($srs['in_transit_proj_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
+                                        <?php endif; ?>
+                                        <td><?php echo number_format(calculateQuantity($srs['delivered_raw'],$srs['wattage'],$view_mode),($view_mode=='mw')?2:0);?></td>
                                     </tr>
                                 <?php endforeach;?>
                             </tbody>
@@ -4167,6 +4213,7 @@ var lineChart = new Chart(ctxLine, {
 // Delivery Overview pie (for regular users)
 var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages));?>;
 var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages));?>;
+var pieChartColors = <?php echo json_encode($pieChartColorsOrdered);?>;
 var ctxPieEl       = document.getElementById('pieChart');
 if(ctxPieEl){
 var ctxPie         = ctxPieEl.getContext('2d');
@@ -4176,17 +4223,7 @@ var pieChart = new Chart(ctxPie,{
         labels: pieChartLabels,
         datasets:[{
             data: pieChartData,
-            backgroundColor:[
-                '#488C9A',  // Delivered to Project
-                '#293E4C',  // In Warehouse  
-                '#fbb040',  // On Water
-                '#66B2FF',  // Cleared Customs
-                '#32CD32',  // Pending
-                '#FF6B6B',  // In Transit to Warehouse
-                '#9370DB',  // In Transit to Project
-                '#FF8C00',  // At Manufacturer
-                '#20B2AA'   // Additional colors if needed
-            ]
+            backgroundColor: pieChartColors
         }]
     },
     options:{
@@ -4585,7 +4622,7 @@ function updateDeliveryTables(filterType) {
                     '<?php echo addslashes($lbl); ?>': {
                         total_order: <?php echo $sr['total_order']; ?>,
                         delivered: <?php echo $sr['delivered']; ?>,
-                        weeks: [<?php foreach($sr['anticipated_quantities'] as $v): ?><?php echo $v; ?>,<?php endforeach; ?>]
+                        weeks: [<?php foreach($sr['anticipated_quantities'] as $v): ?><?php echo calculateQuantity($v,$sr['wattage'],$view_mode); ?>,<?php endforeach; ?>]
                     },
                     <?php endforeach; ?>
                 },
@@ -5121,8 +5158,9 @@ function initializeAdminCustomerCharts() {
     // Delivery Overview pie (for admin customer view)
     var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages));?>;
     var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages));?>;
+    var pieChartColors = <?php echo json_encode($pieChartColorsOrdered);?>;
     var ctxPieEl       = document.getElementById('pieChartAdmin');
-    
+
     if(ctxPieEl && !ctxPieEl.chartInitialized){
         var ctxPie = ctxPieEl.getContext('2d');
         new Chart(ctxPie,{
@@ -5131,11 +5169,7 @@ function initializeAdminCustomerCharts() {
                 labels: pieChartLabels,
                 datasets:[{
                     data: pieChartData,
-                    backgroundColor:[
-                        '#488C9A',
-                        '#293E4C',
-                        '#fbb040'
-                    ]
+                    backgroundColor: pieChartColors
                 }]
             },
             options:{
