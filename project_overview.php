@@ -5536,6 +5536,17 @@ document.getElementById('editBatchForm').addEventListener('submit', function(e) 
         </form>
     </div>
 </div>
+
+<!-- Admin Shipping Modal -->
+<div id="shippingModal" class="warehouse-selection-modal" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="shippingModalTitle"></h3>
+            <span class="close-modal" onclick="closeShippingModal()">&times;</span>
+        </div>
+        <div class="modal-body" id="shippingModalContent"></div>
+    </div>
+</div>
 <?php endif; ?>
 
 </body>

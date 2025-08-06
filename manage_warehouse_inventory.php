@@ -45,7 +45,7 @@ function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port) 
     $pallets_in_storage = [];
     $total_pallets = 0;
     
-    // Common pallet query for both warehouses and ports
+    // Common pallet query for both warehouses and ports - prevent double-counting by using most recent delivery per pallet
     $stmtP_Stored = $conn->prepare("
         SELECT 
             ip.id AS pallet_id,
@@ -61,9 +61,12 @@ function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port) 
         LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
         LEFT JOIN modules m ON umi.unassigned_module_id = m.id
         LEFT JOIN delivery_pallets dp_received ON ip.id = dp_received.inventory_pallet_id
-        LEFT JOIN deliveries d_received ON dp_received.delivery_id = d_received.id AND d_received.warehouse_id = ?
+        LEFT JOIN deliveries d_received ON dp_received.delivery_id = d_received.id 
+            AND d_received.warehouse_id = ?
+            AND d_received.status_of_delivery != 'Departed Port'
         LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
         WHERE ip.current_warehouse_id = ? AND ip.status = ?
+        GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.arrival_date, m.vendor_name, p_assigned.project_name
         ORDER BY ip.arrival_date DESC, ip.id DESC
     ");
     
@@ -71,7 +74,7 @@ function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port) 
     $stmtP_Stored->bind_param("iis", $warehouse_id, $warehouse_id, $received_status);
     $stmtP_Stored->execute();
     $resultP_Stored = $stmtP_Stored->get_result();
-    
+
     while ($pallet = $resultP_Stored->fetch_assoc()) {
         $pallets_in_storage[] = $pallet;
         $pallet['assigned_project'] = $pallet['assigned_project'] ?? 'N/A';
@@ -92,61 +95,61 @@ function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port) 
 function fetchPortContainersCleared($conn, $warehouse_id, $received_status) {
     $containers_cleared = [];
     
-    $stmtContainers = $conn->prepare("
-        SELECT 
-            d_received.bol_number AS container_number,
-            d_received.id AS delivery_id,
-            MIN(ip.arrival_date) AS arrival_date,
-            m.vendor_name AS origin_vendor,
-            COUNT(ip.id) AS total_pallets,
-            SUM(ip.quantity) AS total_modules,
-            GROUP_CONCAT(DISTINCT ip.wattage ORDER BY ip.wattage SEPARATOR ', ') AS wattages,
-            GROUP_CONCAT(DISTINCT p_assigned.project_name SEPARATOR ', ') AS projects
-        FROM inventory_pallets ip
-        LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
-        LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-        LEFT JOIN delivery_pallets dp_received ON ip.id = dp_received.inventory_pallet_id
-        LEFT JOIN deliveries d_received ON dp_received.delivery_id = d_received.id AND d_received.warehouse_id = ?
-        LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+        $stmtContainers = $conn->prepare("
+            SELECT 
+                d_received.bol_number AS container_number,
+                d_received.id AS delivery_id,
+                MIN(ip.arrival_date) AS arrival_date,
+                m.vendor_name AS origin_vendor,
+                COUNT(ip.id) AS total_pallets,
+                SUM(ip.quantity) AS total_modules,
+                GROUP_CONCAT(DISTINCT ip.wattage ORDER BY ip.wattage SEPARATOR ', ') AS wattages,
+                GROUP_CONCAT(DISTINCT p_assigned.project_name SEPARATOR ', ') AS projects
+            FROM inventory_pallets ip
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN delivery_pallets dp_received ON ip.id = dp_received.inventory_pallet_id
+            LEFT JOIN deliveries d_received ON dp_received.delivery_id = d_received.id AND d_received.warehouse_id = ?
+            LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
         WHERE ip.current_warehouse_id = ? 
             AND ip.status = ?
             AND d_received.status_of_delivery != 'Departed Port'
-        GROUP BY d_received.bol_number, d_received.id, m.vendor_name
-        ORDER BY MIN(ip.arrival_date) DESC
-    ");
+            GROUP BY d_received.bol_number, d_received.id, m.vendor_name
+            ORDER BY MIN(ip.arrival_date) DESC
+        ");
     
-    if ($stmtContainers) {
-        $stmtContainers->bind_param("iis", $warehouse_id, $warehouse_id, $received_status);
-        $stmtContainers->execute();
-        $resultContainers = $stmtContainers->get_result();
-        
-        while ($container = $resultContainers->fetch_assoc()) {
+        if ($stmtContainers) {
+            $stmtContainers->bind_param("iis", $warehouse_id, $warehouse_id, $received_status);
+            $stmtContainers->execute();
+            $resultContainers = $stmtContainers->get_result();
+            
+            while ($container = $resultContainers->fetch_assoc()) {
             // Create detailed wattage breakdown for this container
-            $wattages = explode(', ', $container['wattages']);
-            $wattage_details = [];
-            foreach ($wattages as $wattage) {
-                $stmtWattageDetail = $conn->prepare("
-                    SELECT COUNT(ip.id) as pallet_count, SUM(ip.quantity) as module_count
-                    FROM inventory_pallets ip
-                    JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
-                    WHERE dp.delivery_id = ? AND ip.wattage = ? AND ip.status = ?
-                ");
-                if ($stmtWattageDetail) {
-                    $stmtWattageDetail->bind_param("iis", $container['delivery_id'], $wattage, $received_status);
-                    $stmtWattageDetail->execute();
-                    $stmtWattageDetail->bind_result($pallet_count, $module_count);
-                    if ($stmtWattageDetail->fetch()) {
-                        $wattage_details[] = "{$wattage}W: {$pallet_count} pallets ({$module_count} modules)";
+                $wattages = explode(', ', $container['wattages']);
+                $wattage_details = [];
+                foreach ($wattages as $wattage) {
+                    $stmtWattageDetail = $conn->prepare("
+                        SELECT COUNT(ip.id) as pallet_count, SUM(ip.quantity) as module_count
+                        FROM inventory_pallets ip
+                        JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+                        WHERE dp.delivery_id = ? AND ip.wattage = ? AND ip.status = ?
+                    ");
+                    if ($stmtWattageDetail) {
+                        $stmtWattageDetail->bind_param("iis", $container['delivery_id'], $wattage, $received_status);
+                        $stmtWattageDetail->execute();
+                        $stmtWattageDetail->bind_result($pallet_count, $module_count);
+                        if ($stmtWattageDetail->fetch()) {
+                            $wattage_details[] = "{$wattage}W: {$pallet_count} pallets ({$module_count} modules)";
+                        }
+                        $stmtWattageDetail->close();
                     }
-                    $stmtWattageDetail->close();
                 }
+                $container['wattage_breakdown'] = implode(' • ', $wattage_details);
+                $container['projects'] = $container['projects'] ?? 'N/A';
+                $containers_cleared[] = $container;
             }
-            $container['wattage_breakdown'] = implode(' • ', $wattage_details);
-            $container['projects'] = $container['projects'] ?? 'N/A';
-            $containers_cleared[] = $container;
+            $stmtContainers->close();
         }
-        $stmtContainers->close();
-    }
     
     return $containers_cleared;
 }
@@ -193,7 +196,7 @@ function fetchTransitPallets($conn, $warehouse_id) {
         $pallet['source_project'] = $pallet['source_project'] ?? 'N/A';
     }
     $stmtP_Transit->close();
-    
+
     return $pallets_in_transit;
 }
 
@@ -221,7 +224,7 @@ function fetchTransitTruckloads($conn, $warehouse_id) {
         JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
         LEFT JOIN projects p ON d.project_id = p.id
         WHERE d.warehouse_id = ? 
-            AND ip.status IN ('In Transit to Warehouse', 'On Water')
+        AND ip.status IN ('In Transit to Warehouse', 'On Water')
             AND d.status_of_delivery != 'Departed Port'
         GROUP BY d.id, d.bol_number, d.supplier, d.anticipated_delivery_date
         ORDER BY d.anticipated_delivery_date ASC
@@ -259,7 +262,7 @@ function fetchTransitTruckloads($conn, $warehouse_id) {
         }
         $stmtTransitTruckloads->close();
     }
-    
+
     return $transit_truckloads;
 }
 
@@ -2521,48 +2524,48 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 // Create and submit form directly to create_shipment.php
                 // Let the server handle container updates and BOL generation redirect
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = 'create_shipment.php';
-                form.style.display = 'none';
-                
-                // Add all form data as hidden inputs
-                const fields = {
-                    'action': 'ship_pallets',
-                    'departure_date': document.getElementById('move_departure_date').value,
-                    'est_arrival_date': document.getElementById('move_est_arrival_date').value,
-                    'freight_cost': document.getElementById('move_freight_cost').value || '0',
-                    'customer_cost': document.getElementById('move_customer_cost').value || '0',
-                    'miles': document.getElementById('move_miles').value || '0',
-                    'origin_type': 'warehouse',
-                    'origin_id': '<?php echo $warehouse_id; ?>',
-                    'destination_type': document.querySelector('input[name="destination_type"]:checked').value,
-                    'destination_id': document.getElementById('move_destination_id').value,
-                    'bol_number': drayageBolNumber,
-                    'container_number': containerNumber,
+                        const form = document.createElement('form');
+                        form.method = 'POST';
+                        form.action = 'create_shipment.php';
+                        form.style.display = 'none';
+                        
+                        // Add all form data as hidden inputs
+                        const fields = {
+                            'action': 'ship_pallets',
+                            'departure_date': document.getElementById('move_departure_date').value,
+                            'est_arrival_date': document.getElementById('move_est_arrival_date').value,
+                            'freight_cost': document.getElementById('move_freight_cost').value || '0',
+                            'customer_cost': document.getElementById('move_customer_cost').value || '0',
+                            'miles': document.getElementById('move_miles').value || '0',
+                            'origin_type': 'warehouse',
+                            'origin_id': '<?php echo $warehouse_id; ?>',
+                            'destination_type': document.querySelector('input[name="destination_type"]:checked').value,
+                            'destination_id': document.getElementById('move_destination_id').value,
+                            'bol_number': drayageBolNumber,
+                            'container_number': containerNumber,
                     'drayage_container_ids': JSON.stringify(containerIds) // Pass container IDs for server-side processing
-                };
+                        };
                 
                 // Add Generate BOL flag if requested
                 if (shouldGenerateBol) {
                     fields['generate_bol'] = '1';
                 }
-                
-                // Add pallet IDs
-                palletIds.forEach((palletId, index) => {
-                    fields[`selected_pallets[${index}]`] = palletId;
-                });
-                
-                // Create hidden inputs
-                for (let [key, value] of Object.entries(fields)) {
-                    const input = document.createElement('input');
-                    input.type = 'hidden';
-                    input.name = key;
-                    input.value = value;
-                    form.appendChild(input);
-                }
-                
-                document.body.appendChild(form);
+                        
+                        // Add pallet IDs
+                        palletIds.forEach((palletId, index) => {
+                            fields[`selected_pallets[${index}]`] = palletId;
+                        });
+                        
+                        // Create hidden inputs
+                        for (let [key, value] of Object.entries(fields)) {
+                            const input = document.createElement('input');
+                            input.type = 'hidden';
+                            input.name = key;
+                            input.value = value;
+                            form.appendChild(input);
+                        }
+                        
+                        document.body.appendChild(form);
                 form.submit(); // Simple form submission - server handles everything including redirects
         })
         .catch(palletError => {
@@ -2579,6 +2582,7 @@ document.addEventListener('DOMContentLoaded', function() {
             closeMoveContainerModal();
         });
     }
+    
 });
 </script>
 </body>
