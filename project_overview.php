@@ -323,7 +323,7 @@ $in_transit_to_warehouse_combined = 0;
 $in_warehouse_combined            = 0;
 $in_transit_to_project_combined   = 0;
 $delivered_combined               = 0;
-$pending_combined                 = 0;
+
 
 // Calculate combined totals by properly aggregating from the raw status data
 // This approach calculates MW correctly by using actual wattage for each module group
@@ -379,7 +379,6 @@ $pieChartData = [
     'In Transit to Warehouse' => 0,
     'In Transit to Project'   => 0,
     'In Warehouse'            => 0,
-    'Pending'                 => 0,
 ];
 
 $sub_rows        = [];
@@ -414,8 +413,6 @@ foreach ($all_wattages as $lbl => $info) {
     $inw   = $delivery_totals[$lbl]['In Warehouse'] ?? 0;
     $itp   = $delivery_totals[$lbl]['In Transit to Project'] ?? 0;
     $del   = $delivery_totals[$lbl]['Delivered to Project'] ?? 0;
-    $pending = $to - ($atman + $onw + $clr + $itw + $inw + $itp + $del);
-    $pending = max(0, $pending);
 
     // Next 5 Weeks
     $sub_rows[$lbl] = [
@@ -435,7 +432,6 @@ foreach ($all_wattages as $lbl => $info) {
         'in_warehouse'           => $inw,
         'in_transit_to_project'  => $itp,
         'delivered'              => $del,
-        'pending'                => $pending,
     ];
 
     $total_order_combined             += $to;
@@ -447,7 +443,6 @@ foreach ($all_wattages as $lbl => $info) {
     // $in_warehouse_combined            += $inw;
     // $in_transit_to_project_combined   += $itp;
     // $delivered_combined               += $del;
-    $pending_combined                 += $pending;
 
     // pieChartData will be calculated after the loop using the correct combined values
 }
@@ -460,11 +455,19 @@ $pieChartData['Cleared Customs']         = $cleared_customs_combined;
 $pieChartData['In Transit to Warehouse'] = $in_transit_to_warehouse_combined;
 $pieChartData['In Transit to Project']   = $in_transit_to_project_combined;
 $pieChartData['In Warehouse']            = $in_warehouse_combined;
-$pieChartData['Pending']                 = $pending_combined;
 
-$total_pie = array_sum($pieChartData);
-$pieChartPercentages = [];
+// Filter out statuses with 0 values (except always-visible ones)
+$filteredPieChartData = [];
+$alwaysVisible = ['At Manufacturer', 'Delivered to Project'];
 foreach ($pieChartData as $k => $v) {
+    if ($v > 0 || in_array($k, $alwaysVisible)) {
+        $filteredPieChartData[$k] = $v;
+    }
+}
+
+$total_pie = array_sum($filteredPieChartData);
+$pieChartPercentages = [];
+foreach ($filteredPieChartData as $k => $v) {
     $perc = ($total_pie>0)?(($v/$total_pie)*100):0;
     $pieChartPercentages[$k] = $perc;
 }
@@ -3630,7 +3633,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                         <?php if ($cleared_customs_combined > 0): ?>
                                         <th>Cleared Customs</th>
                                         <?php endif; ?>
-                                        <th>Pending</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -3646,7 +3648,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                         <?php if ($cleared_customs_combined > 0): ?>
                                         <td><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?></td>
                                         <?php endif; ?>
-                                        <td><?php echo number_format($pending_combined,($view_mode=='mw')?2:0);?></td>
                                     </tr>
                                     <?php foreach($sub_rows_status as $lbl=>$srs): ?>
                                         <tr class="status-row-admin" style="display:none;">
@@ -3661,7 +3662,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                             <?php if ($cleared_customs_combined > 0): ?>
                                             <td><?php echo number_format($srs['cleared_customs'],($view_mode=='mw')?2:0);?></td>
                                             <?php endif; ?>
-                                            <td><?php echo number_format($srs['pending'],($view_mode=='mw')?2:0);?></td>
                                         </tr>
                                     <?php endforeach;?>
                                 </tbody>
@@ -4255,7 +4255,6 @@ var pieChart = new Chart(ctxPie,{
                 '#9370DB',  // In Transit to Warehouse
                 '#C0C0C0',  // In Transit to Project
                 '#FF6B6B',  // In Warehouse
-                '#20B2AA',  // Pending
                 '#32CD32'   // Additional if needed
             ]
         }]
@@ -4270,6 +4269,21 @@ var pieChart = new Chart(ctxPie,{
                         return lab+': '+ val.toFixed(2)+'%';
                     }
                 }
+            }
+        },
+        onClick: function(event, elements) {
+            if (elements.length > 0) {
+                const elementIndex = elements[0].index;
+                const label = pieChartLabels[elementIndex];
+                
+                // Map pie chart labels to modal status names
+                let modalStatus = label;
+                if (label === 'Delivered to Project') {
+                    modalStatus = 'Delivered';
+                }
+                
+                // Open the same modal as the shipping status boxes
+                showCustomerShippingModal(modalStatus);
             }
         }
     }
@@ -4652,7 +4666,6 @@ function updateDeliveryTables(filterType) {
                 cleared_customs: <?php echo $cleared_customs_combined; ?>,
                 in_transit_to_warehouse: <?php echo $in_transit_to_warehouse_combined; ?>,
                 in_transit_to_project: <?php echo $in_transit_to_project_combined; ?>,
-                pending: <?php echo $pending_combined; ?>,
                 weeks: [<?php foreach($anticipated_quantities_combined as $q): ?><?php echo $q; ?>,<?php endforeach; ?>],
                 sub_rows: {
                     <?php foreach($sub_rows as $lbl => $sr): ?>
@@ -4674,7 +4687,6 @@ function updateDeliveryTables(filterType) {
                         cleared_customs: <?php echo $srs['cleared_customs']; ?>,
                         in_transit_to_warehouse: <?php echo ($srs['in_transit_to_warehouse'] ?? 0); ?>,
                         in_transit_to_project: <?php echo ($srs['in_transit_to_project'] ?? 0); ?>,
-                        pending: <?php echo $srs['pending']; ?>
                     },
                     <?php endforeach; ?>
                 }
@@ -4699,7 +4711,6 @@ function updateDeliveryTables(filterType) {
             cleared_customs: Math.round(window.originalTableData.mw.cleared_customs * 1000000 / avgWattage),
             in_transit_to_warehouse: Math.round(window.originalTableData.mw.in_transit_to_warehouse * 1000000 / avgWattage),
             in_transit_to_project: Math.round(window.originalTableData.mw.in_transit_to_project * 1000000 / avgWattage),
-            pending: Math.round(window.originalTableData.mw.pending * 1000000 / avgWattage),
             weeks: window.originalTableData.mw.weeks.map(w => Math.round(w * 1000000 / avgWattage)),
             sub_rows: {},
             sub_rows_status: {}
@@ -4716,7 +4727,6 @@ function updateDeliveryTables(filterType) {
             cleared_customs: Math.round(window.originalTableData.modules.cleared_customs / modulesPerPallet),
             in_transit_to_warehouse: Math.round(window.originalTableData.modules.in_transit_to_warehouse / modulesPerPallet),
             in_transit_to_project: Math.round(window.originalTableData.modules.in_transit_to_project / modulesPerPallet),
-            pending: Math.round(window.originalTableData.modules.pending / modulesPerPallet),
             weeks: window.originalTableData.modules.weeks.map(w => Math.round(w / modulesPerPallet)),
             sub_rows: {},
             sub_rows_status: {}
@@ -4733,7 +4743,6 @@ function updateDeliveryTables(filterType) {
             cleared_customs: (window.originalTableData.pallets.cleared_customs / palletsPerTruck).toFixed(1),
             in_transit_to_warehouse: (window.originalTableData.pallets.in_transit_to_warehouse / palletsPerTruck).toFixed(1),
             in_transit_to_project: (window.originalTableData.pallets.in_transit_to_project / palletsPerTruck).toFixed(1),
-            pending: (window.originalTableData.pallets.pending / palletsPerTruck).toFixed(1),
             weeks: window.originalTableData.pallets.weeks.map(w => (w / palletsPerTruck).toFixed(1)),
             sub_rows: {},
             sub_rows_status: {}
