@@ -637,6 +637,44 @@ if (!empty($container_numbers_json)) {
         $generateBol = isset($_POST['generate_bol']) && $_POST['generate_bol'] === '1';
         $deliveryIdsParam = implode(',', $createdDeliveryIds);
         
+        // ===============================================================
+        // DRAYAGE CONTAINER PROCESSING - Handle container updates 
+        // ===============================================================
+        
+        // If this is a drayage shipment (has drayage_container_ids), update the original container deliveries
+        if (!empty($_POST['drayage_container_ids'])) {
+            $drayage_container_ids = json_decode($_POST['drayage_container_ids'], true);
+            $container_number_for_update = $_POST['container_number'] ?? '';
+            
+            if (is_array($drayage_container_ids) && !empty($drayage_container_ids) && !empty($container_number_for_update)) {
+                // Update original container deliveries to mark them as "Departed Port"
+                $placeholders = implode(',', array_fill(0, count($drayage_container_ids), '?'));
+                $types = str_repeat('i', count($drayage_container_ids));
+                
+                // Remove pallet associations from original container deliveries
+                $sql_unlink = "DELETE FROM delivery_pallets WHERE delivery_id IN ($placeholders)";
+                $stmt_unlink = $conn->prepare($sql_unlink);
+                if ($stmt_unlink) {
+                    $stmt_unlink->bind_param($types, ...$drayage_container_ids);
+                    $stmt_unlink->execute();
+                    $stmt_unlink->close();
+                }
+                
+                // Update container delivery status to prevent reappearance in port lists
+                $sql_update = "UPDATE deliveries SET status_of_delivery = 'Departed Port', actual_delivery_date = CURDATE() WHERE id IN ($placeholders)";
+                $stmt_update = $conn->prepare($sql_update);
+                if ($stmt_update) {
+                    $stmt_update->bind_param($types, ...$drayage_container_ids);
+                    $stmt_update->execute();
+                    $stmt_update->close();
+                }
+            }
+        }
+        
+        // ===============================================================
+        // BOL GENERATION AND REDIRECT HANDLING
+        // ===============================================================
+        
         if ($generateBol) {
             // User wants to generate BOL - redirect directly to BOL generation
             // Store a simple success message for later display after BOL generation
