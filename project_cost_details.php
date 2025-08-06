@@ -159,11 +159,11 @@ function calculateDeliveryWarehousingCost($delivery, $conn) {
     $delivery_id = $delivery['id'];
     $warehouse_id = $delivery['warehouse_id'];
     
-    // Get warehouse info for this specific delivery
+    // Get warehouse cost items for this specific delivery
     $stmt_warehouse = $conn->prepare("
-        SELECT in_fee, out_fee, monthly_storage_fee 
-        FROM warehouses 
-        WHERE id = ?
+        SELECT label, trigger_event, amount, unit_type
+        FROM warehouse_cost_items 
+        WHERE warehouse_id = ? AND is_active = 1
     ");
     if (!$stmt_warehouse) {
         return 0;
@@ -173,12 +173,23 @@ function calculateDeliveryWarehousingCost($delivery, $conn) {
     $stmt_warehouse->execute();
     $warehouse_result = $stmt_warehouse->get_result();
     
-    if ($warehouse_result->num_rows === 0) {
-        $stmt_warehouse->close();
-        return 0;
-    }
+    // Parse cost items into usable structure
+    $in_fee = 0;
+    $out_fee = 0;
+    $monthly_storage_fee = 0;
     
-    $warehouse = $warehouse_result->fetch_assoc();
+    while ($cost_item = $warehouse_result->fetch_assoc()) {
+        $label = strtolower($cost_item['label']);
+        $amount = floatval($cost_item['amount'] ?? 0);
+        
+        if (strpos($label, 'entry') !== false || strpos($label, 'in') !== false) {
+            $in_fee = $amount;
+        } elseif (strpos($label, 'exit') !== false || strpos($label, 'out') !== false) {
+            $out_fee = $amount;
+        } elseif (strpos($label, 'monthly') !== false || strpos($label, 'storage') !== false) {
+            $monthly_storage_fee = $amount;
+        }
+    }
     $stmt_warehouse->close();
     
     // Get all pallets associated with this delivery
@@ -225,12 +236,12 @@ function calculateDeliveryWarehousingCost($delivery, $conn) {
         return 0;
     }
     
-    // Calculate costs like warehouse_info.php
-    $in_fee_cost = ($warehouse['in_fee'] ?? 0) * $pallet_count; // All pallets that arrived
-    $out_fee_cost = ($warehouse['out_fee'] ?? 0) * $pallets_that_left; // Only pallets that left
+    // Calculate costs using warehouse_cost_items
+    $in_fee_cost = $in_fee * $pallet_count; // All pallets that arrived
+    $out_fee_cost = $out_fee * $pallets_that_left; // Only pallets that left
     
     // Storage cost based on actual days stored
-    $daily_storage_rate = ($warehouse['monthly_storage_fee'] ?? 0) / 30;
+    $daily_storage_rate = $monthly_storage_fee > 0 ? ($monthly_storage_fee / 30) : 0;
     $storage_cost = $total_storage_days * $daily_storage_rate;
     
     $total_warehousing_cost = $in_fee_cost + $out_fee_cost + $storage_cost;
@@ -238,15 +249,15 @@ function calculateDeliveryWarehousingCost($delivery, $conn) {
     return $total_warehousing_cost;
 }
 
-// Initialize totals
-$total_customer_cost     = 0;
-$total_accessorial_costs = 0;
-$total_warehousing_cost  = 0;
-$total_solterra_fee      = 0;
-$total_logistics_cost    = 0;
+// Initialize totals - ensure they are never null
+$total_customer_cost     = 0.0;
+$total_accessorial_costs = 0.0;
+$total_warehousing_cost  = 0.0;
+$total_solterra_fee      = 0.0;
+$total_logistics_cost    = 0.0;
 
 $total_quantity         = 0;
-$total_wattage_quantity = 0;
+$total_wattage_quantity = 0.0;
 $total_pallets_count    = 0;
 
 $deliveries = [];
@@ -322,18 +333,17 @@ if ($stmtPallets) $stmtPallets->close();
 // Calculate overall cost per pallet
 $overall_cost_per_pallet = ($total_pallets_count > 0) ? ($total_logistics_cost / $total_pallets_count) : 0;
 
-// Price per watt / module
+// Price per watt / module - ensure safe division
+$price_per_watt = 0.0;
+$price_per_module = 0.0;
+
 if ($filter === 'price_per_watt') {
-    if ($total_wattage_quantity > 0) {
+    if ($total_wattage_quantity > 0 && $total_logistics_cost > 0) {
         $price_per_watt = $total_logistics_cost / $total_wattage_quantity;
-    } else {
-        $price_per_watt = 0;
     }
 } elseif ($filter === 'price_per_module') {
-    if ($total_quantity > 0) {
+    if ($total_quantity > 0 && $total_logistics_cost > 0) {
         $price_per_module = $total_logistics_cost / $total_quantity;
-    } else {
-        $price_per_module = 0;
     }
 }
 
@@ -367,12 +377,12 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             $d['quantity'] ?? '',
             $d['pallet_count'] ?? 0,
             $d['status_of_delivery'] ?? '',
-            $d['actual_delivery_date_formatted'],
-            number_format($d['warehousing_cost'], 2),
-            number_format($d['customer_cost'], 2),
-            number_format($d['accessorial_costs'], 2),
-            number_format($d['solterra_fee'], 2),
-            number_format($d['total_logistics_cost'], 2)
+            $d['actual_delivery_date_formatted'] ?? '',
+            number_format($d['warehousing_cost'] ?? 0, 2),
+            number_format($d['customer_cost'] ?? 0, 2),
+            number_format($d['accessorial_costs'] ?? 0, 2),
+            number_format($d['solterra_fee'] ?? 0, 2),
+            number_format($d['total_logistics_cost'] ?? 0, 2)
         ]);
     }
     fclose($output);
@@ -811,14 +821,24 @@ $conn->close();
                         </td>
                         <td><?php echo htmlspecialchars($d['status_of_delivery'] ?? ''); ?></td>
                         <td><?php echo $d['actual_delivery_date_formatted']; ?></td>
-                        <td style="text-align: right;">$<?php echo number_format($d['warehousing_cost'], 2); ?></td>
-                        <td style="text-align: right;">$<?php echo number_format($d['customer_cost'], 2); ?></td>
-                        <td style="text-align: right;">$<?php echo number_format($d['accessorial_costs'], 2); ?></td>
-                        <td style="text-align: right; font-weight: bold; background-color: #f8f9fa;">$<?php echo number_format($d['total_logistics_cost'], 2); ?></td>
+                        <td style="text-align: right;">$<?php echo number_format($d['warehousing_cost'] ?? 0, 2); ?></td>
+                        <td style="text-align: right;">$<?php echo number_format($d['customer_cost'] ?? 0, 2); ?></td>
+                        <td style="text-align: right;">$<?php echo number_format($d['accessorial_costs'] ?? 0, 2); ?></td>
+                        <td style="text-align: right; font-weight: bold; background-color: #f8f9fa;">$<?php echo number_format($d['total_logistics_cost'] ?? 0, 2); ?></td>
                     </tr>
                 <?php endforeach; ?>
             <?php else: ?>
-                <tr><td colspan="11" style="text-align: center; padding: 20px; color: #6c757d;">No deliveries found.</td></tr>
+                <tr><td colspan="11" style="text-align: center; padding: 40px; color: #6c757d;">
+                    <div style="font-size: 1.1em; margin-bottom: 10px;">📋 No deliveries found</div>
+                    <div style="font-size: 0.9em; line-height: 1.4;">
+                        <?php if (!empty($status_filter) || $time_filter !== 'all'): ?>
+                            No deliveries match your current filters. Try adjusting your time period or status filter.
+                        <?php else: ?>
+                            No deliveries have been recorded for this project yet.<br>
+                            Cost details will appear here once deliveries are added to the system.
+                        <?php endif; ?>
+                    </div>
+                </td></tr>
             <?php endif; ?>
             </tbody>
         </table>
