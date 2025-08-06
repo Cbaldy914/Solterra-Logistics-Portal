@@ -2694,10 +2694,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 .timeline-header h2 {
     font-size: 2rem;
     font-weight: 700;
-    background: linear-gradient(135deg, #488C9A 0%, #2c5f7a 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
     margin-bottom: 15px;
 }
 
