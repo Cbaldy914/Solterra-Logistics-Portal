@@ -150,10 +150,10 @@ $deliveries_result = $stmt_deliveries->get_result();
 $stmt_deliveries->close();
 
 // Summations for sustainability
-$total_emissions        = 0;
+$total_emissions        = 0.0;
 $total_truckloads       = 0;
-$total_miles_driven     = 0;
-$total_fuel_consumption = 0;
+$total_miles_driven     = 0.0;
+$total_fuel_consumption = 0.0;
 $total_mws_delivered    = 0;
 $deliveries            = [];
 
@@ -274,14 +274,14 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     ]);
     foreach ($deliveries as $del) {
         fputcsv($output, [
-            $del['supplier'],
-            $del['wattage'],
-            $del['quantity'],
+            $del['supplier'] ?? '',
+            $del['wattage'] ?? '',
+            $del['quantity'] ?? '',
             $del['bol_number'] ?? '',
-            $del['status_of_delivery'],
-            number_format($del['miles_driven'], 2),
-            number_format($del['fuel_consumption'], 2),
-            number_format($del['emissions'], 2),
+            $del['status_of_delivery'] ?? '',
+            number_format($del['miles_driven'] ?? 0, 2),
+            number_format($del['fuel_consumption'] ?? 0, 2),
+            number_format($del['emissions'] ?? 0, 2),
         ]);
     }
     fclose($output);
@@ -646,13 +646,23 @@ $conn->close();
                         <td><?php echo htmlspecialchars($del['quantity'] ?? ''); ?></td>
                         <td><?php echo htmlspecialchars($del['bol_number'] ?? ''); ?></td>
                         <td><?php echo htmlspecialchars($del['status_of_delivery'] ?? ''); ?></td>
-                        <td><?php echo number_format($del['miles_driven'], 2); ?></td>
-                        <td><?php echo number_format($del['fuel_consumption'], 2); ?> gal</td>
-                        <td><?php echo number_format($del['emissions'], 2); ?> kg CO₂</td>
+                        <td><?php echo number_format($del['miles_driven'] ?? 0, 2); ?></td>
+                        <td><?php echo number_format($del['fuel_consumption'] ?? 0, 2); ?> gal</td>
+                        <td><?php echo number_format($del['emissions'] ?? 0, 2); ?> kg CO₂</td>
                     </tr>
                 <?php endforeach; ?>
             <?php else: ?>
-                <tr><td colspan="8">No deliveries found.</td></tr>
+                <tr><td colspan="8" style="text-align: center; padding: 40px; color: #6c757d;">
+                    <div style="font-size: 1.1em; margin-bottom: 10px;">🌱 No sustainability data available</div>
+                    <div style="font-size: 0.9em; line-height: 1.4;">
+                        <?php if (!empty($status_filter) || $time_filter !== 'all'): ?>
+                            No deliveries match your current filters. Try adjusting your time period or status filter.
+                        <?php else: ?>
+                            No deliveries have been recorded for this project yet.<br>
+                            Sustainability metrics will appear here once deliveries are added to the system.
+                        <?php endif; ?>
+                    </div>
+                </td></tr>
             <?php endif; ?>
             </tbody>
         </table>
