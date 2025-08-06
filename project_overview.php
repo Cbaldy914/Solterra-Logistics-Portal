@@ -732,7 +732,7 @@ $combined_ppw = ($sum_watts>0)?($combined_total_costs/$sum_watts):0;
 
 // Cost Breakdown Pie
 $pieChartDataFinancial = [
-    'Customer Cost' => $total_customer_cost,
+    'Freight Cost' => $total_customer_cost,
     'Warehousing'   => $total_warehousing_cost,
     'Accessorial'   => $total_accessorial_costs,
     'Solterra Fee'  => $total_solterra_fee,
@@ -1458,12 +1458,36 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 #financial-info {
     display: none;
 }
-/* Enhanced Layout Containers */
+/* Enhanced Layout Containers - Consistent with Timeline */
 .tables-and-charts {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 30px;
-    margin: 20px;
+    margin: 0 auto 40px auto;
+    background: linear-gradient(135deg, #fafbfc 0%, #f1f3f4 100%);
+    border-radius: 20px;
+    padding: 40px 30px;
+    box-shadow: 
+        0 20px 40px rgba(0, 0, 0, 0.12),
+        0 8px 16px rgba(0, 0, 0, 0.08),
+        0 2px 4px rgba(0, 0, 0, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.03);
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    position: relative;
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+}
+
+.tables-and-charts::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    border-radius: 20px 20px 0 0;
 }
 
 .left-side, .right-side {
@@ -1846,8 +1870,15 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     
     /* Enhanced mobile layout for tables and charts */
     .tables-and-charts {
-        margin: 10px;
+        margin: 0 15px 20px 15px;
+        padding: 30px 20px;
         gap: 15px;
+        box-shadow: 
+            0 16px 32px rgba(0, 0, 0, 0.10),
+            0 6px 12px rgba(0, 0, 0, 0.06),
+            0 2px 4px rgba(0, 0, 0, 0.04),
+            inset 0 1px 0 rgba(255, 255, 255, 0.9),
+            inset 0 -1px 0 rgba(0, 0, 0, 0.02);
     }
     
     .left-side, .right-side {
@@ -4888,12 +4919,15 @@ var budgetLineData        = <?php echo $budgetLineChartDataJSON;?>;
 
 function initializeFinancialCharts(){
     // Cost Breakdown Pie
-    var costPie = document.getElementById('costPieChart').getContext('2d');
+    var costPieEl = document.getElementById('costPieChart');
+    if (!costPieEl || costPieEl.chartInitialized) return; // Exit if element doesn't exist or chart already created
+    
+    var costPie = costPieEl.getContext('2d');
     var costPieLabels = Object.keys(pieChartDataFinancial);
     var costPieValues = Object.values(pieChartDataFinancial);
 
     var colorMap = {
-        'Customer Cost': '#488C9A',
+        'Freight Cost': '#488C9A',
         'Warehousing':   '#293E4C',
         'Accessorial':   '#fbb040',
         'Solterra Fee':  '#BFBFBF'
@@ -4924,9 +4958,13 @@ function initializeFinancialCharts(){
             }
         }
     });
+    costPieEl.chartInitialized = true;
 
     // Forecasted vs Actual cost line chart
-    var ctxBudget = document.getElementById('budgetLineChart').getContext('2d');
+    var ctxBudgetEl = document.getElementById('budgetLineChart');
+    if (!ctxBudgetEl || ctxBudgetEl.chartInitialized) return; // Exit if element doesn't exist or chart already created
+    
+    var ctxBudget = ctxBudgetEl.getContext('2d');
     var antCost = budgetLineData.anticipated_cost;
     var actCost = budgetLineData.actual_cost;
 
@@ -4985,6 +5023,7 @@ function initializeFinancialCharts(){
             }
         }
     });
+    ctxBudgetEl.chartInitialized = true;
 }
 <?php endif; ?>
 
