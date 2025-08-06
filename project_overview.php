@@ -2682,6 +2682,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     padding: 30px;
     margin: 20px;
     border: 1px solid rgba(72, 140, 154, 0.1);
+    margin-top: 0px;
 }
 
 /* ===== CUSTOMER TIMELINE STYLING ===== */
@@ -2702,7 +2703,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 
 /* ===== UNIT FILTERS STYLING ===== */
 .unit-filters-container {
-    margin-bottom: 30px;
     padding: 0 20px;
 }
 
@@ -2820,6 +2820,9 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     position: relative;
     overflow: hidden;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+    display: flex;
+    flex-direction: column;
+    min-height: 120px;
 }
 
 .shipping-box-customer::before {
@@ -2849,15 +2852,19 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     font-weight: 600;
     color: #293E4C;
     font-size: 0.9rem;
-    margin-bottom: 8px;
     line-height: 1.3;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: auto;
 }
 
 .shipping-box-customer .status-count {
     font-size: 2rem;
     font-weight: 700;
     color: #488C9A;
-    margin-bottom: 2px;
+    margin: auto 0 2px 0;
 }
 
 .shipping-box-customer .status-unit {
@@ -3028,9 +3035,27 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                     </div>
                 </div>
                 <button onclick="window.location.href='warehouse_info?project_id=<?php echo $project_id; ?>'">Warehousing</button>
-                <button onclick="window.location.href='project_cost_details?project_id=<?php echo $project_id; ?>'">Costs</button>
-                <button onclick="window.location.href='project_documents?project_id=<?php echo $project_id; ?>'">Documents</button>
-                <button onclick="window.location.href='project_sustainability_details?project_id=<?php echo $project_id; ?>'">Sustainability</button>
+                <div class="dropdown">
+                    <button class="dropdown-btn" onclick="toggleCustomerReportsDropdown()">
+                        Reports <span class="dropdown-arrow">▼</span>
+                    </button>
+                    <div class="dropdown-content" id="customerReportsDropdown">
+                        <a href="project_cost_details?project_id=<?php echo $project_id; ?>">💰 Cost Report</a>
+                        <a href="project_sustainability_details?project_id=<?php echo $project_id; ?>">🌱 Sustainability Report</a>
+                    </div>
+                </div>
+                <div class="dropdown">
+                    <button class="dropdown-btn" onclick="toggleCustomerDocumentsDropdown()">
+                        Documents <span class="dropdown-arrow">▼</span>
+                    </button>
+                    <div class="dropdown-content" id="customerDocumentsDropdown">
+                        <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 All Documents</a>
+                        <a href="invoices.php?project_id=<?php echo $project_id; ?>">📄 Invoices</a>
+                        <a href="pods.php?project_id=<?php echo $project_id; ?>">📋 PODs</a>
+                        <a href="ftd.php?project_id=<?php echo $project_id; ?>">⚡ Flash Test Data</a>
+                    </div>
+                </div>
+                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Warranty</button>
             </div>
         </div>
     </div>
@@ -5108,7 +5133,23 @@ document.addEventListener('DOMContentLoaded', function() {
 // Dropdown functionality
 function toggleCustomerDeliveriesDropdown() {
     var dropdown = document.getElementById("customerDeliveriesDropdown");
-    var dropdownBtn = document.querySelector("#customer-buttons .dropdown-btn");
+    var dropdownBtn = document.querySelector("#customer-buttons .dropdown:first-child .dropdown-btn");
+    
+    dropdown.classList.toggle("show");
+    dropdownBtn.classList.toggle("active");
+}
+
+function toggleCustomerReportsDropdown() {
+    var dropdown = document.getElementById("customerReportsDropdown");
+    var dropdownBtn = document.querySelector("#customer-buttons .dropdown:nth-child(3) .dropdown-btn");
+    
+    dropdown.classList.toggle("show");
+    dropdownBtn.classList.toggle("active");
+}
+
+function toggleCustomerDocumentsDropdown() {
+    var dropdown = document.getElementById("customerDocumentsDropdown");
+    var dropdownBtn = document.querySelector("#customer-buttons .dropdown:nth-child(4) .dropdown-btn");
     
     dropdown.classList.toggle("show");
     dropdownBtn.classList.toggle("active");
