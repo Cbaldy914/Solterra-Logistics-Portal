@@ -4845,11 +4845,11 @@ function updateDeliveryTables(filterType) {
     const mainRow2 = table2.querySelector('tbody tr:first-child');
     if (mainRow2) {
         const cells = mainRow2.querySelectorAll('td');
-        if (cells.length >= 4) {
+        if (cells.length >= 3) {
             cells[1].textContent = formatNumber(data.total_order, decimals);
             cells[2].textContent = formatNumber((data.at_manufacturer || 0), decimals);
-            cells[3].textContent = formatNumber(data.delivered, decimals);
-            let cellIndex = 4;
+            // Start placing optional status columns after the first three fixed columns
+            let cellIndex = 3;
             if (data.on_water > 0 && cells[cellIndex]) {
                 cells[cellIndex].textContent = formatNumber(data.on_water, decimals);
                 cellIndex++;
@@ -4862,9 +4862,17 @@ function updateDeliveryTables(filterType) {
                 cells[cellIndex].textContent = formatNumber(data.in_transit_to_warehouse, decimals);
                 cellIndex++;
             }
+            if (data.in_warehouse > 0 && cells[cellIndex]) {
+                cells[cellIndex].textContent = formatNumber(data.in_warehouse, decimals);
+                cellIndex++;
+            }
             if (data.in_transit_to_project > 0 && cells[cellIndex]) {
                 cells[cellIndex].textContent = formatNumber(data.in_transit_to_project, decimals);
                 cellIndex++;
+            }
+            // Delivered to Project is always the final column
+            if (cells[cellIndex]) {
+                cells[cellIndex].textContent = formatNumber(data.delivered, decimals);
             }
         }
     }
@@ -4890,14 +4898,14 @@ function updateDeliveryTables(filterType) {
     const subRows2 = table2.querySelectorAll('tr.status-row');
     subRows2.forEach(row => {
         const cells = row.querySelectorAll('td');
-        if (cells.length >= 4) {
+        if (cells.length >= 3) {
             const wattageLabel = cells[0].textContent;
             const subData = data.sub_rows_status[wattageLabel];
             if (subData) {
                 cells[1].textContent = formatNumber(subData.total_order, decimals);
                 cells[2].textContent = formatNumber((subData.at_manufacturer || 0), decimals);
-                cells[3].textContent = formatNumber(subData.delivered, decimals);
-                let idx = 4;
+                // Optional status columns start after the first three cells
+                let idx = 3;
                 if (data.on_water > 0 && cells[idx]) {
                     cells[idx].textContent = formatNumber((subData.on_water || 0), decimals);
                     idx++;
@@ -4910,9 +4918,17 @@ function updateDeliveryTables(filterType) {
                     cells[idx].textContent = formatNumber((subData.in_transit_to_warehouse || 0), decimals);
                     idx++;
                 }
+                if (data.in_warehouse > 0 && cells[idx]) {
+                    cells[idx].textContent = formatNumber((subData.in_warehouse || 0), decimals);
+                    idx++;
+                }
                 if (data.in_transit_to_project > 0 && cells[idx]) {
                     cells[idx].textContent = formatNumber((subData.in_transit_to_project || 0), decimals);
                     idx++;
+                }
+                // Delivered to Project is always the final column
+                if (cells[idx]) {
+                    cells[idx].textContent = formatNumber(subData.delivered, decimals);
                 }
             }
         }
