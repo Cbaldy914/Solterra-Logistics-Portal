@@ -378,286 +378,195 @@ foreach ($rows as $row) {
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        /* Modern Design System Variables */
-        :root {
-            --primary-color: #488C9A;
-            --primary-dark: #3A6E7F;
-            --primary-light: #E8F4F6;
-            --secondary-color: #293E4C;
-            --success-color: #28a745;
-            --warning-color: #ffc107;
-            --danger-color: #dc3545;
-            --info-color: #17a2b8;
-            --text-primary: #2C3E50;
-            --text-secondary: #6C757D;
-            --text-muted: #ADB5BD;
-            --bg-primary: #FFFFFF;
-            --bg-secondary: #F8F9FA;
-            --bg-tertiary: #E9ECEF;
-            --border-color: #DEE2E6;
-            --shadow-sm: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
-            --shadow-md: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
-            --shadow-lg: 0 1rem 3rem rgba(0, 0, 0, 0.175);
-            --border-radius: 12px;
-            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-
-
-        /* Global Enhancements */
-        main {
-            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
-            min-height: 100vh;
-            position: relative;
-            overflow-x: hidden;
-        }
-
-        main::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 200px;
-            background: linear-gradient(135deg, var(--primary-light) 0%, rgba(72, 140, 154, 0.1) 100%);
-            z-index: -1;
-        }
-
-        /* Enhanced Header */
-        h1 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: var(--text-primary);
-            margin: 2rem 0;
-            text-align: center;
-            position: relative;
-        }
-
-        h1::after {
-            content: '';
-            position: absolute;
-            bottom: -10px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 80px;
-            height: 4px;
-            background: linear-gradient(90deg, var(--primary-color), var(--primary-dark));
-            border-radius: 2px;
-        }
-
-
-
-        /* Revolutionary Metrics Section */
-        .metrics-filters {
-            margin: 3rem auto 2rem;
-            padding: 2rem;
-            background: var(--bg-primary);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-md);
+        .cost-overview {
             display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            margin-bottom: 50px;
+        }
+        .cost-row {
+            display: flex;
+            width: 100%;
             justify-content: center;
-            align-items: center;
-            gap: 2rem;
             flex-wrap: wrap;
-            max-width: 800px;
-
+            margin-bottom: 20px;
         }
-
-        .metrics-filters label {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 24px;
-            background: var(--bg-secondary);
-            border-radius: 50px;
-            cursor: pointer;
-            transition: var(--transition);
-            font-weight: 500;
-            color: var(--text-primary);
-            border: 2px solid transparent;
-        }
-
-        .metrics-filters label:hover {
-            background: var(--primary-light);
-            transform: translateY(-2px);
-            border-color: var(--primary-color);
-        }
-
-        .metrics-filters input[type="radio"] {
-            appearance: none;
-            width: 20px;
-            height: 20px;
-            border: 2px solid var(--primary-color);
-            border-radius: 50%;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .metrics-filters input[type="radio"]:checked {
-            background: var(--primary-color);
-        }
-
-        .metrics-filters input[type="radio"]:checked::after {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 8px;
-            height: 8px;
-            background: white;
-            border-radius: 50%;
-        }
-
-        .metrics-filters input[type="radio"]:checked ~ span {
-            color: var(--primary-color);
-            font-weight: 600;
-        }
-
-        /* Stunning Metrics Overview */
-        .metrics-overview {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 2rem;
-            margin: 3rem auto;
-            padding: 0 2rem;
-
-        }
-
-        .metric-box {
-            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
-            padding: 2.5rem 2rem;
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-md);
+        .cost-metric {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 20px;
+            margin: 8px;
+            border-radius: 12px;
             text-align: center;
-            position: relative;
-            overflow: hidden;
-            transition: var(--transition);
-            border: 1px solid var(--border-color);
+            min-width: 200px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            border: 1px solid #dee2e6;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
-
-        .metric-box::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, var(--primary-color), var(--primary-dark));
+        .cost-metric:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.15);
         }
-
-        .metric-box:hover {
-            transform: translateY(-8px);
-            box-shadow: var(--shadow-lg);
-        }
-
-        .metric-box h3 {
-            font-size: 1.25rem;
+        .cost-metric h3 {
+            margin: 0 0 10px 0;
             font-weight: 600;
-            color: var(--text-primary);
-            margin-bottom: 1rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            color: #293E4C;
+            font-size: 1rem;
         }
-
-        .metric-box p {
-            font-size: 2.5rem;
-            font-weight: 700;
+        .cost-metric p {
             margin: 0;
-            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            font-size: 1.4rem;
+            font-weight: bold;
+            color: #488C9A;
         }
-
-        /* Enhanced Time Filter Header */
+        .cost-metric--total {
+            max-width: 400px;
+            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
+            color: white;
+        }
+        .cost-metric--total h3,
+        .cost-metric--total p {
+            color: white;
+        }
+        .cost-metric--efficiency {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            border-color: #b8dabd;
+        }
+        .cost-metric--efficiency h3 {
+            color: #155724;
+        }
+        .cost-metric--efficiency p {
+            color: #28a745;
+        }
         .time-filter-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin: 3rem 2rem 2rem;
-            padding: 2rem;
-            background: var(--bg-primary);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
+            margin: 30px 20px 10px 20px;
             flex-wrap: wrap;
-            gap: 1rem;
-
         }
-
         .time-filters {
             display: flex;
-            gap: 8px;
-            background: var(--bg-secondary);
-            padding: 8px;
-            border-radius: 50px;
+            gap: 10px;
         }
-
         .time-filters a {
             text-decoration: none;
-            padding: 12px 20px;
-            border-radius: 50px;
-            color: var(--text-primary);
-            font-weight: 500;
-            transition: var(--transition);
-            position: relative;
+            padding: 6px 12px;
+            background: #eee;
+            border-radius: 4px;
+            color: #333;
         }
-
-        .time-filters a:hover {
-            background: var(--primary-light);
-            transform: translateY(-2px);
-        }
-
         .time-filters a.active {
-            background: var(--primary-color);
-            color: white;
-            box-shadow: var(--shadow-sm);
+            background: #488C9A;
+            color: #fff;
         }
-
         .date-navigation {
             display: flex;
             align-items: center;
-            gap: 1rem;
-            background: var(--bg-secondary);
-            padding: 12px 20px;
-            border-radius: 50px;
+            gap: 10px;
         }
-
         .nav-arrow {
-            width: 40px;
-            height: 40px;
-            border: none;
-            background: var(--primary-color);
-            color: white;
-            border-radius: 50%;
+            font-weight: bold;
             cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-            transition: var(--transition);
+            background: #eee;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
         }
-
         .nav-arrow:hover {
-            background: var(--primary-dark);
-            transform: scale(1.1);
+            background: #ccc;
         }
-
         .date-label {
-            font-weight: 600;
-            font-size: 1.1rem;
-            color: var(--text-primary);
-            min-width: 200px;
-            text-align: center;
+            font-weight: bold;
+            font-size: 1.1em;
         }
-
         .right-filters {
             display: flex;
-            gap: 1rem;
+            flex-direction: row;
+            gap: 10px;
             align-items: center;
-            flex-wrap: wrap;
+        }
+        @media screen and (max-width: 768px) {
+            .mobile-hide {
+                display: none !important;
+            }
+        }
+        .table-container {
+            overflow-x: auto;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 650px;
+        }
+        table, th, td {
+            border: 1px solid #ccc;
+        }
+        th, td {
+            padding: 8px;
+            white-space: nowrap;
+        }
+        tr:hover {
+            background: #f1f1f1;
+        }
+        .legacy-filter-form {
+            margin: 15px 20px 20px 20px;
+            padding: 15px;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid #dee2e6;
+            width: auto !important;
+            max-width: fit-content;
+            display: inline-block;
+        }
+        .legacy-filter-form label {
+            margin-right: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            transition: background-color 0.2s ease;
+            font-size: 0.9em;
+        }
+        .legacy-filter-form label:hover {
+            background-color: #f8f9fa;
+        }
+        .legacy-filter-form input[type="radio"] {
+            margin: 0;
+        }
+        .back-icon {
+            display: inline-flex;
+            align-items: center;
+            text-decoration: none;
+            margin: 10px;
+            color: #333;
+        }
+        .back-icon svg {
+            width: 24px;
+            height: 24px;
+            margin-right: 5px;
+        }
+        .breadcrumb {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .breadcrumb .separator {
+            margin: 0 8px;
+            color: #6c757d;
         }
 
+        /* Enhanced warranty-specific styles */
+        
         /* Dropdown Filters Styling */
         .filters-dropdown, .column-chooser {
             position: relative;
@@ -665,23 +574,23 @@ foreach ($rows as $row) {
         }
 
         .filters-btn, .columns-btn {
-            background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+            background: linear-gradient(135deg, #488C9A, #3A6E7F);
             color: white;
             border: none;
             padding: 12px 20px;
             border-radius: 25px;
             cursor: pointer;
             font-weight: 500;
-            transition: var(--transition);
+            transition: all 0.3s ease;
             display: flex;
             align-items: center;
             gap: 8px;
         }
 
         .filters-btn:hover, .columns-btn:hover {
-            background: linear-gradient(135deg, var(--primary-dark), var(--secondary-color));
+            background: linear-gradient(135deg, #3A6E7F, #293E4C);
             transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
         }
 
         .filters-content, .column-chooser-content {
@@ -689,14 +598,14 @@ foreach ($rows as $row) {
             position: absolute;
             top: 100%;
             right: 0;
-            background: var(--bg-primary);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-lg);
+            background: #FFFFFF;
+            border-radius: 12px;
+            box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.175);
             padding: 1.5rem;
             min-width: 280px;
             z-index: 1000;
             margin-top: 8px;
-            border: 1px solid var(--border-color);
+            border: 1px solid #DEE2E6;
         }
 
         .filters-content.show, .column-chooser-content.show {
@@ -715,7 +624,7 @@ foreach ($rows as $row) {
             display: block;
             margin-bottom: 8px;
             font-weight: 600;
-            color: var(--text-primary);
+            color: #2C3E50;
             font-size: 0.9rem;
         }
 
@@ -726,116 +635,118 @@ foreach ($rows as $row) {
             cursor: pointer;
             padding: 8px;
             border-radius: 8px;
-            transition: var(--transition);
+            transition: all 0.3s ease;
             margin-bottom: 0;
         }
 
         .column-item label:hover {
-            background: var(--primary-light);
+            background: #E8F4F6;
         }
 
         .column-toggle {
             width: 18px;
             height: 18px;
-            accent-color: var(--primary-color);
+            accent-color: #488C9A;
         }
 
         .export-btn {
-            background: linear-gradient(135deg, var(--success-color), #20c997);
+            background: linear-gradient(135deg, #28a745, #20c997);
             color: white;
             border: none;
             padding: 10px 20px;
             border-radius: 25px;
             cursor: pointer;
             font-weight: 500;
-            transition: var(--transition);
+            transition: all 0.3s ease;
             width: 100%;
         }
 
         .export-btn:hover {
             transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
         }
 
         #searchInput, #status_filter {
-            border: 2px solid var(--border-color);
+            border: 2px solid #DEE2E6;
             border-radius: 25px;
             padding: 8px 16px;
-            background: var(--bg-primary);
-            transition: var(--transition);
+            background: #FFFFFF;
+            transition: all 0.3s ease;
             font-size: 0.9rem;
         }
 
         #searchInput:focus, #status_filter:focus {
             outline: none;
-            border-color: var(--primary-color);
+            border-color: #488C9A;
             box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
-        }
-
-        button[name="action"] {
-            background: linear-gradient(135deg, var(--success-color), #20c997);
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 25px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: var(--transition);
-        }
-
-        button[name="action"]:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        /* Enhanced Table Design with Borders */
-        #warrantyTable {
-            width: 100%;
-            margin: 2rem auto;
-            background: var(--bg-primary);
-            border-radius: var(--border-radius);
-            overflow: hidden;
-            box-shadow: var(--shadow-lg);
-            border-collapse: collapse;
-            border: 2px solid var(--border-color);
-            max-width: 95%;
-        }
-
-        #warrantyTable thead {
-            background: linear-gradient(135deg, var(--secondary-color), var(--primary-dark));
-        }
-
-        #warrantyTable th {
-            padding: 1.5rem 1rem;
-            color: white;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            font-size: 0.85rem;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            position: relative;
-        }
-
-        #warrantyTable tbody tr {
-            transition: var(--transition);
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        #warrantyTable tbody tr:hover {
-            background: linear-gradient(135deg, var(--primary-light) 0%, rgba(72, 140, 154, 0.05) 100%);
-        }
-
-        #warrantyTable td {
-            padding: 1.25rem 1rem;
-            border: 1px solid var(--border-color);
-            vertical-align: middle;
-            font-size: 0.9rem;
-            color: var(--text-primary);
         }
 
         /* Column visibility controls */
         .column-hidden {
             display: none !important;
+        }
+
+        /* Enhanced Documents Dropdown */
+        .docs-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+
+        .docs-icon {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: linear-gradient(135deg, #17a2b8, #20c997);
+            color: white;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .docs-icon:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        }
+
+        .docs-icon img {
+            width: 16px;
+            height: 16px;
+            filter: brightness(0) invert(1);
+        }
+
+        .docs-dropdown-content {
+            display: none;
+            position: fixed;
+            background: #FFFFFF;
+            border-radius: 12px;
+            box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.175);
+            padding: 1rem;
+            min-width: 250px;
+            z-index: 9999;
+            margin-top: 8px;
+            border: 1px solid #DEE2E6;
+        }
+
+        .docs-dropdown-content.show {
+            display: block;
+        }
+
+        .docs-dropdown-content a {
+            display: block;
+            padding: 8px 12px;
+            color: #488C9A;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            margin-bottom: 4px;
+        }
+
+        .docs-dropdown-content a:hover {
+            background: #E8F4F6;
+            transform: translateX(4px);
         }
 
         /* Status Badges */
@@ -863,75 +774,100 @@ foreach ($rows as $row) {
             color: white;
         }
 
-        /* Enhanced Documents Dropdown */
-        .docs-dropdown {
-            position: relative;
-            display: inline-block;
+        /* Enhanced Table Design with Borders */
+        #warrantyTable {
+            width: 100%;
+            margin: 0 auto 20px auto;
+            background: #FFFFFF;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.175);
+            border-collapse: collapse;
+            border: 2px solid #DEE2E6;
         }
 
-        .docs-icon {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            background: linear-gradient(135deg, var(--info-color), #20c997);
+        #warrantyTable thead {
+            background: linear-gradient(135deg, #293E4C, #3A6E7F);
+        }
+
+        #warrantyTable th {
+            padding: 1.5rem 1rem;
             color: white;
-            border-radius: 25px;
-            cursor: pointer;
-            transition: var(--transition);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 0.85rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            position: relative;
+        }
+
+        #warrantyTable tbody tr {
+            transition: all 0.3s ease;
+            border-bottom: 1px solid #DEE2E6;
+        }
+
+        #warrantyTable tbody tr:hover {
+            background: linear-gradient(135deg, #E8F4F6 0%, rgba(72, 140, 154, 0.05) 100%);
+        }
+
+        #warrantyTable td {
+            padding: 1.25rem 1rem;
+            border: 1px solid #DEE2E6;
+            vertical-align: middle;
+            font-size: 0.9rem;
+            color: #2C3E50;
+        }
+
+
+
+
+
+
+
+
+
+        .filters-content.show, .column-chooser-content.show {
+            display: block;
+        }
+
+        .filter-item, .column-item {
+            margin-bottom: 1rem;
+        }
+
+        .filter-item:last-child, .column-item:last-child {
+            margin-bottom: 0;
+        }
+
+
+
+
+
+        /* Status Badges */
+        .status-badge {
+            padding: 6px 16px;
+            border-radius: 50px;
             font-size: 0.8rem;
-            font-weight: 500;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
-        .docs-icon:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+        .status-pending {
+            background: linear-gradient(135deg, #ffc107, #ffda6a);
+            color: #856404;
         }
 
-        .docs-icon img {
-            width: 16px;
-            height: 16px;
-            filter: brightness(0) invert(1);
+        .status-resolved {
+            background: linear-gradient(135deg, #28a745, #5cb85c);
+            color: white;
         }
 
-        .docs-dropdown-content {
-            display: none;
-            position: fixed;
-            background: var(--bg-primary);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-lg);
-            padding: 1rem;
-            min-width: 250px;
-            z-index: 9999;
-            margin-top: 8px;
-            border: 1px solid var(--border-color);
+        .status-rejected {
+            background: linear-gradient(135deg, #dc3545, #f86c7b);
+            color: white;
         }
 
-        .docs-dropdown-content.show {
-            display: block;
-        }
 
-        .docs-dropdown-content a {
-            display: block;
-            padding: 8px 12px;
-            color: var(--primary-color);
-            text-decoration: none;
-            border-radius: 8px;
-            transition: var(--transition);
-            margin-bottom: 4px;
-        }
-
-        .docs-dropdown-content a:hover {
-            background: var(--primary-light);
-            transform: translateX(4px);
-        }
-
-        /* No Data State */
-        .no-data {
-            text-align: center;
-            padding: 4rem 2rem;
-            color: var(--text-muted);
-        }
 
         .no-data-icon {
             font-size: 4rem;
@@ -1014,20 +950,16 @@ foreach ($rows as $row) {
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Add breadcrumb navigation -->
     <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <a href="project_overview.php?project_id=<?php echo $project_id; ?>" style="color: #488C9A; text-decoration: none;"><?php echo htmlspecialchars($project_name); ?></a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
+        <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
+        <span class="separator">&raquo;</span>
         <span>Warranty Claims</span>
     </div>
 
-    <!-- Stunning Header -->
-    <h1><?php echo htmlspecialchars($project_name); ?> Warranty Claims</h1>
+    <h1>Warranty Claims for <?php echo htmlspecialchars($project_name); ?></h1>
 
-    <!-- Revolutionary Metrics Filter -->
-    <form method="GET" id="filter-form" class="metrics-filters">
+    <!-- Legacy filter form (Claim/MW/Module) -->
+    <form method="GET" class="legacy-filter-form">
         <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
         <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter); ?>">
         <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
@@ -1035,124 +967,125 @@ foreach ($rows as $row) {
 
         <label>
             <input type="radio" name="filter" value="claim"
-                   <?php if ($filter === 'claim') echo 'checked'; ?>
-                   onchange="this.form.submit();">
-            <span>📋 Claim Count</span>
+                   onchange="this.form.submit();"
+                   <?php if ($filter === 'claim') echo 'checked'; ?>>
+            📋 Claim Count
         </label>
         <label>
             <input type="radio" name="filter" value="mw"
-                   <?php if ($filter === 'mw') echo 'checked'; ?>
-                   onchange="this.form.submit();">
-            <span>⚡ Megawatts</span>
+                   onchange="this.form.submit();"
+                   <?php if ($filter === 'mw') echo 'checked'; ?>>
+            ⚡ Megawatts
         </label>
         <label>
             <input type="radio" name="filter" value="module"
-                   <?php if ($filter === 'module') echo 'checked'; ?>
-                   onchange="this.form.submit();">
-            <span>🔋 Module Count</span>
+                   onchange="this.form.submit();"
+                   <?php if ($filter === 'module') echo 'checked'; ?>>
+            🔋 Module Count
         </label>
     </form>
 
-    <!-- Breathtaking Metrics Overview -->
-    <div class="metrics-overview">
-        <div class="metric-box">
-            <h3>🛡️ Total Warranty Claims</h3>
-            <p>
-                <?php 
-                if ($filter === 'claim') {
-                    echo $total_warranty_claims;
-                } elseif ($filter === 'mw') {
-                    echo number_format($total_warranty_mw, 2) . " MW";
-                } elseif ($filter === 'module') {
-                    echo number_format($total_warranty_modules);
-                }
-                ?>
-            </p>
+    <!-- WARRANTY OVERVIEW -->
+    <div class="cost-overview">
+        <div class="cost-row">
+            <div class="cost-metric cost-metric--total">
+                <h3>🛡️ Total Warranty Claims</h3>
+                <p>
+                    <?php 
+                    if ($filter === 'claim') {
+                        echo $total_warranty_claims;
+                    } elseif ($filter === 'mw') {
+                        echo number_format($total_warranty_mw, 2) . " MW";
+                    } elseif ($filter === 'module') {
+                        echo number_format($total_warranty_modules);
+                    }
+                    ?>
+                </p>
+            </div>
         </div>
-        <div class="metric-box">
-            <h3>⏳ Pending Claims</h3>
-            <p>
-                <?php 
-                if ($filter === 'claim') {
-                    echo $total_pending_claims;
-                } elseif ($filter === 'mw') {
-                    echo number_format($total_pending_mw, 2) . " MW";
-                } elseif ($filter === 'module') {
-                    echo number_format($total_pending_modules);
-                }
-                ?>
-            </p>
-        </div>
-        <div class="metric-box">
-            <h3>✅ Resolved Claims</h3>
-            <p>
-                <?php 
-                if ($filter === 'claim') {
-                    echo $total_resolved_claims;
-                } elseif ($filter === 'mw') {
-                    echo number_format($total_resolved_mw, 2) . " MW";
-                } elseif ($filter === 'module') {
-                    echo number_format($total_resolved_modules);
-                }
-                ?>
-            </p>
-        </div>
-        <div class="metric-box">
-            <h3>❌ Rejected Claims</h3>
-            <p>
-                <?php 
-                if ($filter === 'claim') {
-                    echo $total_rejected_claims;
-                } elseif ($filter === 'mw') {
-                    echo number_format($total_rejected_mw, 2) . " MW";
-                } elseif ($filter === 'module') {
-                    echo number_format($total_rejected_modules);
-                }
-                ?>
-            </p>
+        <div class="cost-row">
+            <div class="cost-metric">
+                <h3>⏳ Pending Claims</h3>
+                <p>
+                    <?php 
+                    if ($filter === 'claim') {
+                        echo $total_pending_claims;
+                    } elseif ($filter === 'mw') {
+                        echo number_format($total_pending_mw, 2) . " MW";
+                    } elseif ($filter === 'module') {
+                        echo number_format($total_pending_modules);
+                    }
+                    ?>
+                </p>
+            </div>
+            <div class="cost-metric">
+                <h3>✅ Resolved Claims</h3>
+                <p>
+                    <?php 
+                    if ($filter === 'claim') {
+                        echo $total_resolved_claims;
+                    } elseif ($filter === 'mw') {
+                        echo number_format($total_resolved_mw, 2) . " MW";
+                    } elseif ($filter === 'module') {
+                        echo number_format($total_resolved_modules);
+                    }
+                    ?>
+                </p>
+            </div>
+            <div class="cost-metric">
+                <h3>❌ Rejected Claims</h3>
+                <p>
+                    <?php 
+                    if ($filter === 'claim') {
+                        echo $total_rejected_claims;
+                    } elseif ($filter === 'mw') {
+                        echo number_format($total_rejected_mw, 2) . " MW";
+                    } elseif ($filter === 'module') {
+                        echo number_format($total_rejected_modules);
+                    }
+                    ?>
+                </p>
+            </div>
         </div>
     </div>
 
-    <!-- Enhanced Time Filter Header -->
+    <!-- TIME FILTER HEADER -->
     <div class="time-filter-header">
-        <!-- Gorgeous Time Filters -->
         <div class="time-filters">
             <a href="?project_id=<?php echo $project_id; ?>&time_filter=all&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>"
                class="<?php echo ($time_filter==='all')?'active':''; ?>">
-               All Time
+               All
             </a>
             <a href="?project_id=<?php echo $project_id; ?>&time_filter=day&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>"
                class="<?php echo ($time_filter==='day')?'active':''; ?>">
-               Daily
+               Day
             </a>
             <a href="?project_id=<?php echo $project_id; ?>&time_filter=week&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>"
                class="<?php echo ($time_filter==='week')?'active':''; ?>">
-               Weekly
+               Week
             </a>
             <a href="?project_id=<?php echo $project_id; ?>&time_filter=month&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>"
                class="<?php echo ($time_filter==='month')?'active':''; ?>">
-               Monthly
+               Month
             </a>
         </div>
 
-        <!-- Elegant Date Navigation -->
         <div class="date-navigation">
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
                         onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>'">
-                    ←
+                    &larr;
                 </button>
             <?php endif; ?>
             <span class="date-label"><?php echo $dateLabel; ?></span>
             <?php if ($time_filter !== 'all'): ?>
                 <button type="button" class="nav-arrow"
                         onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>'">
-                    →
+                    &rarr;
                 </button>
             <?php endif; ?>
         </div>
 
-        <!-- Enhanced Filters with Dropdown -->
         <div class="right-filters">
             <!-- Filters Dropdown -->
             <div class="filters-dropdown">
@@ -1189,8 +1122,7 @@ foreach ($rows as $row) {
                 </div>
             </div>
 
-            <!-- Column Chooser for Admins -->
-            <?php if (in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+            <!-- Column Chooser for All Roles -->
             <div class="column-chooser">
                 <button type="button" class="columns-btn" onclick="toggleColumnChooser()">
                     📋 Columns <span id="column-arrow">▼</span>
@@ -1237,7 +1169,6 @@ foreach ($rows as $row) {
                     </div>
                 </div>
             </div>
-            <?php endif; ?>
         </div>
     </div>
 
