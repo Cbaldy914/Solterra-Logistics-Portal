@@ -413,9 +413,9 @@ $conn->close();
         }
         .right-filters {
             display: flex;
-            flex-direction: column;
+            flex-direction: row;
             gap: 10px;
-            align-items: flex-start;
+            align-items: center;
         }
         @media screen and (max-width: 768px) {
             .mobile-hide {
@@ -465,6 +465,125 @@ $conn->close();
         .breadcrumb .separator {
             margin: 0 8px;
             color: #6c757d;
+        }
+        
+        /* Dropdown Filters Styling */
+        .filters-dropdown, .column-chooser {
+            position: relative;
+            display: inline-block;
+        }
+
+        .filters-btn, .columns-btn {
+            background: linear-gradient(135deg, #488C9A, #3A6E7F);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .filters-btn:hover, .columns-btn:hover {
+            background: linear-gradient(135deg, #3A6E7F, #293E4C);
+            transform: translateY(-2px);
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        }
+
+        .filters-content, .column-chooser-content {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: #FFFFFF;
+            border-radius: 12px;
+            box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.175);
+            padding: 1.5rem;
+            min-width: 280px;
+            z-index: 1000;
+            margin-top: 8px;
+            border: 1px solid #DEE2E6;
+        }
+
+        .filters-content.show, .column-chooser-content.show {
+            display: block;
+        }
+
+        .filter-item, .column-item {
+            margin-bottom: 1rem;
+        }
+
+        .filter-item:last-child, .column-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .filter-item label, .column-item label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2C3E50;
+            font-size: 0.9rem;
+        }
+
+        .column-item label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            margin-bottom: 0;
+        }
+
+        .column-item label:hover {
+            background: #E8F4F6;
+        }
+
+        .column-toggle {
+            width: 18px;
+            height: 18px;
+            accent-color: #488C9A;
+        }
+
+        .export-btn {
+            background: linear-gradient(135deg, #28a745, #20c997);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+
+        .export-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        }
+
+        #searchInput, #status_filter {
+            border: 2px solid #DEE2E6;
+            border-radius: 25px;
+            padding: 8px 16px;
+            background: #FFFFFF;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+        }
+
+        #searchInput:focus, #status_filter:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
+        }
+
+        /* Column visibility controls */
+        .column-hidden {
+            display: none !important;
         }
     </style>
     <script>
@@ -597,28 +716,73 @@ $conn->close();
         </div>
 
         <div class="right-filters">
-            <div style="display: flex; gap: 10px;" class="mobile-hide">
-                <label for="searchInput" style="align-self: center;">Search in Table:</label>
-                <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
-            </div>
-            <form method="get" action="" style="display: flex; gap: 10px;">
-                <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-                <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter); ?>">
-                <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
-                <input type="hidden" name="filter" value="<?php echo htmlspecialchars($filter); ?>">
+            <!-- Filters Dropdown -->
+            <div class="filters-dropdown">
+                <button type="button" class="filters-btn" onclick="toggleFilters()">
+                    🔧 Filters <span id="filter-arrow">▼</span>
+                </button>
+                <div class="filters-content" id="filtersDropdown">
+                    <div class="filter-item">
+                        <label for="searchInput">🔍 Search:</label>
+                        <input type="text" id="searchInput" placeholder="Search deliveries..." onkeyup="searchTable()">
+                    </div>
+                    
+                    <form method="get" action="" id="filterForm">
+                        <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+                        <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
+                        <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
+                        <input type="hidden" name="filter" value="<?php echo htmlspecialchars($filter); ?>">
 
-                <label for="status_filter" style="align-self: center;">Filter by Status:</label>
-                <select name="status_filter" id="status_filter" onchange="this.form.submit()">
-                    <option value="">All</option>
-                    <option value="Pending"     <?php if($status_filter==='Pending')    echo 'selected'; ?>>Pending</option>
-                    <option value="In Transit"  <?php if($status_filter==='In Transit') echo 'selected'; ?>>In Transit</option>
-                    <option value="Delivered"   <?php if($status_filter==='Delivered')  echo 'selected'; ?>>Delivered</option>
-                    <option value="Complete"    <?php if($status_filter==='Complete')   echo 'selected'; ?>>Complete</option>
-                </select>
-                <span class="mobile-hide">
-                    <button type="submit" name="export" value="1">Export to CSV</button>
-                </span>
-            </form>
+                        <div class="filter-item">
+                            <label for="status_filter">Status:</label>
+                            <select name="status_filter" id="status_filter" onchange="this.form.submit()">
+                                <option value="">All Statuses</option>
+                                <option value="Pending"     <?php if($status_filter==='Pending')    echo 'selected'; ?>>Pending</option>
+                                <option value="In Transit"  <?php if($status_filter==='In Transit') echo 'selected'; ?>>In Transit</option>
+                                <option value="Delivered"   <?php if($status_filter==='Delivered')  echo 'selected'; ?>>Delivered</option>
+                                <option value="Complete"    <?php if($status_filter==='Complete')   echo 'selected'; ?>>Complete</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-item">
+                            <button type="submit" name="export" value="1" class="export-btn">📥 Export CSV</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Column Chooser for All Roles -->
+            <div class="column-chooser">
+                <button type="button" class="columns-btn" onclick="toggleColumnChooser()">
+                    📋 Columns <span id="column-arrow">▼</span>
+                </button>
+                <div class="column-chooser-content" id="columnChooser">
+                    <div class="column-item">
+                        <label><input type="checkbox" class="column-toggle" data-column="col-supplier" checked> Supplier</label>
+                    </div>
+                    <div class="column-item">
+                        <label><input type="checkbox" class="column-toggle" data-column="col-wattage" checked> Wattage</label>
+                    </div>
+                    <div class="column-item">
+                        <label><input type="checkbox" class="column-toggle" data-column="col-quantity" checked> Quantity</label>
+                    </div>
+                    <div class="column-item">
+                        <label><input type="checkbox" class="column-toggle" data-column="col-bol" checked> BOL Number</label>
+                    </div>
+                    <div class="column-item">
+                        <label><input type="checkbox" class="column-toggle" data-column="col-status" checked> Status of Delivery</label>
+                    </div>
+                    <div class="column-item">
+                        <label><input type="checkbox" class="column-toggle" data-column="col-miles" checked> Miles Driven</label>
+                    </div>
+                    <div class="column-item">
+                        <label><input type="checkbox" class="column-toggle" data-column="col-fuel" checked> Fuel Consumption</label>
+                    </div>
+                    <div class="column-item">
+                        <label><input type="checkbox" class="column-toggle" data-column="col-emissions" checked> Emissions</label>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -627,28 +791,28 @@ $conn->close();
         <table id="deliveriesTable">
             <thead>
                 <tr>
-                    <th>Supplier</th>
-                    <th>Wattage</th>
-                    <th>Quantity</th>
-                    <th>BOL Number</th>
-                    <th>Status of Delivery</th>
-                    <th>Miles Driven</th>
-                    <th>Fuel Consumption</th>
-                    <th>Emissions</th>
+                    <th class="col-supplier">Supplier</th>
+                    <th class="col-wattage">Wattage</th>
+                    <th class="col-quantity">Quantity</th>
+                    <th class="col-bol">BOL Number</th>
+                    <th class="col-status">Status of Delivery</th>
+                    <th class="col-miles">Miles Driven</th>
+                    <th class="col-fuel">Fuel Consumption</th>
+                    <th class="col-emissions">Emissions</th>
                 </tr>
             </thead>
             <tbody>
             <?php if (!empty($deliveries)): ?>
                 <?php foreach ($deliveries as $del): ?>
                     <tr>
-                        <td><?php echo htmlspecialchars($del['supplier'] ?? ''); ?></td>
-                        <td><?php echo htmlspecialchars($del['wattage'] ?? ''); ?></td>
-                        <td><?php echo htmlspecialchars($del['quantity'] ?? ''); ?></td>
-                        <td><?php echo htmlspecialchars($del['bol_number'] ?? ''); ?></td>
-                        <td><?php echo htmlspecialchars($del['status_of_delivery'] ?? ''); ?></td>
-                        <td><?php echo number_format($del['miles_driven'] ?? 0, 2); ?></td>
-                        <td><?php echo number_format($del['fuel_consumption'] ?? 0, 2); ?> gal</td>
-                        <td><?php echo number_format($del['emissions'] ?? 0, 2); ?> kg CO₂</td>
+                        <td class="col-supplier"><?php echo htmlspecialchars($del['supplier'] ?? ''); ?></td>
+                        <td class="col-wattage"><?php echo htmlspecialchars($del['wattage'] ?? ''); ?></td>
+                        <td class="col-quantity"><?php echo htmlspecialchars($del['quantity'] ?? ''); ?></td>
+                        <td class="col-bol"><?php echo htmlspecialchars($del['bol_number'] ?? ''); ?></td>
+                        <td class="col-status"><?php echo htmlspecialchars($del['status_of_delivery'] ?? ''); ?></td>
+                        <td class="col-miles"><?php echo number_format($del['miles_driven'] ?? 0, 2); ?></td>
+                        <td class="col-fuel"><?php echo number_format($del['fuel_consumption'] ?? 0, 2); ?> gal</td>
+                        <td class="col-emissions"><?php echo number_format($del['emissions'] ?? 0, 2); ?> kg CO₂</td>
                     </tr>
                 <?php endforeach; ?>
             <?php else: ?>
@@ -689,6 +853,83 @@ $conn->close();
             trs[i].style.display = show ? "" : "none";
         }
     }
+
+    // Toggle filters dropdown
+    function toggleFilters() {
+        const dropdown = document.getElementById('filtersDropdown');
+        const arrow = document.getElementById('filter-arrow');
+        const columnDropdown = document.getElementById('columnChooser');
+        
+        // Close column chooser if open
+        if (columnDropdown) {
+            columnDropdown.classList.remove('show');
+            document.getElementById('column-arrow').textContent = '▼';
+        }
+        
+        dropdown.classList.toggle('show');
+        arrow.textContent = dropdown.classList.contains('show') ? '▲' : '▼';
+    }
+
+    // Toggle column chooser
+    function toggleColumnChooser() {
+        const dropdown = document.getElementById('columnChooser');
+        const arrow = document.getElementById('column-arrow');
+        const filtersDropdown = document.getElementById('filtersDropdown');
+        
+        // Close filters if open
+        if (filtersDropdown) {
+            filtersDropdown.classList.remove('show');
+            document.getElementById('filter-arrow').textContent = '▼';
+        }
+        
+        dropdown.classList.toggle('show');
+        arrow.textContent = dropdown.classList.contains('show') ? '▲' : '▼';
+    }
+
+    // Column visibility toggle
+    function toggleColumn(columnClass, isVisible) {
+        const elements = document.querySelectorAll('.' + columnClass);
+        elements.forEach(element => {
+            if (isVisible) {
+                element.classList.remove('column-hidden');
+            } else {
+                element.classList.add('column-hidden');
+            }
+        });
+    }
+
+    // Click outside handler
+    document.addEventListener('click', function(e) {
+        // Close filters dropdown
+        if (!e.target.closest('.filters-dropdown')) {
+            const filtersDropdown = document.getElementById('filtersDropdown');
+            if (filtersDropdown && filtersDropdown.classList.contains('show')) {
+                filtersDropdown.classList.remove('show');
+                document.getElementById('filter-arrow').textContent = '▼';
+            }
+        }
+        
+        // Close column chooser
+        if (!e.target.closest('.column-chooser')) {
+            const columnChooser = document.getElementById('columnChooser');
+            if (columnChooser && columnChooser.classList.contains('show')) {
+                columnChooser.classList.remove('show');
+                document.getElementById('column-arrow').textContent = '▼';
+            }
+        }
+    });
+
+    // Initialize column chooser functionality
+    document.addEventListener('DOMContentLoaded', function() {
+        const columnToggles = document.querySelectorAll('.column-toggle');
+        columnToggles.forEach(toggle => {
+            toggle.addEventListener('change', function() {
+                const columnClass = this.dataset.column;
+                const isVisible = this.checked;
+                toggleColumn(columnClass, isVisible);
+            });
+        });
+    });
     </script>
 </main>
 </body>
