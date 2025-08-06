@@ -11,11 +11,13 @@ if (!isset($_SESSION['user_id']) || !isset($_SESSION['role'])) {
 $role = $_SESSION['role'];
 $user_id = $_SESSION['user_id'];
 
-// Only allow admin and global_admin access
+// Allow admin, global_admin, and user access
 $is_admin = ($role === 'admin' || $role === 'global_admin');
 $is_global_admin = ($role === 'global_admin');
+$is_user = ($role === 'user');
 
-if (!$is_admin) {
+// Users have view-only access, admins have full access
+if (!$is_admin && !$is_user) {
     header("Location: unauthorized.php");
     exit();
 }
@@ -48,17 +50,31 @@ if ($role === 'admin') {
 }
 
 // Verify project access
-$project_access_sql = "SELECT p.project_name, p.account_id FROM projects p WHERE p.id = ?";
-if ($role === 'admin' && $account_id_for_admin) {
-    $project_access_sql .= " AND p.account_id = ?";
+if ($role === 'user') {
+    // For users, verify access through customer_account_users
+    $project_access_sql = "
+        SELECT p.project_name, p.account_id 
+        FROM projects p
+        JOIN customer_account_users cau ON p.account_id = cau.account_id
+        WHERE p.id = ? AND cau.user_id = ?
+        LIMIT 1";
+    $project_access_stmt = $conn->prepare($project_access_sql);
+    $project_access_stmt->bind_param("ii", $project_id, $user_id);
+} else {
+    // For admin users
+    $project_access_sql = "SELECT p.project_name, p.account_id FROM projects p WHERE p.id = ?";
+    if ($role === 'admin' && $account_id_for_admin) {
+        $project_access_sql .= " AND p.account_id = ?";
+    }
+    
+    $project_access_stmt = $conn->prepare($project_access_sql);
+    if ($role === 'admin' && $account_id_for_admin) {
+        $project_access_stmt->bind_param("ii", $project_id, $account_id_for_admin);
+    } else {
+        $project_access_stmt->bind_param("i", $project_id);
+    }
 }
 
-$project_access_stmt = $conn->prepare($project_access_sql);
-if ($role === 'admin' && $account_id_for_admin) {
-    $project_access_stmt->bind_param("ii", $project_id, $account_id_for_admin);
-} else {
-    $project_access_stmt->bind_param("i", $project_id);
-}
 $project_access_stmt->execute();
 $project_access_stmt->bind_result($project_name, $project_account_id);
 if (!$project_access_stmt->fetch()) {
@@ -1388,6 +1404,47 @@ include('header.php');
             transform: translateY(-1px);
         }
         
+        /* Table View Button */
+        .table-view-btn {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #488C9A, #3a6e7f);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .table-view-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s;
+        }
+        
+        .table-view-btn:hover::before {
+            left: 100%;
+        }
+        
+        .table-view-btn:hover {
+            background: linear-gradient(135deg, #3a6e7f, #293E4C);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
+        }
+        
+        .table-view-btn:active {
+            transform: translateY(0);
+        }
+
         /* Navigation Buttons - Now handled by .calendar-header-center button */
         
         /* Schedule Grid Styling */
@@ -2157,12 +2214,18 @@ include('header.php');
                     <button onclick="next()">&gt;</button>
                 </div>
                 <div class="calendar-header-right" style="text-align:right;">
+                    <button type="button" class="table-view-btn" onclick="window.location.href='view_project.php?project_id=<?php echo $project_id; ?>'">
+                        📋 Table View
+                    </button>
+                    <?php if ($is_admin): ?>
                     <!-- Future: Add operating hours management button -->
+                    <?php endif; ?>
                 </div>
             </div>
             <div id="calendarContent">Loading calendar...</div>
         </div>
 
+        <?php if ($is_admin): ?>
         <!-- Add Appointment Modal -->
         <div id="addAppointmentModal" class="modal">
             <div class="modal-content">
@@ -2371,6 +2434,7 @@ include('header.php');
                 </div>
             </div>
         </div>
+        <?php endif; ?>
     </main>
 
     <script>
@@ -2382,6 +2446,7 @@ include('header.php');
         const autoEdit = <?php echo $auto_edit; ?>;
         const appointmentDuration = <?php echo $appointment_duration; ?>;
         const siteTimezone = '<?php echo $site_timezone; ?>';
+        const isAdmin = <?php echo $is_admin ? 'true' : 'false'; ?>;
         
         let currentView = '<?php echo $view; ?>';
         let currentDate = '<?php echo $current_date; ?>';
@@ -2528,7 +2593,11 @@ include('header.php');
                         html += renderAppointmentCell(appointmentMap[slotKey]);
                     } else {
                         const slotTime = formatLocalDateTime(current);
-                        html += `<td><div class="appointment-slot" onclick="openAddModal('${slotTime}')">+</div></td>`;
+                        if (isAdmin) {
+                            html += `<td><div class="appointment-slot" onclick="openAddModal('${slotTime}')">+</div></td>`;
+                        } else {
+                            html += '<td><div class="empty-slot"></div></td>';
+                        }
                     }
                 } else {
                     html += '<td><div class="closed-slot">Closed</div></td>';
@@ -2616,7 +2685,11 @@ include('header.php');
                             html += renderAppointmentCell(appointment);
                         } else {
                             const slotTime = formatLocalDateTime(slotDateTime);
-                            html += `<td><div class="appointment-slot" onclick="openAddModal('${slotTime}')">+</div></td>`;
+                            if (isAdmin) {
+                                html += `<td><div class="appointment-slot" onclick="openAddModal('${slotTime}')">+</div></td>`;
+                            } else {
+                                html += '<td><div class="empty-slot"></div></td>';
+                            }
                         }
                     } else {
                         html += '<td><div class="closed-slot">Closed</div></td>';
@@ -2725,8 +2798,8 @@ include('header.php');
                         });
                     }
                     
-                    // Add slot for new appointments if day is open
-                    if (isCurrentMonth && dayHours && dayHours.length > 0) {
+                    // Add slot for new appointments if day is open (admin only)
+                    if (isCurrentMonth && dayHours && dayHours.length > 0 && isAdmin) {
                         const slotTime = dateStr + ' ' + dayHours[0].start_time;
                         cellContent += `<div class="add-appointment" onclick="openAddModal('${slotTime}')">+</div>`;
                     }
@@ -2826,6 +2899,12 @@ include('header.php');
         }
         
         function openAddModal(datetime) {
+            // Check if user has admin permissions
+            if (!isAdmin) {
+                alert('You do not have permission to schedule appointments. View-only access.');
+                return;
+            }
+            
             // Check if this is coming from month view (time is just date with start time)
             const isMonthView = currentView === 'month';
 
@@ -2898,6 +2977,20 @@ include('header.php');
                             document.getElementById('edit_departure_time').value = appointment.departure_time.replace(' ', 'T').substring(0, 16);
                         } else {
                             document.getElementById('edit_departure_time').value = '';
+                        }
+
+                        // For non-admin users, make form read-only
+                        if (!isAdmin) {
+                            // Disable all form inputs
+                            const modal = document.getElementById('editAppointmentModal');
+                            modal.querySelectorAll('input, textarea, select, button').forEach(element => {
+                                if (element.className.includes('close-modal')) return; // Keep close button enabled
+                                element.disabled = true;
+                            });
+                            
+                            // Update modal title for view-only mode
+                            const modalTitle = modal.querySelector('h2');
+                            if (modalTitle) modalTitle.textContent = 'View Appointment (Read-Only)';
                         }
 
                         // Show modal
