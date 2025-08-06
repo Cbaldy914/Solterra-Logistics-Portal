@@ -314,7 +314,7 @@ while ($row = $res_status->fetch_assoc()) {
 }
 $stmt_status->close();
 
-// Summaries and pie chart data
+// Calculate combined totals - use status_totals for status data, total_orders for total_order
 $total_order_combined             = 0;
 $at_manufacturer_combined         = 0;
 $on_water_combined                = 0;
@@ -324,6 +324,52 @@ $in_warehouse_combined            = 0;
 $in_transit_to_project_combined   = 0;
 $delivered_combined               = 0;
 $pending_combined                 = 0;
+
+// Calculate combined totals by properly aggregating from the raw status data
+// This approach calculates MW correctly by using actual wattage for each module group
+foreach ($status_totals as $status => $data) {
+    $modules = $data['modules'] ?? 0;
+    
+    if ($modules > 0) {
+        // Calculate the actual MW by looking at the wattage breakdown in detailed_breakdown
+        $total_mw_for_status = 0;
+        
+        // Find the corresponding detailed breakdown entries for this status
+        foreach ($detailed_breakdown as $key => $breakdown) {
+            if (strpos($key, $status) === 0 || $key === $status) {
+                foreach ($breakdown['wattage_breakdown'] as $wattage => $watt_data) {
+                    $watt_modules = $watt_data['modules'];
+                    $mw_for_this_wattage = calculateQuantity($watt_modules, $wattage, $view_mode);
+                    $total_mw_for_status += $mw_for_this_wattage;
+                }
+            }
+        }
+        
+        switch ($status) {
+            case 'At Manufacturer':
+                $at_manufacturer_combined = $total_mw_for_status;
+                break;
+            case 'On Water':
+                $on_water_combined = $total_mw_for_status;
+                break;
+            case 'Cleared Customs':
+                $cleared_customs_combined = $total_mw_for_status;
+                break;
+            case 'In Transit to Warehouse':
+                $in_transit_to_warehouse_combined = $total_mw_for_status;
+                break;
+            case 'In Warehouse':
+                $in_warehouse_combined = $total_mw_for_status;
+                break;
+            case 'In Transit to Project':
+                $in_transit_to_project_combined = $total_mw_for_status;
+                break;
+            case 'Delivered to Project':
+                $delivered_combined = $total_mw_for_status;
+                break;
+        }
+    }
+}
 
 $pieChartData = [
     'Delivered to Project'    => 0,
@@ -393,24 +439,29 @@ foreach ($all_wattages as $lbl => $info) {
     ];
 
     $total_order_combined             += $to;
-    $at_manufacturer_combined         += $atman;
-    $on_water_combined                += $onw;
-    $cleared_customs_combined         += $clr;
-    $in_transit_to_warehouse_combined += $itw;
-    $in_warehouse_combined            += $inw;
-    $in_transit_to_project_combined   += $itp;
-    $delivered_combined               += $del;
+    // Status combined values are calculated from status_totals above - don't override them here
+    // $at_manufacturer_combined         += $atman;
+    // $on_water_combined                += $onw;
+    // $cleared_customs_combined         += $clr;
+    // $in_transit_to_warehouse_combined += $itw;
+    // $in_warehouse_combined            += $inw;
+    // $in_transit_to_project_combined   += $itp;
+    // $delivered_combined               += $del;
     $pending_combined                 += $pending;
 
-    $pieChartData['Delivered to Project']    += $del;
-    $pieChartData['At Manufacturer']         += $atman;
-    $pieChartData['On Water']                += $onw;
-    $pieChartData['Cleared Customs']         += $clr;
-    $pieChartData['In Transit to Warehouse'] += $itw;
-    $pieChartData['In Transit to Project']   += $itp;
-    $pieChartData['In Warehouse']            += $inw;
-    $pieChartData['Pending']                 += $pending;
+    // pieChartData will be calculated after the loop using the correct combined values
 }
+
+// Calculate pieChartData using the correct combined values
+$pieChartData['Delivered to Project']    = $delivered_combined;
+$pieChartData['At Manufacturer']         = $at_manufacturer_combined;
+$pieChartData['On Water']                = $on_water_combined;
+$pieChartData['Cleared Customs']         = $cleared_customs_combined;
+$pieChartData['In Transit to Warehouse'] = $in_transit_to_warehouse_combined;
+$pieChartData['In Transit to Project']   = $in_transit_to_project_combined;
+$pieChartData['In Warehouse']            = $in_warehouse_combined;
+$pieChartData['Pending']                 = $pending_combined;
+
 $total_pie = array_sum($pieChartData);
 $pieChartPercentages = [];
 foreach ($pieChartData as $k => $v) {
