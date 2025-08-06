@@ -45,7 +45,7 @@ function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port) 
     $pallets_in_storage = [];
     $total_pallets = 0;
     
-    // Common pallet query for both warehouses and ports - prevent double-counting by using most recent delivery per pallet
+    // Robust pallet query - INNER JOIN to only include pallets with deliveries to current warehouse
     $stmtP_Stored = $conn->prepare("
         SELECT 
             ip.id AS pallet_id,
@@ -60,13 +60,12 @@ function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port) 
         FROM inventory_pallets ip
         LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
         LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-        LEFT JOIN delivery_pallets dp_received ON ip.id = dp_received.inventory_pallet_id
-        LEFT JOIN deliveries d_received ON dp_received.delivery_id = d_received.id 
+        INNER JOIN delivery_pallets dp_received ON ip.id = dp_received.inventory_pallet_id
+        INNER JOIN deliveries d_received ON dp_received.delivery_id = d_received.id 
             AND d_received.warehouse_id = ?
             AND d_received.status_of_delivery != 'Departed Port'
         LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
         WHERE ip.current_warehouse_id = ? AND ip.status = ?
-        GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.arrival_date, m.vendor_name, p_assigned.project_name
         ORDER BY ip.arrival_date DESC, ip.id DESC
     ");
     
@@ -1533,7 +1532,7 @@ $conn->close();
         <div class="shipment-details-modal-content">
             <h2 class="section-title" style="margin-top:0; text-align:center;">Move Container (Drayage)</h2>
             
-            <form id="moveContainerForm" onsubmit="return false;">
+            <form id="moveContainerForm" method="POST" action="create_shipment.php">
                 <div class="form-row">
                     <div>
                         <label for="move_departure_date">Departure Date:</label>
@@ -1603,7 +1602,16 @@ $conn->close();
                     </small>
                 </div>
                 
-                <button type="button" id="confirmMoveContainerBtn" class="action-button" style="margin-top:15px;">
+                <!-- Hidden fields for container data that will be populated by JavaScript -->
+                <input type="hidden" name="action" value="ship_pallets">
+                <input type="hidden" name="origin_type" value="warehouse">
+                <input type="hidden" name="origin_id" value="<?php echo $warehouse_id; ?>">
+                <input type="hidden" id="container_ids_input" name="drayage_container_ids" value="">
+                <input type="hidden" id="pallet_ids_container" name="selected_pallets" value="">
+                <input type="hidden" id="bol_number_input" name="bol_number" value="">
+                <input type="hidden" id="container_number_input" name="container_number" value="">
+                
+                <button type="submit" id="confirmMoveContainerBtn" class="action-button" style="margin-top:15px;">
                     Create Drayage Shipment
                 </button>
             </form>
@@ -2432,10 +2440,12 @@ document.addEventListener('DOMContentLoaded', function() {
         if (e.target === modal) closeMoveContainerModal();
     });
     
-    // Handle Move Container form submission
-    const confirmBtn = document.getElementById('confirmMoveContainerBtn');
-    if (confirmBtn) {
-        confirmBtn.addEventListener('click', function() {
+    // Handle Move Container form submission - populate hidden fields before form submits
+    const form = document.getElementById('moveContainerForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault(); // Temporarily prevent submission to populate hidden fields
+            
             const modal = document.getElementById('moveContainerModal');
             const containerIds = JSON.parse(modal.dataset.containerIds || '[]');
             
@@ -2444,26 +2454,35 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
-            // Validate form
-            const form = document.getElementById('moveContainerForm');
-            if (!form.checkValidity()) {
-                form.reportValidity();
+            // Get container number from first checked container for BOL naming
+            let containerNumber = '';
+            const checkedContainers = document.querySelectorAll('.container-checkbox:checked');
+            
+            if (checkedContainers.length > 0) {
+                const firstCheckedRow = checkedContainers[0].closest('tr');
+                if (firstCheckedRow) {
+                    const containerCell = firstCheckedRow.cells[1]; // Container Number column (index 1)
+                    if (containerCell) {
+                        containerNumber = containerCell.textContent.trim();
+                    }
+                }
+            }
+            
+            if (!containerNumber) {
+                alert('Error: Could not determine container number. Please try again.');
                 return;
             }
             
-            // Disable the submit button to prevent double-clicking
-            const submitButton = document.querySelector('#moveContainerModal .action-button');
-            if (submitButton) {
-                submitButton.disabled = true;
-                submitButton.textContent = 'Creating...';
-            }
+            // Set BOL number as container number + drayage suffix
+            const drayageBolNumber = containerNumber + '-DRAY';
             
-            // Check if Generate BOL is checked
-            const generateBolCheckbox = document.getElementById('generate_bol_drayage');
-            const shouldGenerateBol = generateBolCheckbox && generateBolCheckbox.checked;
+            // Populate hidden fields with container data
+            document.getElementById('container_ids_input').value = JSON.stringify(containerIds);
+            document.getElementById('bol_number_input').value = drayageBolNumber;
+            document.getElementById('container_number_input').value = containerNumber;
             
-            // First, get all pallet IDs from the selected container deliveries
-            const getPalletIdsPromise = fetch('get_container_pallets.php', {
+            // Get pallet IDs and then submit the form
+            fetch('get_container_pallets.php', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -2477,112 +2496,26 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!data.success) {
                     throw new Error(data.message || 'Failed to get pallet IDs');
                 }
-                return data.pallet_ids;
+                
+                // Populate pallet IDs in proper format for create_shipment.php
+                const palletContainer = document.getElementById('pallet_ids_container');
+                data.pallet_ids.forEach((palletId, index) => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = `selected_pallets[${index}]`;
+                    input.value = palletId;
+                    form.appendChild(input);
+                });
+                
+                // Now submit the form normally - server handles everything including BOL redirect
+                form.submit();
+            })
+            .catch(error => {
+                console.error('Error getting pallet IDs:', error);
+                alert('Error: ' + error.message);
             });
-            
-            getPalletIdsPromise.then(palletIds => {
-                // Get container number from first checked container for BOL naming
-                let containerNumber = '';
-                const checkedContainers = document.querySelectorAll('.container-checkbox:checked');
-                
-                if (checkedContainers.length > 0) {
-                    const firstCheckedRow = checkedContainers[0].closest('tr');
-                    if (firstCheckedRow) {
-                        const containerCell = firstCheckedRow.cells[1]; // Container Number column (index 1)
-                        if (containerCell) {
-                            containerNumber = containerCell.textContent.trim();
-                        }
-                    }
-                }
-                
-                console.log('Checked containers found:', checkedContainers.length);
-                console.log('First checked container row:', checkedContainers[0]?.closest('tr'));
-                console.log('Container cell content:', checkedContainers[0]?.closest('tr')?.cells[1]?.textContent);
-                
-                // Validate container number was found
-                if (!containerNumber) {
-                    alert('Error: Could not determine container number. Please try again.');
-                    
-                    // Re-enable the submit button
-                    const submitButton = document.querySelector('#moveContainerModal .action-button');
-                    if (submitButton) {
-                        submitButton.disabled = false;
-                        submitButton.textContent = 'Create Drayage Shipment';
-                    }
-                    return;
-                }
-                
-                // Set BOL number as container number + drayage suffix
-                const drayageBolNumber = containerNumber + '-DRAY';
-                
-                console.log('Container number found:', containerNumber);
-                console.log('BOL number will be:', drayageBolNumber);
-                
-                // ===================================================================
-                // SIMPLIFIED BOL GENERATION FLOW - DIRECT FORM SUBMISSION
-                // ===================================================================
-                
-                // Create and submit form directly to create_shipment.php
-                // Let the server handle container updates and BOL generation redirect
-                        const form = document.createElement('form');
-                        form.method = 'POST';
-                        form.action = 'create_shipment.php';
-                        form.style.display = 'none';
-                        
-                        // Add all form data as hidden inputs
-                        const fields = {
-                            'action': 'ship_pallets',
-                            'departure_date': document.getElementById('move_departure_date').value,
-                            'est_arrival_date': document.getElementById('move_est_arrival_date').value,
-                            'freight_cost': document.getElementById('move_freight_cost').value || '0',
-                            'customer_cost': document.getElementById('move_customer_cost').value || '0',
-                            'miles': document.getElementById('move_miles').value || '0',
-                            'origin_type': 'warehouse',
-                            'origin_id': '<?php echo $warehouse_id; ?>',
-                            'destination_type': document.querySelector('input[name="destination_type"]:checked').value,
-                            'destination_id': document.getElementById('move_destination_id').value,
-                            'bol_number': drayageBolNumber,
-                            'container_number': containerNumber,
-                    'drayage_container_ids': JSON.stringify(containerIds) // Pass container IDs for server-side processing
-                        };
-                
-                // Add Generate BOL flag if requested
-                if (shouldGenerateBol) {
-                    fields['generate_bol'] = '1';
-                }
-                        
-                        // Add pallet IDs
-                        palletIds.forEach((palletId, index) => {
-                            fields[`selected_pallets[${index}]`] = palletId;
-                        });
-                        
-                        // Create hidden inputs
-                        for (let [key, value] of Object.entries(fields)) {
-                            const input = document.createElement('input');
-                            input.type = 'hidden';
-                            input.name = key;
-                            input.value = value;
-                            form.appendChild(input);
-                        }
-                        
-                        document.body.appendChild(form);
-                form.submit(); // Simple form submission - server handles everything including redirects
-        })
-        .catch(palletError => {
-            console.error('Error getting pallet IDs:', palletError);
-            alert('Error: ' + palletError.message);
-            
-            // Re-enable the submit button
-            const submitButton = document.querySelector('#moveContainerModal .action-button');
-            if (submitButton) {
-                submitButton.disabled = false;
-                submitButton.textContent = 'Create Drayage Shipment';
-            }
-            
-            closeMoveContainerModal();
         });
     }
-    
 });
 </script>
 </body>
