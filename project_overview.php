@@ -4271,7 +4271,17 @@ function generateShippingContent(filter){
             }
             html+=`</div>`;
         }else if(filter==='Cleared Customs'){
-            html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=Cleared%20Customs" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
+            // For Cleared Customs status, link to warehouse inventory for drayage shipment
+            html+=`<div style="text-align:center;margin-top:15px;">`;
+            html+=`<p style="color:#666;margin-bottom:10px;">Pallets have cleared customs. Create a drayage shipment to move them to their destination.</p>`;
+            // Find the port warehouse for this project's cleared customs pallets
+            for(const key in shippingBreakdown){
+                if(key.includes('Cleared Customs') && shippingBreakdown[key].warehouse_id){
+                    html+=`<a href="manage_warehouse_inventory.php?warehouse_id=${shippingBreakdown[key].warehouse_id}&project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;margin:5px;">Create Drayage Shipment</a>`;
+                    break;
+                }
+            }
+            html+=`</div>`;
         }else if(filter==='In Warehouse'){
             html+=`<div style="text-align:center;margin-top:15px;"><a href="create_shipment.php?project_id=<?php echo $project_id; ?>&status_filter=In%20Warehouse" class="modal-action" style="background:#488C9A;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">Create Shipment</a></div>`;
         }else if(filter==='In Transit to Project'){
