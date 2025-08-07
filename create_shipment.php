@@ -827,8 +827,16 @@ try {
     
     if ($role === 'admin' && $account_id_for_admin) {
         $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?) AND ip.status IN ($status_placeholders)";
+        // Add project-specific filtering if coming from a specific project page
+        if ($project_id_from_url > 0) {
+            $sql .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
+        }
     } else {
         $sql .= " WHERE ip.status IN ($status_placeholders)";
+        // Add project-specific filtering if coming from a specific project page
+        if ($project_id_from_url > 0) {
+            $sql .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
+        }
     }
     
     $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.manufacturer_location_id, m.vendor_name, m.account_id, ml.street_address, ml.city, ml.state, ml.zip_code, ml.country, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
@@ -838,6 +846,13 @@ try {
         $stmt = $conn->prepare($sql);
         $params = array_merge([$account_id_for_admin, $account_id_for_admin, $account_id_for_admin], $allowed_statuses);
         $types = 'iii' . str_repeat('s', count($allowed_statuses));
+        
+        // Add project parameters if filtering by project
+        if ($project_id_from_url > 0) {
+            $params = array_merge($params, [$project_id_from_url, $project_id_from_url]);
+            $types .= 'ii';
+        }
+        
         $stmt->bind_param($types, ...$params);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -847,8 +862,16 @@ try {
         $stmt->close();
     } else {
         $stmt = $conn->prepare($sql);
+        $params = $allowed_statuses;
         $types = str_repeat('s', count($allowed_statuses));
-        $stmt->bind_param($types, ...$allowed_statuses);
+        
+        // Add project parameters if filtering by project
+        if ($project_id_from_url > 0) {
+            $params = array_merge($params, [$project_id_from_url, $project_id_from_url]);
+            $types .= 'ii';
+        }
+        
+        $stmt->bind_param($types, ...$params);
         $stmt->execute();
         $result = $stmt->get_result();
         while ($row = $result->fetch_assoc()) {
@@ -1445,6 +1468,7 @@ if (!empty($bolCompletionMessage)) {
                                     <select id="wattageFilter" onchange="filterPallets()" style="flex: 1;">
                                         <option value="">All</option>
                                         <?php
+                                        // Only show wattages that are available in current pallets (filtered by account if admin)
                                         $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
                                         sort($wattages);
                                         foreach ($wattages as $w) {
@@ -1458,9 +1482,9 @@ if (!empty($bolCompletionMessage)) {
                                     <select id="statusFilter" onchange="filterPallets()" style="flex: 1;">
                                         <option value="">All</option>
                                         <?php
-                                        // Only show the allowed shippable statuses
-                                        $allowed_statuses = ['At Manufacturer', 'In Warehouse', 'Delivered to Project'];
-                                        foreach ($allowed_statuses as $s) {
+                                        // Only show statuses that are available in current pallets (filtered by account if admin)
+                                        $available_statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
+                                        foreach ($available_statuses as $s) {
                                             echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>';
                                         }
                                         ?>
@@ -1607,7 +1631,7 @@ if (!empty($bolCompletionMessage)) {
                             <input type="date" id="est_arrival_date" name="est_arrival_date" required>
                         </div>
                     </div>
-                    <div class="form-row">
+                    <div class="form-row" id="domestic-cost-fields">
                         <div>
                             <label for="freight_cost">Freight Cost ($):</label>
                             <input type="number" id="freight_cost" name="freight_cost" step="0.01" min="0">
@@ -1624,17 +1648,17 @@ if (!empty($bolCompletionMessage)) {
                     <div class="origin-destination-section">
                         <div class="location-container" style="display: flex; align-items: flex-start; gap: 20px;">
                             <div class="origin-section" style="flex: 1;">
-                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Origin:</label>
-                                <div id="originDisplay" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
-                                    <strong id="originLocationText">Select pallets to see origin</strong>
-                                </div>
+                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Origin Port:</label>
                                 
                                 <!-- Origin Port for Overseas Shipments -->
-                                <div id="originPortSection" style="display: none; margin-top: 10px;">
-                                    <label for="origin_port_id" style="margin-bottom: 5px; display: block; font-weight: 500;">Origin Port: *</label>
+                                <div id="originPortSection" style="display: none; margin-bottom: 15px;">
                                     <select id="origin_port_id" name="origin_port_id" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                                         <option value="">Select departure port...</option>
                                     </select>
+                                </div>
+                                
+                                <div id="originDisplay" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
+                                    <strong id="originLocationText">Select pallets to see origin</strong>
                                 </div>
                                 
                                 <input type="hidden" id="origin_type" name="origin_type" value="">
@@ -1742,17 +1766,17 @@ if (!empty($bolCompletionMessage)) {
                     <div class="origin-destination-section">
                         <div class="location-container" style="display: flex; align-items: flex-start; gap: 20px;">
                             <div class="origin-section" style="flex: 1;">
-                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Origin:</label>
-                                <div id="originDisplayMulti" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
-                                    <strong id="originLocationTextMulti">Select pallets to see origin</strong>
-                                </div>
+                                <label style="margin-bottom: 10px; display:block; font-weight: 600;">Origin Port:</label>
                                 
                                 <!-- Origin Port for Overseas Shipments -->
-                                <div id="originPortSectionMulti" style="display: none; margin-top: 10px;">
-                                    <label for="origin_port_id_multi" style="margin-bottom: 5px; display: block; font-weight: 500;">Origin Port: *</label>
+                                <div id="originPortSectionMulti" style="display: none; margin-bottom: 15px;">
                                     <select id="origin_port_id_multi" name="origin_port_id_multi" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
                                         <option value="">Select departure port...</option>
                                     </select>
+                                </div>
+                                
+                                <div id="originDisplayMulti" style="padding: 12px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 45px; display: flex; align-items: center;">
+                                    <strong id="originLocationTextMulti">Select pallets to see origin</strong>
                                 </div>
                                 
                                 <input type="hidden" id="origin_type_multi" name="origin_type_multi" value="">
@@ -2095,11 +2119,13 @@ openShipModalBtn.addEventListener('click', openShipModal);
 if (closeShipModalBtn) {
     closeShipModalBtn.addEventListener('click', closeShipModal);
 }
-window.addEventListener('click', function(e) {
-    if (e.target === shipModal) {
-        closeShipModal();
-    }
-});
+// Disable clicking outside to close modal for admin/global_admin users
+// (They need to click the X button to close)
+// window.addEventListener('click', function(e) {
+//     if (e.target === shipModal) {
+//         closeShipModal();
+//     }
+// });
 
 // ----------------- TAB SWITCHING (SINGLE vs MULTI) -----------------
 const singleTabBtn = document.getElementById('singleTabBtn');
@@ -2507,16 +2533,21 @@ function showOverseasFields() {
     const domesticBolField = document.getElementById('domesticBolField');
     const overseasContainerField = document.getElementById('overseasContainerField');
     const overseasContainerFieldsMulti = document.getElementById('overseasContainerFieldsMulti');
+    const domesticCostFields = document.getElementById('domestic-cost-fields');
     
     if (domesticBolField) domesticBolField.style.display = 'none';
     if (overseasContainerField) overseasContainerField.style.display = 'block';
     if (overseasContainerFieldsMulti) overseasContainerFieldsMulti.style.display = 'block';
+    if (domesticCostFields) domesticCostFields.style.display = 'none';
     
     // Show origin port sections
     const originPortSection = document.getElementById('originPortSection');
     const originPortSectionMulti = document.getElementById('originPortSectionMulti');
     if (originPortSection) originPortSection.style.display = 'block';
     if (originPortSectionMulti) originPortSectionMulti.style.display = 'block';
+    
+    // Update origin labels for overseas shipments - they're already "Origin Port:"
+    // No need to change labels since they're set correctly in HTML
     
     // Update destination for ports only
     updateDestinationForOverseas(true);
@@ -2538,11 +2569,22 @@ function showOverseasFields() {
         createButton.style.borderColor = '#1976d2'; // Blue border
     }
     
-    // Update modal title for container shipments
+    // Update modal title for container shipments with enhanced styling
     const modalTitle = document.querySelector('.shipment-details-modal-content h2.section-title');
     if (modalTitle) {
-        modalTitle.innerHTML = 'Create Ocean Delivery';
+        modalTitle.innerHTML = '🚢 Create Ocean Delivery';
         modalTitle.style.color = '#1976d2'; // Blue color
+        modalTitle.style.background = 'linear-gradient(135deg, #1976d2 0%, #42a5f5 100%)';
+        modalTitle.style.webkitBackgroundClip = 'text';
+        modalTitle.style.webkitTextFillColor = 'transparent';
+        modalTitle.style.backgroundClip = 'text';
+        modalTitle.style.fontSize = '1.5em';
+        modalTitle.style.fontWeight = '700';
+        modalTitle.style.textAlign = 'center';
+        modalTitle.style.padding = '20px 0';
+        modalTitle.style.borderBottom = '3px solid #1976d2';
+        modalTitle.style.marginBottom = '25px';
+        modalTitle.style.textShadow = '0 2px 4px rgba(25, 118, 210, 0.3)';
     }
 }
 
@@ -2554,16 +2596,24 @@ function hideOverseasFields() {
     const domesticBolField = document.getElementById('domesticBolField');
     const overseasContainerField = document.getElementById('overseasContainerField');
     const overseasContainerFieldsMulti = document.getElementById('overseasContainerFieldsMulti');
+    const domesticCostFields = document.getElementById('domestic-cost-fields');
     
     if (domesticBolField) domesticBolField.style.display = 'block';
     if (overseasContainerField) overseasContainerField.style.display = 'none';
     if (overseasContainerFieldsMulti) overseasContainerFieldsMulti.style.display = 'none';
+    if (domesticCostFields) domesticCostFields.style.display = 'block';
     
     // Hide origin port sections
     const originPortSection = document.getElementById('originPortSection');
     const originPortSectionMulti = document.getElementById('originPortSectionMulti');
     if (originPortSection) originPortSection.style.display = 'none';
     if (originPortSectionMulti) originPortSectionMulti.style.display = 'none';
+    
+    // Update origin labels back to "Origin:" for domestic shipments
+    const originLabels = document.querySelectorAll('.origin-section > label');
+    originLabels.forEach(label => {
+        if (label) label.textContent = 'Origin:';
+    });
     
     // Restore domestic destination options
     updateDestinationForOverseas(false);
@@ -2587,6 +2637,17 @@ function hideOverseasFields() {
     if (modalTitle) {
         modalTitle.innerHTML = 'Create Delivery';
         modalTitle.style.color = ''; // Reset to default color
+        modalTitle.style.background = '';
+        modalTitle.style.webkitBackgroundClip = '';
+        modalTitle.style.webkitTextFillColor = '';
+        modalTitle.style.backgroundClip = '';
+        modalTitle.style.fontSize = '';
+        modalTitle.style.fontWeight = '';
+        modalTitle.style.textAlign = '';
+        modalTitle.style.padding = '';
+        modalTitle.style.borderBottom = '';
+        modalTitle.style.marginBottom = '';
+        modalTitle.style.textShadow = '';
     }
 }
 
@@ -2988,13 +3049,14 @@ function proceedWithDuplicateBol() {
     }
 }
 
-// Close modal when clicking outside
-window.addEventListener('click', function(e) {
-    const modal = document.getElementById('bolWarningModal');
-    if (e.target === modal) {
-        closeBolWarningModal();
-    }
-});
+// Disable clicking outside to close BOL warning modal for admin/global_admin users
+// (They need to click the X button or the Cancel/Proceed buttons to close)
+// window.addEventListener('click', function(e) {
+//     const modal = document.getElementById('bolWarningModal');
+//     if (e.target === modal) {
+//         closeBolWarningModal();
+//     }
+// });
 
 // ----------------- CONFIRM BUTTONS (SINGLE & MULTI) -----------------
 const confirmShipmentBtn = document.getElementById('confirmShipmentBtn');
