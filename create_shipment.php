@@ -706,7 +706,9 @@ if (!empty($container_numbers_json)) {
             if ($project_id_from_url > 0) {
                 $bolLinkUrl .= "&project_id={$project_id_from_url}";
             }
-            $bolLink = " <a href='{$bolLinkUrl}' style='color: #488C9A; text-decoration: underline; margin-left: 10px;'>Generate BOL</a>";
+            // Check if this is a drayage shipment - if so, don't include Generate BOL link
+            $isDrayageShipment = !empty($_POST['drayage_container_ids']);
+            $bolLink = $isDrayageShipment ? '' : " <a href='{$bolLinkUrl}' style='color: #488C9A; text-decoration: underline; margin-left: 10px;'>Generate BOL</a>";
             
             $deliveryWord = ($totalDeliveries === 1) ? 'delivery' : 'deliveries';
             
@@ -736,11 +738,29 @@ if (!empty($container_numbers_json)) {
     }
     
     // Store message in session and redirect to prevent form resubmission
-    $_SESSION['create_shipment_message'] = $shipMessage;
-    // Preserve project_id in redirect for breadcrumb navigation
-    $redirect_url = "create_shipment.php";
-    if ($project_id_from_url > 0) {
-        $redirect_url .= "?project_id=" . $project_id_from_url;
+    // Check if this is a drayage shipment - if so, redirect back to warehouse inventory
+    if (!empty($_POST['drayage_container_ids'])) {
+        // This is a drayage shipment - redirect back to manage_warehouse_inventory.php
+        $_SESSION['move_pallet_message'] = $shipMessage;
+        
+        // Get the origin warehouse ID for redirect
+        $origin_warehouse_id = isset($_POST['origin_id']) ? intval($_POST['origin_id']) : 0;
+        $redirect_url = "manage_warehouse_inventory.php";
+        if ($origin_warehouse_id > 0) {
+            $redirect_url .= "?warehouse_id=" . $origin_warehouse_id;
+            // Also preserve project_id if available
+            if ($project_id_from_url > 0) {
+                $redirect_url .= "&project_id=" . $project_id_from_url;
+            }
+        }
+    } else {
+        // Normal shipment - redirect back to create_shipment.php
+        $_SESSION['create_shipment_message'] = $shipMessage;
+        // Preserve project_id in redirect for breadcrumb navigation
+        $redirect_url = "create_shipment.php";
+        if ($project_id_from_url > 0) {
+            $redirect_url .= "?project_id=" . $project_id_from_url;
+        }
     }
     header("Location: " . $redirect_url);
     exit();
@@ -801,8 +821,14 @@ try {
             LEFT JOIN deliveries d ON dp.delivery_id = d.id";
     
     // Add account filtering for admin role (only see pallets from their account's projects)
+    // Also filter for only shippable statuses
+    $allowed_statuses = ['At Manufacturer', 'In Warehouse', 'Delivered to Project'];
+    $status_placeholders = str_repeat('?,', count($allowed_statuses) - 1) . '?';
+    
     if ($role === 'admin' && $account_id_for_admin) {
-        $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?)";
+        $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?) AND ip.status IN ($status_placeholders)";
+    } else {
+        $sql .= " WHERE ip.status IN ($status_placeholders)";
     }
     
     $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.manufacturer_location_id, m.vendor_name, m.account_id, ml.street_address, ml.city, ml.state, ml.zip_code, ml.country, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
@@ -810,7 +836,9 @@ try {
     
     if ($role === 'admin' && $account_id_for_admin) {
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param("iii", $account_id_for_admin, $account_id_for_admin, $account_id_for_admin);
+        $params = array_merge([$account_id_for_admin, $account_id_for_admin, $account_id_for_admin], $allowed_statuses);
+        $types = 'iii' . str_repeat('s', count($allowed_statuses));
+        $stmt->bind_param($types, ...$params);
         $stmt->execute();
         $result = $stmt->get_result();
         while ($row = $result->fetch_assoc()) {
@@ -818,12 +846,15 @@ try {
         }
         $stmt->close();
     } else {
-        $result = $conn->query($sql);
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $pallets[] = $row;
-            }
+        $stmt = $conn->prepare($sql);
+        $types = str_repeat('s', count($allowed_statuses));
+        $stmt->bind_param($types, ...$allowed_statuses);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $pallets[] = $row;
         }
+        $stmt->close();
     }
 
     // Add full addresses for pallets
@@ -1359,7 +1390,7 @@ if (!empty($bolCompletionMessage)) {
         <span>Create Shipment</span>
     </div>
 
-    <h1>Create Shipment</h1>
+    <h1 id="page-title">Create Shipment</h1>
 
     <?php if (!empty($sessionMessage)): ?>
         <?php $messageClass = (strpos(strtolower($sessionMessage), 'error') !== false) ? 'error-message' : 'success-message'; ?>
@@ -1427,9 +1458,9 @@ if (!empty($bolCompletionMessage)) {
                                     <select id="statusFilter" onchange="filterPallets()" style="flex: 1;">
                                         <option value="">All</option>
                                         <?php
-                                        $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
-                                        sort($statuses);
-                                        foreach ($statuses as $s) {
+                                        // Only show the allowed shippable statuses
+                                        $allowed_statuses = ['At Manufacturer', 'In Warehouse', 'Delivered to Project'];
+                                        foreach ($allowed_statuses as $s) {
                                             echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>';
                                         }
                                         ?>
@@ -2498,6 +2529,21 @@ function showOverseasFields() {
     
     // Load ports
     loadPorts();
+    
+    // Update button and modal styling for container shipments
+    const createButton = document.getElementById('openShipModalBtn');
+    if (createButton) {
+        createButton.innerHTML = '🚢 Create Container Shipment';
+        createButton.style.backgroundColor = '#1976d2'; // Blue background
+        createButton.style.borderColor = '#1976d2'; // Blue border
+    }
+    
+    // Update modal title for container shipments
+    const modalTitle = document.querySelector('.shipment-details-modal-content h2.section-title');
+    if (modalTitle) {
+        modalTitle.innerHTML = 'Create Ocean Delivery';
+        modalTitle.style.color = '#1976d2'; // Blue color
+    }
 }
 
 function hideOverseasFields() {
@@ -2527,6 +2573,21 @@ function hideOverseasFields() {
     const generateBolMulti = document.getElementById('generate_bol_multi')?.closest('div');
     if (generateBolSingle) generateBolSingle.style.display = 'block';
     if (generateBolMulti) generateBolMulti.style.display = 'block';
+    
+    // Reset button and modal styling for domestic shipments
+    const createButton = document.getElementById('openShipModalBtn');
+    if (createButton) {
+        createButton.innerHTML = 'Create Delivery for Selected Pallets';
+        createButton.style.backgroundColor = ''; // Reset to default background
+        createButton.style.borderColor = ''; // Reset to default border
+    }
+    
+    // Reset modal title for domestic shipments
+    const modalTitle = document.querySelector('.shipment-details-modal-content h2.section-title');
+    if (modalTitle) {
+        modalTitle.innerHTML = 'Create Delivery';
+        modalTitle.style.color = ''; // Reset to default color
+    }
 }
 
 function loadPorts() {

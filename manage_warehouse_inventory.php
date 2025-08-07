@@ -291,7 +291,7 @@ function fetchInboundHistory($conn, $warehouse_id) {
         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
         LEFT JOIN projects p ON d.project_id = p.id
         WHERE d.warehouse_id = ? 
-        AND d.status_of_delivery = 'Delivered to Warehouse'
+        AND d.status_of_delivery IN ('Delivered to Warehouse', 'Cleared Customs', 'Departed Port')
         AND d.warehouse_arrival_date IS NOT NULL
         GROUP BY d.bol_number, d.supplier, d.warehouse_arrival_date, d.proof_of_delivery
         ORDER BY d.warehouse_arrival_date DESC
@@ -378,14 +378,14 @@ function fetchOutboundHistory($conn, $warehouse_id) {
         LEFT JOIN warehouses w ON d.warehouse_id = w.id
         JOIN delivery_pallets dp ON d.id = dp.delivery_id
         JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
-        WHERE d.warehouse_id = ?
+        WHERE (d.warehouse_id = ? OR (d.origin_type = 'warehouse' AND d.origin_id = ?))
         AND d.left_warehouse_date IS NOT NULL
         GROUP BY d.bol_number, d.supplier, d.left_warehouse_date, d.anticipated_delivery_date, d.status_of_delivery
         ORDER BY d.left_warehouse_date DESC
     ");
     
     if ($stmtOutboundHistory) {
-        $stmtOutboundHistory->bind_param("ii", $warehouse_id, $warehouse_id);
+        $stmtOutboundHistory->bind_param("iii", $warehouse_id, $warehouse_id, $warehouse_id);
         $stmtOutboundHistory->execute();
         $resultOutboundHistory = $stmtOutboundHistory->get_result();
         $index = 0;
@@ -908,7 +908,7 @@ $conn->close();
     </div>
     
     <?php if (!empty($successMessage)): ?>
-        <div class="success-message"><?php echo htmlspecialchars($successMessage); ?></div>
+        <div class="success-message"><?php echo $successMessage; ?></div>
     <?php endif; ?>
     <?php if (!empty($errorMessage)): ?>
         <div class="error-message">
@@ -1591,17 +1591,7 @@ $conn->close();
                     <input type="hidden" id="move_miles" name="miles" value="">
                 </div>
                 
-                <!-- Generate BOL Checkbox -->
-                <div style="margin-top: 15px; margin-bottom: 20px; padding: 10px; background-color: #f8f9fa; border-radius: 4px; border: 1px solid #e9ecef;">
-                    <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
-                        <input type="checkbox" id="generate_bol_drayage" name="generate_bol" value="1" style="margin: 0;">
-                        <span>Generate Bill of Lading (BOL) after creating delivery</span>
-                    </label>
-                    <small style="color: #6c757d; margin-left: 20px; display: block; margin-top: 3px;">
-                        Check this to immediately create a BOL document for this shipment
-                    </small>
-                </div>
-                
+
                 <!-- Hidden fields for container data that will be populated by JavaScript -->
                 <input type="hidden" name="action" value="ship_pallets">
                 <input type="hidden" name="origin_type" value="warehouse">
@@ -2214,9 +2204,7 @@ function openMoveContainerModal(containerIds) {
     const distanceDisplay = document.getElementById('drayageDistanceDisplay');
     if (distanceDisplay) distanceDisplay.innerHTML = '';
     
-    // Clear Generate BOL checkbox
-    const generateBolCheckbox = document.getElementById('generate_bol_drayage');
-    if (generateBolCheckbox) generateBolCheckbox.checked = false;
+
     
     // Debug data availability when modal opens
     console.log('Modal opening - checking data availability:');
