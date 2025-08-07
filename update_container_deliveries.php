@@ -73,10 +73,10 @@ try {
     $unlinked_count = $stmt_unlink->affected_rows;
     $stmt_unlink->close();
     
-    // Update the original container deliveries to mark them as transferred
+    // Update the original container deliveries to mark them as departed from port
     $sql = "
         UPDATE deliveries 
-        SET status_of_delivery = 'Transferred to Drayage',
+        SET status_of_delivery = 'Departed Port',
             actual_delivery_date = CURDATE()
         WHERE id IN ($placeholders)
     ";
