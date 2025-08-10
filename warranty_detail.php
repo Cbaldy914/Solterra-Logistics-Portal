@@ -156,7 +156,7 @@ $conn->close();
         .replacement-only { display:none; }
 
         /* Upload card like dashboard Add Project */
-        .upload-card { display:flex; align-items:center; justify-content:center; flex-direction:column; border:2px dashed #d0d0d0; background:#f9f9f9; color:#6c757d; border-radius:12px; padding:22px; min-height:75px; cursor:pointer; transition:all .2s ease; }
+        .upload-card { display:flex; align-items:center; justify-content:center; flex-direction:column; border:2px dashed #d0d0d0; background:#f9f9f9; color:#6c757d; border-radius:12px; padding:22px; height:75px; cursor:pointer; transition:all .2s ease; }
         .upload-card:hover { border-color:#488C9A; background:#f0f8fa; color:#488C9A; box-shadow:0 8px 24px rgba(72,140,154,0.2); }
         .upload-card .icon { font-size:28px; line-height:1; margin-bottom:6px; }
         /* Tabs */
@@ -293,7 +293,7 @@ $conn->close();
                             </div>
                         <?php endforeach; ?>
                         <?php if ($isAdmin): ?>
-                        <label for="upload_docs" class="upload-card" style="min-width:75px;">
+                        <label for="upload_docs" class="upload-card" style="min-width:140px;">
                             <div class="icon">＋</div>
                             <div style="font-weight:600;">Add Documents</div>
                             <div style="font-size:12px; color:#6c757d;">PDF, PNG, JPG, WEBP</div>
@@ -337,14 +337,14 @@ $conn->close();
     </div>
 
     <?php if ($isAdmin): ?>
-    <!-- Admin Panel -->
-    <div class="card admin-panel" style="margin: 0 20px 20px;">
-        <div class="card-header">Admin Controls</div>
-        <div class="card-body">
-            <form method="post" action="process_warranty_update.php" enctype="multipart/form-data">
-                <input type="hidden" name="claim_id" value="<?php echo (int)$claimId; ?>">
-                <?php if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); } ?>
-                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+    <form method="post" action="process_warranty_update.php" enctype="multipart/form-data">
+        <input type="hidden" name="claim_id" value="<?php echo (int)$claimId; ?>">
+        <?php if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); } ?>
+        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+
+        <div class="card admin-panel" style="margin: 0 20px 20px;">
+            <div class="card-header">Status Actions</div>
+            <div class="card-body">
                 <div class="admin-form-row">
                     <div class="admin-form-group">
                         <label class="form-label">Current Status</label>
@@ -373,7 +373,6 @@ $conn->close();
                                 </div>
                                 <div id="decision_approve_fields" style="display:none; padding:8px 0;">
                                     <div class="admin-form-row">
-        
                                         <div class="admin-form-group">
                                             <label class="form-label">Resolution Type</label>
                                             <select name="resolution_type" class="form-select" id="resolution_type">
@@ -389,32 +388,32 @@ $conn->close();
                                         </div>
                                     </div>
 
-                <div class="admin-form-row full replacement-only">
-                    <div class="admin-form-group">
-                        <label class="form-label">Replacement Tracking</label>
-                        <input type="text" class="form-control" name="replacement_tracking" value="<?php echo htmlspecialchars((string)$claim['replacement_tracking']); ?>" placeholder="Tracking # or reference">
-                        <div class="form-hint">Optional now; will be required when marking as Replacement Shipped.</div>
-                    </div>
-                </div>
+                                    <div class="admin-form-row full replacement-only">
+                                        <div class="admin-form-group">
+                                            <label class="form-label">Replacement Tracking</label>
+                                            <input type="text" class="form-control" name="replacement_tracking" value="<?php echo htmlspecialchars((string)$claim['replacement_tracking']); ?>" placeholder="Tracking # or reference">
+                                            <div class="form-hint">Optional now; will be required when marking as Replacement Shipped.</div>
+                                        </div>
+                                    </div>
 
-                <div class="admin-form-row full replacement-only">
-                    <div class="admin-form-group">
-                        <label class="form-label">Replacement Pallets</label>
-                        <a class="btn btn-secondary" href="link_replacement_pallets.php?claim_id=<?php echo (int)$claimId; ?>">Link replacement pallet(s)</a>
-                        <div class="form-hint">Currently linked: <?php echo (int)count($linkedIds); ?> pallet(s).</div>
-                        <?php if (!empty($linkedIds)): ?>
-                            <ul class="mt-2">
-                                <?php foreach ($linkedIds as $pid): ?>
-                                    <li><?php echo htmlspecialchars($linkedMap[$pid] ?? ('ID '.$pid)); ?></li>
-                                <?php endforeach; ?>
-                            </ul>
-                        <?php endif; ?>
-                        <div class="form-check mt-2">
-                            <input class="form-check-input" type="checkbox" name="override_cross_project" id="override_cross_project_top" value="1">
-                            <label class="form-check-label" for="override_cross_project_top">Allow cross-project pallets (records override event)</label>
-                        </div>
-                    </div>
-                </div>
+                                    <div class="admin-form-row full replacement-only">
+                                        <div class="admin-form-group">
+                                            <label class="form-label">Replacement Pallets</label>
+                                            <a class="btn btn-secondary" href="link_replacement_pallets.php?claim_id=<?php echo (int)$claimId; ?>">Link replacement pallet(s)</a>
+                                            <div class="form-hint">Currently linked: <?php echo (int)count($linkedIds); ?> pallet(s).</div>
+                                            <?php if (!empty($linkedIds)): ?>
+                                                <ul class="mt-2">
+                                                    <?php foreach ($linkedIds as $pid): ?>
+                                                        <li><?php echo htmlspecialchars($linkedMap[$pid] ?? ('ID '.$pid)); ?></li>
+                                                    <?php endforeach; ?>
+                                                </ul>
+                                            <?php endif; ?>
+                                            <div class="form-check mt-2">
+                                                <input class="form-check-input" type="checkbox" name="override_cross_project" id="override_cross_project_top" value="1">
+                                                <label class="form-check-label" for="override_cross_project_top">Allow cross-project pallets (records override event)</label>
+                                            </div>
+                                        </div>
+                                    </div>
 
                                     <div class="admin-form-row full">
                                         <div class="admin-form-group">
@@ -446,19 +445,6 @@ $conn->close();
                     </div>
                 </div>
 
-                <div class="admin-form-row full">
-                    <div class="admin-form-group">
-                        <label class="form-label">Responsible Party</label>
-                        <select name="responsible_party" class="form-select" id="responsible_party_select">
-                            <?php foreach (['Manufacturer','EPC','Carrier','Other'] as $rp): ?>
-                                <option value="<?php echo $rp; ?>" <?php echo ($claim['responsible_party']===$rp)?'selected':''; ?>><?php echo $rp; ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                </div>
-
-                
-
                 <?php $from = (string)$claim['status']; if (strpos($from, 'Approved - ') === 0): ?>
                 <div class="admin-form-row" style="margin-top:6px;">
                     <div class="admin-form-group">
@@ -483,18 +469,22 @@ $conn->close();
                         <textarea class="form-control" name="rejection_reason" rows="3" placeholder="Provide a clear reason for rejection."></textarea>
                     </div>
                 </div>
+            </div>
+        </div>
 
-                <div class="admin-form-row full replacement-only">
+        <div class="card admin-panel" style="margin: 0 20px 20px;">
+            <div class="card-header">General Updates</div>
+            <div class="card-body">
+                <div class="admin-form-row full">
                     <div class="admin-form-group">
-                        <label class="form-label">Replacement Tracking</label>
-                        <input type="text" class="form-control" name="replacement_tracking" value="<?php echo htmlspecialchars((string)$claim['replacement_tracking']); ?>" placeholder="Tracking # or reference">
-                        <div class="form-hint">When first set, status can auto-advance to Replacement Shipped.</div>
+                        <label class="form-label">Responsible Party</label>
+                        <select name="responsible_party" class="form-select" id="responsible_party_select">
+                            <?php foreach (['Manufacturer','EPC','Carrier','Other'] as $rp): ?>
+                                <option value="<?php echo $rp; ?>" <?php echo ($claim['responsible_party']===$rp)?'selected':''; ?>><?php echo $rp; ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
                 </div>
-
-                <!-- Proof of Completion removed from base Admin Controls; shown in Pending decision approve area only -->
-
-                <!-- Attachments section removed from Admin Controls per request -->
 
                 <div class="admin-form-row">
                     <div class="admin-form-group">
@@ -504,40 +494,17 @@ $conn->close();
                     <div class="admin-form-group">
                         <label class="form-label">Post Public Update</label>
                         <textarea class="form-control" name="public_notes" rows="3" placeholder="Share a clear update that customers will see..."></textarea>
-                        <div class="form-hint">This will be saved when you click Save changes.</div>
                     </div>
                 </div>
 
-                <div class="admin-form-row full replacement-only">
-                    <div class="admin-form-group">
-                        <label class="form-label">Replacement Pallets</label>
-                        <a class="btn btn-secondary" href="link_replacement_pallets.php?claim_id=<?php echo (int)$claimId; ?>">Link replacement pallet(s)</a>
-                        <div class="form-hint">Currently linked: <?php echo (int)count($linkedIds); ?> pallet(s).</div>
-                        <?php if (!empty($linkedIds)): ?>
-                            <ul class="mt-2">
-                                <?php foreach ($linkedIds as $pid): ?>
-                                    <li><?php echo htmlspecialchars($linkedMap[$pid] ?? ('ID '.$pid)); ?></li>
-                                <?php endforeach; ?>
-                            </ul>
-                        <?php endif; ?>
-                        <div class="form-check mt-3">
-                            <input class="form-check-input" type="checkbox" name="override_cross_project" id="override_cross_project" value="1">
-                            <label class="form-check-label" for="override_cross_project">Allow cross-project pallets (records override event)</label>
-                        </div>
-                    </div>
-                </div>
                 <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
-                    <div class="text-muted small">
-                        <i class="fas fa-info-circle me-1"></i>
-                        Changes are logged automatically and customers are notified of public updates.
-                    </div>
                     <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-save me-2"></i>Save changes only
+                        <i class="fas fa-save me-2"></i>Save changes
                     </button>
                 </div>
-            </form>
+            </div>
         </div>
-    </div>
+    </form>
     <?php endif; ?>
 
     <!-- Tabs: Pallets & (Admin-only) Audit Log -->
@@ -632,11 +599,13 @@ function toggleReplacementSections(){
   if (!sel) return;
   const show = sel.value === 'Replacement';
   document.querySelectorAll('.replacement-only').forEach(el => {
-    el.style.display = show ? '' : 'none';
+    // Ensure we override the CSS rule `.replacement-only { display:none; }`
+    // Use grid to match `.admin-form-row` layout
+    el.style.display = show ? 'grid' : 'none';
   });
 }
 document.addEventListener('DOMContentLoaded', () => {
-  const sel = document.querySelector('select[name="resolution_type"]');
+  const sel = document.getElementById('resolution_type');
   if (sel) sel.addEventListener('change', toggleReplacementSections);
   toggleReplacementSections();
 
