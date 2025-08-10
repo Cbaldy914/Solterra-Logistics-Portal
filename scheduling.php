@@ -143,7 +143,7 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
         $pallet_actuals = isset($_POST['pallet_actuals']) ? json_decode($_POST['pallet_actuals'], true) : [];
         $pallet_accepted = isset($_POST['pallet_accepted']) ? json_decode($_POST['pallet_accepted'], true) : [];
         $pallet_notes = isset($_POST['pallet_notes']) ? json_decode($_POST['pallet_notes'], true) : [];
-        
+
         // Handle photo uploads first
         $pictures = [];
         if (isset($_FILES['damage_pictures']) && is_array($_FILES['damage_pictures']['name'])) {
@@ -151,7 +151,7 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
             if (!is_dir($upload_dir)) {
                 mkdir($upload_dir, 0755, true);
             }
-            
+
             $count = count($_FILES['damage_pictures']['name']);
             for ($i = 0; $i < $count; $i++) {
                 if ($_FILES['damage_pictures']['error'][$i] === UPLOAD_ERR_OK) {
@@ -162,21 +162,28 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
                 }
             }
         }
-        
+
         // First, delete any existing warranty claims for this appointment
         $delete_existing = $conn->prepare("DELETE FROM warranty_claims WHERE scheduling_id = ?");
         $delete_existing->bind_param("i", $appointment_id);
         $delete_existing->execute();
         $delete_existing->close();
-        
-        // Get all unique pallet IDs that have any kind of issue
+
+        // Gather pallets with issues
         $all_pallet_ids = array_unique(array_merge(
             array_keys($pallet_damages),
             array_keys($pallet_actuals),
             array_keys($pallet_accepted)
         ));
-        
-        // Process each pallet individually
+
+        $details = [];
+        $any_damage = false;
+        $any_discrepancy = false;
+        $total_expected = 0;
+        $total_actual = 0;
+        $total_damaged = 0;
+        $total_accepted = 0;
+
         foreach ($all_pallet_ids as $pallet_id) {
             // Get pallet info
             $pallet_stmt = $conn->prepare("SELECT wattage, quantity FROM inventory_pallets WHERE id = ?");
@@ -185,53 +192,38 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
             $pallet_stmt->bind_result($wattage, $original_qty);
             $pallet_stmt->fetch();
             $pallet_stmt->close();
-            
+
             $expected_qty = intval($original_qty);
             $actual_qty = isset($pallet_actuals[$pallet_id]) ? intval($pallet_actuals[$pallet_id]) : $expected_qty;
             $damaged_qty = isset($pallet_damages[$pallet_id]) ? intval($pallet_damages[$pallet_id]) : 0;
             $accepted_qty = isset($pallet_accepted[$pallet_id]) ? intval($pallet_accepted[$pallet_id]) : $actual_qty;
-            $notes = isset($pallet_notes[$pallet_id]) ? trim($pallet_notes[$pallet_id]) : '';
-            
-            // Determine issue type
+            $note = isset($pallet_notes[$pallet_id]) ? trim($pallet_notes[$pallet_id]) : '';
+
             $has_damage = ($damaged_qty > 0);
-            $has_quantity_discrepancy = ($actual_qty != $expected_qty);
-            
-            $issue_type = '';
-            if ($has_damage && $has_quantity_discrepancy) {
-                $issue_type = 'both';
-            } elseif ($has_damage) {
-                $issue_type = 'damaged';
-            } elseif ($has_quantity_discrepancy) {
-                $issue_type = 'quantity_discrepancy';
-            } else {
-                // No issues, skip this pallet
+            $has_discrepancy = ($actual_qty != $expected_qty);
+
+            if (!($has_damage || $has_discrepancy)) {
                 continue;
             }
-            
-            // Create warranty claim for this pallet
-            $insert_warranty = $conn->prepare("
-                INSERT INTO warranty_claims 
-                (scheduling_id, bol_number, delivery_date, status, notes, pictures, 
-                 pallet_id, issue_type, expected_quantity, actual_quantity, 
-                 damaged_quantity, accepted_quantity)
-                VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?)
-            ");
-            $insert_warranty->bind_param("issssissiii", 
-                $appointment_id,
-                $bol_number,
-                $delivery_date,
-                $notes,
-                json_encode($pictures), // Store pictures on each claim
-                $pallet_id,
-                $issue_type,
-                $expected_qty,
-                $actual_qty,
-                $damaged_qty,
-                $accepted_qty
-            );
-            $insert_warranty->execute();
-            $insert_warranty->close();
-            
+
+            $any_damage = $any_damage || $has_damage;
+            $any_discrepancy = $any_discrepancy || $has_discrepancy;
+
+            $total_expected += $expected_qty;
+            $total_actual += $actual_qty;
+            $total_damaged += $damaged_qty;
+            $total_accepted += $accepted_qty;
+
+            $details[] = [
+                'pallet_id' => (int)$pallet_id,
+                'wattage' => (int)$wattage,
+                'expected' => $expected_qty,
+                'actual' => $actual_qty,
+                'damaged' => $damaged_qty,
+                'accepted' => $accepted_qty,
+                'notes' => $note,
+            ];
+
             // Update pallet status based on issues
             if ($has_damage) {
                 $new_status = ($damaged_qty >= $actual_qty) ? 'Damaged - Total Loss' : 'Partially Damaged';
@@ -240,12 +232,52 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
                 $update_pallet->execute();
                 $update_pallet->close();
             }
-            
-            // Note: We do NOT update the pallet quantity in inventory_pallets when there's a discrepancy.
-            // The original expected quantity should remain unchanged in the database.
-            // The actual received quantity is recorded in the warranty_claims table for tracking purposes.
         }
-        
+
+        // If no issues across pallets, nothing to create
+        if (empty($details)) {
+            return;
+        }
+
+        $issue_type = $any_damage && $any_discrepancy ? 'both' : ($any_damage ? 'damaged' : 'quantity_discrepancy');
+
+        // Create a single warranty claim for the delivery (appointment)
+        $notes_json = json_encode(['pallets' => $details], JSON_UNESCAPED_SLASHES);
+        $pictures_json = json_encode($pictures);
+
+        $insert = $conn->prepare("
+            INSERT INTO warranty_claims
+            (scheduling_id, bol_number, delivery_date, status, notes, pictures,
+             pallet_id, issue_type, expected_quantity, actual_quantity,
+             damaged_quantity, accepted_quantity)
+            VALUES (?, ?, ?, 'Submitted', ?, ?, NULL, ?, ?, ?, ?, ?)
+        ");
+        $insert->bind_param(
+            "isssssiiii",
+            $appointment_id,
+            $bol_number,
+            $delivery_date,
+            $notes_json,
+            $pictures_json,
+            $issue_type,
+            $total_expected,
+            $total_actual,
+            $total_damaged,
+            $total_accepted
+        );
+        $insert->execute();
+        $claim_id = $conn->insert_id;
+        $insert->close();
+
+        if ($claim_id > 0) {
+            $user_id = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
+            $event_text = 'Warranty claim submitted for delivery with multiple pallet issues (' . count($details) . ' pallets)';
+            $ev = $conn->prepare("INSERT INTO warranty_claim_events (claim_id, user_id, event_text, is_public) VALUES (?, ?, ?, 1)");
+            $ev->bind_param('iis', $claim_id, $user_id, $event_text);
+            $ev->execute();
+            $ev->close();
+        }
+
     } catch (Exception $e) {
         throw new Exception("Error processing damage report: " . $e->getMessage());
     }
@@ -3508,11 +3540,50 @@ include('header.php');
                             📸 Upload Damage Photos
                             <input type="file" name="damage_pictures[]" multiple accept="image/*">
                         </label>
+                        <div id="damage_photos_preview" class="photos-preview"></div>
                     </div>
                 </div>
             `;
             
             container.innerHTML = html;
+
+            // Wire up photo preview feedback
+            const fileInput = container.querySelector('input[name="damage_pictures[]"]');
+            const preview = container.querySelector('#damage_photos_preview');
+            if (fileInput && preview) {
+                fileInput.addEventListener('change', () => {
+                    preview.innerHTML = '';
+                    const files = Array.from(fileInput.files || []);
+                    if (!files.length) return;
+                    const list = document.createElement('div');
+                    list.style.display = 'grid';
+                    list.style.gridTemplateColumns = 'repeat(auto-fill, minmax(80px, 1fr))';
+                    list.style.gap = '8px';
+                    files.forEach(f => {
+                        const item = document.createElement('div');
+                        item.style.border = '1px solid #e1e6ea';
+                        item.style.borderRadius = '8px';
+                        item.style.padding = '4px';
+                        item.style.textAlign = 'center';
+                        if (f.type.startsWith('image/')) {
+                            const img = document.createElement('img');
+                            img.src = URL.createObjectURL(f);
+                            img.style.width = '100%';
+                            img.style.height = '70px';
+                            img.style.objectFit = 'cover';
+                            img.onload = () => URL.revokeObjectURL(img.src);
+                            item.appendChild(img);
+                        }
+                        const name = document.createElement('div');
+                        name.style.fontSize = '11px';
+                        name.style.marginTop = '4px';
+                        name.textContent = f.name;
+                        item.appendChild(name);
+                        list.appendChild(item);
+                    });
+                    preview.appendChild(list);
+                });
+            }
             
             // Populate existing damage data if available
             if (window.existingDamageData) {
@@ -3537,11 +3608,49 @@ include('header.php');
                     <div class="file-upload-container">
                         <label class="file-upload-button">
                             📸 Upload Damage Photos
-                            <input type="file" name="damage_pictures[]" multiple accept="image/*">
+                            <input type="file" name="damage_pictures[]" multiple accept="image/*" id="basic_damage_pictures">
                         </label>
+                        <div id="basic_damage_photos_preview" class="photos-preview"></div>
                     </div>
                 </div>
             `;
+            // Wire up photo preview feedback for basic form
+            const basicInput = document.getElementById('basic_damage_pictures');
+            const basicPreview = document.getElementById('basic_damage_photos_preview');
+            if (basicInput && basicPreview) {
+                basicInput.addEventListener('change', () => {
+                    basicPreview.innerHTML = '';
+                    const files = Array.from(basicInput.files || []);
+                    if (!files.length) return;
+                    const list = document.createElement('div');
+                    list.style.display = 'grid';
+                    list.style.gridTemplateColumns = 'repeat(auto-fill, minmax(80px, 1fr))';
+                    list.style.gap = '8px';
+                    files.forEach(f => {
+                        const item = document.createElement('div');
+                        item.style.border = '1px solid #e1e6ea';
+                        item.style.borderRadius = '8px';
+                        item.style.padding = '4px';
+                        item.style.textAlign = 'center';
+                        if (f.type.startsWith('image/')) {
+                            const img = document.createElement('img');
+                            img.src = URL.createObjectURL(f);
+                            img.style.width = '100%';
+                            img.style.height = '70px';
+                            img.style.objectFit = 'cover';
+                            img.onload = () => URL.revokeObjectURL(img.src);
+                            item.appendChild(img);
+                        }
+                        const name = document.createElement('div');
+                        name.style.fontSize = '11px';
+                        name.style.marginTop = '4px';
+                        name.textContent = f.name;
+                        item.appendChild(name);
+                        list.appendChild(item);
+                    });
+                    basicPreview.appendChild(list);
+                });
+            }
         }
         
         // Enhanced Submit Edit Appointment

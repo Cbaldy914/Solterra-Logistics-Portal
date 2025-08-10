@@ -104,6 +104,8 @@ persistWarrantyFilters($filters);
         .status-Submitted { background:#d1e7ff; color:#084298; }
         .status-In\ Review { background:#fff3cd; color:#664d03; }
         .status-Pending\ Manufacturer { background:#fde2e1; color:#842029; }
+        .status-Pending\ EPC { background:#fde2e1; color:#842029; }
+        .status-Pending\ Carrier { background:#fde2e1; color:#842029; }
         .status-Approved\ -\ Credit { background:#d4edda; color:#0f5132; }
         .status-Approved\ -\ Replacement { background:#e2e3ff; color:#3d3dff; }
         .status-Replacement\ Shipped { background:#cff4fc; color:#055160; }
