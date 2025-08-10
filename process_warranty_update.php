@@ -44,6 +44,8 @@ $internalNotes = trim((string)($_POST['internal_notes'] ?? ''));
 $rejectionReason = trim((string)($_POST['rejection_reason'] ?? ''));
 $overrideCross = isset($_POST['override_cross_project']) ? (int)$_POST['override_cross_project'] : 0;
 $replacementPallets = isset($_POST['replacement_pallets']) ? array_map('intval', (array)$_POST['replacement_pallets']) : [];
+// Public note may be used for validation when approving
+$publicNotes = trim((string)($_POST['public_notes'] ?? ''));
 
 // Map UI-friendly status "Approved" to backend-specific statuses based on resolution type
 if ($status === 'Approved') {
@@ -84,9 +86,16 @@ if ($status === 'Approved - Credit' && ($creditAmount === null || $creditAmount 
     die('Credit amount required for Approved - Credit');
 }
 
-if ($status === 'Rejected' && $rejectionReason === '') {
+// For rejection, require either a text reason OR at least one uploaded file
+if ($status === 'Rejected' && $rejectionReason === '' && empty($_FILES['proof_files']['name'][0])) {
     $conn->close();
-    die('Rejection reason is required');
+    die('Provide a rejection reason or upload at least one file.');
+}
+
+// For approval, require either a public note OR at least one uploaded file
+if ((strpos($status, 'Approved - ') === 0) && ($publicNotes === '') && empty($_FILES['proof_files']['name'][0])) {
+    $conn->close();
+    die('Add a public update or upload at least one file to proceed.');
 }
 
 // Begin transaction for atomic update

@@ -147,8 +147,19 @@ persistWarrantyFilters($filters);
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <?php 
+        $selectedProjectId = (int)($filters['project_id'] ?? 0);
+        $selectedProjectName = '';
+        if ($selectedProjectId > 0) {
+            foreach ($projects as $p) { if ((int)$p['id'] === $selectedProjectId) { $selectedProjectName = (string)$p['project_name']; break; } }
+        }
+    ?>
     <div class="breadcrumb" style="margin: 10px 20px;">
         <a href="dashboard.php">Dashboard</a>
+        <?php if ($selectedProjectId > 0 && $selectedProjectName !== ''): ?>
+            <span class="separator">&raquo;</span>
+            <a href="project_overview.php?project_id=<?php echo (int)$selectedProjectId; ?>">Project: <?php echo htmlspecialchars($selectedProjectName); ?></a>
+        <?php endif; ?>
         <span class="separator">&raquo;</span>
         <span>Warranty Claims</span>
     </div>
@@ -258,16 +269,23 @@ let claimsTable;
 function buildAjaxData(d) {
   const form = document.getElementById('filtersForm');
   const fd = new FormData(form);
-  const issueTypes = [];
-  form.querySelectorAll('input[name="issue_types[]"]:checked').forEach(cb => issueTypes.push(cb.value));
-  const statuses = Array.from(form.querySelectorAll('#f_statuses option:checked')).map(o => o.value);
+  // Issue and Status are custom dropdowns; read from hidden inputs we keep in sync
+  const issueVals = [
+    (document.getElementById('issue_hidden_1')?.value || ''),
+    (document.getElementById('issue_hidden_2')?.value || '')
+  ].filter(Boolean);
+  const statusVals = [
+    (document.getElementById('status_hidden_1')?.value || ''),
+    (document.getElementById('status_hidden_2')?.value || ''),
+    (document.getElementById('status_hidden_3')?.value || '')
+  ].filter(Boolean);
   d.project_id = parseInt(fd.get('project_id') || '0');
-  d.issue_types = issueTypes;
+  d.issue_types = issueVals;
   d.responsible_party = fd.get('responsible_party') || '';
-  d.statuses = statuses;
+  d.statuses = statusVals;
   d.date_from = fd.get('date_from') || '';
   d.date_to = fd.get('date_to') || '';
-  d.hide_closed = form.querySelector('#f_hide').checked ? 1 : 0;
+  d.hide_closed = document.getElementById('f_hide').checked ? 1 : 0;
 }
 
 function statusBadge(status) {
