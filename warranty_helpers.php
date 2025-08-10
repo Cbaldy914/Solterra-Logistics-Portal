@@ -279,19 +279,26 @@ function detectPublicChanges(array $before, array $after, array $linkedPalletIds
     if (!empty($newUploads)) {
         $changes['uploads_added'] = $newUploads;
     }
+    // Track removed files from pictures
+    $beforePics = jsonToArray($before['pictures'] ?? '');
+    $afterPics = jsonToArray($after['pictures'] ?? '');
+    $removed = array_values(array_diff($beforePics, $afterPics));
+    if (!empty($removed)) {
+        $changes['uploads_removed'] = $removed;
+    }
     return $changes; // empty => no public changes
 }
 
 function summarizePublicChanges(mysqli $conn, array $changes): string {
     $parts = [];
     if (isset($changes['status'])) {
-        $parts[] = 'Status changed: ' . ($changes['status']['from'] ?? '—') . ' → ' . ($changes['status']['to'] ?? '—');
+        $parts[] = 'Status changed: ' . ($changes['status']['from'] ?? '—') . ' to ' . ($changes['status']['to'] ?? '—');
     }
     if (isset($changes['responsible_party'])) {
-        $parts[] = 'Responsible: ' . ($changes['responsible_party']['from'] ?? '—') . ' → ' . ($changes['responsible_party']['to'] ?? '—');
+        $parts[] = 'Responsible Party Changed: ' . ($changes['responsible_party']['from'] ?? '—') . ' to ' . ($changes['responsible_party']['to'] ?? '—');
     }
     if (isset($changes['resolution_type'])) {
-        $parts[] = 'Resolution: ' . ($changes['resolution_type']['from'] ?? '—') . ' → ' . ($changes['resolution_type']['to'] ?? '—');
+        $parts[] = 'Resolution Changed: ' . ($changes['resolution_type']['from'] ?? '—') . ' to ' . ($changes['resolution_type']['to'] ?? '—');
     }
     if (isset($changes['credit_amount'])) {
         $to = $changes['credit_amount']['to'];
@@ -313,6 +320,10 @@ function summarizePublicChanges(mysqli $conn, array $changes): string {
     if (isset($changes['uploads_added']) && !empty($changes['uploads_added'])) {
         $files = array_map(function($p){ return basename($p); }, $changes['uploads_added']);
         $parts[] = 'Files added: ' . implode(', ', $files);
+    }
+    if (isset($changes['uploads_removed']) && !empty($changes['uploads_removed'])) {
+        $files = array_map(function($p){ return basename($p); }, $changes['uploads_removed']);
+        $parts[] = 'Files removed: ' . implode(', ', $files);
     }
     return empty($parts) ? 'Update' : implode(' | ', $parts);
 }
