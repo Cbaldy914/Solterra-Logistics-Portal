@@ -7,9 +7,9 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once __DIR__ . '/../config.php';
 
 function notifyUsers(int $claimId): void {
-    // Placeholder for future email integration
-    // Intentionally left minimal per spec
-    // You can later wire this into SendGrid/SES/etc.
+    // Placeholder for future email/in-app notifications.
+    // Intentionally minimal to avoid side effects in this environment.
+    return;
 }
 
 ?>

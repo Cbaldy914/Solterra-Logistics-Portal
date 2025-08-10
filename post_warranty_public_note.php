@@ -14,6 +14,11 @@ if (!in_array($role, ['admin', 'global_admin'], true)) { http_response_code(403)
 
 $claimId = isset($_POST['claim_id']) ? (int)$_POST['claim_id'] : 0;
 $publicNotes = trim((string)($_POST['public_notes'] ?? ''));
+// CSRF check
+if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'] ?? '', (string)$_POST['csrf_token'])) {
+    http_response_code(400);
+    die('Invalid CSRF token');
+}
 if ($claimId <= 0 || $publicNotes === '') { header('Location: warranty_detail.php?id=' . $claimId); exit(); }
 
 $conn = getDBConnection();

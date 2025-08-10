@@ -76,3 +76,9 @@ SELECT
 FROM `warranty_claims` w
 LEFT JOIN `inventory_pallets` ip ON w.pallet_id = ip.id
 WHERE w.`created_at` IS NOT NULL;
+-- Step 6: Performance indexes to speed listing/filtering
+CREATE INDEX `idx_warranty_status` ON `warranty_claims`(`status`);
+CREATE INDEX `idx_warranty_resp_party` ON `warranty_claims`(`responsible_party`);
+CREATE INDEX `idx_warranty_issue_type` ON `warranty_claims`(`issue_type`);
+CREATE INDEX `idx_warranty_last_public` ON `warranty_claims`(`last_public_update_at`);
+CREATE INDEX `idx_warranty_created` ON `warranty_claims`(`created_at`);

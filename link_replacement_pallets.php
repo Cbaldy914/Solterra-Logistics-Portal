@@ -72,6 +72,8 @@ $conn->close();
     <form method="post" action="process_warranty_update.php">
       <input type="hidden" name="claim_id" value="<?php echo (int)$claimId; ?>">
       <input type="hidden" name="resolution_type" value="Replacement">
+      <?php if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); } ?>
+      <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
       <div class="grid">
         <?php foreach ($pallets as $p): $checked = in_array((int)$p['id'], $linkedIds, true) ? 'checked' : ''; ?>
           <label class="card">
