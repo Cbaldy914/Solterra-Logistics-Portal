@@ -159,6 +159,9 @@ $conn->close();
         .upload-card { display:flex; align-items:center; justify-content:center; flex-direction:column; border:2px dashed #d0d0d0; background:#f9f9f9; color:#6c757d; border-radius:12px; padding:22px; height:75px; cursor:pointer; transition:all .2s ease; }
         .upload-card:hover { border-color:#488C9A; background:#f0f8fa; color:#488C9A; box-shadow:0 8px 24px rgba(72,140,154,0.2); }
         .upload-card .icon { font-size:28px; line-height:1; margin-bottom:6px; }
+        /* File preview pills */
+        .file-pills { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+        .file-pill { background:#f4f7f9; border:1px solid #e2e9ef; color:#293E4C; padding:4px 8px; border-radius:999px; font-size:12px; }
         /* Tabs */
         .tabs { margin: 0 20px 80px; }
         .tabs-nav { display:flex; gap:12px; border-bottom:1px solid #e9ecef; margin-bottom:12px; }
@@ -174,7 +177,10 @@ $conn->close();
     <div class="page-header">
         <div>
             <div class="breadcrumb" style="margin-bottom:8px;">
-                <a href="warranty.php">Warranty Claims</a>
+                <?php $projId = (int)$claim['project_id']; $projName = (string)$claim['project_name']; ?>
+                <a href="project_overview.php?project_id=<?php echo $projId; ?>">Project: <?php echo htmlspecialchars($projName); ?></a>
+                <span class="separator">&raquo;</span>
+                <a href="warranty.php?project_id=<?php echo $projId; ?>">Warranty Claims</a>
                 <span class="separator">&raquo;</span>
                 <span>Ticket #<?php echo htmlspecialchars($claimId); ?></span>
             </div>
@@ -326,6 +332,7 @@ $conn->close();
                     <div class="mt-3">
                         <!-- Hidden input bound to the Add Documents tile above -->
                         <input id="upload_docs" type="file" name="proof_files[]" multiple accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none;">
+                        <div id="upload_docs_preview" class="file-pills" style="display:none;"></div>
                         <div class="d-flex justify-content-end mt-2">
                             <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Update Attachments</button>
                         </div>
@@ -424,6 +431,7 @@ $conn->close();
                                                 <div style="font-size:12px; color:#6c757d;">PDF, PNG, JPG, WEBP</div>
                                             </label>
                                             <input id="proof_upload" type="file" name="proof_files[]" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none;">
+                                            <div id="proof_upload_preview" class="file-pills" style="display:none;"></div>
                                             <div class="form-hint">Closing requires a proof file.</div>
                                         </div>
                                     </div>
@@ -698,6 +706,27 @@ document.addEventListener('DOMContentLoaded', () => {
       if (g) { g.style.display = (g.style.display === 'none' || g.style.display === '') ? 'grid' : 'none'; }
     });
   }
+
+  // File input previews for user feedback
+  function renderSelectedFiles(inputEl, previewEl){
+    if (!inputEl || !previewEl) return;
+    const files = inputEl.files;
+    if (!files || files.length === 0) {
+      previewEl.style.display = 'none';
+      previewEl.innerHTML = '';
+      return;
+    }
+    const pills = Array.from(files).map(f => `<span class=\"file-pill\">${f.name}</span>`).join('');
+    previewEl.innerHTML = pills;
+    previewEl.style.display = '';
+  }
+  const uploadDocs = document.getElementById('upload_docs');
+  const uploadDocsPreview = document.getElementById('upload_docs_preview');
+  if (uploadDocs) uploadDocs.addEventListener('change', () => renderSelectedFiles(uploadDocs, uploadDocsPreview));
+
+  const proofUpload = document.getElementById('proof_upload');
+  const proofUploadPreview = document.getElementById('proof_upload_preview');
+  if (proofUpload) proofUpload.addEventListener('change', () => renderSelectedFiles(proofUpload, proofUploadPreview));
 });
 </script>
 </body>
