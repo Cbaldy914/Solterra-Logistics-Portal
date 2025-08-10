@@ -115,7 +115,7 @@ persistWarrantyFilters($filters);
         /* Buttons */
         .filters-btn { background: linear-gradient(135deg, #488C9A, #3A6E7F); color:#fff; border:none; padding:10px 16px; border-radius:12px; font-weight:600; box-shadow:0 6px 16px rgba(72,140,154,0.25); cursor:pointer; width:100%; }
         .filters-btn:hover { filter:brightness(0.96); box-shadow:0 10px 24px rgba(72,140,154,0.30); transform: translateY(-1px); }
-        .icon-btn { width:38px; height:38px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; border:none; background:linear-gradient(135deg,#3A6E7F,#293E4C); color:#fff; box-shadow:0 8px 20px rgba(41,62,76,0.35); }
+        .icon-btn { width:38px; cursor:pointer; height:38px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; border:none; background:linear-gradient(135deg,#3A6E7F,#293E4C); color:#fff; box-shadow:0 8px 20px rgba(41,62,76,0.35); }
         .icon-btn:hover { filter:brightness(1.05); transform: translateY(-1px) scale(1.02); }
 
         /* Table polish */

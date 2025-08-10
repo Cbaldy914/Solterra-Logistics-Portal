@@ -155,6 +155,10 @@ $conn->close();
         .action-btn-secondary:hover { background:#f8f9fa; border-color:#dee2e6; }
         .replacement-only { display:none; }
 
+        /* Upload card like dashboard Add Project */
+        .upload-card { display:flex; align-items:center; justify-content:center; flex-direction:column; border:2px dashed #d0d0d0; background:#f9f9f9; color:#6c757d; border-radius:12px; padding:22px; min-height:75px; cursor:pointer; transition:all .2s ease; }
+        .upload-card:hover { border-color:#488C9A; background:#f0f8fa; color:#488C9A; box-shadow:0 8px 24px rgba(72,140,154,0.2); }
+        .upload-card .icon { font-size:28px; line-height:1; margin-bottom:6px; }
         /* Tabs */
         .tabs { margin: 0 20px 80px; }
         .tabs-nav { display:flex; gap:12px; border-bottom:1px solid #e9ecef; margin-bottom:12px; }
@@ -219,35 +223,33 @@ $conn->close();
     </div>
 
     <div class="layout">
-        <!-- Left: Public timeline + public notes composer for admin -->
+        <!-- Left: Public timeline -->
         <div class="card">
             <div class="card-header">Public Timeline</div>
             <div class="card-body">
-                <?php if ($isAdmin): ?>
-            <form method="post" action="post_warranty_public_note.php" class="mb-3">
-                <input type="hidden" name="claim_id" value="<?php echo (int)$claimId; ?>">
-                <?php if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); } ?>
-                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
-                    <label for="public_notes" class="form-label">Post Public Update</label>
-                    <textarea id="public_notes" name="public_notes" class="form-control" rows="3" placeholder="Share a clear update that customers will see..."></textarea>
-                    <div class="d-flex justify-content-end mt-2">
-                        <button type="submit" class="action-btn action-btn-primary">
-                            <i class="fas fa-paper-plane"></i>Post Update
-                        </button>
+                <?php /* Collapsible view: show latest, expand for history */ ?>
+                <?php $latest = empty($eventsPublic) ? null : $eventsPublic[0]; ?>
+                <?php if (!$latest): ?>
+                    <div class="help-text">No public updates yet.</div>
+                <?php else: ?>
+                    <div class="timeline-item" style="margin-bottom:8px;">
+                        <div class="timeline-time"><?php echo htmlspecialchars($latest['event_ts']); ?> · Latest</div>
+                        <div><?php echo htmlspecialchars($latest['event_text']); ?></div>
                     </div>
-                </form>
-                <hr/>
+                    <?php if (count($eventsPublic) > 1): ?>
+                        <details>
+                            <summary style="cursor:pointer; font-weight:600; color:#293E4C;">Show previous updates</summary>
+                            <ul class="timeline" style="margin-top:10px;">
+                                <?php foreach (array_slice($eventsPublic, 1) as $ev): ?>
+                                    <li class="timeline-item">
+                                        <div class="timeline-time"><?php echo htmlspecialchars($ev['event_ts']); ?></div>
+                                        <div><?php echo htmlspecialchars($ev['event_text']); ?></div>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </details>
+                    <?php endif; ?>
                 <?php endif; ?>
-                <ul class="timeline">
-                    <?php if (empty($eventsPublic)): ?>
-                        <li class="help-text">No public updates yet.</li>
-                    <?php else: foreach ($eventsPublic as $ev): ?>
-                        <li class="timeline-item">
-                            <div class="timeline-time"><?php echo htmlspecialchars($ev['event_ts']); ?></div>
-                            <div><?php echo htmlspecialchars($ev['event_text']); ?></div>
-                        </li>
-                    <?php endforeach; endif; ?>
-                </ul>
             </div>
         </div>
 
@@ -255,21 +257,80 @@ $conn->close();
         <div class="card">
             <div class="card-header">Attachments</div>
             <div class="card-body">
+                <?php if ($isAdmin): ?>
+                <form method="post" action="process_warranty_update.php" enctype="multipart/form-data">
+                    <input type="hidden" name="claim_id" value="<?php echo (int)$claimId; ?>">
+                    <?php if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); } ?>
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                <?php endif; ?>
+
                 <?php if (!empty($proofPrimary)): ?>
                     <div class="mb-2"><strong>Primary Proof:</strong> <a href="<?php echo htmlspecialchars($proofPrimary); ?>" target="_blank">View Proof</a></div>
                 <?php endif; ?>
+                <?php 
+                    $totalPics = count($pictures);
+                    $picsToShow = array_slice($pictures, 0, 2);
+                    $hasMorePics = $totalPics > 2;
+                    $galleryId = 'all_pics_' . (int)$claimId;
+                    $viewAllId = 'view_all_' . (int)$claimId;
+                ?>
                 <?php if (empty($pictures)): ?>
                     <div class="help-text">No attachments uploaded yet.</div>
                 <?php else: ?>
                     <div class="gallery">
-                        <?php foreach ($pictures as $p): $isImg = preg_match('/\.(png|jpe?g|webp)$/i', $p); ?>
-                            <a href="<?php echo htmlspecialchars($p); ?>" target="_blank">
-                                <?php if ($isImg): ?><img src="<?php echo htmlspecialchars($p); ?>" alt="Attachment"><?php else: ?>
-                                    <div style="padding:20px; text-align:center;">📄 <?php echo htmlspecialchars(basename($p)); ?></div>
+                        <?php foreach ($picsToShow as $p): $isImg = preg_match('/\.(png|jpe?g|webp)$/i', $p); ?>
+                            <div>
+                                <a href="<?php echo htmlspecialchars($p); ?>" target="_blank">
+                                    <?php if ($isImg): ?><img src="<?php echo htmlspecialchars($p); ?>" alt="Attachment"><?php else: ?>
+                                        <div style="padding:20px; text-align:center;">📄 <?php echo htmlspecialchars(basename($p)); ?></div>
+                                    <?php endif; ?>
+                                </a>
+                                <?php if ($isAdmin): ?>
+                                    <div class="mt-1">
+                                        <label class="form-check-label small"><input type="checkbox" class="form-check-input" name="delete_pictures[]" value="<?php echo htmlspecialchars($p); ?>"> Delete</label>
+                                    </div>
                                 <?php endif; ?>
-                            </a>
+                            </div>
                         <?php endforeach; ?>
+                        <?php if ($isAdmin): ?>
+                        <label for="upload_docs" class="upload-card" style="min-width:75px;">
+                            <div class="icon">＋</div>
+                            <div style="font-weight:600;">Add Documents</div>
+                            <div style="font-size:12px; color:#6c757d;">PDF, PNG, JPG, WEBP</div>
+                        </label>
+                        <?php endif; ?>
                     </div>
+                    <?php if ($hasMorePics): ?>
+                        <div class="mt-2">
+                            <a href="#" id="<?php echo $viewAllId; ?>" class="action-btn-secondary" style="padding:6px 10px; border-radius:8px; border:1px solid #e1e6ea; text-decoration:none;">View All (<?php echo (int)$totalPics; ?>)</a>
+                        </div>
+                        <div id="<?php echo $galleryId; ?>" class="gallery" style="display:none; margin-top:10px;">
+                            <?php foreach ($pictures as $p): $isImg = preg_match('/\.(png|jpe?g|webp)$/i', $p); ?>
+                                <div>
+                                    <a href="<?php echo htmlspecialchars($p); ?>" target="_blank">
+                                        <?php if ($isImg): ?><img src="<?php echo htmlspecialchars($p); ?>" alt="Attachment"><?php else: ?>
+                                            <div style="padding:20px; text-align:center;">📄 <?php echo htmlspecialchars(basename($p)); ?></div>
+                                        <?php endif; ?>
+                                    </a>
+                                    <?php if ($isAdmin): ?>
+                                        <div class="mt-1">
+                                            <label class="form-check-label small"><input type="checkbox" class="form-check-input" name="delete_pictures[]" value="<?php echo htmlspecialchars($p); ?>"> Delete</label>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                <?php endif; ?>
+                <?php if ($isAdmin): ?>
+                    <div class="mt-3">
+                        <!-- Hidden input bound to the Add Documents tile above -->
+                        <input id="upload_docs" type="file" name="proof_files[]" multiple accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none;">
+                        <div class="d-flex justify-content-end mt-2">
+                            <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Update Attachments</button>
+                        </div>
+                    </div>
+                </form>
                 <?php endif; ?>
             </div>
         </div>
@@ -301,7 +362,7 @@ $conn->close();
                             <?php elseif ($from === 'In Review'): ?>
                                 <button type="button" class="btn-primary" id="btn_to_pending"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Move to Pending <?php echo htmlspecialchars($resp); ?></span></button>
                                 <div class="form-hint">Change Responsible Party below to alter pending label.</div>
-                            <?php elseif (in_array($from, ['Pending Manufacturer','Pending EPC','Pending Carrier'], true)): ?>
+                            <?php elseif (strpos($from, 'Pending ') === 0): ?>
                                 <div class="form-check" style="margin-bottom:8px;">
                                     <input class="form-check-input" type="radio" name="decision" id="dec_approve" value="approve">
                                     <label class="form-check-label" for="dec_approve">Approve</label>
@@ -325,6 +386,46 @@ $conn->close();
                                         <div class="admin-form-group credit-only" style="display:none;">
                                             <label class="form-label">Credit Amount</label>
                                             <input type="number" step="0.01" class="form-control" name="credit_amount" value="<?php echo htmlspecialchars((string)$claim['credit_amount']); ?>" placeholder="0.00">
+                                        </div>
+                                    </div>
+
+                <div class="admin-form-row full replacement-only">
+                    <div class="admin-form-group">
+                        <label class="form-label">Replacement Tracking</label>
+                        <input type="text" class="form-control" name="replacement_tracking" value="<?php echo htmlspecialchars((string)$claim['replacement_tracking']); ?>" placeholder="Tracking # or reference">
+                        <div class="form-hint">Optional now; will be required when marking as Replacement Shipped.</div>
+                    </div>
+                </div>
+
+                <div class="admin-form-row full replacement-only">
+                    <div class="admin-form-group">
+                        <label class="form-label">Replacement Pallets</label>
+                        <a class="btn btn-secondary" href="link_replacement_pallets.php?claim_id=<?php echo (int)$claimId; ?>">Link replacement pallet(s)</a>
+                        <div class="form-hint">Currently linked: <?php echo (int)count($linkedIds); ?> pallet(s).</div>
+                        <?php if (!empty($linkedIds)): ?>
+                            <ul class="mt-2">
+                                <?php foreach ($linkedIds as $pid): ?>
+                                    <li><?php echo htmlspecialchars($linkedMap[$pid] ?? ('ID '.$pid)); ?></li>
+                                <?php endforeach; ?>
+                            </ul>
+                        <?php endif; ?>
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" name="override_cross_project" id="override_cross_project_top" value="1">
+                            <label class="form-check-label" for="override_cross_project_top">Allow cross-project pallets (records override event)</label>
+                        </div>
+                    </div>
+                </div>
+
+                                    <div class="admin-form-row full">
+                                        <div class="admin-form-group">
+                                            <label class="form-label">Proof of Completion</label>
+                                            <label for="proof_upload" class="upload-card">
+                                                <div class="icon">＋</div>
+                                                <div style="font-weight:600;">Upload Proof of Completion</div>
+                                                <div style="font-size:12px; color:#6c757d;">PDF, PNG, JPG, WEBP</div>
+                                            </label>
+                                            <input id="proof_upload" type="file" name="proof_files[]" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none;">
+                                            <div class="form-hint">Closing requires a proof file.</div>
                                         </div>
                                     </div>
                                 </div>
@@ -359,7 +460,7 @@ $conn->close();
                 
 
                 <?php $from = (string)$claim['status']; if (strpos($from, 'Approved - ') === 0): ?>
-                <div class="admin-form-row">
+                <div class="admin-form-row" style="margin-top:6px;">
                     <div class="admin-form-group">
                         <label class="form-label">Resolution Type</label>
                         <select name="resolution_type" class="form-select">
@@ -376,7 +477,7 @@ $conn->close();
                 </div>
                 <?php endif; ?>
 
-                <div class="admin-form-row full rejection-only" style="display:none;">
+                <div class="admin-form-row full rejection-only" style="display:none; margin-top:6px;">
                     <div class="admin-form-group">
                         <label class="form-label">Rejection Reason</label>
                         <textarea class="form-control" name="rejection_reason" rows="3" placeholder="Provide a clear reason for rejection."></textarea>
@@ -391,18 +492,19 @@ $conn->close();
                     </div>
                 </div>
 
-                <div class="admin-form-row full">
-                    <div class="admin-form-group">
-                        <label class="form-label">Proof of Completion</label>
-                        <input type="file" name="proof_files[]" multiple class="form-control" accept=".pdf,.png,.jpg,.jpeg,.webp">
-                        <div class="form-hint">Upload multiple files: photos, signed memos, etc.</div>
-                    </div>
-                </div>
+                <!-- Proof of Completion removed from base Admin Controls; shown in Pending decision approve area only -->
 
-                <div class="admin-form-row full">
+                <!-- Attachments section removed from Admin Controls per request -->
+
+                <div class="admin-form-row">
                     <div class="admin-form-group">
                         <label class="form-label">Internal Notes</label>
                         <textarea class="form-control" name="internal_notes" rows="3" placeholder="Only visible to admins."><?php echo htmlspecialchars((string)$claim['internal_notes']); ?></textarea>
+                    </div>
+                    <div class="admin-form-group">
+                        <label class="form-label">Post Public Update</label>
+                        <textarea class="form-control" name="public_notes" rows="3" placeholder="Share a clear update that customers will see..."></textarea>
+                        <div class="form-hint">This will be saved when you click Save changes.</div>
                     </div>
                 </div>
 
@@ -438,11 +540,13 @@ $conn->close();
     </div>
     <?php endif; ?>
 
-    <!-- Tabs: Pallets & Audit Log -->
+    <!-- Tabs: Pallets & (Admin-only) Audit Log -->
     <div class="tabs">
         <div class="tabs-nav">
             <a href="#tab-pallets" class="active" onclick="showTab(event,'tab-pallets')">Pallets</a>
-            <a href="#tab-audit" onclick="showTab(event,'tab-audit')">Audit Log</a>
+            <?php if ($isAdmin): ?>
+                <a href="#tab-audit" onclick="showTab(event,'tab-audit')">Audit Log</a>
+            <?php endif; ?>
         </div>
         <div id="tab-pallets" class="tab-pane">
             <?php 
@@ -494,10 +598,8 @@ $conn->close();
                 </ul>
             <?php endif; ?>
         </div>
-        <div id="tab-audit" class="tab-pane" style="display:none;">
-            <?php if (!$isAdmin): ?>
-                <div class="help-text">Admins only.</div>
-            <?php else: ?>
+        <?php if ($isAdmin): ?>
+            <div id="tab-audit" class="tab-pane" style="display:none;">
                 <?php if (empty($eventsAll)): ?>
                     <div class="help-text">No events yet.</div>
                 <?php else: ?>
@@ -510,8 +612,8 @@ $conn->close();
                         <?php endforeach; ?>
                     </ul>
                 <?php endif; ?>
-            <?php endif; ?>
-        </div>
+            </div>
+        <?php endif; ?>
     </div>
 </main>
 
@@ -616,6 +718,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const btnToClosed = document.getElementById('btn_to_closed');
   if (btnToClosed) btnToClosed.addEventListener('click', () => { statusHidden.value = 'Closed'; btnToClosed.closest('form').submit(); });
+
+  // View All attachments
+  const viewAll = document.querySelector('[id^="view_all_"]');
+  if (viewAll) {
+    viewAll.addEventListener('click', (e) => {
+      e.preventDefault();
+      const id = viewAll.id.replace('view_all_', 'all_pics_');
+      const g = document.getElementById(id);
+      if (g) { g.style.display = (g.style.display === 'none' || g.style.display === '') ? 'grid' : 'none'; }
+    });
+  }
 });
 </script>
 </body>

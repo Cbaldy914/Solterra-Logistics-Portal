@@ -98,6 +98,9 @@ if (!empty($_FILES['proof_files']) && is_array($_FILES['proof_files']['name'])) 
     $newUploads = storeUploadedFiles($_FILES['proof_files'], $claimId);
 }
 
+// Handle deletions of pictures (only paths present in current pictures list)
+$deletePictures = isset($_POST['delete_pictures']) ? (array)$_POST['delete_pictures'] : [];
+
 // Replacement pallets: restrict to same project unless override
 if (!empty($replacementPallets) && !$overrideCross) {
     if (!empty($replacementPallets)) {
@@ -155,8 +158,11 @@ $after['resolution_type'] = $resolution !== '' ? $resolution : null;
 $after['credit_amount'] = $creditAmount;
 $after['replacement_tracking'] = $replacementTracking !== '' ? $replacementTracking : null;
 
-// Merge pictures with uploads
+// Merge pictures with uploads and deletions
 $picturesArr = jsonToArray($before['pictures'] ?? '');
+if (!empty($deletePictures)) {
+    $picturesArr = array_values(array_filter($picturesArr, function($p) use ($deletePictures){ return !in_array($p, $deletePictures, true); }));
+}
 if (!empty($newUploads)) {
     $picturesArr = array_values(array_unique(array_merge($picturesArr, $newUploads)));
 }
@@ -181,7 +187,7 @@ if ($after['credit_amount'] === null) {
     $repTrackParam = $after['replacement_tracking'];
     $proofParam = $after['proof_of_completion_path'] ?? $before['proof_of_completion_path'];
     $stmtU->bind_param(
-        'sssssi',
+        'ssssssi',
         $after['status'],
         $after['responsible_party'],
         $after['resolution_type'],
@@ -232,6 +238,15 @@ if (isset($_POST['replacement_pallets'])) {
 // Events
 if ($internalNotes !== '') {
     insertEvent($conn, $claimId, $userId, $internalNotes, 0);
+}
+
+// Save Public Update text (from admin controls) as a public event with current status context
+$publicNotes = trim((string)($_POST['public_notes'] ?? ''));
+if ($publicNotes !== '') {
+    $statusContext = (string)$after['status'];
+    $noteText = '[' . $statusContext . '] ' . $publicNotes;
+    insertEvent($conn, $claimId, $userId, $noteText, 1);
+    setLastPublicUpdateNow($conn, $claimId);
 }
 
 if ($status === 'Rejected' && $rejectionReason !== '') {
