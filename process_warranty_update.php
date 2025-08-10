@@ -12,6 +12,12 @@ $userId = (int)($_SESSION['user_id'] ?? 0);
 $role = $_SESSION['role'] ?? 'user';
 if (!in_array($role, ['admin', 'global_admin'], true)) { http_response_code(403); die('Unauthorized'); }
 
+// CSRF check
+if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'] ?? '', (string)$_POST['csrf_token'])) {
+    http_response_code(400);
+    die('Invalid CSRF token');
+}
+
 $claimId = isset($_POST['claim_id']) ? (int)$_POST['claim_id'] : 0;
 if ($claimId <= 0) { die('Invalid claim'); }
 
@@ -35,6 +41,7 @@ $resolution = trim((string)($_POST['resolution_type'] ?? $before['resolution_typ
 $creditAmount = isset($_POST['credit_amount']) && $_POST['credit_amount'] !== '' ? (float)$_POST['credit_amount'] : null;
 $replacementTracking = trim((string)($_POST['replacement_tracking'] ?? $before['replacement_tracking']));
 $internalNotes = trim((string)($_POST['internal_notes'] ?? ''));
+$rejectionReason = trim((string)($_POST['rejection_reason'] ?? ''));
 $overrideCross = isset($_POST['override_cross_project']) ? (int)$_POST['override_cross_project'] : 0;
 $replacementPallets = isset($_POST['replacement_pallets']) ? array_map('intval', (array)$_POST['replacement_pallets']) : [];
 
@@ -57,11 +64,33 @@ if ($status !== $fromStatus && !isValidWarrantyTransition($fromStatus, $status))
     die('Invalid status transition');
 }
 
+// Enforce Pending {Party} matches selected responsible party
+if (strpos($status, 'Pending ') === 0) {
+    $expectedPending = 'Pending ' . $responsible;
+    // Map responsible party to exact labels for EPC/Carrier/Manufacturer only
+    if (!in_array($expectedPending, ['Pending Manufacturer','Pending EPC','Pending Carrier'], true)) {
+        $conn->close();
+        die('Invalid responsible party for pending state');
+    }
+    if ($status !== $expectedPending) {
+        $conn->close();
+        die('Pending status must match Responsible Party');
+    }
+}
+
 // Business rules
 if ($status === 'Approved - Credit' && ($creditAmount === null || $creditAmount <= 0)) {
     $conn->close();
     die('Credit amount required for Approved - Credit');
 }
+
+if ($status === 'Rejected' && $rejectionReason === '') {
+    $conn->close();
+    die('Rejection reason is required');
+}
+
+// Begin transaction for atomic update
+$conn->begin_transaction();
 
 // Handle file uploads (proofs)
 $newUploads = [];
@@ -82,8 +111,9 @@ if (!empty($replacementPallets) && !$overrideCross) {
         $c = (int)($stmt->get_result()->fetch_assoc()['c'] ?? 0);
         $stmt->close();
         if ($c !== count($replacementPallets)) {
-            $conn->close();
-            die('One or more pallets not in the same project. Enable override to proceed.');
+        $conn->rollback();
+        $conn->close();
+        die('One or more pallets not in the same project. Enable override to proceed.');
         }
     }
 }
@@ -92,11 +122,17 @@ if (!empty($replacementPallets) && !$overrideCross) {
 $linkedExisting = listLinkedReplacementPalletIds($conn, $claimId);
 $finalLinked = !empty($replacementPallets) ? array_unique(array_map('intval', $replacementPallets)) : $linkedExisting;
 
-// If resolution is Replacement, must have at least one linked pallet and tracking when moving to Approved - Replacement or later
-if (in_array($status, ['Approved - Replacement', 'Replacement Shipped', 'Closed'], true)) {
-    if ($resolution === 'Replacement' && (empty($finalLinked) || $replacementTracking === '')) {
+// Replacement rules: require at least one linked pallet once approved; require tracking when shipping/closing
+if ($resolution === 'Replacement') {
+    if ($status === 'Approved - Replacement' && empty($finalLinked)) {
+        $conn->rollback();
         $conn->close();
-        die('Replacement requires at least one linked pallet and a tracking number');
+        die('Replacement requires at least one linked pallet');
+    }
+    if (in_array($status, ['Replacement Shipped', 'Closed'], true) && (empty($finalLinked) || $replacementTracking === '')) {
+        $conn->rollback();
+        $conn->close();
+        die('Replacement shipment requires linked pallet(s) and tracking number');
     }
 }
 
@@ -105,6 +141,7 @@ if ($status === 'Closed') {
     $picturesArr = jsonToArray($before['pictures'] ?? '');
     $anyProof = !empty($before['proof_of_completion_path']) || !empty($newUploads);
     if (!$anyProof) {
+        $conn->rollback();
         $conn->close();
         die('Proof of completion required to close');
     }
@@ -197,6 +234,12 @@ if ($internalNotes !== '') {
     insertEvent($conn, $claimId, $userId, $internalNotes, 0);
 }
 
+if ($status === 'Rejected' && $rejectionReason !== '') {
+    // Log both internal and public reasons so customers can see why
+    insertEvent($conn, $claimId, $userId, 'Rejected: ' . $rejectionReason, 0);
+    insertEvent($conn, $claimId, $userId, 'Rejected: ' . $rejectionReason, 1);
+}
+
 $publicChanges = detectPublicChanges($before, $after, $linkedBefore, $linkedAfter, $newUploads);
 if (!empty($publicChanges)) {
     $summary = summarizePublicChanges($conn, $publicChanges);
@@ -205,9 +248,11 @@ if (!empty($publicChanges)) {
     }
     insertEvent($conn, $claimId, $userId, $summary, 1);
     setLastPublicUpdateNow($conn, $claimId);
-    notifyUsers($claimId);
+    // notify after commit
 }
 
+$conn->commit();
+notifyUsers($claimId);
 $conn->close();
 header('Location: warranty_detail.php?id=' . $claimId);
 exit();

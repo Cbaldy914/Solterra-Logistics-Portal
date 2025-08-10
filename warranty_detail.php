@@ -143,10 +143,11 @@ $conn->close();
         .form-hint { color:#6c757d; font-size:0.8rem; margin-top:4px; }
 
         /* Buttons */
-        .btn-primary { background: linear-gradient(135deg, #488C9A, #3A6E7F); border:none; border-radius:12px; padding:12px 20px; box-shadow:0 10px 24px rgba(58,110,127,0.25); font-weight:700; color:#fff !important; }
+        .btn-primary { background: linear-gradient(135deg, #488C9A, #3A6E7F); border:none; border-radius:12px; padding:12px 20px; box-shadow:0 10px 24px rgba(58,110,127,0.25); font-weight:700; color:#fff !important; cursor:pointer; display:inline-flex; align-items:center; gap:8px; }
         .btn-primary:hover { filter:brightness(0.96); transform: translateY(-1px); box-shadow:0 14px 30px rgba(58,110,127,0.30); color:#fff !important; }
-        .btn-secondary { background:#f8f9fa; border:1px solid #e9ecef; border-radius:12px; padding:10px 16px; font-weight:600; color:#495057; }
+        .btn-secondary { background:#f8f9fa; border:1px solid #e9ecef; border-radius:12px; padding:10px 16px; font-weight:600; color:#495057; cursor:pointer; display:inline-flex; align-items:center; gap:8px; }
         .btn-secondary:hover { background:#e9ecef; border-color:#dee2e6; }
+        .btn-primary .icon, .btn-secondary .icon { width:14px; height:14px; }
         .action-btn { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:8px; border:none; font-size:0.9rem; font-weight:600; cursor:pointer; transition:all 0.15s ease; }
         .action-btn-primary { background:linear-gradient(135deg,#488C9A,#3A6E7F); color:#fff; }
         .action-btn-primary:hover { filter:brightness(1.05); transform:translateY(-1px); }
@@ -185,14 +186,35 @@ $conn->close();
         </div>
     </div>
 
-    <!-- Progress bar -->
+    <!-- Progress bar with labels -->
     <div class="card" style="margin: 0 20px 20px;">
         <div class="card-body">
+            <?php 
+                $uiPath = warrantyUiPathAdvanced((string)($claim['responsible_party'] ?? 'Manufacturer'), (string)$claim['status'], (string)($claim['resolution_type'] ?? ''));
+                $activeIdx = uiIndexForStatus((string)$claim['status'], (string)($claim['responsible_party'] ?? ''), (string)($claim['resolution_type'] ?? ''));
+            ?>
             <div class="progress">
-                <?php $path = warrantyStatusPath(); $idx = array_search($claim['status'], $path, true); foreach ($path as $i=>$label): ?>
-                    <div class="step <?php echo ($idx!==false && $i <= $idx)?'active':''; ?>" title="<?php echo htmlspecialchars($label); ?>"></div>
+                <?php foreach ($uiPath as $i=>$label): ?>
+                    <div class="step <?php echo ($i <= $activeIdx)?'active':''; ?>" title="<?php echo htmlspecialchars($label); ?>"></div>
                 <?php endforeach; ?>
             </div>
+            <div class="step-labels" style="display:grid; grid-template-columns: repeat(<?php echo count($uiPath); ?>, 1fr); gap: 10px; margin-top:8px;">
+                <?php foreach ($uiPath as $i=>$label): ?>
+                    <div style="text-align:center; font-size:12px; color: <?php echo ($i <= $activeIdx)?'#2C3E50':'#6c757d'; ?>; font-weight:<?php echo ($i <= $activeIdx)?'700':'600'; ?>;">
+                        <?php echo htmlspecialchars($label); ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            <?php if ((string)$claim['status'] === 'Rejected'): ?>
+                <?php 
+                    // Try to find the most recent rejection reason from events
+                    $rejReason = '';
+                    foreach ($eventsAll as $ev) { if (stripos($ev['event_text'] ?? '', 'Rejected:') === 0) { $rejReason = trim(substr($ev['event_text'], 9)); break; } }
+                ?>
+                <?php if ($rejReason !== ''): ?>
+                    <div style="margin-top:8px; text-align:center; color:#842029; font-weight:600;">Reason: <?php echo htmlspecialchars($rejReason); ?></div>
+                <?php endif; ?>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -202,8 +224,10 @@ $conn->close();
             <div class="card-header">Public Timeline</div>
             <div class="card-body">
                 <?php if ($isAdmin): ?>
-                <form method="post" action="post_warranty_public_note.php" class="mb-3">
-                    <input type="hidden" name="claim_id" value="<?php echo (int)$claimId; ?>">
+            <form method="post" action="post_warranty_public_note.php" class="mb-3">
+                <input type="hidden" name="claim_id" value="<?php echo (int)$claimId; ?>">
+                <?php if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); } ?>
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                     <label for="public_notes" class="form-label">Post Public Update</label>
                     <textarea id="public_notes" name="public_notes" class="form-control" rows="3" placeholder="Share a clear update that customers will see..."></textarea>
                     <div class="d-flex justify-content-end mt-2">
@@ -258,29 +282,73 @@ $conn->close();
         <div class="card-body">
             <form method="post" action="process_warranty_update.php" enctype="multipart/form-data">
                 <input type="hidden" name="claim_id" value="<?php echo (int)$claimId; ?>">
+                <?php if (empty($_SESSION['csrf_token'])) { $_SESSION['csrf_token'] = bin2hex(random_bytes(32)); } ?>
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                 <div class="admin-form-row">
                     <div class="admin-form-group">
-                        <label class="form-label">Status</label>
-                        <select name="status" class="form-select">
-                            <?php 
-                                $path = warrantyStatusPath();
-                                $uiStatuses = [];
-                                foreach ($path as $st) {
-                                    if (strpos($st, 'Approved - ') === 0) {
-                                        if (!in_array('Approved', $uiStatuses, true)) $uiStatuses[] = 'Approved';
-                                    } else {
-                                        $uiStatuses[] = $st;
-                                    }
-                                }
-                                $currentUi = (strpos((string)$claim['status'], 'Approved - ') === 0) ? 'Approved' : (string)$claim['status'];
-                                foreach ($uiStatuses as $st): ?>
-                                    <option value="<?php echo $st; ?>" <?php echo ($currentUi===$st)?'selected':''; ?>><?php echo $st; ?></option>
-                            <?php endforeach; ?>
-                        </select>
+                        <label class="form-label">Current Status</label>
+                        <div class="form-control" style="background:#f8f9fa;">
+                            <?php echo htmlspecialchars((string)$claim['status']); ?>
+                        </div>
+                        <input type="hidden" name="status" id="status_hidden" value="<?php echo htmlspecialchars((string)$claim['status']); ?>">
                     </div>
                     <div class="admin-form-group">
+                        <label class="form-label">Next Step</label>
+                        <div id="next_step_area">
+                            <?php $from = (string)$claim['status']; $resp = (string)($claim['responsible_party'] ?? 'Manufacturer'); ?>
+                            <?php if ($from === 'Submitted' || $from === 'Draft'): ?>
+                                <button type="button" class="btn-primary" id="btn_to_in_review"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Move to In Review</span></button>
+                            <?php elseif ($from === 'In Review'): ?>
+                                <button type="button" class="btn-primary" id="btn_to_pending"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Move to Pending <?php echo htmlspecialchars($resp); ?></span></button>
+                                <div class="form-hint">Change Responsible Party below to alter pending label.</div>
+                            <?php elseif (in_array($from, ['Pending Manufacturer','Pending EPC','Pending Carrier'], true)): ?>
+                                <div class="form-check" style="margin-bottom:8px;">
+                                    <input class="form-check-input" type="radio" name="decision" id="dec_approve" value="approve">
+                                    <label class="form-check-label" for="dec_approve">Approve</label>
+                                </div>
+                                <div class="form-check" style="margin-bottom:8px;">
+                                    <input class="form-check-input" type="radio" name="decision" id="dec_reject" value="reject">
+                                    <label class="form-check-label" for="dec_reject">Reject</label>
+                                </div>
+                                <div id="decision_approve_fields" style="display:none; padding:8px 0;">
+                                    <div class="admin-form-row">
+        
+                                        <div class="admin-form-group">
+                                            <label class="form-label">Resolution Type</label>
+                                            <select name="resolution_type" class="form-select" id="resolution_type">
+                                                <option value="">—</option>
+                                                <?php foreach (['Credit','Replacement','No-charge','Monitoring'] as $rt): ?>
+                                                    <option value="<?php echo $rt; ?>" <?php echo ($claim['resolution_type']===$rt)?'selected':''; ?>><?php echo $rt; ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                        <div class="admin-form-group credit-only" style="display:none;">
+                                            <label class="form-label">Credit Amount</label>
+                                            <input type="number" step="0.01" class="form-control" name="credit_amount" value="<?php echo htmlspecialchars((string)$claim['credit_amount']); ?>" placeholder="0.00">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="decision_reject_fields" style="display:none; padding:8px 0;">
+                                    <label class="form-label">Rejection Reason</label>
+                                    <textarea class="form-control" name="rejection_reason" rows="3" placeholder="Provide a clear reason for rejection."></textarea>
+                                </div>
+                                <button type="button" class="btn-primary" id="btn_apply_decision"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Apply Decision</span></button>
+                            <?php elseif ($from === 'Approved - Replacement'): ?>
+                                <button type="button" class="btn-primary" id="btn_to_shipped"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Mark Replacement Shipped</span></button>
+                            <?php elseif ($from === 'Replacement Shipped' || $from === 'Approved - Credit' || $from === 'Rejected'): ?>
+                                <button type="button" class="btn-primary" id="btn_to_closed"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Close</span></button>
+                            <?php else: ?>
+                                <div class="form-hint">No further steps available.</div>
+                            <?php endif; ?>
+                        </div>
+                        <div id="next_step_help" class="form-hint" style="margin-top:8px;"></div>
+                    </div>
+                </div>
+
+                <div class="admin-form-row full">
+                    <div class="admin-form-group">
                         <label class="form-label">Responsible Party</label>
-                        <select name="responsible_party" class="form-select">
+                        <select name="responsible_party" class="form-select" id="responsible_party_select">
                             <?php foreach (['Manufacturer','EPC','Carrier','Other'] as $rp): ?>
                                 <option value="<?php echo $rp; ?>" <?php echo ($claim['responsible_party']===$rp)?'selected':''; ?>><?php echo $rp; ?></option>
                             <?php endforeach; ?>
@@ -288,6 +356,9 @@ $conn->close();
                     </div>
                 </div>
 
+                
+
+                <?php $from = (string)$claim['status']; if (strpos($from, 'Approved - ') === 0): ?>
                 <div class="admin-form-row">
                     <div class="admin-form-group">
                         <label class="form-label">Resolution Type</label>
@@ -301,6 +372,14 @@ $conn->close();
                     <div class="admin-form-group">
                         <label class="form-label">Credit Amount</label>
                         <input type="number" step="0.01" class="form-control" name="credit_amount" value="<?php echo htmlspecialchars((string)$claim['credit_amount']); ?>" placeholder="0.00">
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <div class="admin-form-row full rejection-only" style="display:none;">
+                    <div class="admin-form-group">
+                        <label class="form-label">Rejection Reason</label>
+                        <textarea class="form-control" name="rejection_reason" rows="3" placeholder="Provide a clear reason for rejection."></textarea>
                     </div>
                 </div>
 
@@ -351,7 +430,7 @@ $conn->close();
                         Changes are logged automatically and customers are notified of public updates.
                     </div>
                     <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-save me-2"></i>Save Changes
+                        <i class="fas fa-save me-2"></i>Save changes only
                     </button>
                 </div>
             </form>
@@ -366,6 +445,45 @@ $conn->close();
             <a href="#tab-audit" onclick="showTab(event,'tab-audit')">Audit Log</a>
         </div>
         <div id="tab-pallets" class="tab-pane">
+            <?php 
+                $palletDetails = [];
+                $decodedNotes = json_decode((string)($claim['notes'] ?? ''), true);
+                if (is_array($decodedNotes) && isset($decodedNotes['pallets']) && is_array($decodedNotes['pallets'])) {
+                    $palletDetails = $decodedNotes['pallets'];
+                }
+            ?>
+            <?php if (!empty($palletDetails)): ?>
+                <div class="table-responsive">
+                    <table class="table" style="width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left;">Pallet</th>
+                                <th style="text-align:right;">Expected</th>
+                                <th style="text-align:right;">Actual</th>
+                                <th style="text-align:right;">Damaged</th>
+                                <th style="text-align:right;">Accepted</th>
+                                <th style="text-align:left;">Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($palletDetails as $pd): ?>
+                                <tr>
+                                    <td><?php echo htmlspecialchars('ID ' . (int)($pd['pallet_id'] ?? 0)); ?></td>
+                                    <td style="text-align:right;">&times;<?php echo (int)($pd['expected'] ?? 0); ?></td>
+                                    <td style="text-align:right;">&times;<?php echo (int)($pd['actual'] ?? 0); ?></td>
+                                    <td style="text-align:right;">&times;<?php echo (int)($pd['damaged'] ?? 0); ?></td>
+                                    <td style="text-align:right;">&times;<?php echo (int)($pd['accepted'] ?? 0); ?></td>
+                                    <td><?php echo htmlspecialchars((string)($pd['notes'] ?? '')); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="help-text" style="margin-top:8px;">Details reflect pallet-level data provided at delivery reporting.</div>
+                <hr/>
+            <?php endif; ?>
+
+            <h4>Replacement Pallets</h4>
             <?php if (empty($linkedIds)): ?>
                 <div class="help-text">No replacement pallets linked.</div>
             <?php else: ?>
@@ -419,6 +537,85 @@ document.addEventListener('DOMContentLoaded', () => {
   const sel = document.querySelector('select[name="resolution_type"]');
   if (sel) sel.addEventListener('change', toggleReplacementSections);
   toggleReplacementSections();
+
+  const statusHidden = document.getElementById('status_hidden');
+  const respSel = document.getElementById('responsible_party_select');
+
+  const btnInReview = document.getElementById('btn_to_in_review');
+  if (btnInReview) btnInReview.addEventListener('click', () => { statusHidden.value = 'In Review'; btnInReview.closest('form').submit(); });
+
+  const btnToPending = document.getElementById('btn_to_pending');
+  if (btnToPending) btnToPending.addEventListener('click', () => {
+    const resp = (respSel && respSel.value) ? respSel.value : 'Manufacturer';
+    const target = 'Pending ' + resp;
+    statusHidden.value = target;
+    btnToPending.closest('form').submit();
+  });
+
+  const decApprove = document.getElementById('dec_approve');
+  const decReject = document.getElementById('dec_reject');
+  const approveFields = document.getElementById('decision_approve_fields');
+  const rejectFields = document.getElementById('decision_reject_fields');
+  const resSelect = document.getElementById('resolution_type');
+  const creditOnly = document.querySelector('.credit-only');
+  const nextHelp = document.getElementById('next_step_help');
+  const currentStatus = (statusHidden && statusHidden.value) ? statusHidden.value : '';
+  function updateNextStepHelp(){
+    let msg = '';
+    if (currentStatus === 'Submitted' || currentStatus === 'Draft') {
+      msg = 'Next step moves the ticket to In Review. You can add internal notes or attachments anytime.';
+    } else if (currentStatus === 'In Review') {
+      const resp = (respSel && respSel.value) ? respSel.value : 'Manufacturer';
+      msg = `Next step sets status to Pending ${resp}. Ensure Responsible Party is correct.`;
+    } else if (currentStatus === 'Pending Manufacturer' || currentStatus === 'Pending EPC' || currentStatus === 'Pending Carrier') {
+      msg = 'Choose Approve or Reject. Approve requires a Resolution Type. If Credit, enter Credit Amount. For Replacement, link pallet(s) now or before shipping; tracking required at shipping/close. Reject requires a reason.';
+    } else if (currentStatus === 'Approved - Replacement') {
+      msg = 'Enter replacement tracking when available, then mark Replacement Shipped. At least one replacement pallet must be linked.';
+    } else if (currentStatus === 'Approved - Credit') {
+      msg = 'When ready, Close the ticket. Closing requires a proof of completion file.';
+    } else if (currentStatus === 'Replacement Shipped' || currentStatus === 'Rejected') {
+      msg = 'Final step is Close. Closing requires a proof of completion file.';
+    } else if (currentStatus === 'Closed') {
+      msg = 'Ticket is closed. You can still add internal notes or attachments if needed.';
+    }
+    if (nextHelp) nextHelp.textContent = msg;
+  }
+  function syncDecisionUi(){
+    if (decApprove && decApprove.checked) {
+      approveFields && (approveFields.style.display = '');
+      rejectFields && (rejectFields.style.display = 'none');
+    } else if (decReject && decReject.checked) {
+      approveFields && (approveFields.style.display = 'none');
+      rejectFields && (rejectFields.style.display = '');
+    }
+    if (creditOnly && resSelect) {
+      creditOnly.style.display = (resSelect.value === 'Credit') ? '' : 'none';
+    }
+  }
+  if (decApprove) decApprove.addEventListener('change', syncDecisionUi);
+  if (decReject) decReject.addEventListener('change', syncDecisionUi);
+  if (resSelect) resSelect.addEventListener('change', syncDecisionUi);
+  syncDecisionUi();
+  updateNextStepHelp();
+
+  const btnApplyDecision = document.getElementById('btn_apply_decision');
+  if (btnApplyDecision) btnApplyDecision.addEventListener('click', () => {
+    if (decApprove && decApprove.checked) {
+      statusHidden.value = 'Approved';
+    } else if (decReject && decReject.checked) {
+      statusHidden.value = 'Rejected';
+    } else {
+      alert('Select Approve or Reject.');
+      return;
+    }
+    btnApplyDecision.closest('form').submit();
+  });
+
+  const btnToShipped = document.getElementById('btn_to_shipped');
+  if (btnToShipped) btnToShipped.addEventListener('click', () => { statusHidden.value = 'Replacement Shipped'; btnToShipped.closest('form').submit(); });
+
+  const btnToClosed = document.getElementById('btn_to_closed');
+  if (btnToClosed) btnToClosed.addEventListener('click', () => { statusHidden.value = 'Closed'; btnToClosed.closest('form').submit(); });
 });
 </script>
 </body>

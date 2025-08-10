@@ -13,10 +13,13 @@ const SHOW_CREDIT_TO_CUSTOMERS = true;
 
 // Status path and transitions
 function warrantyStatusPath(): array {
+    // Legacy full set; kept for compatibility
     return [
         'Submitted',
         'In Review',
         'Pending Manufacturer',
+        'Pending EPC',
+        'Pending Carrier',
         'Approved - Credit',
         'Approved - Replacement',
         'Replacement Shipped',
@@ -25,12 +28,70 @@ function warrantyStatusPath(): array {
     ];
 }
 
+// UI path with labels (collapses approvals under one step and picks Pending by responsible)
+function warrantyUiPath(string $responsibleParty): array {
+    // Default/legacy path retained for compatibility
+    $pending = 'Pending ' . ($responsibleParty ?: 'Manufacturer');
+    return ['Submitted','In Review',$pending,'Approved/Rejected','Closed'];
+}
+
+function warrantyUiPathAdvanced(string $responsibleParty, string $status, ?string $resolutionType): array {
+    $pending = 'Pending ' . ($responsibleParty ?: 'Manufacturer');
+
+    // Before decision
+    if (in_array($status, ['Submitted','Draft','In Review','Pending Manufacturer','Pending EPC','Pending Carrier'], true)) {
+        return ['Submitted','In Review',$pending,'Approved/Rejected','Closed'];
+    }
+
+    // Rejected path
+    if ($status === 'Rejected') {
+        return ['Submitted','In Review',$pending,'Rejected','Closed'];
+    }
+
+    // Approved path -> include resolution step
+    if ($status === 'Approved - Credit' || $status === 'Approved - Replacement' || $status === 'Replacement Shipped' || $status === 'Closed') {
+        $resLabel = $resolutionType ?: 'Resolution';
+        // Specialize for replacement shipped
+        if ($status === 'Replacement Shipped') { $resLabel = 'Replacement Shipped'; }
+        return ['Submitted','In Review',$pending,'Approved',$resLabel,'Closed'];
+    }
+
+    // Fallback to default
+    return ['Submitted','In Review',$pending,'Approved/Rejected','Closed'];
+}
+
+function uiIndexForStatus(string $status, string $responsibleParty, ?string $resolutionType): int {
+    $path = warrantyUiPathAdvanced($responsibleParty, $status, $resolutionType);
+    // Map known statuses to index in advanced path
+    $pending = 'Pending ' . ($responsibleParty ?: 'Manufacturer');
+    $map = [
+        'Submitted' => 0,
+        'In Review' => 1,
+        'Pending Manufacturer' => 2,
+        'Pending EPC' => 2,
+        'Pending Carrier' => 2,
+        'Approved - Credit' => 3,
+        'Approved - Replacement' => 3,
+        'Replacement Shipped' => 4,
+        'Rejected' => 3, // in rejected path, index 3 maps to 'Rejected'
+        'Closed' => array_key_exists(5, $path) ? 5 : 4,
+    ];
+    if (isset($map[$status])) {
+        $idx = $map[$status];
+        // Ensure it doesn't exceed path length
+        return min($idx, max(0, count($path)-1));
+    }
+    return 0;
+}
+
 function warrantyValidTransitions(): array {
     return [
         'Draft' => ['Submitted'], // in case legacy rows exist
         'Submitted' => ['In Review', 'Rejected'],
-        'In Review' => ['Pending Manufacturer', 'Rejected'],
+        'In Review' => ['Pending Manufacturer', 'Pending EPC', 'Pending Carrier', 'Rejected'],
         'Pending Manufacturer' => ['Approved - Credit', 'Approved - Replacement', 'Rejected'],
+        'Pending EPC' => ['Approved - Credit', 'Approved - Replacement', 'Rejected'],
+        'Pending Carrier' => ['Approved - Credit', 'Approved - Replacement', 'Rejected'],
         'Approved - Credit' => ['Closed'],
         'Approved - Replacement' => ['Replacement Shipped'],
         'Replacement Shipped' => ['Closed'],
@@ -122,12 +183,34 @@ function storeUploadedFiles(array $files, int $claimId): array {
     if (!isset($files['name']) || !is_array($files['name'])) return $stored;
     $dir = ensureWarrantyUploadDir($claimId);
     $allowed = ['pdf','png','jpg','jpeg','webp'];
+    $allowedMime = [
+        'pdf'  => 'application/pdf',
+        'png'  => 'image/png',
+        'jpg'  => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'webp' => 'image/webp',
+    ];
+    $maxBytes = 12 * 1024 * 1024; // 12 MB per file
     $count = count($files['name']);
     for ($i=0; $i<$count; $i++) {
         if ($files['error'][$i] !== UPLOAD_ERR_OK) continue;
+        if (!is_uploaded_file($files['tmp_name'][$i])) continue;
+        if (filesize($files['tmp_name'][$i]) > $maxBytes) continue;
         $name = $files['name'][$i];
         $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
         if (!in_array($ext, $allowed, true)) continue;
+        // MIME sniffing
+        $finfo = function_exists('finfo_open') ? finfo_open(FILEINFO_MIME_TYPE) : false;
+        if ($finfo) {
+            $mime = finfo_file($finfo, $files['tmp_name'][$i]);
+            finfo_close($finfo);
+            // allow jpeg variations
+            if ($ext === 'jpg' || $ext === 'jpeg') {
+                if (strpos((string)$mime, 'image/jpeg') !== 0) continue;
+            } else {
+                if (($allowedMime[$ext] ?? '') !== $mime) continue;
+            }
+        }
         $safe = preg_replace('/[^a-zA-Z0-9-_\.]/', '_', basename($name));
         $target = $dir . '/' . time() . '_' . $safe;
         if (@move_uploaded_file($files['tmp_name'][$i], $target)) {
