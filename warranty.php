@@ -145,8 +145,9 @@ persistWarrantyFilters($filters);
         .dataTables_wrapper .dataTables_filter { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
         .dataTables_wrapper .dataTables_info { margin:0; }
         .dataTables_wrapper .dataTables_paginate { margin:0; text-align:right; }
-        /* Put info and pagination inline on the right */
-        .dataTables_wrapper .dt-bottom-right { display:flex; align-items:center; justify-content:flex-end; gap:65%; }
+        /* Bottom toolbar alignment: info left, pagination right */
+        .dataTables_wrapper .dt-bottom-left { display:flex; align-items:center; justify-content:flex-start; }
+        .dataTables_wrapper .dt-bottom-right { display:flex; align-items:center; justify-content:flex-end; }
     </style>
 </head>
 <body>
@@ -309,7 +310,7 @@ document.addEventListener('DOMContentLoaded', function() {
     ajax: { url: 'get_warranty_claims.php', data: function(d){ buildAjaxData(d); } },
     pageLength: 25,
     // Top: length left, search right. Bottom: info + pagination together on right
-    dom: '<"row mb-2 align-items-center"<"col-sm-6"l><"col-sm-6"f>>t<"row mt-2 align-items-center"<"col-sm-12 dt-bottom-right d-flex justify-content-end"ip>>',
+    dom: '<"row mb-2 align-items-center"<"col-sm-6"l><"col-sm-6"f>>t<"row mt-2 align-items-center"<"col-sm-6 dt-bottom-left"i><"col-sm-6 dt-bottom-right"p>>',
     columns: [
       { data: 0 },
       { data: 1 },
