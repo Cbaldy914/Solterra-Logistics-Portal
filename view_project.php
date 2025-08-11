@@ -83,14 +83,14 @@ $ref_date     = $_GET['ref_date']     ?? date('Y-m-d');
 $baseWhere = [];  $paramTypes = '';  $params = [];
 
 /* context filters */
-$selectClause = "SELECT d.* FROM deliveries d";
-$joinClause   = "";
+$selectClause = "SELECT d.*, ss.id as appointment_id FROM deliveries d";
+$joinClause   = " LEFT JOIN site_scheduling ss ON d.id = ss.delivery_id";
 if ($project_id) {
     $baseWhere[] = "d.project_id = ?";
     $paramTypes .= "i";
     $params[]    = $project_id;
 } else {
-    $joinClause   = " LEFT JOIN projects p ON d.project_id = p.id";
+    $joinClause  .= " LEFT JOIN projects p ON d.project_id = p.id";
     $baseWhere[]  = "d.supplier = ?";
     $paramTypes  .= "s";
     $params[]     = $source_vendor_name_for_batch;
@@ -138,7 +138,7 @@ if(isset($_GET['export']) && $_GET['export']==1){
     $out=fopen('php://output','w');
     fputcsv($out,['Supplier','Wattage','Status of Delivery','Quantity','BOL Number',
                    'Anticipated Delivery Date','Actual Delivery Date',
-                   'Associated Pallets','Proof of Delivery']);
+                   'Associated Pallets','Scheduled','Proof of Delivery']);
     $sql="$selectClause $joinClause $whereClause ORDER BY $filterColumn DESC";
     $stmt=$conn->prepare($sql);
     if($paramTypes) $stmt->bind_param($paramTypes,...$params);
@@ -150,7 +150,9 @@ if(isset($_GET['export']) && $_GET['export']==1){
             $row['bol_number'],
             $row['anticipated_delivery_date']?date('m-d-Y',strtotime($row['anticipated_delivery_date'])):'',
             $row['actual_delivery_date']?date('m-d-Y',strtotime($row['actual_delivery_date'])):'',
-            $row['associated_pallets'], $row['proof_of_delivery']?'Yes':'No'
+            $row['associated_pallets'],
+            $row['scheduled'] ? 'Yes' : 'No',
+            $row['proof_of_delivery']?'Yes':'No'
         ]);
     }
     fclose($out); $stmt->close(); $conn->close(); exit();
@@ -174,7 +176,7 @@ $stmt->close();
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         /* ======  original inline CSS (unchanged) ====== */
-        .container{margin:20px;} /* … (omitted for brevity) … */
+        .container{margin:0px;} /* … (omitted for brevity) … */
         .column-hidden{display:none !important;}
         .time-filter-header{display:flex;justify-content:space-between;align-items:center;margin-top:30px;margin-bottom:10px;flex-wrap:wrap;}
         .time-filters{display:flex;gap:10px;}
@@ -213,6 +215,8 @@ $stmt->close();
         .column-chooser-container{position:relative;display:inline-block;}
         .column-chooser-btn{background-color:#488C9A;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:.9em;transition:background-color .3s ease;}
         .column-chooser-btn:hover{background-color:#3A6E7F;}
+        .calendar-view-btn{background-color:#488C9A;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:.9em;transition:background-color .3s ease;}
+        .calendar-view-btn:hover{background-color:#3A6E7F;}
         .column-chooser-dropdown{position:absolute;top:100%;right:0;background:white;border:1px solid #ddd;border-radius:4px;box-shadow:0 4px 8px rgba(0,0,0,.1);z-index:1000;min-width:250px;max-width:300px;max-height:400px;overflow-y:auto;}
         .column-chooser-header{padding:12px 16px;background-color:#f8f9fa;border-bottom:1px solid #ddd;font-weight:600;color:#293E4C;}
         .column-chooser-options{padding:8px 0;max-height:300px;overflow-y:auto;}
@@ -333,6 +337,7 @@ $stmt->close();
                                     'anticipated-column'=>"Anticipated Delivery Date",
                                     'actual-column'=>"Actual Delivery Date",
                                     'pallets-column'=>"Associated Pallets",
+                                    'scheduled-column'=>"Scheduled",
                                     'pod-column'=>"Proof of Delivery"];
                                 foreach($cols as $cls=>$label){
                                     echo "<label class=\"column-option\"><input type=\"checkbox\" class=\"column-toggle\" data-column=\"$cls\" checked> $label</label>";
@@ -344,6 +349,14 @@ $stmt->close();
                             </div>
                         </div>
                     </div>
+
+                    <?php if ($project_id): ?>
+                    <div class="calendar-view-container">
+                        <button type="button" class="calendar-view-btn" onclick="window.location.href='scheduling.php?project_id=<?php echo $project_id; ?>'">
+                            📅 Calendar View
+                        </button>
+                    </div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
@@ -361,6 +374,7 @@ $stmt->close();
                         <th class="anticipated-column">Anticipated Delivery Date</th>
                         <th class="actual-column">Actual Delivery Date</th>
                         <th class="pallets-column">Associated Pallets</th>
+                        <th class="scheduled-column">Scheduled</th>
                         <th class="pod-column">Proof of Delivery</th>
                     </tr>
                 </thead>
@@ -400,6 +414,23 @@ $stmt->close();
                                         View Pallets (<?php echo $count; ?>)
                                     </button>
                                 <?php else: ?>N/A<?php endif; ?>
+                            </td>
+                            <td class="scheduled-column">
+                                <?php if ($delivery['scheduled'] == 1): ?>
+                                    <?php if (!empty($delivery['project_id']) && !empty($delivery['appointment_id'])): ?>
+                                        <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>&appointment_id=<?php echo $delivery['appointment_id']; ?>&auto_edit=1" 
+                                           style="color: #488C9A; text-decoration: underline;">View Appointment</a>
+                                    <?php else: ?>
+                                        <span style="color: #28a745;">Scheduled</span>
+                                    <?php endif; ?>
+                                <?php else: ?>
+                                    <?php if (!empty($delivery['project_id']) && $delivery['status_of_delivery'] === 'In Transit to Project'): ?>
+                                        <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>" 
+                                           style="color: #fbb040; text-decoration: underline;">Schedule Delivery</a>
+                                    <?php else: ?>
+                                        <span style="color: #666;">N/A</span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
                             </td>
                             <td class="pod-column">
                                 <?php if($delivery['proof_of_delivery']): ?>

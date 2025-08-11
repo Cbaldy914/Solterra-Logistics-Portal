@@ -162,7 +162,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     pallet_depth_mm = ?, pallet_double_stacked_height_mm = ?, pallet_total_weight_kg = ?, 
                     stacking_in_warehouse = ?, stacking_during_transport = ?, forklift_truck_long_side_mm = ?, 
                     forklift_truck_short_side_mm = ?, pallet_jack_long_side_mm = ?, pallet_jack_short_side_mm = ?, 
-                    module_notes = ?, updated_at = NOW()
+                    module_notes = ?, last_updated_at = NOW()
                 WHERE id = ?
             ");
             $stmtUpdate->bind_param("ssiiiiiiiissiiisi", 
@@ -178,33 +178,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $stmtUpdate->close();
             
-            // Delete existing wattage items
-            $stmtDelete = $conn->prepare("DELETE FROM unassigned_module_items WHERE unassigned_module_id = ?");
-            $stmtDelete->bind_param("i", $batch_id);
-            if (!$stmtDelete->execute()) {
-                throw new Exception("Error deleting existing items: " . $stmtDelete->error);
+            // Update/insert wattage items instead of deleting and re-inserting
+            // First, get existing items for comparison
+            $existing_items = [];
+            foreach ($current_wattages as $item) {
+                $existing_items[$item['wattage']] = $item;
             }
-            $stmtDelete->close();
             
-            // Insert new wattage items
-            $stmtInsert = $conn->prepare("
-                INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) 
-                VALUES (?, ?, ?)
-            ");
-            
+            // Process new wattages
             $new_totals = [];
+            $processed_wattages = [];
+            
             for ($i = 0; $i < count($wattages); $i++) {
                 $wattage = intval(trim($wattages[$i]));
                 $quantity = intval(trim($quantities[$i]));
+                $processed_wattages[] = $wattage;
                 
-                $stmtInsert->bind_param("iii", $batch_id, $wattage, $quantity);
-                if (!$stmtInsert->execute()) {
-                    throw new Exception("Error inserting wattage item: " . $stmtInsert->error);
+                if (isset($existing_items[$wattage])) {
+                    // Update existing item
+                    $stmtUpdate = $conn->prepare("
+                        UPDATE unassigned_module_items 
+                        SET quantity = ? 
+                        WHERE id = ?
+                    ");
+                    $stmtUpdate->bind_param("ii", $quantity, $existing_items[$wattage]['id']);
+                    if (!$stmtUpdate->execute()) {
+                        throw new Exception("Error updating wattage item: " . $stmtUpdate->error);
+                    }
+                    $stmtUpdate->close();
+                } else {
+                    // Insert new item
+                    $stmtInsert = $conn->prepare("
+                        INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) 
+                        VALUES (?, ?, ?)
+                    ");
+                    $stmtInsert->bind_param("iii", $batch_id, $wattage, $quantity);
+                    if (!$stmtInsert->execute()) {
+                        throw new Exception("Error inserting wattage item: " . $stmtInsert->error);
+                    }
+                    $stmtInsert->close();
                 }
                 
                 $new_totals[$wattage] = ($new_totals[$wattage] ?? 0) + $quantity;
             }
-            $stmtInsert->close();
+            
+            // Delete items that are no longer needed (only if they don't have inventory pallets)
+            foreach ($existing_items as $wattage => $item) {
+                if (!in_array($wattage, $processed_wattages)) {
+                    // Check if this item has any inventory pallets referencing it
+                    $stmtCheckPallets = $conn->prepare("
+                        SELECT COUNT(*) as pallet_count 
+                        FROM inventory_pallets 
+                        WHERE unassigned_module_item_id = ?
+                    ");
+                    $stmtCheckPallets->bind_param("i", $item['id']);
+                    $stmtCheckPallets->execute();
+                    $palletResult = $stmtCheckPallets->get_result();
+                    $palletCount = $palletResult->fetch_assoc()['pallet_count'];
+                    $stmtCheckPallets->close();
+                    
+                    if ($palletCount == 0) {
+                        // Safe to delete - no inventory pallets reference this item
+                        $stmtDelete = $conn->prepare("DELETE FROM unassigned_module_items WHERE id = ?");
+                        $stmtDelete->bind_param("i", $item['id']);
+                        if (!$stmtDelete->execute()) {
+                            throw new Exception("Error deleting unused wattage item: " . $stmtDelete->error);
+                        }
+                        $stmtDelete->close();
+                    } else {
+                        // Can't delete - has inventory pallets, so set quantity to 0 instead
+                        $stmtZero = $conn->prepare("UPDATE unassigned_module_items SET quantity = 0 WHERE id = ?");
+                        $stmtZero->bind_param("i", $item['id']);
+                        if (!$stmtZero->execute()) {
+                            throw new Exception("Error zeroing wattage item quantity: " . $stmtZero->error);
+                        }
+                        $stmtZero->close();
+                    }
+                }
+            }
             
             // Update project_wattage_orders to reflect changes
             $all_wattages = array_unique(array_merge(array_keys($current_totals), array_keys($new_totals)));
@@ -282,8 +333,7 @@ $conn->close();
         }
         
         .form-header {
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            color: white;
+
             padding: 30px;
             text-align: center;
         }
