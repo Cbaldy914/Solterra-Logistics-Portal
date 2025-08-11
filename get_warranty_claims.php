@@ -34,12 +34,16 @@ $orderBy = $columns[$orderColIdx] ?? $columns[6];
 
 // Filters
 $filters = loadPersistedWarrantyFilters();
-// Merge with incoming GET (so deep links work)
+// Merge with incoming GET (so deep links work) — always honor current request, including
+// empty arrays or zeros so users can clear filters (e.g., show closed items).
 $incoming = getWarrantyFiltersFromRequest();
 foreach ($incoming as $k => $v) {
     if ($k === 'issue_types' || $k === 'statuses') {
-        if (!empty($v)) $filters[$k] = $v;
-    } elseif ($v !== '' && $v !== 0 && $v !== null) {
+        $filters[$k] = (array)$v; // allow clearing to []
+    } elseif ($k === 'hide_closed' || $k === 'project_id') {
+        $filters[$k] = (int)$v;   // allow 0 to mean "All Projects" or show closed
+    } else {
+        // date_from/date_to/responsible_party/search can be empty strings to clear
         $filters[$k] = $v;
     }
 }
