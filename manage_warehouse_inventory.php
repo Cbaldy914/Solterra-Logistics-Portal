@@ -29,33 +29,23 @@ $total_storage_cost_monthly_rate = 0;
 $all_projects = [];
 $other_warehouses = [];
 
-try {
-    // Fetch Warehouse Details
-    $stmtW = $conn->prepare("SELECT * FROM warehouses WHERE id = ?");
-    if (!$stmtW) throw new Exception("Failed to prepare warehouse query: " . $conn->error);
-    $stmtW->bind_param("i", $warehouse_id);
-    $stmtW->execute();
-    $resultW = $stmtW->get_result();
-    if ($resultW->num_rows === 0) {
-        throw new Exception("Warehouse not found.");
-    }
-    $warehouse = $resultW->fetch_assoc();
-    $stmtW->close();
+// ===========================================================================================
+// HELPER FUNCTIONS: DATA FETCHING LOGIC SEPARATED BY FACILITY TYPE
+// ===========================================================================================
 
-    // 🚢 PORT DETECTION AND CONDITIONAL UI VARIABLES
-    $is_port = ($warehouse['is_port'] == 1);
+/**
+ * Fetch stored pallets/containers for warehouse inventory display
+ * @param PDO $conn Database connection
+ * @param int $warehouse_id Warehouse/port ID
+ * @param string $received_status Status filter for received items
+ * @param bool $is_port Whether this is a port facility
+ * @return array Array of stored pallets or containers
+ */
+function fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port) {
+    $pallets_in_storage = [];
+    $total_pallets = 0;
     
-    // Define conditional UI text based on port vs warehouse
-    $facility_type = $is_port ? 'Port' : 'Warehouse';
-    $page_title = $is_port ? 'Port Operations' : 'Warehouse Inventory';
-    $receiving_title = $is_port ? 'Receive Container(s)' : 'Receive Selected Truckloads';
-    $history_title = $is_port ? 'Container History' : 'Truckload History';
-    $inventory_title = $is_port ? 'Containers Cleared' : 'Stored Inventory';
-    $received_status = $is_port ? 'Cleared Customs' : 'In Warehouse';
-    $transit_status_filter = $is_port ? "('In Transit to Warehouse', 'On Water')" : "('In Transit to Warehouse')";
-    $grouping_field = $is_port ? 'container_number' : 'bol_number';
-
-    // Fetch Pallets in Warehouse (Stored Inventory - By Pallet)
+    // Robust pallet query - INNER JOIN to only include pallets with deliveries to current warehouse
     $stmtP_Stored = $conn->prepare("
         SELECT 
             ip.id AS pallet_id,
@@ -70,20 +60,19 @@ try {
         FROM inventory_pallets ip
         LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
         LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-        LEFT JOIN delivery_pallets dp_received ON ip.id = dp_received.inventory_pallet_id
-        LEFT JOIN deliveries d_received ON dp_received.delivery_id = d_received.id AND d_received.warehouse_id = ?
+        INNER JOIN delivery_pallets dp_received ON ip.id = dp_received.inventory_pallet_id
+        INNER JOIN deliveries d_received ON dp_received.delivery_id = d_received.id 
+            AND d_received.warehouse_id = ?
+            AND d_received.status_of_delivery != 'Departed Port'
         LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
         WHERE ip.current_warehouse_id = ? AND ip.status = ?
         ORDER BY ip.arrival_date DESC, ip.id DESC
     ");
+    
     if (!$stmtP_Stored) throw new Exception("Failed to prepare stored pallets query: " . $conn->error);
     $stmtP_Stored->bind_param("iis", $warehouse_id, $warehouse_id, $received_status);
     $stmtP_Stored->execute();
     $resultP_Stored = $stmtP_Stored->get_result();
-    
-    $today = new DateTime();
-    $daily_storage_rate = ($warehouse['monthly_storage_fee'] ?? 0) / 30;
-    $total_pallets = 0;
 
     while ($pallet = $resultP_Stored->fetch_assoc()) {
         $pallets_in_storage[] = $pallet;
@@ -92,9 +81,19 @@ try {
     }
     $stmtP_Stored->close();
     
-    // 🚢 NEW: For ports, also fetch containers grouped (for shipping interface)
+    return [$pallets_in_storage, $total_pallets];
+}
+
+/**
+ * PORT-SPECIFIC: Fetch containers grouped for port operations interface
+ * @param PDO $conn Database connection
+ * @param int $warehouse_id Port ID
+ * @param string $received_status Status filter (typically 'Cleared Customs')
+ * @return array Array of cleared containers with grouped data
+ */
+function fetchPortContainersCleared($conn, $warehouse_id, $received_status) {
     $containers_cleared = [];
-    if ($is_port) {
+    
         $stmtContainers = $conn->prepare("
             SELECT 
                 d_received.bol_number AS container_number,
@@ -111,21 +110,23 @@ try {
             LEFT JOIN delivery_pallets dp_received ON ip.id = dp_received.inventory_pallet_id
             LEFT JOIN deliveries d_received ON dp_received.delivery_id = d_received.id AND d_received.warehouse_id = ?
             LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
-            WHERE ip.current_warehouse_id = ? AND ip.status = ?
+        WHERE ip.current_warehouse_id = ? 
+            AND ip.status = ?
+            AND d_received.status_of_delivery != 'Departed Port'
             GROUP BY d_received.bol_number, d_received.id, m.vendor_name
             ORDER BY MIN(ip.arrival_date) DESC
         ");
+    
         if ($stmtContainers) {
             $stmtContainers->bind_param("iis", $warehouse_id, $warehouse_id, $received_status);
             $stmtContainers->execute();
             $resultContainers = $stmtContainers->get_result();
             
             while ($container = $resultContainers->fetch_assoc()) {
-                // Create wattage breakdown
+            // Create detailed wattage breakdown for this container
                 $wattages = explode(', ', $container['wattages']);
                 $wattage_details = [];
                 foreach ($wattages as $wattage) {
-                    // Get count and quantity for this specific wattage and delivery
                     $stmtWattageDetail = $conn->prepare("
                         SELECT COUNT(ip.id) as pallet_count, SUM(ip.quantity) as module_count
                         FROM inventory_pallets ip
@@ -148,9 +149,19 @@ try {
             }
             $stmtContainers->close();
         }
-    }
     
-    // Fetch Pallets in transit (Inbound Transit - By Pallet)
+    return $containers_cleared;
+}
+
+/**
+ * Fetch pallets currently in transit to this facility
+ * @param PDO $conn Database connection
+ * @param int $warehouse_id Warehouse/port ID
+ * @return array Array of pallets in transit
+ */
+function fetchTransitPallets($conn, $warehouse_id) {
+    $pallets_in_transit = [];
+    
     $stmtP_Transit = $conn->prepare("
         SELECT 
             ip.id AS pallet_id,
@@ -168,21 +179,35 @@ try {
         LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
         LEFT JOIN modules m ON umi.unassigned_module_id = m.id
         LEFT JOIN projects p ON d.project_id = p.id
-        WHERE ip.status IN ('In Transit to Warehouse', 'On Water') AND d.warehouse_id = ?
+        WHERE ip.status IN ('In Transit to Warehouse', 'On Water') 
+            AND d.warehouse_id = ?
+            AND d.status_of_delivery != 'Departed Port'
         ORDER BY d.anticipated_delivery_date ASC, ip.id DESC
     ");
+    
     if (!$stmtP_Transit) throw new Exception("Failed to prepare transit pallets query: " . $conn->error);
     $stmtP_Transit->bind_param("i", $warehouse_id);
     $stmtP_Transit->execute();
     $resultP_Transit = $stmtP_Transit->get_result();
+    
     while ($pallet = $resultP_Transit->fetch_assoc()) {
         $pallets_in_transit[] = $pallet;
         $pallet['source_project'] = $pallet['source_project'] ?? 'N/A';
     }
     $stmtP_Transit->close();
 
-    // NEW: Fetch Inbound Transit by Truckload (group by delivery_id)
+    return $pallets_in_transit;
+}
+
+/**
+ * Fetch transit deliveries grouped by delivery/truckload
+ * @param PDO $conn Database connection
+ * @param int $warehouse_id Warehouse/port ID
+ * @return array Array of transit truckloads with grouped data
+ */
+function fetchTransitTruckloads($conn, $warehouse_id) {
     $transit_truckloads = [];
+    
     $stmtTransitTruckloads = $conn->prepare("
         SELECT 
             d.id AS delivery_id,
@@ -199,19 +224,21 @@ try {
         LEFT JOIN projects p ON d.project_id = p.id
         WHERE d.warehouse_id = ? 
         AND ip.status IN ('In Transit to Warehouse', 'On Water')
+            AND d.status_of_delivery != 'Departed Port'
         GROUP BY d.id, d.bol_number, d.supplier, d.anticipated_delivery_date
         ORDER BY d.anticipated_delivery_date ASC
     ");
+    
     if ($stmtTransitTruckloads) {
         $stmtTransitTruckloads->bind_param("i", $warehouse_id);
         $stmtTransitTruckloads->execute();
         $resultTransitTruckloads = $stmtTransitTruckloads->get_result();
+        
         while ($truckload = $resultTransitTruckloads->fetch_assoc()) {
-            // Create wattage breakdown manually
+            // Create detailed wattage breakdown
             $wattages = explode(', ', $truckload['wattages']);
             $wattage_details = [];
             foreach ($wattages as $wattage) {
-                // Get count and quantity for this specific wattage and delivery
                 $stmtWattageDetail = $conn->prepare("
                     SELECT COUNT(ip.id) as pallet_count, SUM(ip.quantity) as module_count
                     FROM inventory_pallets ip
@@ -235,11 +262,18 @@ try {
         $stmtTransitTruckloads->close();
     }
 
-    // NEW: Fetch Inbound History (completed arrivals) - Grouped by BOL#
+    return $transit_truckloads;
+}
+
+/**
+ * Fetch inbound delivery history for this facility
+ * @param PDO $conn Database connection
+ * @param int $warehouse_id Warehouse/port ID
+ * @return array Array of inbound delivery history grouped by BOL
+ */
+function fetchInboundHistory($conn, $warehouse_id) {
     $inbound_history = [];
-    $inbound_grouped = [];
     
-    // First get all deliveries grouped by BOL#
     $stmtInboundHistory = $conn->prepare("
         SELECT 
             d.bol_number,
@@ -257,21 +291,23 @@ try {
         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
         LEFT JOIN projects p ON d.project_id = p.id
         WHERE d.warehouse_id = ? 
-        AND d.status_of_delivery = 'Delivered to Warehouse'
+        AND d.status_of_delivery IN ('Delivered to Warehouse', 'Cleared Customs', 'Departed Port')
         AND d.warehouse_arrival_date IS NOT NULL
         GROUP BY d.bol_number, d.supplier, d.warehouse_arrival_date, d.proof_of_delivery
         ORDER BY d.warehouse_arrival_date DESC
     ");
+    
     if ($stmtInboundHistory) {
         $stmtInboundHistory->bind_param("i", $warehouse_id);
         $stmtInboundHistory->execute();
         $resultInboundHistory = $stmtInboundHistory->get_result();
         $index = 0;
+        
         while ($delivery = $resultInboundHistory->fetch_assoc()) {
             $delivery['source_project'] = $delivery['projects'] ?? 'N/A';
             $delivery['index'] = $index;
             
-            // If mixed wattage, get individual delivery details
+            // Handle mixed wattage deliveries with detailed breakdown
             if ($delivery['is_mixed_wattage']) {
                 $delivery_ids = explode(',', $delivery['delivery_ids']);
                 $delivery['details'] = [];
@@ -298,16 +334,23 @@ try {
                 }
             }
             
-            $inbound_grouped[] = $delivery;
+            $inbound_history[] = $delivery;
             $index++;
         }
         $stmtInboundHistory->close();
     }
-    $inbound_history = $inbound_grouped;
+    
+    return $inbound_history;
+}
 
-    // NEW: Fetch Outbound History (departures from this warehouse) - Grouped by BOL#
+/**
+ * Fetch outbound delivery history for this facility
+ * @param PDO $conn Database connection
+ * @param int $warehouse_id Warehouse/port ID
+ * @return array Array of outbound delivery history grouped by BOL
+ */
+function fetchOutboundHistory($conn, $warehouse_id) {
     $outbound_history = [];
-    $outbound_grouped = [];
     
     $stmtOutboundHistory = $conn->prepare("
         SELECT 
@@ -335,21 +378,23 @@ try {
         LEFT JOIN warehouses w ON d.warehouse_id = w.id
         JOIN delivery_pallets dp ON d.id = dp.delivery_id
         JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
-        WHERE d.warehouse_id = ?
+        WHERE (d.warehouse_id = ? OR (d.origin_type = 'warehouse' AND d.origin_id = ?))
         AND d.left_warehouse_date IS NOT NULL
         GROUP BY d.bol_number, d.supplier, d.left_warehouse_date, d.anticipated_delivery_date, d.status_of_delivery
         ORDER BY d.left_warehouse_date DESC
     ");
+    
     if ($stmtOutboundHistory) {
-        $stmtOutboundHistory->bind_param("ii", $warehouse_id, $warehouse_id);
+        $stmtOutboundHistory->bind_param("iii", $warehouse_id, $warehouse_id, $warehouse_id);
         $stmtOutboundHistory->execute();
         $resultOutboundHistory = $stmtOutboundHistory->get_result();
         $index = 0;
+        
         while ($delivery = $resultOutboundHistory->fetch_assoc()) {
             $delivery['destination_project'] = $delivery['projects'] ?? 'N/A';
             $delivery['index'] = $index;
             
-            // If mixed wattage, get individual delivery details
+            // Handle mixed wattage deliveries with detailed breakdown
             if ($delivery['is_mixed_wattage']) {
                 $delivery_ids = explode(',', $delivery['delivery_ids']);
                 $delivery['details'] = [];
@@ -382,17 +427,80 @@ try {
                 }
             }
             
-            $outbound_grouped[] = $delivery;
+            $outbound_history[] = $delivery;
             $index++;
         }
         $stmtOutboundHistory->close();
     }
-    $outbound_history = $outbound_grouped;
     
-    // Monthly cost estimate
+    return $outbound_history;
+}
+
+// ===========================================================================================
+// MAIN EXECUTION: FETCH FACILITY DATA AND CONFIGURE INTERFACE
+// ===========================================================================================
+
+try {
+    // Fetch Warehouse/Port Details
+    $stmtW = $conn->prepare("SELECT * FROM warehouses WHERE id = ?");
+    if (!$stmtW) throw new Exception("Failed to prepare warehouse query: " . $conn->error);
+    $stmtW->bind_param("i", $warehouse_id);
+    $stmtW->execute();
+    $resultW = $stmtW->get_result();
+    if ($resultW->num_rows === 0) {
+        throw new Exception("Warehouse not found.");
+    }
+    $warehouse = $resultW->fetch_assoc();
+    $stmtW->close();
+
+    // ===========================================================================================
+    // FACILITY TYPE DETECTION AND UI CONFIGURATION
+    // ===========================================================================================
+    $is_port = ($warehouse['is_port'] == 1);
+    
+    // Configure UI text and behavior based on facility type
+    $facility_type = $is_port ? 'Port' : 'Warehouse';
+    $page_title = $is_port ? 'Port Operations' : 'Warehouse Inventory';
+    $receiving_title = $is_port ? 'Receive Container(s)' : 'Receive Selected Truckloads';
+    $history_title = $is_port ? 'Container History' : 'Truckload History';
+    $inventory_title = $is_port ? 'Containers Cleared' : 'Stored Inventory';
+    $received_status = $is_port ? 'Cleared Customs' : 'In Warehouse';
+    $transit_status_filter = $is_port ? "('In Transit to Warehouse', 'On Water')" : "('In Transit to Warehouse')";
+    $grouping_field = $is_port ? 'container_number' : 'bol_number';
+    
+    // ===========================================================================================
+    // FETCH STORED INVENTORY DATA (COMMON FOR BOTH FACILITIES)
+    // ===========================================================================================
+    list($pallets_in_storage, $total_pallets) = fetchStoredInventory($conn, $warehouse_id, $received_status, $is_port);
+    
+    // ===========================================================================================
+    // PORT-SPECIFIC: FETCH CONTAINERS CLEARED (FOR GROUPED CONTAINER VIEW)
+    // ===========================================================================================
+    $containers_cleared = [];
+    if ($is_port) {
+        $containers_cleared = fetchPortContainersCleared($conn, $warehouse_id, $received_status);
+    }
+
+    // ===========================================================================================
+    // FETCH TRANSIT INVENTORY DATA (COMMON FOR BOTH FACILITIES)
+    // ===========================================================================================
+    $pallets_in_transit = fetchTransitPallets($conn, $warehouse_id);
+    $transit_truckloads = fetchTransitTruckloads($conn, $warehouse_id);
+
+    // ===========================================================================================
+    // FETCH DELIVERY HISTORY DATA (COMMON FOR BOTH FACILITIES)
+    // ===========================================================================================
+    $inbound_history = fetchInboundHistory($conn, $warehouse_id);
+    $outbound_history = fetchOutboundHistory($conn, $warehouse_id);
+    
+    // ===========================================================================================
+    // CALCULATE COST ESTIMATES AND FETCH REFERENCE DATA
+    // ===========================================================================================
+    
+    // Monthly cost estimate calculation
     $total_storage_cost_monthly_rate = $total_pallets * ($warehouse['monthly_storage_fee'] ?? 0);
 
-    // Fetch all projects (build full addresses like create_shipment.php)
+    // Fetch all projects for dropdown options (build full addresses like create_shipment.php)
     $stmtAllP = $conn->prepare("SELECT id, project_name, street_address, city, state, zip_code FROM projects ORDER BY project_name ASC");
     if ($stmtAllP) {
         $stmtAllP->execute();
@@ -800,7 +908,7 @@ $conn->close();
     </div>
     
     <?php if (!empty($successMessage)): ?>
-        <div class="success-message"><?php echo htmlspecialchars($successMessage); ?></div>
+        <div class="success-message"><?php echo $successMessage; ?></div>
     <?php endif; ?>
     <?php if (!empty($errorMessage)): ?>
         <div class="error-message">
@@ -1424,7 +1532,7 @@ $conn->close();
         <div class="shipment-details-modal-content">
             <h2 class="section-title" style="margin-top:0; text-align:center;">Move Container (Drayage)</h2>
             
-            <form id="moveContainerForm" onsubmit="return false;">
+            <form id="moveContainerForm" method="POST" action="create_shipment.php">
                 <div class="form-row">
                     <div>
                         <label for="move_departure_date">Departure Date:</label>
@@ -1483,18 +1591,17 @@ $conn->close();
                     <input type="hidden" id="move_miles" name="miles" value="">
                 </div>
                 
-                <!-- Generate BOL Checkbox -->
-                <div style="margin-top: 15px; margin-bottom: 20px; padding: 10px; background-color: #f8f9fa; border-radius: 4px; border: 1px solid #e9ecef;">
-                    <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
-                        <input type="checkbox" id="generate_bol_drayage" name="generate_bol" value="1" style="margin: 0;">
-                        <span>Generate Bill of Lading (BOL) after creating delivery</span>
-                    </label>
-                    <small style="color: #6c757d; margin-left: 20px; display: block; margin-top: 3px;">
-                        Check this to immediately create a BOL document for this shipment
-                    </small>
-                </div>
+
+                <!-- Hidden fields for container data that will be populated by JavaScript -->
+                <input type="hidden" name="action" value="ship_pallets">
+                <input type="hidden" name="origin_type" value="warehouse">
+                <input type="hidden" name="origin_id" value="<?php echo $warehouse_id; ?>">
+                <input type="hidden" id="container_ids_input" name="drayage_container_ids" value="">
+                <input type="hidden" id="pallet_ids_container" name="selected_pallets" value="">
+                <input type="hidden" id="bol_number_input" name="bol_number" value="">
+                <input type="hidden" id="container_number_input" name="container_number" value="">
                 
-                <button type="button" id="confirmMoveContainerBtn" class="action-button" style="margin-top:15px;">
+                <button type="submit" id="confirmMoveContainerBtn" class="action-button" style="margin-top:15px;">
                     Create Drayage Shipment
                 </button>
             </form>
@@ -2097,9 +2204,7 @@ function openMoveContainerModal(containerIds) {
     const distanceDisplay = document.getElementById('drayageDistanceDisplay');
     if (distanceDisplay) distanceDisplay.innerHTML = '';
     
-    // Clear Generate BOL checkbox
-    const generateBolCheckbox = document.getElementById('generate_bol_drayage');
-    if (generateBolCheckbox) generateBolCheckbox.checked = false;
+
     
     // Debug data availability when modal opens
     console.log('Modal opening - checking data availability:');
@@ -2323,10 +2428,12 @@ document.addEventListener('DOMContentLoaded', function() {
         if (e.target === modal) closeMoveContainerModal();
     });
     
-    // Handle Move Container form submission
-    const confirmBtn = document.getElementById('confirmMoveContainerBtn');
-    if (confirmBtn) {
-        confirmBtn.addEventListener('click', function() {
+    // Handle Move Container form submission - populate hidden fields before form submits
+    const form = document.getElementById('moveContainerForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault(); // Temporarily prevent submission to populate hidden fields
+            
             const modal = document.getElementById('moveContainerModal');
             const containerIds = JSON.parse(modal.dataset.containerIds || '[]');
             
@@ -2335,26 +2442,35 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
-            // Validate form
-            const form = document.getElementById('moveContainerForm');
-            if (!form.checkValidity()) {
-                form.reportValidity();
+            // Get container number from first checked container for BOL naming
+            let containerNumber = '';
+            const checkedContainers = document.querySelectorAll('.container-checkbox:checked');
+            
+            if (checkedContainers.length > 0) {
+                const firstCheckedRow = checkedContainers[0].closest('tr');
+                if (firstCheckedRow) {
+                    const containerCell = firstCheckedRow.cells[1]; // Container Number column (index 1)
+                    if (containerCell) {
+                        containerNumber = containerCell.textContent.trim();
+                    }
+                }
+            }
+            
+            if (!containerNumber) {
+                alert('Error: Could not determine container number. Please try again.');
                 return;
             }
             
-            // Disable the submit button to prevent double-clicking
-            const submitButton = document.querySelector('#moveContainerModal .action-button');
-            if (submitButton) {
-                submitButton.disabled = true;
-                submitButton.textContent = 'Creating...';
-            }
+            // Set BOL number as container number + drayage suffix
+            const drayageBolNumber = containerNumber + '-DRAY';
             
-            // Check if Generate BOL is checked
-            const generateBolCheckbox = document.getElementById('generate_bol_drayage');
-            const shouldGenerateBol = generateBolCheckbox && generateBolCheckbox.checked;
+            // Populate hidden fields with container data
+            document.getElementById('container_ids_input').value = JSON.stringify(containerIds);
+            document.getElementById('bol_number_input').value = drayageBolNumber;
+            document.getElementById('container_number_input').value = containerNumber;
             
-            // First, get all pallet IDs from the selected container deliveries
-            const getPalletIdsPromise = fetch('get_container_pallets.php', {
+            // Get pallet IDs and then submit the form
+            fetch('get_container_pallets.php', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -2368,432 +2484,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!data.success) {
                     throw new Error(data.message || 'Failed to get pallet IDs');
                 }
-                return data.pallet_ids;
-            });
-            
-            getPalletIdsPromise.then(palletIds => {
-                // Get container number from first checked container for BOL naming
-                let containerNumber = '';
-                const checkedContainers = document.querySelectorAll('.container-checkbox:checked');
                 
-                if (checkedContainers.length > 0) {
-                    const firstCheckedRow = checkedContainers[0].closest('tr');
-                    if (firstCheckedRow) {
-                        const containerCell = firstCheckedRow.cells[1]; // Container Number column (index 1)
-                        if (containerCell) {
-                            containerNumber = containerCell.textContent.trim();
-                        }
-                    }
-                }
-                
-                console.log('Checked containers found:', checkedContainers.length);
-                console.log('First checked container row:', checkedContainers[0]?.closest('tr'));
-                console.log('Container cell content:', checkedContainers[0]?.closest('tr')?.cells[1]?.textContent);
-                
-                // Validate container number was found
-                if (!containerNumber) {
-                    alert('Error: Could not determine container number. Please try again.');
-                    
-                    // Re-enable the submit button
-                    const submitButton = document.querySelector('#moveContainerModal .action-button');
-                    if (submitButton) {
-                        submitButton.disabled = false;
-                        submitButton.textContent = 'Create Drayage Shipment';
-                    }
-                    return;
-                }
-                
-                // Set BOL number as container number + drayage suffix
-                const drayageBolNumber = containerNumber + '-DRAY';
-                
-                console.log('Container number found:', containerNumber);
-                console.log('BOL number will be:', drayageBolNumber);
-                
-                // For BOL generation, use normal form submission to avoid redirect issues
-                if (shouldGenerateBol) {
-                    console.log('BOL generation requested - using normal form submission');
-                    
-                    // First update container deliveries
-                    console.log('About to call update_container_deliveries.php with:', {
-                        delivery_ids: containerIds,
-                        container_number: containerNumber
-                    });
-                    
-                    fetch('update_container_deliveries.php', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            delivery_ids: containerIds,
-                            container_number: containerNumber
-                        })
-                    })
-                    .then(response => {
-                        console.log('Update response status:', response.status);
-                        return response.json();
-                    })
-                    .then(updateResult => {
-                        console.log('Container update result before BOL form submission:', updateResult);
-                        
-                        if (!updateResult.success) {
-                            throw new Error(updateResult.message || 'Failed to update container deliveries');
-                        }
-                        
-                        // Create and submit a normal form
-                        const form = document.createElement('form');
-                        form.method = 'POST';
-                        form.action = 'create_shipment.php';
-                        form.style.display = 'none';
-                        
-                        // Add all form data as hidden inputs
-                        const fields = {
-                            'action': 'ship_pallets',
-                            'departure_date': document.getElementById('move_departure_date').value,
-                            'est_arrival_date': document.getElementById('move_est_arrival_date').value,
-                            'freight_cost': document.getElementById('move_freight_cost').value || '0',
-                            'customer_cost': document.getElementById('move_customer_cost').value || '0',
-                            'miles': document.getElementById('move_miles').value || '0',
-                            'origin_type': 'warehouse',
-                            'origin_id': '<?php echo $warehouse_id; ?>',
-                            'destination_type': document.querySelector('input[name="destination_type"]:checked').value,
-                            'destination_id': document.getElementById('move_destination_id').value,
-                            'bol_number': drayageBolNumber,
-                            'container_number': containerNumber,
-                            'generate_bol': '1'
-                        };
-                        
-                        // Add pallet IDs
-                        palletIds.forEach((palletId, index) => {
-                            fields[`selected_pallets[${index}]`] = palletId;
-                        });
-                        
-                        // Create hidden inputs
-                        for (let [key, value] of Object.entries(fields)) {
-                            const input = document.createElement('input');
-                            input.type = 'hidden';
-                            input.name = key;
-                            input.value = value;
-                            form.appendChild(input);
-                        }
-                        
-                        document.body.appendChild(form);
-                        form.submit();
-                        return; // Exit - form submission will handle the rest
-                    })
-                    .catch(updateError => {
-                        console.error('Error updating container deliveries before form submission:', updateError);
-                        alert('Error updating container status. Please try again.');
-                        
-                        // Re-enable the submit button
-                        const submitButton = document.querySelector('#moveContainerModal .action-button');
-                        if (submitButton) {
-                            submitButton.disabled = false;
-                            submitButton.textContent = 'Create Drayage Shipment';
-                        }
-                        return;
-                    });
-                    
-                    return; // Exit here for BOL generation
-                }
-                
-                // Create form data for shipment using create_shipment.php format (non-BOL path)
-            const formData = new FormData();
-            
-                // Add pallet IDs in the format expected by create_shipment.php
-                palletIds.forEach((palletId, index) => {
-                    formData.append(`selected_pallets[${index}]`, palletId);
+                // Populate pallet IDs in proper format for create_shipment.php
+                const palletContainer = document.getElementById('pallet_ids_container');
+                data.pallet_ids.forEach((palletId, index) => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = `selected_pallets[${index}]`;
+                    input.value = palletId;
+                    form.appendChild(input);
                 });
-            
-            // Basic shipment info
-            formData.append('departure_date', form.departure_date.value);
-            formData.append('est_arrival_date', form.est_arrival_date.value);
-            formData.append('freight_cost', form.freight_cost.value || '0');
-            formData.append('customer_cost', form.customer_cost.value || '0');
-            formData.append('miles', form.miles.value || '0');
-            
-                // Origin info (current warehouse/port)
-            formData.append('origin_type', 'warehouse');
-            formData.append('origin_id', '<?php echo $warehouse_id; ?>');
-            
-            // Destination info
-            const destinationType = document.querySelector('input[name="destination_type"]:checked').value;
-            const destinationId = document.getElementById('move_destination_id').value;
-            formData.append('destination_type', destinationType);
-            formData.append('destination_id', destinationId);
-            
-                // BOL number
-            formData.append('bol_number', drayageBolNumber);
-            
-                // Container number for drayage shipments (preserve original container number)
-                formData.append('container_number', containerNumber);
                 
-                // Action type for create_shipment.php
-                formData.append('action', 'ship_pallets');
-            
-            // Add Generate BOL flag
-            if (shouldGenerateBol) {
-                formData.append('generate_bol', '1');
-            }
-            
-                console.log('Creating drayage shipment with pallet IDs:', Object.fromEntries(formData));
-            
-            // Submit the form to create_shipment.php
-                return fetch('create_shipment.php', {
-                method: 'POST',
-                    body: formData,
-                    redirect: 'manual' // Prevent automatic redirect following
-                });
-            })
-            .then(response => {
-                console.log('Response status:', response.status);
-                console.log('Response type:', response.type);
-                console.log('Response redirected:', response.redirected);
-                console.log('Response url:', response.url);
-                
-                // Check if it's a redirect (manual redirect mode gives us status 0 and type "opaqueredirect")
-                if ((response.status === 0 && response.type === 'opaqueredirect') || response.status === 302) {
-                    if (shouldGenerateBol) {
-                        // For BOL generation, we need to update container deliveries first, then redirect
-                        console.log('Detected redirect - updating containers then redirecting for BOL generation');
-                        
-                        // Update original container deliveries first
-                        return fetch('update_container_deliveries.php', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                delivery_ids: containerIds,
-                                container_number: containerNumber
-                            })
-                        })
-                        .then(response => response.json())
-                        .then(updateResult => {
-                            console.log('Container update result before BOL redirect:', updateResult);
-                            
-                            // Now create a temporary form and submit it normally to allow redirect
-                            const tempForm = document.createElement('form');
-                            tempForm.method = 'POST';
-                            tempForm.action = 'create_shipment.php';
-                            tempForm.style.display = 'none';
-                            
-                            // Add all the form data as hidden inputs
-                            const tempFormData = new FormData();
-                            palletIds.forEach((palletId, index) => {
-                                tempFormData.append(`selected_pallets[${index}]`, palletId);
-                            });
-                            tempFormData.append('departure_date', form.departure_date.value);
-                            tempFormData.append('est_arrival_date', form.est_arrival_date.value);
-                            tempFormData.append('freight_cost', form.freight_cost.value || '0');
-                            tempFormData.append('customer_cost', form.customer_cost.value || '0');
-                            tempFormData.append('miles', form.miles.value || '0');
-                            tempFormData.append('origin_type', 'warehouse');
-                            tempFormData.append('origin_id', '<?php echo $warehouse_id; ?>');
-                            tempFormData.append('destination_type', destinationType);
-                            tempFormData.append('destination_id', destinationId);
-                            tempFormData.append('bol_number', drayageBolNumber);
-                            tempFormData.append('container_number', containerNumber);
-                            tempFormData.append('action', 'ship_pallets');
-                            tempFormData.append('generate_bol', '1');
-                            
-                            for (let [key, value] of tempFormData.entries()) {
-                                const input = document.createElement('input');
-                                input.type = 'hidden';
-                                input.name = key;
-                                input.value = value;
-                                tempForm.appendChild(input);
-                            }
-                            
-                            document.body.appendChild(tempForm);
-                            tempForm.submit();
-                            return; // Exit here - don't process further
-                        })
-                        .catch(updateError => {
-                            console.error('Error updating container deliveries before BOL redirect:', updateError);
-                            // Still proceed with BOL generation even if container update fails
-                            alert('Container update failed, but proceeding with BOL generation');
-                            window.location.href = 'generate_bol.php?delivery_ids=' + encodeURIComponent(response.headers.get('X-Delivery-IDs') || '');
-                        });
-                    } else {
-                        // No BOL generation - this is a successful redirect, update containers and show success
-                        return fetch('update_container_deliveries.php', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                delivery_ids: containerIds,
-                                container_number: containerNumber
-                            })
-                        })
-                        .then(response => response.json())
-                        .then(updateResult => {
-                            console.log('Container update result:', updateResult);
-                            
-                            closeMoveContainerModal();
-                            
-                            // Show success message
-                            const deliveryCount = containerIds.length;
-                            const deliveryWord = deliveryCount === 1 ? 'delivery' : 'deliveries';
-                            let successMsg = `${deliveryCount} drayage ${deliveryWord} successfully created.`;
-                            
-                            const destinationType = document.querySelector('input[name="destination_type"]:checked').value;
-                            if (destinationType === 'warehouse') {
-                                successMsg += ` Container(s) are now in transit to the selected warehouse.`;
-                            } else {
-                                successMsg += ` Container(s) are now in transit to the selected project.`;
-                            }
-                            
-                            sessionStorage.setItem('move_container_success', successMsg);
-                            location.reload();
-                        })
-                        .catch(updateError => {
-                            console.error('Error updating container deliveries:', updateError);
-                            // Still show success since the main drayage shipment was created
-                            closeMoveContainerModal();
-                            sessionStorage.setItem('move_container_success', 'Drayage shipment created successfully.');
-                            location.reload();
-                        });
-                    }
-                }
-                
-                // Normal response - get the text
-                return response.text();
-            })
-            .then(data => {
-                if (!data) return; // If we redirected, data will be undefined
-                
-                console.log('Drayage shipment response:', data);
-                closeMoveContainerModal();
-                
-                // Check if response indicates success (create_shipment.php redirects on success, so we won't get here normally)
-                // But in case there's an error, it should be in the response
-                if (data.includes('successfully created') || data.includes('success')) {
-                    // Update original container deliveries to mark as transferred
-                    return fetch('update_container_deliveries.php', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            delivery_ids: containerIds,
-                            container_number: containerNumber
-                        })
-                    })
-                    .then(response => response.json())
-                    .then(updateResult => {
-                        console.log('Container update result:', updateResult);
-                        
-                        // Show success message similar to create_shipment.php format
-                        const deliveryCount = containerIds.length;
-                        const deliveryWord = deliveryCount === 1 ? 'delivery' : 'deliveries';
-                        let successMsg = `${deliveryCount} drayage ${deliveryWord} successfully created.`;
-                        
-                        const destinationType = document.querySelector('input[name="destination_type"]:checked').value;
-                        if (destinationType === 'warehouse') {
-                            successMsg += ` Container(s) are now in transit to the selected warehouse.`;
-                        } else {
-                            successMsg += ` Container(s) are now in transit to the selected project.`;
-                    }
-                        
-                        // Store success message in session for display after page reload
-                        sessionStorage.setItem('move_container_success', successMsg);
-                    
-                    // Refresh the page to show updated inventory
-                        location.reload();
-                    })
-                    .catch(updateError => {
-                        console.error('Error updating container deliveries:', updateError);
-                        // Still show success since the main drayage shipment was created
-                        alert('Drayage shipment created, but there may be an issue with container status. Please refresh the page.');
-                        location.reload();
-                    });
-                    
-                } else if (data.includes('error') || data.includes('Error')) {
-                    // Extract error message if possible
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(data, 'text/html');
-                    const errorElement = doc.querySelector('.error-message');
-                    const errorMsg = errorElement ? errorElement.textContent.trim() : 'Unknown error occurred';
-                    
-                    alert('Error creating drayage shipment: ' + errorMsg);
-                    console.error('Drayage creation failed:', data);
-                    
-                    // Re-enable the submit button
-                    const submitButton = document.querySelector('#moveContainerModal .action-button');
-                    if (submitButton) {
-                        submitButton.disabled = false;
-                        submitButton.textContent = 'Create Drayage Shipment';
-                    }
-                    
-                    closeMoveContainerModal();
-                } else {
-                    // If we get here, it might be a successful redirect response
-                    // Update original container deliveries to mark as transferred
-                    fetch('update_container_deliveries.php', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            delivery_ids: containerIds,
-                            container_number: containerNumber
-                        })
-                    })
-                    .then(response => response.json())
-                    .then(updateResult => {
-                        console.log('Container update result:', updateResult);
-                        
-                        // Store success message and reload
-                        const deliveryCount = containerIds.length;
-                        const deliveryWord = deliveryCount === 1 ? 'delivery' : 'deliveries';
-                        let successMsg = `${deliveryCount} drayage ${deliveryWord} successfully created.`;
-                        
-                        const destinationType = document.querySelector('input[name="destination_type"]:checked').value;
-                        if (destinationType === 'warehouse') {
-                            successMsg += ` Container(s) are now in transit to the selected warehouse.`;
-                        } else {
-                            successMsg += ` Container(s) are now in transit to the selected project.`;
-                        }
-                        
-                        sessionStorage.setItem('move_container_success', successMsg);
-                        location.reload();
-                    })
-                    .catch(updateError => {
-                        console.error('Error updating container deliveries:', updateError);
-                        // Still show success since the main drayage shipment was created
-                        sessionStorage.setItem('move_container_success', 'Drayage shipment created successfully.');
-                        location.reload();
-                    });
-                }
+                // Now submit the form normally - server handles everything including BOL redirect
+                form.submit();
             })
             .catch(error => {
-                console.error('Error:', error);
-                alert('Error creating drayage shipment: ' + error.message);
-                
-                // Re-enable the submit button
-                const submitButton = document.querySelector('#moveContainerModal .action-button');
-                if (submitButton) {
-                    submitButton.disabled = false;
-                    submitButton.textContent = 'Create Drayage Shipment';
-                }
-                
-                closeMoveContainerModal();
+                console.error('Error getting pallet IDs:', error);
+                alert('Error: ' + error.message);
             });
-        })
-        .catch(palletError => {
-            console.error('Error getting pallet IDs:', palletError);
-            alert('Error: ' + palletError.message);
-            
-            // Re-enable the submit button
-            const submitButton = document.querySelector('#moveContainerModal .action-button');
-            if (submitButton) {
-                submitButton.disabled = false;
-                submitButton.textContent = 'Create Drayage Shipment';
-            }
-            
-            closeMoveContainerModal();
         });
     }
 });
