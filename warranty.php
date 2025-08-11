@@ -117,6 +117,9 @@ persistWarrantyFilters($filters);
         .filters-btn:hover { filter:brightness(0.96); box-shadow:0 10px 24px rgba(72,140,154,0.30); transform: translateY(-1px); }
         .icon-btn { width:38px; cursor:pointer; height:38px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; border:none; background:linear-gradient(135deg,#3A6E7F,#293E4C); color:#fff; box-shadow:0 8px 20px rgba(41,62,76,0.35); }
         .icon-btn:hover { filter:brightness(1.05); transform: translateY(-1px) scale(1.02); }
+        .btn-primary { background: linear-gradient(135deg, #488C9A, #3A6E7F); border:none; border-radius:12px; padding:10px 16px; box-shadow:0 10px 24px rgba(58,110,127,0.25); font-weight:700; color:#fff !important; cursor:pointer; display:inline-flex; align-items:center; gap:8px; text-decoration:none; }
+        .btn-primary:hover { filter:brightness(0.96); transform: translateY(-1px); box-shadow:0 14px 30px rgba(58,110,127,0.30); color:#fff !important; }
+        .btn-sm { padding:8px 12px; border-radius:10px; font-size:0.9rem; }
 
         /* Table polish */
         .table-container { padding:0 20px; }
@@ -142,6 +145,8 @@ persistWarrantyFilters($filters);
         .dataTables_wrapper .dataTables_filter { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
         .dataTables_wrapper .dataTables_info { margin:0; }
         .dataTables_wrapper .dataTables_paginate { margin:0; text-align:right; }
+        /* Put info and pagination inline on the right */
+        .dataTables_wrapper .dt-bottom-right { display:flex; align-items:center; justify-content:flex-end; gap:65%; }
     </style>
 </head>
 <body>
@@ -265,6 +270,10 @@ persistWarrantyFilters($filters);
 <script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
 <script>
 let claimsTable;
+const NEW_TICKET_URL = <?php 
+  $newUrl = 'warranty_create.php' . (!empty($filters['project_id']) ? ('?project_id='.(int)$filters['project_id']) : '');
+  echo json_encode($newUrl);
+?>;
 
 function buildAjaxData(d) {
   const form = document.getElementById('filtersForm');
@@ -299,7 +308,8 @@ document.addEventListener('DOMContentLoaded', function() {
     order: [[6, 'desc']],
     ajax: { url: 'get_warranty_claims.php', data: function(d){ buildAjaxData(d); } },
     pageLength: 25,
-    dom: '<"row mb-2"<"col-sm-6"l><"col-sm-6"f>>t<"row mt-2"<"col-sm-6"i><"col-sm-6"p>>',
+    // Top: length left, search right. Bottom: info + pagination together on right
+    dom: '<"row mb-2 align-items-center"<"col-sm-6"l><"col-sm-6"f>>t<"row mt-2 align-items-center"<"col-sm-12 dt-bottom-right d-flex justify-content-end"ip>>',
     columns: [
       { data: 0 },
       { data: 1 },
@@ -311,6 +321,20 @@ document.addEventListener('DOMContentLoaded', function() {
       { data: null, orderable:false, searchable:false, render: (row)=> `<button class=\"icon-btn\" title=\"Open\" onclick=\"event.stopPropagation(); window.location='warranty_detail.php?id=${row[0]}'\">▶</button>` }
     ]
   });
+
+  // Add subtle New Ticket button next to the search (top-right)
+  <?php if (isAdminRole()): ?>
+  const filterWrap = document.querySelector('.dataTables_filter');
+  if (filterWrap) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '+ New Ticket';
+    btn.className = 'btn-primary btn-sm';
+    btn.addEventListener('click', ()=> { window.location = NEW_TICKET_URL; });
+    btn.style.marginLeft = '10px';
+    filterWrap.appendChild(btn);
+  }
+  <?php endif; ?>
 
   $('#claimsTable tbody').on('click', 'tr', function() {
     const data = claimsTable.row(this).data();
