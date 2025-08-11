@@ -319,8 +319,23 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   document.getElementById('applyFilters').addEventListener('click', function(){
+    // Push current form state into the URL so back/forward works and server can read GET
+    const params = new URLSearchParams();
+    const fd = new FormData(document.getElementById('filtersForm'));
+    params.set('project_id', fd.get('project_id') || '0');
+    // Serialize issue/status from hidden inputs we manage
+    const issueVals = [document.getElementById('issue_hidden_1')?.value, document.getElementById('issue_hidden_2')?.value].filter(Boolean);
+    issueVals.forEach(v => params.append('issue_types[]', v));
+    const statusVals = [document.getElementById('status_hidden_1')?.value, document.getElementById('status_hidden_2')?.value, document.getElementById('status_hidden_3')?.value].filter(Boolean);
+    statusVals.forEach(v => params.append('statuses[]', v));
+    params.set('responsible_party', fd.get('responsible_party') || '');
+    params.set('date_from', fd.get('date_from') || '');
+    params.set('date_to', fd.get('date_to') || '');
+    params.set('hide_closed', document.getElementById('f_hide').checked ? '1' : '0');
+    const newUrl = window.location.pathname + '?' + params.toString();
+    window.history.replaceState({}, '', newUrl);
     claimsTable.ajax.reload();
-    });
+  });
   
   // Segmented control for Issue Type → writes up to two hidden inputs to preserve multi-select capability
   const issueSelect = document.getElementById('issueSelect');
