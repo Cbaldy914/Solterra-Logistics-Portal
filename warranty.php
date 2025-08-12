@@ -51,7 +51,7 @@ persistWarrantyFilters($filters);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Warranty Claims</title>
+    <title>Exceptions Report</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -137,17 +137,17 @@ persistWarrantyFilters($filters);
         .dataTables_wrapper .dataTables_paginate ul.pagination { list-style:none; margin:0; padding-left:0; display:flex; }
         .dataTables_wrapper .dataTables_paginate ul.pagination li { list-style:none; }
         .dataTables_wrapper ul { list-style:none; }
-        .dataTables_wrapper .row { align-items:center; }
+        .dataTables_wrapper .row { display:flex; align-items:center; flex-wrap:wrap; }
         /* DataTables toolbar alignment */
         .dataTables_wrapper .row { margin:0; }
-        .dataTables_wrapper .col-sm-6 { padding:0 8px; }
+        .dataTables_wrapper .col-sm-6 { padding:0 8px; flex: 1 1 50%; }
         .dataTables_wrapper .dataTables_length { display:flex; align-items:center; gap:8px; }
         .dataTables_wrapper .dataTables_filter { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
         .dataTables_wrapper .dataTables_info { margin:0; }
         .dataTables_wrapper .dataTables_paginate { margin:0; text-align:right; }
         /* Bottom toolbar alignment: info left, pagination right */
-        .dataTables_wrapper .dt-bottom-left { display:flex; align-items:center; justify-content:flex-start; }
-        .dataTables_wrapper .dt-bottom-right { display:flex; align-items:center; justify-content:flex-end; }
+        .dataTables_wrapper .dt-bottom-left { display:flex; align-items:center; justify-content:flex-start; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .dataTables_wrapper .dt-bottom-right { display:flex; align-items:center; justify-content:flex-end; flex-shrink:0; }
     </style>
 </head>
 <body>
@@ -167,10 +167,10 @@ persistWarrantyFilters($filters);
             <a href="project_overview.php?project_id=<?php echo (int)$selectedProjectId; ?>">Project: <?php echo htmlspecialchars($selectedProjectName); ?></a>
         <?php endif; ?>
         <span class="separator">&raquo;</span>
-        <span>Warranty Claims</span>
+        <span>Exceptions Report</span>
     </div>
 
-    <h1>Warranty Claims</h1>
+    <h1>Exceptions Report</h1>
     <div style="height: 6px;"></div>
 
     <form class="filter-bar" id="filtersForm">

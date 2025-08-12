@@ -87,7 +87,7 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Warranty Ticket #<?php echo htmlspecialchars($claimId); ?></title>
+    <title>Exception Ticket #<?php echo htmlspecialchars($claimId); ?></title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -180,7 +180,7 @@ $conn->close();
                 <?php $projId = (int)$claim['project_id']; $projName = (string)$claim['project_name']; ?>
                 <a href="project_overview.php?project_id=<?php echo $projId; ?>">Project: <?php echo htmlspecialchars($projName); ?></a>
                 <span class="separator">&raquo;</span>
-                <a href="warranty.php?project_id=<?php echo $projId; ?>">Warranty Claims</a>
+                <a href="warranty.php?project_id=<?php echo $projId; ?>">Exceptions Report</a>
                 <span class="separator">&raquo;</span>
                 <span>Ticket #<?php echo htmlspecialchars($claimId); ?></span>
             </div>
