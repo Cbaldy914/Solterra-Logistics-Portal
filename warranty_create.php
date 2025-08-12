@@ -59,7 +59,7 @@ $csrf = $_SESSION['csrf_token'];
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Warranty Ticket</title>
+    <title>Create Exception Ticket</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -189,12 +189,12 @@ $csrf = $_SESSION['csrf_token'];
             <a href="project_overview.php?project_id=<?php echo (int)$selectedProjectId; ?>">Project: <?php echo htmlspecialchars($selName); ?></a>
         <?php endif; ?>
         <span class="separator">&raquo;</span>
-        <a href="warranty.php<?php echo $selectedProjectId?('?project_id='.(int)$selectedProjectId):''; ?>">Warranty Claims</a>
+        <a href="warranty.php<?php echo $selectedProjectId?('?project_id='.(int)$selectedProjectId):''; ?>">Exceptions Report</a>
         <span class="separator">&raquo;</span>
         <span>Create Ticket</span>
     </div>
 
-    <h1>Create Warranty Ticket</h1>
+    <h1>Create Exception Ticket</h1>
 
     <form method="post" action="process_warranty_create.php" enctype="multipart/form-data" class="card" style="margin-top:12px;">
         <div class="card-header">Details</div>

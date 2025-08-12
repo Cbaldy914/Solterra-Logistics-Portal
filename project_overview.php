@@ -3016,7 +3016,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                     </div>
                 </div>
                 <button onclick="handleAdminWarehousing()">Warehousing</button>
-                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Warranty</button>
+                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Exceptions</button>
             </div>
             
             <!-- Customer View Buttons -->
@@ -3051,7 +3051,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         <a href="ftd.php?project_id=<?php echo $project_id; ?>">⚡ Flash Test Data</a>
                     </div>
                 </div>
-                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Warranty</button>
+                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Exceptions</button>
             </div>
         </div>
     </div>
