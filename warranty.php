@@ -145,9 +145,11 @@ persistWarrantyFilters($filters);
         .dataTables_wrapper .dataTables_filter { display:flex; align-items:center; gap:8px; justify-content:flex-end; }
         .dataTables_wrapper .dataTables_info { margin:0; }
         .dataTables_wrapper .dataTables_paginate { margin:0; text-align:right; }
-        /* Bottom toolbar alignment: info left, pagination right */
+        /* Custom top/bottom rows to ensure inline layout regardless of Bootstrap */
+        .dataTables_wrapper .dt-top-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+        .dataTables_wrapper .dt-bottom-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:nowrap; }
         .dataTables_wrapper .dt-bottom-left { display:flex; align-items:center; justify-content:flex-start; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .dataTables_wrapper .dt-bottom-right { display:flex; align-items:center; justify-content:flex-end; flex-shrink:0; }
+        .dataTables_wrapper .dt-bottom-right { display:flex; align-items:center; justify-content:flex-end; margin-left:16px; }
     </style>
 </head>
 <body>
@@ -309,8 +311,8 @@ document.addEventListener('DOMContentLoaded', function() {
     order: [[6, 'desc']],
     ajax: { url: 'get_warranty_claims.php', data: function(d){ buildAjaxData(d); } },
     pageLength: 25,
-    // Top: length left, search right. Bottom: info + pagination together on right
-    dom: '<"row mb-2 align-items-center"<"col-sm-6"l><"col-sm-6"f>>t<"row mt-2 align-items-center"<"col-sm-6 dt-bottom-left"i><"col-sm-6 dt-bottom-right"p>>',
+    // Custom DOM to force info and pagination into a single inline row
+    dom: '<"dt-top-row mb-2"lfr>t<"dt-bottom-row mt-2"<"dt-bottom-left"i><"dt-bottom-right"p>>',
     columns: [
       { data: 0 },
       { data: 1 },

@@ -154,6 +154,10 @@ $conn->close();
         .action-btn-secondary { background:#fff; border:1px solid #e1e6ea; color:#495057; }
         .action-btn-secondary:hover { background:#f8f9fa; border-color:#dee2e6; }
         .replacement-only { display:none; }
+        /* Required markers */
+        .req::after { content:' *'; color:#b42318; font-weight:700; }
+        /* Inline error box */
+        .error-box { background:#fde2e1; color:#5f2120; border:1px solid #f3b8b5; border-radius:10px; padding:10px 12px; margin-bottom:10px; }
 
         /* Upload card like dashboard Add Project */
         .upload-card { display:flex; align-items:center; justify-content:center; flex-direction:column; border:2px dashed #d0d0d0; background:#f9f9f9; color:#6c757d; border-radius:12px; padding:22px; height:75px; cursor:pointer; transition:all .2s ease; }
@@ -352,6 +356,10 @@ $conn->close();
         <div class="card admin-panel" style="margin: 0 20px 20px;">
             <div class="card-header">Status Actions</div>
             <div class="card-body">
+                <?php if (!empty($_SESSION['flash_success'])): ?>
+                    <div class="error-box" style="background:#d1e7dd;border-color:#badbcc;color:#0f5132;"><?php echo htmlspecialchars($_SESSION['flash_success']); unset($_SESSION['flash_success']); ?></div>
+                <?php endif; ?>
+                <div id="inline_error" class="error-box" style="display:none;"></div>
                 <div class="admin-form-row">
                     <div class="admin-form-group">
                         <label class="form-label">Current Status</label>
@@ -381,7 +389,7 @@ $conn->close();
                                 <div id="decision_approve_fields" style="display:none; padding:8px 0;">
                                     <div class="admin-form-row">
                                         <div class="admin-form-group">
-                                            <label class="form-label">Resolution Type</label>
+                                            <label class="form-label req">Resolution Type</label>
                                             <select name="resolution_type" class="form-select" id="resolution_type">
                                                 <option value="">—</option>
                                                 <?php foreach (['Credit','Replacement','No-charge','Monitoring'] as $rt): ?>
@@ -390,23 +398,17 @@ $conn->close();
                                             </select>
                                         </div>
                                         <div class="admin-form-group credit-only" style="display:none;">
-                                            <label class="form-label">Credit Amount</label>
+                                            <label class="form-label req">Credit Amount</label>
                                             <input type="number" step="0.01" class="form-control" name="credit_amount" value="<?php echo htmlspecialchars((string)$claim['credit_amount']); ?>" placeholder="0.00">
                                         </div>
                                     </div>
 
-                                    <div class="admin-form-row full replacement-only">
-                                        <div class="admin-form-group">
-                                            <label class="form-label">Replacement Tracking</label>
-                                            <input type="text" class="form-control" name="replacement_tracking" value="<?php echo htmlspecialchars((string)$claim['replacement_tracking']); ?>" placeholder="Tracking # or reference">
-                                            <div class="form-hint">Optional now; will be required when marking as Replacement Shipped.</div>
-                                        </div>
-                                    </div>
+                                    
 
                                     <div class="admin-form-row full replacement-only">
                                         <div class="admin-form-group">
                                             <label class="form-label">Replacement Pallets</label>
-                                            <a class="btn btn-secondary" href="link_replacement_pallets.php?claim_id=<?php echo (int)$claimId; ?>">Link replacement pallet(s)</a>
+                                            <a class="btn btn-secondary" href="create_replacements.php?claim_id=<?php echo (int)$claimId; ?>">Create replacement pallet(s)</a>
                                             <div class="form-hint">Currently linked: <?php echo (int)count($linkedIds); ?> pallet(s).</div>
                                             <?php if (!empty($linkedIds)): ?>
                                                 <ul class="mt-2">
@@ -415,10 +417,6 @@ $conn->close();
                                                     <?php endforeach; ?>
                                                 </ul>
                                             <?php endif; ?>
-                                            <div class="form-check mt-2">
-                                                <input class="form-check-input" type="checkbox" name="override_cross_project" id="override_cross_project_top" value="1">
-                                                <label class="form-check-label" for="override_cross_project_top">Allow cross-project pallets (records override event)</label>
-                                            </div>
                                         </div>
                                     </div>
 
@@ -437,7 +435,7 @@ $conn->close();
                                     </div>
                                 </div>
                                 <div id="decision_reject_fields" style="display:none; padding:8px 0;">
-                                    <label class="form-label">Rejection Reason</label>
+                                    <label class="form-label req">Rejection Reason</label>
                                     <textarea class="form-control" name="rejection_reason" rows="3" placeholder="Provide a clear reason for rejection."></textarea>
                                 </div>
                                 <button type="button" class="btn-primary" id="btn_apply_decision"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Apply Decision</span></button>
@@ -677,24 +675,81 @@ document.addEventListener('DOMContentLoaded', () => {
   syncDecisionUi();
   updateNextStepHelp();
 
+  // Pre-fill UI when redirected after creating replacements
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('prefill') === 'approve_replacement') {
+    const fromStatus = (statusHidden && statusHidden.value) ? statusHidden.value : '';
+    if (fromStatus.startsWith('Pending ')) {
+      const decApproveRadio = document.getElementById('dec_approve');
+      if (decApproveRadio) decApproveRadio.checked = true;
+      if (sel) sel.value = 'Replacement';
+      syncDecisionUi();
+      updateNextStepHelp();
+    }
+  }
+
   const btnApplyDecision = document.getElementById('btn_apply_decision');
   if (btnApplyDecision) btnApplyDecision.addEventListener('click', () => {
+    const errorBox = document.getElementById('inline_error');
+    function showError(msg){ if (errorBox){ errorBox.textContent = msg; errorBox.style.display = ''; errorBox.scrollIntoView({behavior:'smooth', block:'center'});} }
+    if (errorBox){ errorBox.style.display = 'none'; errorBox.textContent=''; }
+
     if (decApprove && decApprove.checked) {
+      // Approve requires a resolution type
+      const rt = (resSelect && resSelect.value) ? resSelect.value : '';
+      if (!rt) { showError('Select a Resolution Type (Credit or Replacement) before approving.'); return; }
+      if (rt === 'Credit') {
+        const amtInput = document.querySelector('input[name="credit_amount"]');
+        const amt = amtInput ? parseFloat(amtInput.value) : NaN;
+        if (!amt || amt <= 0) { showError('Enter a valid Credit Amount greater than 0.'); return; }
+      }
+      // For Replacement approvals, require at least one linked pallet
+      if (rt === 'Replacement') {
+        const hasLinked = <?php echo !empty($linkedIds) ? 'true' : 'false'; ?>;
+        if (!hasLinked) { showError('Replacement requires at least one linked pallet'); return; }
+      }
+      // Approval requires either a public update or at least one uploaded file
+      const publicNotes = (document.querySelector('textarea[name="public_notes"]')?.value || '').trim();
+      const hasFile = document.getElementById('proof_upload')?.files?.length > 0;
+      if (!publicNotes && !hasFile) { showError('Add a public update or upload at least one file to proceed.'); return; }
       statusHidden.value = 'Approved';
     } else if (decReject && decReject.checked) {
+      // Reject requires a reason or file upload
+      const reason = (document.querySelector('textarea[name="rejection_reason"]')?.value || '').trim();
+      const uploaded = document.getElementById('proof_upload')?.files?.length > 0;
+      if (!reason && !uploaded) { showError('Provide a rejection reason or upload at least one file.'); return; }
       statusHidden.value = 'Rejected';
     } else {
-      alert('Select Approve or Reject.');
+      showError('Select Approve or Reject.');
       return;
     }
     btnApplyDecision.closest('form').submit();
   });
 
   const btnToShipped = document.getElementById('btn_to_shipped');
-  if (btnToShipped) btnToShipped.addEventListener('click', () => { statusHidden.value = 'Replacement Shipped'; btnToShipped.closest('form').submit(); });
+  if (btnToShipped) btnToShipped.addEventListener('click', () => {
+    const errorBox = document.getElementById('inline_error');
+    function showError(msg){ if (errorBox){ errorBox.textContent = msg; errorBox.style.display = ''; errorBox.scrollIntoView({behavior:'smooth', block:'center'});} }
+    if (errorBox){ errorBox.style.display = 'none'; errorBox.textContent=''; }
+    // Must have at least one linked pallet and tracking number
+    const anyLinked = <?php echo !empty($linkedIds) ? 'true' : 'false'; ?>;
+    const tracking = (document.querySelector('input[name="replacement_tracking"]')?.value || '').trim();
+    if (!anyLinked || !tracking) { showError('Replacement shipment requires linked pallet(s) and tracking number'); return; }
+    statusHidden.value = 'Replacement Shipped';
+    btnToShipped.closest('form').submit();
+  });
 
   const btnToClosed = document.getElementById('btn_to_closed');
-  if (btnToClosed) btnToClosed.addEventListener('click', () => { statusHidden.value = 'Closed'; btnToClosed.closest('form').submit(); });
+  if (btnToClosed) btnToClosed.addEventListener('click', () => {
+    const errorBox = document.getElementById('inline_error');
+    function showError(msg){ if (errorBox){ errorBox.textContent = msg; errorBox.style.display = ''; errorBox.scrollIntoView({behavior:'smooth', block:'center'});} }
+    if (errorBox){ errorBox.style.display = 'none'; errorBox.textContent=''; }
+    // Closing requires proof of completion file
+    const hasProof = !!document.getElementById('proof_upload')?.files?.length || <?php echo !empty($proofPrimary) ? 'true' : 'false'; ?>;
+    if (!hasProof) { showError('Proof of completion required to close'); return; }
+    statusHidden.value = 'Closed';
+    btnToClosed.closest('form').submit();
+  });
 
   // View All attachments
   const viewAll = document.querySelector('[id^="view_all_"]');
