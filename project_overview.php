@@ -224,8 +224,7 @@ $status_totals = [
     'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
     'In Warehouse' => ['pallets' => 0, 'modules' => 0],
     'In Transit to Project' => ['pallets' => 0, 'modules' => 0],
-    'Damaged - Total Loss' => ['pallets' => 0, 'modules' => 0],
-    'Partially Damaged' => ['pallets' => 0, 'modules' => 0]
+    'Damaged' => ['pallets' => 0, 'modules' => 0]
 ];
 $detailed_breakdown = [];
 
@@ -307,7 +306,7 @@ while ($row = $res_status->fetch_assoc()) {
     }
     
     // Only count healthy pallets toward delivery totals
-    if (!in_array($status, ['Damaged - Total Loss', 'Partially Damaged'])) {
+    if ($status !== 'Damaged') {
         $delivery_totals[$lbl][$status] += $q_calc;
         if ($status === 'Delivered to Project') {
             $delivered_raw_total += $qty;
@@ -381,7 +380,7 @@ foreach ($warranty_damaged_pallets as $damaged_pallet) {
     }
     
     // Determine if total loss or partial damage
-    $damage_status = ($damaged_qty >= $actual_qty) ? 'Damaged - Total Loss' : 'Partially Damaged';
+    $damage_status = 'Damaged';
     
     // Add to status_totals
     if (!isset($status_totals[$damage_status])) {
@@ -467,8 +466,7 @@ foreach ($status_totals as $status => $data) {
             case 'Delivered to Project':
                 $delivered_combined = $total_mw_for_status;
                 break;
-            case 'Damaged - Total Loss':
-            case 'Partially Damaged':
+            case 'Damaged':
                 $exceptions_combined += $total_mw_for_status;
                 break;
         }
@@ -1067,7 +1065,7 @@ $stmt_delivered = $conn->prepare("
     LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
     LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
     WHERE d.project_id=? AND d.status_of_delivery = 'Delivered to Project'
-      AND (ip.id IS NULL OR ip.status NOT IN ('Damaged - Total Loss', 'Partially Damaged'))
+      AND (ip.id IS NULL OR ip.status != 'Damaged')
     GROUP BY d.wattage
 ");
 $stmt_delivered->bind_param("i", $project_id);
@@ -3574,8 +3572,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 
                                 <!-- Exceptions (Admin View) -->
                                 <?php 
-                                    $exceptions_pallets = ($status_totals['Damaged - Total Loss']['pallets'] ?? 0) + ($status_totals['Partially Damaged']['pallets'] ?? 0);
-                                    $exceptions_modules = ($status_totals['Damaged - Total Loss']['modules'] ?? 0) + ($status_totals['Partially Damaged']['modules'] ?? 0);
+                                    $exceptions_pallets = ($status_totals['Damaged']['pallets'] ?? 0);
+                                    $exceptions_modules = ($status_totals['Damaged']['modules'] ?? 0);
                                     if ($exceptions_pallets > 0): 
                                         $pallets = $exceptions_pallets;
                                         $modules = $exceptions_modules;
@@ -4065,8 +4063,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     
                                     <!-- Exceptions (Damaged Pallets) -->
                                     <?php 
-                                        $exceptions_pallets = ($status_totals['Damaged - Total Loss']['pallets'] ?? 0) + ($status_totals['Partially Damaged']['pallets'] ?? 0);
-                                        $exceptions_modules = ($status_totals['Damaged - Total Loss']['modules'] ?? 0) + ($status_totals['Partially Damaged']['modules'] ?? 0);
+                                        $exceptions_pallets = ($status_totals['Damaged']['pallets'] ?? 0);
+                                        $exceptions_modules = ($status_totals['Damaged']['modules'] ?? 0);
                                         if ($exceptions_pallets > 0): 
                                             $pallets = $exceptions_pallets;
                                             $modules = $exceptions_modules;
@@ -4628,10 +4626,8 @@ function generateShippingContent(filter){
         // Handle Exceptions (Damaged Pallets) for admin
         has = true;
         const exceptionsData = {
-            damaged_total_loss: <?php echo ($status_totals['Damaged - Total Loss']['pallets'] ?? 0); ?>,
-            damaged_total_loss_modules: <?php echo ($status_totals['Damaged - Total Loss']['modules'] ?? 0); ?>,
-            partially_damaged: <?php echo ($status_totals['Partially Damaged']['pallets'] ?? 0); ?>,
-            partially_damaged_modules: <?php echo ($status_totals['Partially Damaged']['modules'] ?? 0); ?>
+            damaged: <?php echo ($status_totals['Damaged']['pallets'] ?? 0); ?>,
+            damaged_modules: <?php echo ($status_totals['Damaged']['modules'] ?? 0); ?>
         };
         
         const totalExceptionPallets = exceptionsData.damaged_total_loss + exceptionsData.partially_damaged;
@@ -5543,10 +5539,8 @@ function generateCustomerShippingContent(status) {
         // Handle Exceptions (Damaged Pallets)
         has = true;
         const exceptionsData = {
-            damaged_total_loss: <?php echo ($status_totals['Damaged - Total Loss']['pallets'] ?? 0); ?>,
-            damaged_total_loss_modules: <?php echo ($status_totals['Damaged - Total Loss']['modules'] ?? 0); ?>,
-            partially_damaged: <?php echo ($status_totals['Partially Damaged']['pallets'] ?? 0); ?>,
-            partially_damaged_modules: <?php echo ($status_totals['Partially Damaged']['modules'] ?? 0); ?>
+            damaged: <?php echo ($status_totals['Damaged']['pallets'] ?? 0); ?>,
+            damaged_modules: <?php echo ($status_totals['Damaged']['modules'] ?? 0); ?>
         };
         
         const totalExceptionPallets = exceptionsData.damaged_total_loss + exceptionsData.partially_damaged;

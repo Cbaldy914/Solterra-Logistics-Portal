@@ -616,7 +616,7 @@ try {
                        LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
                        LEFT JOIN deliveries d ON dp.delivery_id = d.id
                        WHERE ip.unassigned_module_item_id IN ($placeholders)
-                         AND ip.status NOT IN ('Damaged - Total Loss', 'Partially Damaged')
+                         AND ip.status != 'Damaged'
                        GROUP BY ip.id, ip.pallet_identifier, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name, p.project_name,
                               w.street_address, w.city, w.state, w.zip_code,
                               p.street_address, p.city, p.state, p.zip_code
@@ -633,7 +633,7 @@ try {
                        LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
                        LEFT JOIN deliveries d ON dp.delivery_id = d.id
                        WHERE ip.unassigned_module_item_id IN ($placeholders)
-                         AND ip.status IN ('Damaged - Total Loss', 'Partially Damaged')
+                         AND ip.status = 'Damaged'
                        GROUP BY ip.id, ip.pallet_identifier, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name, p.project_name,
                               w.street_address, w.city, w.state, w.zip_code,
                               p.street_address, p.city, p.state, p.zip_code
@@ -736,10 +736,8 @@ try {
             $quantity = $pallet['quantity'];
             
             // Add to pallets array for display
-            if ($pallet['status'] === 'Damaged - Total Loss') {
-                $pallet['display_location'] = 'Damaged - Total Loss';
-            } elseif ($pallet['status'] === 'Partially Damaged') {
-                $pallet['display_location'] = 'Partially Damaged';
+            if ($pallet['status'] === 'Damaged') {
+                $pallet['display_location'] = 'Damaged';
             }
             $pallets[] = $pallet;
             
