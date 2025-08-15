@@ -226,10 +226,15 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
 
             // Update pallet status based on issues
             if ($has_damage) {
-                $new_status = ($damaged_qty >= $actual_qty) ? 'Damaged - Total Loss' : 'Partially Damaged';
+                $new_status = 'Damaged';
                 $update_pallet = $conn->prepare("UPDATE inventory_pallets SET status = ? WHERE id = ?");
                 $update_pallet->bind_param("si", $new_status, $pallet_id);
-                $update_pallet->execute();
+                if ($update_pallet->execute()) {
+                    $affected_rows = $update_pallet->affected_rows;
+                    error_log("DEBUG: Successfully updated pallet ID {$pallet_id} to status 'Damaged'. Affected rows: {$affected_rows}");
+                } else {
+                    error_log("ERROR: Failed to update pallet ID {$pallet_id} to status 'Damaged'. Error: " . $update_pallet->error);
+                }
                 $update_pallet->close();
             }
         }
@@ -904,7 +909,8 @@ if ($action) {
                                     $update_pallets_stmt = $conn->prepare("
                                         UPDATE inventory_pallets 
                                         SET status = ? 
-                                        WHERE id IN ($placeholders_pallet_update)
+                                        WHERE id IN ($placeholders_pallet_update) 
+                                        AND status != 'Damaged'
                                     ");
                                     
                                     if ($update_pallets_stmt) {
@@ -917,8 +923,8 @@ if ($action) {
                                 }
                             }
                             
-                            // Log the successful update for debugging
-                            error_log("Scheduling: Updated {$updated_delivery_count} delivery records to 'Delivered to Project' for BOL {$appointment_bol} and {$pallet_status_update_count} associated pallets");
+                                                                        // Log the successful update for debugging
+                            error_log("Scheduling: Updated {$updated_delivery_count} delivery records to 'Delivered to Project' for BOL {$appointment_bol} and {$pallet_status_update_count} associated pallets (excluding damaged pallets)");
                         }
                         
                         $update_delivery_stmt->close();
@@ -1001,6 +1007,7 @@ if ($action) {
                                         UPDATE inventory_pallets 
                                         SET status = ? 
                                         WHERE id IN ($placeholders_pallet_revert)
+                                        AND status != 'Damaged'
                                     ");
                                     if ($revert_pallets_stmt) {
                                         $types_pallet_revert = 's' . str_repeat('i', count($pallet_ids_to_revert));
@@ -1014,7 +1021,7 @@ if ($action) {
                             }
                             
                             // Log the successful revert for debugging
-                            error_log("Scheduling: Reverted {$reverted_delivery_count} delivery records to 'In Transit to Project' for BOL {$appointment_bol} and {$pallet_revert_count} associated pallets");
+                            error_log("Scheduling: Reverted {$reverted_delivery_count} delivery records to 'In Transit to Project' for BOL {$appointment_bol} and {$pallet_revert_count} associated pallets (excluding damaged pallets)");
                         }
                         
                         $revert_delivery_stmt->close();
@@ -1028,6 +1035,8 @@ if ($action) {
             json_response(['success' => true]);
             
         } catch (Exception $e) {
+            // Log the error for debugging pallet status update issues
+            error_log("Scheduling appointment update failed - rolling back transaction. Error: " . $e->getMessage() . " | File: " . $e->getFile() . " | Line: " . $e->getLine());
             $conn->rollback();
             json_response(['success' => false, 'error' => $e->getMessage()]);
         }
@@ -2318,7 +2327,7 @@ include('header.php');
                 <div style="margin-bottom: 16px;">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
                         <h2 style="margin: 0;">Edit Appointment</h2>
-                        <button type="button" id="headerMarkDeliveredBtn" class="login-btn" onclick="markAsDeliveredAndClose()" style="background: linear-gradient(135deg, #28a745, #20c997); font-size: 0.9rem; padding: 8px 16px; margin-right: 40px;">
+                        <button type="button" id="headerMarkDeliveredBtn" class="login-btn" onclick="toggleDeliveryStatus()" style="background: linear-gradient(135deg, #28a745, #20c997); font-size: 0.9rem; padding: 8px 16px; margin-right: 40px;">
                             Mark as Delivered
                         </button>
                     </div>
@@ -3038,6 +3047,11 @@ include('header.php');
         }
         
         function closeEditModal() {
+            // Reset modal styling
+            const modalContent = document.querySelector('#editAppointmentModal .modal-content');
+            modalContent.style.border = '';
+            modalContent.style.boxShadow = '';
+            
             document.getElementById('editAppointmentModal').style.display = 'none';
         }
         
@@ -3220,6 +3234,34 @@ include('header.php');
         
         function getCurrentFormData() {
             const podInput = document.getElementById('edit_proof_of_delivery');
+            
+            // Collect damage data if damages are reported
+            const hasDamages = document.querySelector('input[name="has_damages"]:checked')?.value || 'no';
+            let damageData = {};
+            
+            if (hasDamages === 'yes') {
+                // Collect all damage-related inputs
+                document.querySelectorAll('input[name^="pallet_damaged["]').forEach(input => {
+                    const palletId = input.name.match(/\d+/)[0];
+                    damageData[`damaged_${palletId}`] = input.value;
+                });
+                
+                document.querySelectorAll('input[name^="pallet_actual["]').forEach(input => {
+                    const palletId = input.name.match(/\d+/)[0];
+                    damageData[`actual_${palletId}`] = input.value;
+                });
+                
+                document.querySelectorAll('input[name^="pallet_accepted["]').forEach(input => {
+                    const palletId = input.name.match(/\d+/)[0];
+                    damageData[`accepted_${palletId}`] = input.value;
+                });
+                
+                document.querySelectorAll('input[name^="pallet_notes["]').forEach(input => {
+                    const palletId = input.name.match(/\d+/)[0];
+                    damageData[`notes_${palletId}`] = input.value;
+                });
+            }
+            
             return {
                 bol_number: document.getElementById('edit_bol_number').value,
                 reference_numbers: document.getElementById('edit_reference_numbers').value,
@@ -3227,9 +3269,10 @@ include('header.php');
                 arrival_time: document.getElementById('edit_arrival_time').value,
                 departure_time: document.getElementById('edit_departure_time').value,
                 is_delivered: document.getElementById('edit_is_delivered').value,
-                has_damages: document.querySelector('input[name="has_damages"]:checked')?.value || 'no',
+                has_damages: hasDamages,
                 has_safety_incident: document.querySelector('input[name="has_safety_incident"]:checked')?.value || 'no',
-                proof_of_delivery: podInput.files.length > 0 ? podInput.files[0].name : ''
+                proof_of_delivery: podInput.files.length > 0 ? podInput.files[0].name : '',
+                damage_data: JSON.stringify(damageData)
             };
         }
         
@@ -3255,8 +3298,8 @@ include('header.php');
             saveBtn.style.opacity = '0.6';
         }
         
-        // Mark as Delivered functionality  
-        function markAsDeliveredAndClose() {
+        // Toggle Delivery Status functionality - NO auto-submit, NO modal close
+        function toggleDeliveryStatus() {
             const currentStatus = document.getElementById('edit_is_delivered').value === '1';
             const newStatus = !currentStatus;
             
@@ -3266,7 +3309,8 @@ include('header.php');
             // Update the header button display
             updateHeaderDeliveryButton(newStatus);
             
-            // If marking as delivered, submit the change and close modal
+            // Add/remove beautiful green outline for delivered status
+            const modalContent = document.querySelector('#editAppointmentModal .modal-content');
             if (newStatus) {
                 // Auto-set arrival time to appointment time if not already set
                 const arrivalTimeInput = document.getElementById('edit_arrival_time');
@@ -3274,86 +3318,17 @@ include('header.php');
                     arrivalTimeInput.value = window.currentAppointmentExpectedTime;
                 }
                 
-                // Create form data with just the delivery status change
-                const formData = new FormData();
-                formData.append('action', 'edit_appointment');
-                formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
-                formData.append('appointment_id', document.getElementById('edit_appointment_id').value);
-                formData.append('is_delivered', '1');
-                formData.append('bol_number', document.getElementById('edit_bol_number').value);
-                formData.append('reference_numbers', document.getElementById('edit_reference_numbers').value);
-                formData.append('description', document.getElementById('edit_description').value);
-                formData.append('arrival_time', document.getElementById('edit_arrival_time').value);
-                formData.append('departure_time', document.getElementById('edit_departure_time').value);
-                formData.append('has_damages', 'no');
-                formData.append('has_safety_incident', 'no');
-                
-                // Submit the change
-                fetch(`scheduling.php?project_id=${projectId}`, {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        alert('Delivery marked as completed!');
-                        closeEditModal();
-                        loadAppointments(currentView, currentDate);
-                    } else {
-                        alert('Error: ' + (data.error || 'Unknown error'));
-                        // Revert the status on error
-                        document.getElementById('edit_is_delivered').value = '0';
-                        updateHeaderDeliveryButton(false);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('Network error occurred.');
-                    // Revert the status on error
-                    document.getElementById('edit_is_delivered').value = '0';
-                    updateHeaderDeliveryButton(false);
-                });
+                // Add beautiful green outline
+                modalContent.style.border = '3px solid #28a745';
+                modalContent.style.boxShadow = '0 0 20px rgba(40, 167, 69, 0.3)';
             } else {
-                // Mark as not delivered - also auto-submit to revert delivery status
-                const formData = new FormData();
-                formData.append('action', 'edit_appointment');
-                formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
-                formData.append('appointment_id', document.getElementById('edit_appointment_id').value);
-                formData.append('is_delivered', '0');
-                formData.append('bol_number', document.getElementById('edit_bol_number').value);
-                formData.append('reference_numbers', document.getElementById('edit_reference_numbers').value);
-                formData.append('description', document.getElementById('edit_description').value);
-                formData.append('arrival_time', document.getElementById('edit_arrival_time').value);
-                formData.append('departure_time', document.getElementById('edit_departure_time').value);
-                formData.append('has_damages', 'no');
-                formData.append('has_safety_incident', 'no');
-                
-                // Submit the change
-                fetch(`scheduling.php?project_id=${projectId}`, {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        alert('Delivery marked as not completed!');
-                        closeEditModal();
-                        loadAppointments(currentView, currentDate);
-                    } else {
-                        alert('Error: ' + (data.error || 'Unknown error'));
-                        // Revert the status on error
-                        document.getElementById('edit_is_delivered').value = '1';
-                        updateHeaderDeliveryButton(true);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('Network error occurred.');
-                    // Revert the status on error
-                    document.getElementById('edit_is_delivered').value = '1';
-                    updateHeaderDeliveryButton(true);
-                });
+                // Remove green outline
+                modalContent.style.border = '';
+                modalContent.style.boxShadow = '';
             }
+            
+            // Trigger change tracking to enable Save Changes button
+            trackChanges();
         }
         
         function updateHeaderDeliveryButton(isDelivered) {
@@ -3502,7 +3477,7 @@ include('header.php');
                                    class="damage-input" 
                                    min="0" 
                                    value="${pallet.quantity}"
-                                   onchange="updateAcceptedQuantity(${pallet.id}, ${pallet.quantity})">
+                                   onchange="updateAcceptedQuantity(${pallet.id}, ${pallet.quantity}); trackChanges();">
                         </td>
                         <td>
                             <input type="number" 
@@ -3511,20 +3486,22 @@ include('header.php');
                                    min="0" 
                                    max="${pallet.quantity}" 
                                    value="0"
-                                   onchange="updateAcceptedQuantity(${pallet.id}, ${pallet.quantity})">
+                                   onchange="updateAcceptedQuantity(${pallet.id}, ${pallet.quantity}); trackChanges();">
                         </td>
                         <td>
                             <input type="number" 
                                    name="pallet_accepted[${pallet.id}]" 
                                    class="damage-input" 
                                    min="0" 
-                                   value="${pallet.quantity}">
+                                   value="${pallet.quantity}"
+                                   onchange="trackChanges();">
                         </td>
                         <td>
                             <input type="text" 
                                    name="pallet_notes[${pallet.id}]" 
                                    placeholder="Damage details..."
-                                   class="notes-input">
+                                   class="notes-input"
+                                   onchange="trackChanges();">
                         </td>
                     </tr>
                 `;
@@ -3792,6 +3769,16 @@ include('header.php');
                         const isCompleted = (appointment.arrival_time && appointment.departure_time) || appointment.status_of_delivery === 'Delivered to Project';
                         document.getElementById('edit_is_delivered').value = isCompleted ? '1' : '0';
                         updateHeaderDeliveryButton(isCompleted);
+                        
+                        // Apply green outline if already marked as delivered
+                        const modalContent = document.querySelector('#editAppointmentModal .modal-content');
+                        if (isCompleted) {
+                            modalContent.style.border = '3px solid #28a745';
+                            modalContent.style.boxShadow = '0 0 20px rgba(40, 167, 69, 0.3)';
+                        } else {
+                            modalContent.style.border = '';
+                            modalContent.style.boxShadow = '';
+                        }
                         
                         // Handle existing POD
                         const podContainer = document.getElementById('existing_pod_container');
