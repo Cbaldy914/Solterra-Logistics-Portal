@@ -223,7 +223,9 @@ $status_totals = [
     'Cleared Customs' => ['pallets' => 0, 'modules' => 0],
     'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
     'In Warehouse' => ['pallets' => 0, 'modules' => 0],
-    'In Transit to Project' => ['pallets' => 0, 'modules' => 0]
+    'In Transit to Project' => ['pallets' => 0, 'modules' => 0],
+    'Damaged - Total Loss' => ['pallets' => 0, 'modules' => 0],
+    'Partially Damaged' => ['pallets' => 0, 'modules' => 0]
 ];
 $detailed_breakdown = [];
 
@@ -241,9 +243,42 @@ $stmt_status->bind_param('iii', $project_id, $project_id, $project_id);
 $stmt_status->execute();
 $res_status = $stmt_status->get_result();
 
+// Also fetch damaged pallets from warranty claims JSON
+$warranty_damaged_pallets = [];
+$stmt_warranty = $conn->prepare(
+    "SELECT wc.notes, s.project_id 
+     FROM warranty_claims wc 
+     LEFT JOIN site_scheduling s ON wc.scheduling_id = s.id 
+     WHERE s.project_id = ? AND wc.notes IS NOT NULL AND wc.notes != ''"
+);
+$stmt_warranty->bind_param('i', $project_id);
+$stmt_warranty->execute();
+$res_warranty = $stmt_warranty->get_result();
+
+while ($warranty_row = $res_warranty->fetch_assoc()) {
+    $notes = $warranty_row['notes'];
+    if ($notes) {
+        $decoded = json_decode($notes, true);
+        if (isset($decoded['pallets']) && is_array($decoded['pallets'])) {
+            foreach ($decoded['pallets'] as $pallet_info) {
+                if (isset($pallet_info['pallet_id']) && $pallet_info['damaged'] > 0) {
+                    $warranty_damaged_pallets[] = [
+                        'pallet_id' => $pallet_info['pallet_id'],
+                        'wattage' => $pallet_info['wattage'],
+                        'damaged' => $pallet_info['damaged'],
+                        'actual' => $pallet_info['actual']
+                    ];
+                }
+            }
+        }
+    }
+}
+$stmt_warranty->close();
+
 // Build delivery_totals structure to match expected format
 $delivery_totals = [];
 $delivered_raw_total = 0; // Raw module count for timeline calculations
+$delivered_damaged_total = 0; // Count of damaged modules that were delivered to project
 
 while ($row = $res_status->fetch_assoc()) {
     $status  = $row['status'];
@@ -270,9 +305,13 @@ while ($row = $res_status->fetch_assoc()) {
             'Delivered to Project'   => 0,
         ];
     }
-    $delivery_totals[$lbl][$status] += $q_calc;
-    if ($status === 'Delivered to Project') {
-        $delivered_raw_total += $qty;
+    
+    // Only count healthy pallets toward delivery totals
+    if (!in_array($status, ['Damaged - Total Loss', 'Partially Damaged'])) {
+        $delivery_totals[$lbl][$status] += $q_calc;
+        if ($status === 'Delivered to Project') {
+            $delivered_raw_total += $qty;
+        }
     }
 
     // Build status_totals for overall tracking
@@ -281,6 +320,8 @@ while ($row = $res_status->fetch_assoc()) {
     }
     $status_totals[$status]['pallets'] += 1;
     $status_totals[$status]['modules'] += $qty;
+    
+
 
     // Build detailed_breakdown for the overview section
     if ($status === 'In Warehouse' && $wh_name) {
@@ -314,6 +355,64 @@ while ($row = $res_status->fetch_assoc()) {
 }
 $stmt_status->close();
 
+// Process warranty damaged pallets and add to status_totals
+foreach ($warranty_damaged_pallets as $damaged_pallet) {
+    $damaged_qty = $damaged_pallet['damaged'];
+    $actual_qty = $damaged_pallet['actual'];
+    $wattage = $damaged_pallet['wattage'];
+    $pallet_id = $damaged_pallet['pallet_id'];
+    
+    // Check if this damaged pallet was delivered to project site
+    $stmt_check_delivery = $conn->prepare(
+        "SELECT COUNT(*) as is_delivered FROM deliveries d 
+         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id 
+         WHERE dp.inventory_pallet_id = ? AND d.status_of_delivery = 'Delivered to Project'"
+    );
+    $stmt_check_delivery->bind_param('i', $pallet_id);
+    $stmt_check_delivery->execute();
+    $delivery_result = $stmt_check_delivery->get_result();
+    $delivery_row = $delivery_result->fetch_assoc();
+    $is_delivered_to_project = ($delivery_row['is_delivered'] > 0);
+    $stmt_check_delivery->close();
+    
+    // If this damaged pallet was delivered to project, add to delivered damaged total
+    if ($is_delivered_to_project) {
+        $delivered_damaged_total += $damaged_qty;
+    }
+    
+    // Determine if total loss or partial damage
+    $damage_status = ($damaged_qty >= $actual_qty) ? 'Damaged - Total Loss' : 'Partially Damaged';
+    
+    // Add to status_totals
+    if (!isset($status_totals[$damage_status])) {
+        $status_totals[$damage_status] = ['pallets' => 0, 'modules' => 0];
+    }
+    $status_totals[$damage_status]['pallets'] += 1;
+    $status_totals[$damage_status]['modules'] += $damaged_qty;
+    
+    // Add to detailed_breakdown
+    if (!isset($detailed_breakdown[$damage_status])) {
+        $detailed_breakdown[$damage_status] = [
+            'pallet_count' => 0,
+            'total_modules' => 0,
+            'wattage_breakdown' => [],
+            'warehouse_id' => null,
+            'project_id' => $project_id
+        ];
+    }
+    $detailed_breakdown[$damage_status]['pallet_count']++;
+    $detailed_breakdown[$damage_status]['total_modules'] += $damaged_qty;
+    
+    if (!isset($detailed_breakdown[$damage_status]['wattage_breakdown'][$wattage])) {
+        $detailed_breakdown[$damage_status]['wattage_breakdown'][$wattage] = [
+            'pallets' => 0,
+            'modules' => 0
+        ];
+    }
+    $detailed_breakdown[$damage_status]['wattage_breakdown'][$wattage]['pallets']++;
+    $detailed_breakdown[$damage_status]['wattage_breakdown'][$wattage]['modules'] += $damaged_qty;
+}
+
 // Calculate combined totals - use status_totals for status data, total_orders for total_order
 $total_order_combined             = 0;
 $at_manufacturer_combined         = 0;
@@ -323,6 +422,7 @@ $in_transit_to_warehouse_combined = 0;
 $in_warehouse_combined            = 0;
 $in_transit_to_project_combined   = 0;
 $delivered_combined               = 0;
+$exceptions_combined              = 0;
 
 
 // Calculate combined totals by properly aggregating from the raw status data
@@ -367,6 +467,10 @@ foreach ($status_totals as $status => $data) {
             case 'Delivered to Project':
                 $delivered_combined = $total_mw_for_status;
                 break;
+            case 'Damaged - Total Loss':
+            case 'Partially Damaged':
+                $exceptions_combined += $total_mw_for_status;
+                break;
         }
     }
 }
@@ -379,6 +483,7 @@ $pieChartData = [
     'In Transit to Warehouse' => 0,
     'In Transit to Project'   => 0,
     'In Warehouse'            => 0,
+    'Exceptions'              => 0,
 ];
 
 $sub_rows        = [];
@@ -455,6 +560,7 @@ $pieChartData['Cleared Customs']         = $cleared_customs_combined;
 $pieChartData['In Transit to Warehouse'] = $in_transit_to_warehouse_combined;
 $pieChartData['In Transit to Project']   = $in_transit_to_project_combined;
 $pieChartData['In Warehouse']            = $in_warehouse_combined;
+$pieChartData['Exceptions']              = $exceptions_combined;
 
 // Filter out statuses with 0 values (except always-visible ones)
 $filteredPieChartData = [];
@@ -956,10 +1062,13 @@ $expected_pallets = ceil($total_raw_modules / 30);
 // Get delivered modules breakdown for JavaScript
 $delivered_by_wattage = [];
 $stmt_delivered = $conn->prepare("
-    SELECT wattage, SUM(quantity) AS total_quantity
-    FROM deliveries
-    WHERE project_id=? AND status_of_delivery = 'Delivered to Project'
-    GROUP BY wattage
+    SELECT d.wattage, SUM(d.quantity) AS total_quantity
+    FROM deliveries d
+    LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+    LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+    WHERE d.project_id=? AND d.status_of_delivery = 'Delivered to Project'
+      AND (ip.id IS NULL OR ip.status NOT IN ('Damaged - Total Loss', 'Partially Damaged'))
+    GROUP BY d.wattage
 ");
 $stmt_delivered->bind_param("i", $project_id);
 $stmt_delivered->execute();
@@ -3304,8 +3413,40 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                      data-truckloads="<?php echo $truckloads; ?>" 
                                      data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">Delivered to Project</div>
-                                    <div class="status-count"><?php echo $pallets; ?></div>
+                                    <div class="status-count"><?php echo $pallets; ?><?php if($delivered_damaged_total > 0): ?> <span style="font-size:0.8em;color:#e65100;">(<?php echo ceil($delivered_damaged_total / 30); ?> damaged)</span><?php endif; ?></div>
                                     <div class="status-unit">pallets</div>
+                                </div>
+                                <?php endif; ?>
+                                
+                                <!-- Exceptions (Admin View) -->
+                                <?php 
+                                    $exceptions_pallets = ($status_totals['Damaged - Total Loss']['pallets'] ?? 0) + ($status_totals['Partially Damaged']['pallets'] ?? 0);
+                                    $exceptions_modules = ($status_totals['Damaged - Total Loss']['modules'] ?? 0) + ($status_totals['Partially Damaged']['modules'] ?? 0);
+                                    if ($exceptions_pallets > 0): 
+                                        $pallets = $exceptions_pallets;
+                                        $modules = $exceptions_modules;
+                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                        $mws = 0;
+                                        if (!empty($wattages) && $modules > 0) {
+                                            $total_watts = 0;
+                                            $total_modules_for_avg = 0;
+                                            foreach ($wattages as $w) {
+                                                $total_watts += $w;
+                                                $total_modules_for_avg++;
+                                            }
+                                            $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                            $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                        }
+                                ?>
+                                <div class="shipping-box exceptions-box" onclick="showShippingBreakdown('Exceptions')" 
+                                     data-pallets="<?php echo $pallets; ?>" 
+                                     data-modules="<?php echo $modules; ?>" 
+                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-mws="<?php echo $mws; ?>"
+                                     style="border-color: #f57c00; background: linear-gradient(135deg, #fff3e0 0%, #ffeaa7 100%);">
+                                    <div class="status-label" style="color: #e65100;">Exceptions</div>
+                                    <div class="status-count" style="color: #e65100;"><?php echo $pallets; ?></div>
+                                    <div class="status-unit" style="color: #e65100;">pallets</div>
                                 </div>
                                 <?php endif; ?>
                             </div>
@@ -3743,8 +3884,40 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                          data-truckloads="<?php echo $truckloads; ?>" 
                                          data-mws="<?php echo $mws; ?>">
                                         <div class="status-label">Delivered to Project</div>
-                                        <div class="status-count"><?php echo $mws; ?></div>
+                                        <div class="status-count"><?php echo $mws; ?><?php if($delivered_damaged_total > 0): ?> <span style="font-size:0.8em;color:#e65100;">(<?php echo round($delivered_damaged_total * ($mws / ($delivered_raw_total > 0 ? $delivered_raw_total : 1)), 2); ?> damaged)</span><?php endif; ?></div>
                                         <div class="status-unit">MWs</div>
+                                    </div>
+                                    <?php endif; ?>
+                                    
+                                    <!-- Exceptions (Damaged Pallets) -->
+                                    <?php 
+                                        $exceptions_pallets = ($status_totals['Damaged - Total Loss']['pallets'] ?? 0) + ($status_totals['Partially Damaged']['pallets'] ?? 0);
+                                        $exceptions_modules = ($status_totals['Damaged - Total Loss']['modules'] ?? 0) + ($status_totals['Partially Damaged']['modules'] ?? 0);
+                                        if ($exceptions_pallets > 0): 
+                                            $pallets = $exceptions_pallets;
+                                            $modules = $exceptions_modules;
+                                            $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                            $mws = 0;
+                                            if (!empty($wattages) && $modules > 0) {
+                                                $total_watts = 0;
+                                                $total_modules_for_avg = 0;
+                                                foreach ($wattages as $w) {
+                                                    $total_watts += $w;
+                                                    $total_modules_for_avg++;
+                                                }
+                                                $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                                $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                            }
+                                    ?>
+                                    <div class="shipping-box-customer exceptions-box" onclick="showCustomerShippingModal('Exceptions')" 
+                                         data-pallets="<?php echo $pallets; ?>" 
+                                         data-modules="<?php echo $modules; ?>" 
+                                         data-truckloads="<?php echo $truckloads; ?>" 
+                                         data-mws="<?php echo $mws; ?>"
+                                         style="border-color: #f57c00; background: linear-gradient(135deg, #fff3e0 0%, #ffeaa7 100%);">
+                                        <div class="status-label" style="color: #e65100;">Exceptions</div>
+                                        <div class="status-count" style="color: #e65100;"><?php echo $mws; ?></div>
+                                        <div class="status-unit" style="color: #e65100;">MWs</div>
                                     </div>
                                     <?php endif; ?>
                                 </div>
@@ -4064,6 +4237,23 @@ var lineChart = new Chart(ctxLine, {
 // Delivery Overview pie (for regular users)
 var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages));?>;
 var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages));?>;
+
+// Create dynamic color mapping based on actual labels
+var colorMap = {
+    'Delivered to Project': '#488C9A',
+    'At Manufacturer': '#293E4C', 
+    'On Water': '#66B2FF',
+    'Cleared Customs': '#32CD32',
+    'In Transit to Warehouse': '#9370DB',
+    'In Transit to Project': '#C0C0C0',
+    'In Warehouse': '#FF6B6B',
+    'Exceptions': '#f57c00'
+};
+
+var dynamicColors = pieChartLabels.map(function(label) {
+    return colorMap[label] || '#cccccc'; // fallback color
+});
+
 var ctxPieEl       = document.getElementById('pieChart');
 if(ctxPieEl){
 // Add pointer cursor since pie chart is now clickable
@@ -4075,16 +4265,7 @@ var pieChart = new Chart(ctxPie,{
         labels: pieChartLabels,
         datasets:[{
             data: pieChartData,
-            backgroundColor:[
-                '#488C9A',  // Delivered to Project
-                '#293E4C',  // At Manufacturer
-                '#9370DB',  // In Transit to Warehouse
-                '#C0C0C0',  // In Transit to Project
-                '#FF6B6B',  // In Warehouse
-                '#66B2FF',  // On Water
-                '#32CD32',  // Cleared Customs
-
-            ]
+            backgroundColor: dynamicColors
         }]
     },
     options:{
@@ -4094,7 +4275,17 @@ var pieChart = new Chart(ctxPie,{
                     label:function(context){
                         var lab=context.label||'';
                         var val=context.parsed||0;
-                        return lab+': '+ val.toFixed(2)+'%';
+                        let tooltipText = lab+': '+ val.toFixed(2)+'%';
+                        
+                        // Add damaged count for Delivered to Project
+                        if (lab === 'Delivered to Project') {
+                            const deliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+                            if (deliveredDamagedTotal > 0) {
+                                tooltipText += ` (${deliveredDamagedTotal} modules damaged)`;
+                            }
+                        }
+                        
+                        return tooltipText;
                     }
                 }
             }
@@ -4108,6 +4299,8 @@ var pieChart = new Chart(ctxPie,{
                 let modalStatus = label;
                 if (label === 'Delivered to Project') {
                     modalStatus = 'Delivered';
+                } else if (label === 'Exceptions') {
+                    modalStatus = 'Exceptions';
                 }
                 
                 // Open the same modal as the shipping status boxes
@@ -4209,9 +4402,17 @@ function generateShippingContent(filter){
         const totalDeliveredMW = <?php echo $delivered_combined; ?>;
         const totalPallets = Math.round(totalDeliveredRaw / 30);
         
+        const deliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+        const deliveredPalletsText = deliveredDamagedTotal > 0 ? 
+            `${totalPallets} pallets (${Math.ceil(deliveredDamagedTotal / 30)} damaged)` : 
+            `${totalPallets} pallets`;
+        const deliveredModulesText = deliveredDamagedTotal > 0 ? 
+            `${totalDeliveredRaw.toLocaleString()} modules (${deliveredDamagedTotal} damaged)` : 
+            `${totalDeliveredRaw.toLocaleString()} modules`;
+        
         html += `<div style="margin-bottom:20px;padding:15px;background:#e8f5e8;border-radius:8px;border-left:4px solid #28a745;">` +
                `<h4 style="margin-top:0;color:#28a745;">Delivered to Project</h4>` +
-               `<p><strong>Total:</strong> ${totalPallets} pallets, ${totalDeliveredRaw.toLocaleString()} modules` +
+               `<p><strong>Total:</strong> ${deliveredPalletsText}, ${deliveredModulesText}` +
                `<?php if($view_mode == 'mw'): ?> (${totalDeliveredMW.toFixed(2)} MW)<?php endif; ?></p>`;
         
         // Show wattage breakdown for delivered modules        
@@ -4227,6 +4428,42 @@ function generateShippingContent(filter){
         
         html += `<div style="text-align:center;margin-top:15px;">` +
                `<a href="manage_deliveries?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#28a745;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">View Delivery Details</a>` +
+               `</div>`;
+        html += '</div>';
+    } else if (filter === 'Exceptions') {
+        // Handle Exceptions (Damaged Pallets) for admin
+        has = true;
+        const exceptionsData = {
+            damaged_total_loss: <?php echo ($status_totals['Damaged - Total Loss']['pallets'] ?? 0); ?>,
+            damaged_total_loss_modules: <?php echo ($status_totals['Damaged - Total Loss']['modules'] ?? 0); ?>,
+            partially_damaged: <?php echo ($status_totals['Partially Damaged']['pallets'] ?? 0); ?>,
+            partially_damaged_modules: <?php echo ($status_totals['Partially Damaged']['modules'] ?? 0); ?>
+        };
+        
+        const totalExceptionPallets = exceptionsData.damaged_total_loss + exceptionsData.partially_damaged;
+        const totalExceptionModules = exceptionsData.damaged_total_loss_modules + exceptionsData.partially_damaged_modules;
+        
+        html += `<div style="margin-bottom:20px;padding:15px;background:#fff3e0;border-radius:8px;border-left:4px solid #f57c00;">` +
+               `<h4 style="margin-top:0;color:#e65100;">⚠️ Module Exceptions</h4>` +
+               `<p><strong>Total:</strong> ${totalExceptionPallets} pallets, ${totalExceptionModules.toLocaleString()} modules</p>`;
+        
+        // Show exception type breakdown
+        if (exceptionsData.damaged_total_loss > 0 || exceptionsData.partially_damaged > 0) {
+            html += '<p><strong>Exception Breakdown:</strong></p><ul>';
+            
+            if (exceptionsData.damaged_total_loss > 0) {
+                html += `<li style="color:#d32f2f;"><strong>Damaged - Total Loss:</strong> ${exceptionsData.damaged_total_loss} pallets (${exceptionsData.damaged_total_loss_modules.toLocaleString()} modules)</li>`;
+            }
+            
+            if (exceptionsData.partially_damaged > 0) {
+                html += `<li style="color:#ff8f00;"><strong>Partially Damaged:</strong> ${exceptionsData.partially_damaged} pallets (${exceptionsData.partially_damaged_modules.toLocaleString()} modules)</li>`;
+            }
+            
+            html += '</ul>';
+        }
+        
+        html += `<div style="text-align:center;margin-top:15px;">` +
+               `<a href="warranty.php?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#f57c00;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">View Exceptions</a>` +
                `</div>`;
         html += '</div>';
     } else {
@@ -4719,7 +4956,14 @@ function updateDeliveryTables(filterType) {
             }
             // Delivered to Project is always the final column
             if (cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.delivered, decimals);
+                const deliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+                let deliveredText = formatNumber(data.delivered, decimals);
+                if (deliveredDamagedTotal > 0) {
+                    const damageDisplayValue = decimals === 0 ? Math.ceil(deliveredDamagedTotal / 30) : 
+                        (deliveredDamagedTotal * (data.delivered / <?php echo max($delivered_raw_total, 1); ?>)).toFixed(decimals);
+                    deliveredText += ` (${damageDisplayValue} damaged)`;
+                }
+                cells[cellIndex].textContent = deliveredText;
             }
         }
     }
@@ -4775,7 +5019,19 @@ function updateDeliveryTables(filterType) {
                 }
                 // Delivered to Project is always the final column
                 if (cells[idx]) {
-                    cells[idx].textContent = formatNumber(subData.delivered, decimals);
+                    const subDeliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+                    let subDeliveredText = formatNumber(subData.delivered, decimals);
+                    if (subDeliveredDamagedTotal > 0 && subData.delivered > 0) {
+                        // Proportional damage calculation for sub-rows
+                        const subDamageRatio = subData.delivered / <?php echo max($delivered_combined, 1); ?>;
+                        const subDamageDisplayValue = decimals === 0 ? 
+                            Math.ceil(subDeliveredDamagedTotal * subDamageRatio / 30) : 
+                            (subDeliveredDamagedTotal * subDamageRatio).toFixed(decimals);
+                        if (subDamageDisplayValue > 0) {
+                            subDeliveredText += ` (${subDamageDisplayValue} damaged)`;
+                        }
+                    }
+                    cells[idx].textContent = subDeliveredText;
                 }
             }
         }
@@ -4833,14 +5089,22 @@ function generateCustomerShippingContent(status) {
             totalMWs = ((totalDeliveredRaw * avgWattage) / 1000000).toFixed(2);
         }
         
+        const customerDeliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+        const palletDisplay = customerDeliveredDamagedTotal > 0 ? 
+            `${totalPallets}<br><small style="color:#e65100;">(${Math.ceil(customerDeliveredDamagedTotal / 30)} damaged)</small>` : 
+            totalPallets;
+        const moduleDisplay = customerDeliveredDamagedTotal > 0 ? 
+            `${totalDeliveredRaw.toLocaleString()}<br><small style="color:#e65100;">(${customerDeliveredDamagedTotal} damaged)</small>` : 
+            totalDeliveredRaw.toLocaleString();
+        
         html += `<div style="margin-bottom:20px;padding:20px;background:#e8f5e8;border-radius:12px;border-left:4px solid #28a745;">` +
                `<h4 style="margin-top:0;color:#28a745;">🎉 Delivered to Project</h4>` +
                `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin:15px 0;">` +
                `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
-               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalPallets}</div>` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${palletDisplay}</div>` +
                `<div style="font-size:0.9rem;color:#666;">Pallets</div></div>` +
                `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
-               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalDeliveredRaw.toLocaleString()}</div>` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${moduleDisplay}</div>` +
                `<div style="font-size:0.9rem;color:#666;">Modules</div></div>` +
                `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
                `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalMWs}</div>` +
@@ -4861,6 +5125,62 @@ function generateCustomerShippingContent(status) {
         
         html += `<div style="text-align:center;margin-top:20px;">` +
                `<a href="view_project.php?project_id=<?php echo $project_id; ?>&status_filter=Delivered" class="customer-modal-btn">View Deliveries</a>` +
+               `</div>`;
+        html += '</div>';
+    } else if (status === 'Exceptions') {
+        // Handle Exceptions (Damaged Pallets)
+        has = true;
+        const exceptionsData = {
+            damaged_total_loss: <?php echo ($status_totals['Damaged - Total Loss']['pallets'] ?? 0); ?>,
+            damaged_total_loss_modules: <?php echo ($status_totals['Damaged - Total Loss']['modules'] ?? 0); ?>,
+            partially_damaged: <?php echo ($status_totals['Partially Damaged']['pallets'] ?? 0); ?>,
+            partially_damaged_modules: <?php echo ($status_totals['Partially Damaged']['modules'] ?? 0); ?>
+        };
+        
+        const totalExceptionPallets = exceptionsData.damaged_total_loss + exceptionsData.partially_damaged;
+        const totalExceptionModules = exceptionsData.damaged_total_loss_modules + exceptionsData.partially_damaged_modules;
+        
+        // Calculate MWs
+        const wattages = <?php echo json_encode($wattages); ?>;
+        let totalMWs = 0;
+        if (wattages.length > 0 && totalExceptionModules > 0) {
+            const avgWattage = wattages.reduce((a, b) => a + b) / wattages.length;
+            totalMWs = ((totalExceptionModules * avgWattage) / 1000000).toFixed(2);
+        }
+        
+        html += `<div style="margin-bottom:20px;padding:20px;background:#fff3e0;border-radius:12px;border-left:4px solid #f57c00;">` +
+               `<h4 style="margin-top:0;color:#e65100;">⚠️ Module Exceptions</h4>` +
+               `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin:15px 0;">` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#f57c00;">${totalExceptionPallets}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">Pallets</div></div>` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#f57c00;">${totalExceptionModules.toLocaleString()}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">Modules</div></div>` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#f57c00;">${totalMWs}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">MWs</div></div>` +
+               `</div>`;
+        
+        // Show exception type breakdown
+        if (exceptionsData.damaged_total_loss > 0 || exceptionsData.partially_damaged > 0) {
+            html += '<div style="margin-top:20px;"><h5 style="color:#e65100;">Exception Breakdown:</h5><ul style="list-style:none;padding:0;">';
+            
+            if (exceptionsData.damaged_total_loss > 0) {
+                html += `<li style="padding:12px;margin-bottom:8px;background:#ffebee;border-radius:8px;border-left:3px solid #d32f2f;">` +
+                       `<strong>Damaged - Total Loss:</strong> ${exceptionsData.damaged_total_loss} pallets • ${exceptionsData.damaged_total_loss_modules.toLocaleString()} modules</li>`;
+            }
+            
+            if (exceptionsData.partially_damaged > 0) {
+                html += `<li style="padding:12px;margin-bottom:8px;background:#fff8e1;border-radius:8px;border-left:3px solid #ff8f00;">` +
+                       `<strong>Partially Damaged:</strong> ${exceptionsData.partially_damaged} pallets • ${exceptionsData.partially_damaged_modules.toLocaleString()} modules</li>`;
+            }
+            
+            html += '</ul></div>';
+        }
+        
+        html += `<div style="text-align:center;margin-top:20px;">` +
+               `<a href="warranty.php?project_id=<?php echo $project_id; ?>" class="customer-modal-btn" style="background:#f57c00;border-color:#f57c00;">View Exceptions</a>` +
                `</div>`;
         html += '</div>';
     } else {
