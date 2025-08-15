@@ -122,7 +122,7 @@ try {
 
                     // Update pallet status if damaged
                     if ($damaged > 0) {
-                        $new_status = ($damaged >= $actual) ? 'Damaged - Total Loss' : 'Partially Damaged';
+                        $new_status = 'Damaged';
                         $upP = $conn->prepare('UPDATE inventory_pallets SET status = ? WHERE id = ?');
                         $upP->bind_param('si', $new_status, $pid);
                         $upP->execute();
