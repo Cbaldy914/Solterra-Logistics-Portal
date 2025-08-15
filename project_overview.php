@@ -223,7 +223,8 @@ $status_totals = [
     'Cleared Customs' => ['pallets' => 0, 'modules' => 0],
     'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
     'In Warehouse' => ['pallets' => 0, 'modules' => 0],
-    'In Transit to Project' => ['pallets' => 0, 'modules' => 0]
+    'In Transit to Project' => ['pallets' => 0, 'modules' => 0],
+    'Damaged' => ['pallets' => 0, 'modules' => 0]
 ];
 $detailed_breakdown = [];
 
@@ -241,9 +242,42 @@ $stmt_status->bind_param('iii', $project_id, $project_id, $project_id);
 $stmt_status->execute();
 $res_status = $stmt_status->get_result();
 
+// Also fetch damaged pallets from warranty claims JSON
+$warranty_damaged_pallets = [];
+$stmt_warranty = $conn->prepare(
+    "SELECT wc.notes, s.project_id 
+     FROM warranty_claims wc 
+     LEFT JOIN site_scheduling s ON wc.scheduling_id = s.id 
+     WHERE s.project_id = ? AND wc.notes IS NOT NULL AND wc.notes != ''"
+);
+$stmt_warranty->bind_param('i', $project_id);
+$stmt_warranty->execute();
+$res_warranty = $stmt_warranty->get_result();
+
+while ($warranty_row = $res_warranty->fetch_assoc()) {
+    $notes = $warranty_row['notes'];
+    if ($notes) {
+        $decoded = json_decode($notes, true);
+        if (isset($decoded['pallets']) && is_array($decoded['pallets'])) {
+            foreach ($decoded['pallets'] as $pallet_info) {
+                if (isset($pallet_info['pallet_id']) && $pallet_info['damaged'] > 0) {
+                    $warranty_damaged_pallets[] = [
+                        'pallet_id' => $pallet_info['pallet_id'],
+                        'wattage' => $pallet_info['wattage'],
+                        'damaged' => $pallet_info['damaged'],
+                        'actual' => $pallet_info['actual']
+                    ];
+                }
+            }
+        }
+    }
+}
+$stmt_warranty->close();
+
 // Build delivery_totals structure to match expected format
 $delivery_totals = [];
 $delivered_raw_total = 0; // Raw module count for timeline calculations
+$delivered_damaged_total = 0; // Count of damaged modules that were delivered to project
 
 while ($row = $res_status->fetch_assoc()) {
     $status  = $row['status'];
@@ -270,9 +304,13 @@ while ($row = $res_status->fetch_assoc()) {
             'Delivered to Project'   => 0,
         ];
     }
-    $delivery_totals[$lbl][$status] += $q_calc;
-    if ($status === 'Delivered to Project') {
-        $delivered_raw_total += $qty;
+    
+    // Only count healthy pallets toward delivery totals
+    if ($status !== 'Damaged') {
+        $delivery_totals[$lbl][$status] += $q_calc;
+        if ($status === 'Delivered to Project') {
+            $delivered_raw_total += $qty;
+        }
     }
 
     // Build status_totals for overall tracking
@@ -281,6 +319,8 @@ while ($row = $res_status->fetch_assoc()) {
     }
     $status_totals[$status]['pallets'] += 1;
     $status_totals[$status]['modules'] += $qty;
+    
+
 
     // Build detailed_breakdown for the overview section
     if ($status === 'In Warehouse' && $wh_name) {
@@ -314,6 +354,31 @@ while ($row = $res_status->fetch_assoc()) {
 }
 $stmt_status->close();
 
+// Process warranty damaged pallets for delivered damaged total calculation only
+// Note: Don't add to status_totals as damaged pallets are already counted with status='Damaged' in main loop
+foreach ($warranty_damaged_pallets as $damaged_pallet) {
+    $damaged_qty = $damaged_pallet['damaged'];
+    $pallet_id = $damaged_pallet['pallet_id'];
+    
+    // Check if this damaged pallet was delivered to project site
+    $stmt_check_delivery = $conn->prepare(
+        "SELECT COUNT(*) as is_delivered FROM deliveries d 
+         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id 
+         WHERE dp.inventory_pallet_id = ? AND d.status_of_delivery = 'Delivered to Project'"
+    );
+    $stmt_check_delivery->bind_param('i', $pallet_id);
+    $stmt_check_delivery->execute();
+    $delivery_result = $stmt_check_delivery->get_result();
+    $delivery_row = $delivery_result->fetch_assoc();
+    $is_delivered_to_project = ($delivery_row['is_delivered'] > 0);
+    $stmt_check_delivery->close();
+    
+    // If this damaged pallet was delivered to project, add to delivered damaged total
+    if ($is_delivered_to_project) {
+        $delivered_damaged_total += $damaged_qty;
+    }
+}
+
 // Calculate combined totals - use status_totals for status data, total_orders for total_order
 $total_order_combined             = 0;
 $at_manufacturer_combined         = 0;
@@ -323,6 +388,7 @@ $in_transit_to_warehouse_combined = 0;
 $in_warehouse_combined            = 0;
 $in_transit_to_project_combined   = 0;
 $delivered_combined               = 0;
+$exceptions_combined              = 0;
 
 
 // Calculate combined totals by properly aggregating from the raw status data
@@ -367,6 +433,9 @@ foreach ($status_totals as $status => $data) {
             case 'Delivered to Project':
                 $delivered_combined = $total_mw_for_status;
                 break;
+            case 'Damaged':
+                $exceptions_combined += $total_mw_for_status;
+                break;
         }
     }
 }
@@ -379,6 +448,7 @@ $pieChartData = [
     'In Transit to Warehouse' => 0,
     'In Transit to Project'   => 0,
     'In Warehouse'            => 0,
+    'Exceptions'              => 0,
 ];
 
 $sub_rows        = [];
@@ -455,6 +525,7 @@ $pieChartData['Cleared Customs']         = $cleared_customs_combined;
 $pieChartData['In Transit to Warehouse'] = $in_transit_to_warehouse_combined;
 $pieChartData['In Transit to Project']   = $in_transit_to_project_combined;
 $pieChartData['In Warehouse']            = $in_warehouse_combined;
+$pieChartData['Exceptions']              = $exceptions_combined;
 
 // Filter out statuses with 0 values (except always-visible ones)
 $filteredPieChartData = [];
@@ -956,10 +1027,13 @@ $expected_pallets = ceil($total_raw_modules / 30);
 // Get delivered modules breakdown for JavaScript
 $delivered_by_wattage = [];
 $stmt_delivered = $conn->prepare("
-    SELECT wattage, SUM(quantity) AS total_quantity
-    FROM deliveries
-    WHERE project_id=? AND status_of_delivery = 'Delivered to Project'
-    GROUP BY wattage
+    SELECT d.wattage, SUM(d.quantity) AS total_quantity
+    FROM deliveries d
+    LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+    LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+    WHERE d.project_id=? AND d.status_of_delivery = 'Delivered to Project'
+      AND (ip.id IS NULL OR ip.status != 'Damaged')
+    GROUP BY d.wattage
 ");
 $stmt_delivered->bind_param("i", $project_id);
 $stmt_delivered->execute();
@@ -1049,34 +1123,153 @@ while ($module = $modules_result->fetch_assoc()) {
 }
 $stmt_modules->close();
 
-// Calculate average pallets_per_truck for truckload calculations
+// Calculate averages for conversion settings from module batches
 $pallets_per_truck_values = [];
+$modules_per_truck_values = [];
 $total_modules_for_ppt = 0;
 $weighted_ppt_sum = 0;
+$total_modules_for_mpt = 0;
+$weighted_mpt_sum = 0;
+
+// For modules per pallet (project-level and by wattage)
+$has_modules_per_pallet_data = false;
+$total_modules_for_mpp = 0;
+$weighted_mpp_sum = 0;
+$mpp_by_wattage = [];
+$modules_by_wattage_for_mpp = [];
 
 foreach ($module_batches as $batch) {
+    // Weighted average pallets per truck
+    $batch_modules_total = 0;
+    foreach ($batch['wattages'] as $wattage_info) {
+        $batch_modules_total += (int)$wattage_info['quantity'];
+    }
     if (!empty($batch['pallets_per_truck']) && $batch['pallets_per_truck'] > 0) {
         $ppt = (int)$batch['pallets_per_truck'];
-        // Calculate total modules for this batch to weight the average
-        $batch_modules = 0;
-        foreach ($batch['wattages'] as $wattage_info) {
-            $batch_modules += (int)$wattage_info['quantity'];
-        }
-        
         $pallets_per_truck_values[] = $ppt;
-        $weighted_ppt_sum += ($ppt * $batch_modules);
-        $total_modules_for_ppt += $batch_modules;
+        $weighted_ppt_sum += ($ppt * $batch_modules_total);
+        $total_modules_for_ppt += $batch_modules_total;
+    }
+    // Weighted average modules per truck
+    if (!empty($batch['modules_per_truck']) && $batch['modules_per_truck'] > 0) {
+        $mpt = (int)$batch['modules_per_truck'];
+        $modules_per_truck_values[] = $mpt;
+        $weighted_mpt_sum += ($mpt * $batch_modules_total);
+        $total_modules_for_mpt += $batch_modules_total;
+    }
+    // Modules per pallet (project-level and by wattage)
+    if (!empty($batch['modules_per_pallet']) && $batch['modules_per_pallet'] > 0) {
+        $has_modules_per_pallet_data = true;
+        $mpp = (int)$batch['modules_per_pallet'];
+        $weighted_mpp_sum += ($mpp * $batch_modules_total);
+        $total_modules_for_mpp += $batch_modules_total;
+        foreach ($batch['wattages'] as $wattage_info) {
+            $w = (int)$wattage_info['wattage'];
+            $qty = (int)$wattage_info['quantity'];
+            if (!isset($mpp_by_wattage[$w])) {
+                $mpp_by_wattage[$w] = 0;
+                $modules_by_wattage_for_mpp[$w] = 0;
+            }
+            $mpp_by_wattage[$w] += ($mpp * $qty);
+            $modules_by_wattage_for_mpp[$w] += $qty;
+        }
     }
 }
 
-// Use weighted average if available, otherwise use 26 as default
-$default_pallets_per_truck = 26;
+$has_pallets_per_truck_data = ($total_modules_for_ppt > 0 && $weighted_ppt_sum > 0) || !empty($pallets_per_truck_values);
+$has_modules_per_truck_data = ($total_modules_for_mpt > 0 && $weighted_mpt_sum > 0) || !empty($modules_per_truck_values);
+
 if ($total_modules_for_ppt > 0 && $weighted_ppt_sum > 0) {
     $average_pallets_per_truck = round($weighted_ppt_sum / $total_modules_for_ppt);
 } elseif (!empty($pallets_per_truck_values)) {
     $average_pallets_per_truck = round(array_sum($pallets_per_truck_values) / count($pallets_per_truck_values));
 } else {
-    $average_pallets_per_truck = $default_pallets_per_truck;
+    // No data present; leave undefined for N/A behavior in UI
+    $average_pallets_per_truck = null;
+}
+
+if ($total_modules_for_mpt > 0 && $weighted_mpt_sum > 0) {
+    $average_modules_per_truck = round($weighted_mpt_sum / $total_modules_for_mpt);
+} elseif (!empty($modules_per_truck_values)) {
+    $average_modules_per_truck = round(array_sum($modules_per_truck_values) / count($modules_per_truck_values));
+} else {
+    $average_modules_per_truck = null;
+}
+
+$average_modules_per_pallet = null;
+if ($has_modules_per_pallet_data && $total_modules_for_mpp > 0) {
+    $average_modules_per_pallet = round($weighted_mpp_sum / $total_modules_for_mpp);
+}
+
+// Compute project-level pallets per status (actuals) for Module Delivery Status table
+$statuses_of_interest = [
+    'At Manufacturer',
+    'On Water',
+    'Cleared Customs',
+    'In Transit to Warehouse',
+    'In Warehouse',
+    'In Transit to Project',
+    'Delivered to Project',
+];
+
+$pallets_status_main = [
+    'total_order' => 0,
+    'delivered' => 0,
+    'at_manufacturer' => 0,
+    'on_water' => 0,
+    'cleared_customs' => 0,
+    'in_transit_to_warehouse' => 0,
+    'in_warehouse' => 0,
+    'in_transit_to_project' => 0,
+];
+foreach ($statuses_of_interest as $s) {
+    $count = (int)($status_totals[$s]['pallets'] ?? 0);
+    switch ($s) {
+        case 'At Manufacturer': $pallets_status_main['at_manufacturer'] = $count; break;
+        case 'On Water': $pallets_status_main['on_water'] = $count; break;
+        case 'Cleared Customs': $pallets_status_main['cleared_customs'] = $count; break;
+        case 'In Transit to Warehouse': $pallets_status_main['in_transit_to_warehouse'] = $count; break;
+        case 'In Warehouse': $pallets_status_main['in_warehouse'] = $count; break;
+        case 'In Transit to Project': $pallets_status_main['in_transit_to_project'] = $count; break;
+        case 'Delivered to Project': $pallets_status_main['delivered'] = $count; break;
+    }
+    $pallets_status_main['total_order'] += $count;
+}
+
+// Build per-wattage pallets for sub rows using detailed_breakdown actuals
+$pallets_sub_rows_status = [];
+foreach ($statuses_of_interest as $s) {
+    foreach ($detailed_breakdown as $key => $breakdown) {
+        // Normalize key to base status (strip location suffixes like " - <name>")
+        $base = explode(' - ', $key)[0];
+        if ($base !== $s) continue;
+        foreach ($breakdown['wattage_breakdown'] as $w => $wd) {
+            $label = $w . 'W';
+            if (!isset($pallets_sub_rows_status[$label])) {
+                $pallets_sub_rows_status[$label] = [
+                    'total_order' => 0,
+                    'delivered' => 0,
+                    'at_manufacturer' => 0,
+                    'on_water' => 0,
+                    'cleared_customs' => 0,
+                    'in_transit_to_warehouse' => 0,
+                    'in_warehouse' => 0,
+                    'in_transit_to_project' => 0,
+                ];
+            }
+            $pal = (int)($wd['pallets'] ?? 0);
+            switch ($s) {
+                case 'At Manufacturer': $pallets_sub_rows_status[$label]['at_manufacturer'] += $pal; break;
+                case 'On Water': $pallets_sub_rows_status[$label]['on_water'] += $pal; break;
+                case 'Cleared Customs': $pallets_sub_rows_status[$label]['cleared_customs'] += $pal; break;
+                case 'In Transit to Warehouse': $pallets_sub_rows_status[$label]['in_transit_to_warehouse'] += $pal; break;
+                case 'In Warehouse': $pallets_sub_rows_status[$label]['in_warehouse'] += $pal; break;
+                case 'In Transit to Project': $pallets_sub_rows_status[$label]['in_transit_to_project'] += $pal; break;
+                case 'Delivered to Project': $pallets_sub_rows_status[$label]['delivered'] += $pal; break;
+            }
+            $pallets_sub_rows_status[$label]['total_order'] += $pal;
+        }
+    }
 }
 
 // Fetch manufacturers for modal dropdown
@@ -3016,7 +3209,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                     </div>
                 </div>
                 <button onclick="handleAdminWarehousing()">Warehousing</button>
-                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Warranty</button>
+                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Exceptions</button>
             </div>
             
             <!-- Customer View Buttons -->
@@ -3051,7 +3244,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         <a href="ftd.php?project_id=<?php echo $project_id; ?>">⚡ Flash Test Data</a>
                     </div>
                 </div>
-                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Warranty</button>
+                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Exceptions</button>
             </div>
         </div>
     </div>
@@ -3121,7 +3314,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <?php if(($status_totals['At Manufacturer']['pallets'] ?? 0) > 0): 
                                     $pallets = $status_totals['At Manufacturer']['pallets'];
                                     $modules = $status_totals['At Manufacturer']['modules'];
-                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $truckloads = null;
+                                    if (!empty($average_pallets_per_truck)) {
+                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    } elseif (!empty($average_modules_per_truck)) {
+                                        $truckloads = round($modules / $average_modules_per_truck, 1);
+                                    }
                                     $mws = 0;
                                     // Calculate MWs - we need wattage information
                                     // For now, we'll calculate based on average wattage if available
@@ -3139,7 +3337,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <div class="shipping-box" onclick="showShippingBreakdown('At Manufacturer')" 
                                      data-pallets="<?php echo $pallets; ?>" 
                                      data-modules="<?php echo $modules; ?>" 
-                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
                                      data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">At Manufacturer</div>
                                     <div class="status-count"><?php echo $pallets; ?></div>
@@ -3150,7 +3348,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <?php if(($status_totals['On Water']['pallets'] ?? 0) > 0): 
                                     $pallets = $status_totals['On Water']['pallets'];
                                     $modules = $status_totals['On Water']['modules'];
-                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $truckloads = null;
+                                    if (!empty($average_pallets_per_truck)) {
+                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    } elseif (!empty($average_modules_per_truck)) {
+                                        $truckloads = round($modules / $average_modules_per_truck, 1);
+                                    }
                                     $mws = 0;
                                     if (!empty($wattages) && $modules > 0) {
                                         $total_watts = 0;
@@ -3166,7 +3369,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <div class="shipping-box" onclick="showShippingBreakdown('On Water')" 
                                      data-pallets="<?php echo $pallets; ?>" 
                                      data-modules="<?php echo $modules; ?>" 
-                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
                                      data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">On Water</div>
                                     <div class="status-count"><?php echo $pallets; ?></div>
@@ -3177,7 +3380,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <?php if(($status_totals['Cleared Customs']['pallets'] ?? 0) > 0): 
                                     $pallets = $status_totals['Cleared Customs']['pallets'];
                                     $modules = $status_totals['Cleared Customs']['modules'];
-                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $truckloads = null;
+                                    if (!empty($average_pallets_per_truck)) {
+                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    } elseif (!empty($average_modules_per_truck)) {
+                                        $truckloads = round($modules / $average_modules_per_truck, 1);
+                                    }
                                     $mws = 0;
                                     if (!empty($wattages) && $modules > 0) {
                                         $total_watts = 0;
@@ -3193,7 +3401,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <div class="shipping-box" onclick="showShippingBreakdown('Cleared Customs')" 
                                      data-pallets="<?php echo $pallets; ?>" 
                                      data-modules="<?php echo $modules; ?>" 
-                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
                                      data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">Cleared Customs</div>
                                     <div class="status-count"><?php echo $pallets; ?></div>
@@ -3204,7 +3412,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <?php if(($status_totals['In Transit to Warehouse']['pallets'] ?? 0) > 0): 
                                     $pallets = $status_totals['In Transit to Warehouse']['pallets'];
                                     $modules = $status_totals['In Transit to Warehouse']['modules'];
-                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $truckloads = null;
+                                    if (!empty($average_pallets_per_truck)) {
+                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    } elseif (!empty($average_modules_per_truck)) {
+                                        $truckloads = round($modules / $average_modules_per_truck, 1);
+                                    }
                                     $mws = 0;
                                     if (!empty($wattages) && $modules > 0) {
                                         $total_watts = 0;
@@ -3231,7 +3444,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <?php if(($status_totals['In Warehouse']['pallets'] ?? 0) > 0): 
                                     $pallets = $status_totals['In Warehouse']['pallets'];
                                     $modules = $status_totals['In Warehouse']['modules'];
-                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $truckloads = null;
+                                    if (!empty($average_pallets_per_truck)) {
+                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    } elseif (!empty($average_modules_per_truck)) {
+                                        $truckloads = round($modules / $average_modules_per_truck, 1);
+                                    }
                                     $mws = 0;
                                     if (!empty($wattages) && $modules > 0) {
                                         $total_watts = 0;
@@ -3247,7 +3465,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <div class="shipping-box" onclick="showShippingBreakdown('In Warehouse')" 
                                      data-pallets="<?php echo $pallets; ?>" 
                                      data-modules="<?php echo $modules; ?>" 
-                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
                                      data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">In Warehouse</div>
                                     <div class="status-count"><?php echo $pallets; ?></div>
@@ -3258,7 +3476,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <?php if(($status_totals['In Transit to Project']['pallets'] ?? 0) > 0): 
                                     $pallets = $status_totals['In Transit to Project']['pallets'];
                                     $modules = $status_totals['In Transit to Project']['modules'];
-                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $truckloads = null;
+                                    if (!empty($average_pallets_per_truck)) {
+                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    } elseif (!empty($average_modules_per_truck)) {
+                                        $truckloads = round($modules / $average_modules_per_truck, 1);
+                                    }
                                     $mws = 0;
                                     if (!empty($wattages) && $modules > 0) {
                                         $total_watts = 0;
@@ -3274,7 +3497,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <div class="shipping-box" onclick="showShippingBreakdown('In Transit to Project')" 
                                      data-pallets="<?php echo $pallets; ?>" 
                                      data-modules="<?php echo $modules; ?>" 
-                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
                                      data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">In Transit to Project</div>
                                     <div class="status-count"><?php echo $pallets; ?></div>
@@ -3285,7 +3508,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <?php if(($delivered_raw_total > 0)): 
                                     $pallets = ceil($delivered_raw_total / 30);
                                     $modules = $delivered_raw_total;
-                                    $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    $truckloads = null;
+                                    if (!empty($average_pallets_per_truck)) {
+                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                    } elseif (!empty($average_modules_per_truck)) {
+                                        $truckloads = round($modules / $average_modules_per_truck, 1);
+                                    }
                                     $mws = 0;
                                     if (!empty($wattages) && $modules > 0) {
                                         $total_watts = 0;
@@ -3301,11 +3529,48 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <div class="shipping-box" onclick="showShippingBreakdown('Delivered')" 
                                      data-pallets="<?php echo $pallets; ?>" 
                                      data-modules="<?php echo $modules; ?>" 
-                                     data-truckloads="<?php echo $truckloads; ?>" 
+                                     data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
                                      data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">Delivered to Project</div>
                                     <div class="status-count"><?php echo $pallets; ?></div>
                                     <div class="status-unit">pallets</div>
+                                </div>
+                                <?php endif; ?>
+                                
+                                <!-- Exceptions (Admin View) -->
+                                <?php 
+                                    $exceptions_pallets = ($status_totals['Damaged']['pallets'] ?? 0);
+                                    $exceptions_modules = ($status_totals['Damaged']['modules'] ?? 0);
+                                    if ($exceptions_pallets > 0): 
+                                        $pallets = $exceptions_pallets;
+                                        $modules = $exceptions_modules;
+                                        $truckloads = null;
+                                        if (!empty($average_pallets_per_truck)) {
+                                            $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                        } elseif (!empty($average_modules_per_truck)) {
+                                            $truckloads = round($modules / $average_modules_per_truck, 1);
+                                        }
+                                        $mws = 0;
+                                        if (!empty($wattages) && $modules > 0) {
+                                            $total_watts = 0;
+                                            $total_modules_for_avg = 0;
+                                            foreach ($wattages as $w) {
+                                                $total_watts += $w;
+                                                $total_modules_for_avg++;
+                                            }
+                                            $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                            $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                        }
+                                ?>
+                                <div class="shipping-box exceptions-box" onclick="showShippingBreakdown('Exceptions')" 
+                                     data-pallets="<?php echo $pallets; ?>" 
+                                     data-modules="<?php echo $modules; ?>" 
+                                     data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
+                                     data-mws="<?php echo $mws; ?>"
+                                     style="border-color: #f57c00; background: linear-gradient(135deg, #fff3e0 0%, #ffeaa7 100%);">
+                                    <div class="status-label" style="color: #e65100;">Exceptions</div>
+                                    <div class="status-count" style="color: #e65100;"><?php echo $pallets; ?></div>
+                                    <div class="status-unit" style="color: #e65100;">pallets</div>
                                 </div>
                                 <?php endif; ?>
                             </div>
@@ -3656,7 +3921,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <?php if(($status_totals['At Manufacturer']['pallets'] ?? 0) > 0): 
                                         $pallets = $status_totals['At Manufacturer']['pallets'];
                                         $modules = $status_totals['At Manufacturer']['modules'];
-                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                        $truckloads = null;
+                                        if (!empty($average_pallets_per_truck)) {
+                                            $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                        } elseif (!empty($average_modules_per_truck)) {
+                                            $truckloads = round($modules / $average_modules_per_truck, 1);
+                                        }
                                         $mws = 0;
                                         if (!empty($wattages) && $modules > 0) {
                                             $total_watts = 0;
@@ -3672,7 +3942,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <div class="shipping-box-customer" onclick="showCustomerShippingModal('At Manufacturer')" 
                                          data-pallets="<?php echo $pallets; ?>" 
                                          data-modules="<?php echo $modules; ?>" 
-                                         data-truckloads="<?php echo $truckloads; ?>" 
+                                         data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
                                          data-mws="<?php echo $mws; ?>">
                                         <div class="status-label">At Manufacturer</div>
                                         <div class="status-count"><?php echo $mws; ?></div>
@@ -3693,7 +3963,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                         if (($status_totals[$status_key]['pallets'] ?? 0) > 0):
                                             $pallets = $status_totals[$status_key]['pallets'];
                                             $modules = $status_totals[$status_key]['modules'];
-                                            $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                            $truckloads = null;
+                                            if (!empty($average_pallets_per_truck)) {
+                                                $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                            } elseif (!empty($average_modules_per_truck)) {
+                                                $truckloads = round($modules / $average_modules_per_truck, 1);
+                                            }
                                             $mws = 0;
                                             if (!empty($wattages) && $modules > 0) {
                                                 $total_watts = 0;
@@ -3709,7 +3984,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <div class="shipping-box-customer" onclick="showCustomerShippingModal('<?php echo $status_key; ?>')" 
                                          data-pallets="<?php echo $pallets; ?>" 
                                          data-modules="<?php echo $modules; ?>" 
-                                         data-truckloads="<?php echo $truckloads; ?>" 
+                                         data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
                                          data-mws="<?php echo $mws; ?>">
                                         <div class="status-label"><?php echo $status_label; ?></div>
                                         <div class="status-count"><?php echo $mws; ?></div>
@@ -3724,7 +3999,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <?php if(($delivered_raw_total > 0)): 
                                         $pallets = ceil($delivered_raw_total / 30);
                                         $modules = $delivered_raw_total;
-                                        $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                        $truckloads = null;
+                                        if (!empty($average_pallets_per_truck)) {
+                                            $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                        } elseif (!empty($average_modules_per_truck)) {
+                                            $truckloads = round($modules / $average_modules_per_truck, 1);
+                                        }
                                         $mws = 0;
                                         if (!empty($wattages) && $modules > 0) {
                                             $total_watts = 0;
@@ -3740,11 +4020,48 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                     <div class="shipping-box-customer" onclick="showCustomerShippingModal('Delivered')" 
                                          data-pallets="<?php echo $pallets; ?>" 
                                          data-modules="<?php echo $modules; ?>" 
-                                         data-truckloads="<?php echo $truckloads; ?>" 
+                                         data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
                                          data-mws="<?php echo $mws; ?>">
                                         <div class="status-label">Delivered to Project</div>
-                                        <div class="status-count"><?php echo $mws; ?></div>
+                                        <div class="status-count"><?php echo $mws; ?><?php if($delivered_damaged_total > 0): ?> <span style="font-size:0.8em;color:#e65100;">(<?php echo round($delivered_damaged_total * ($mws / ($delivered_raw_total > 0 ? $delivered_raw_total : 1)), 2); ?> damaged)</span><?php endif; ?></div>
                                         <div class="status-unit">MWs</div>
+                                    </div>
+                                    <?php endif; ?>
+                                    
+                                    <!-- Exceptions (Damaged Pallets) -->
+                                    <?php 
+                                        $exceptions_pallets = ($status_totals['Damaged']['pallets'] ?? 0);
+                                        $exceptions_modules = ($status_totals['Damaged']['modules'] ?? 0);
+                                        if ($exceptions_pallets > 0): 
+                                            $pallets = $exceptions_pallets;
+                                            $modules = $exceptions_modules;
+                                            $truckloads = null;
+                                            if (!empty($average_pallets_per_truck)) {
+                                                $truckloads = round($pallets / $average_pallets_per_truck, 1);
+                                            } elseif (!empty($average_modules_per_truck)) {
+                                                $truckloads = round($modules / $average_modules_per_truck, 1);
+                                            }
+                                            $mws = 0;
+                                            if (!empty($wattages) && $modules > 0) {
+                                                $total_watts = 0;
+                                                $total_modules_for_avg = 0;
+                                                foreach ($wattages as $w) {
+                                                    $total_watts += $w;
+                                                    $total_modules_for_avg++;
+                                                }
+                                                $avg_wattage = $total_modules_for_avg > 0 ? ($total_watts / $total_modules_for_avg) : 0;
+                                                $mws = round(($modules * $avg_wattage) / 1000000, 2);
+                                            }
+                                    ?>
+                                    <div class="shipping-box-customer exceptions-box" onclick="showCustomerShippingModal('Exceptions')" 
+                                         data-pallets="<?php echo $pallets; ?>" 
+                                         data-modules="<?php echo $modules; ?>" 
+                                         data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
+                                         data-mws="<?php echo $mws; ?>"
+                                         style="border-color: #f57c00; background: linear-gradient(135deg, #fff3e0 0%, #ffeaa7 100%);">
+                                        <div class="status-label" style="color: #e65100;">Exceptions</div>
+                                        <div class="status-count" style="color: #e65100;"><?php echo $mws; ?></div>
+                                        <div class="status-unit" style="color: #e65100;">MWs</div>
                                     </div>
                                     <?php endif; ?>
                                 </div>
@@ -3999,6 +4316,21 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                 <div class="modal-body" id="customerShippingModalContent"></div>
             </div>
         </div>
+        
+        <!-- Admin Conversion Prompt Modal (for Pallets/Truckloads conversions) -->
+        <div id="conversionModal" class="warehouse-selection-modal" style="display:none;">
+            <div class="modal-content" style="max-width:520px;">
+                <div class="modal-header">
+                    <h3 id="conversionModalTitle">Conversion Needed</h3>
+                    <span class="close-modal" onclick="closeConversionModal()">&times;</span>
+                </div>
+                <div class="modal-body" id="conversionModalBody"></div>
+                <div style="display:flex;justify-content:flex-end;gap:10px;padding:15px;">
+                    <button class="modal-btn btn-secondary" onclick="closeConversionModal()">Cancel</button>
+                    <button class="modal-btn btn-primary" onclick="saveConversionModal()">Save</button>
+                </div>
+            </div>
+        </div>
     <?php endif; ?>
 </main>
 
@@ -4064,6 +4396,23 @@ var lineChart = new Chart(ctxLine, {
 // Delivery Overview pie (for regular users)
 var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages));?>;
 var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages));?>;
+
+// Create dynamic color mapping based on actual labels
+var colorMap = {
+    'Delivered to Project': '#488C9A',
+    'At Manufacturer': '#293E4C', 
+    'On Water': '#66B2FF',
+    'Cleared Customs': '#32CD32',
+    'In Transit to Warehouse': '#9370DB',
+    'In Transit to Project': '#C0C0C0',
+    'In Warehouse': '#FF6B6B',
+    'Exceptions': '#f57c00'
+};
+
+var dynamicColors = pieChartLabels.map(function(label) {
+    return colorMap[label] || '#cccccc'; // fallback color
+});
+
 var ctxPieEl       = document.getElementById('pieChart');
 if(ctxPieEl){
 // Add pointer cursor since pie chart is now clickable
@@ -4075,16 +4424,7 @@ var pieChart = new Chart(ctxPie,{
         labels: pieChartLabels,
         datasets:[{
             data: pieChartData,
-            backgroundColor:[
-                '#488C9A',  // Delivered to Project
-                '#293E4C',  // At Manufacturer
-                '#9370DB',  // In Transit to Warehouse
-                '#C0C0C0',  // In Transit to Project
-                '#FF6B6B',  // In Warehouse
-                '#66B2FF',  // On Water
-                '#32CD32',  // Cleared Customs
-
-            ]
+            backgroundColor: dynamicColors
         }]
     },
     options:{
@@ -4094,7 +4434,17 @@ var pieChart = new Chart(ctxPie,{
                     label:function(context){
                         var lab=context.label||'';
                         var val=context.parsed||0;
-                        return lab+': '+ val.toFixed(2)+'%';
+                        let tooltipText = lab+': '+ val.toFixed(2)+'%';
+                        
+                        // Add damaged count for Delivered to Project
+                        if (lab === 'Delivered to Project') {
+                            const deliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+                            if (deliveredDamagedTotal > 0) {
+                                tooltipText += ` (${deliveredDamagedTotal} modules damaged)`;
+                            }
+                        }
+                        
+                        return tooltipText;
                     }
                 }
             }
@@ -4108,6 +4458,8 @@ var pieChart = new Chart(ctxPie,{
                 let modalStatus = label;
                 if (label === 'Delivered to Project') {
                     modalStatus = 'Delivered';
+                } else if (label === 'Exceptions') {
+                    modalStatus = 'Exceptions';
                 }
                 
                 // Open the same modal as the shipping status boxes
@@ -4209,9 +4561,17 @@ function generateShippingContent(filter){
         const totalDeliveredMW = <?php echo $delivered_combined; ?>;
         const totalPallets = Math.round(totalDeliveredRaw / 30);
         
+        const deliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+        const deliveredPalletsText = deliveredDamagedTotal > 0 ? 
+            `${totalPallets} pallets (${Math.ceil(deliveredDamagedTotal / 30)} damaged)` : 
+            `${totalPallets} pallets`;
+        const deliveredModulesText = deliveredDamagedTotal > 0 ? 
+            `${totalDeliveredRaw.toLocaleString()} modules (${deliveredDamagedTotal} damaged)` : 
+            `${totalDeliveredRaw.toLocaleString()} modules`;
+        
         html += `<div style="margin-bottom:20px;padding:15px;background:#e8f5e8;border-radius:8px;border-left:4px solid #28a745;">` +
                `<h4 style="margin-top:0;color:#28a745;">Delivered to Project</h4>` +
-               `<p><strong>Total:</strong> ${totalPallets} pallets, ${totalDeliveredRaw.toLocaleString()} modules` +
+               `<p><strong>Total:</strong> ${deliveredPalletsText}, ${deliveredModulesText}` +
                `<?php if($view_mode == 'mw'): ?> (${totalDeliveredMW.toFixed(2)} MW)<?php endif; ?></p>`;
         
         // Show wattage breakdown for delivered modules        
@@ -4227,6 +4587,32 @@ function generateShippingContent(filter){
         
         html += `<div style="text-align:center;margin-top:15px;">` +
                `<a href="manage_deliveries?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#28a745;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">View Delivery Details</a>` +
+               `</div>`;
+        html += '</div>';
+    } else if (filter === 'Exceptions') {
+        // Handle Exceptions (Damaged Pallets) for admin
+        has = true;
+        const exceptionsData = {
+            damaged: <?php echo ($status_totals['Damaged']['pallets'] ?? 0); ?>,
+            damaged_modules: <?php echo ($status_totals['Damaged']['modules'] ?? 0); ?>
+        };
+        
+        const totalExceptionPallets = exceptionsData.damaged;
+        const totalExceptionModules = exceptionsData.damaged_modules;
+        
+        html += `<div style="margin-bottom:20px;padding:15px;background:#fff3e0;border-radius:8px;border-left:4px solid #f57c00;">` +
+               `<h4 style="margin-top:0;color:#e65100;">⚠️ Module Exceptions</h4>` +
+               `<p><strong>Total:</strong> ${totalExceptionPallets} pallets, ${totalExceptionModules.toLocaleString()} modules</p>`;
+        
+        // Show exception type breakdown
+        if (exceptionsData.damaged > 0) {
+            html += '<p><strong>Exception Breakdown:</strong></p><ul>';
+            html += `<li style="color:#d32f2f;"><strong>Damaged:</strong> ${exceptionsData.damaged} pallets (${exceptionsData.damaged_modules.toLocaleString()} modules)</li>`;
+            html += '</ul>';
+        }
+        
+        html += `<div style="text-align:center;margin-top:15px;">` +
+               `<a href="warranty.php?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#f57c00;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">View Exceptions</a>` +
                `</div>`;
         html += '</div>';
     } else {
@@ -4356,6 +4742,33 @@ function goToWarehouseManagement(warehouseId) {
 // Customer view functions
 let currentFilter = 'mws'; // Global filter state
 
+// Conversion availability and actual actuals for pallets/truckloads
+window.conversionAvailability = {
+    isAdmin: false,
+    modulesPerPalletAvailable: <?php echo ($average_modules_per_pallet !== null && $average_modules_per_pallet > 0) ? 'true' : 'false'; ?>,
+    avgModulesPerPallet: <?php echo ($average_modules_per_pallet !== null && $average_modules_per_pallet > 0) ? (int)$average_modules_per_pallet : 'null'; ?>,
+    palletsPerTruckAvailable: <?php echo ($average_pallets_per_truck !== null && $average_pallets_per_truck > 0) ? 'true' : 'false'; ?>,
+    avgPalletsPerTruck: <?php echo ($average_pallets_per_truck !== null && $average_pallets_per_truck > 0) ? (int)$average_pallets_per_truck : 'null'; ?>,
+    modulesPerTruckAvailable: <?php echo ($average_modules_per_truck !== null && $average_modules_per_truck > 0) ? 'true' : 'false'; ?>,
+    avgModulesPerTruck: <?php echo ($average_modules_per_truck !== null && $average_modules_per_truck > 0) ? (int)$average_modules_per_truck : 'null'; ?>,
+    wattageModulesPerPallet: <?php
+        $mpp_by_wattage_avg = [];
+        foreach ($mpp_by_wattage as $w => $sum_val) {
+            $den = $modules_by_wattage_for_mpp[$w] ?? 0;
+            if ($den > 0) $mpp_by_wattage_avg[$w] = round($sum_val / $den);
+        }
+        echo json_encode($mpp_by_wattage_avg);
+    ?>
+};
+
+// Actual pallets by status for Module Delivery Status table
+window.actualStatusData = {
+    pallets: {
+        main: <?php echo json_encode($pallets_status_main); ?>,
+        sub: <?php echo json_encode($pallets_sub_rows_status); ?>
+    }
+};
+
 function showView(viewId) {
     // Hide all sections
     document.getElementById('project-progress').style.display = 'none';
@@ -4469,7 +4882,9 @@ function updateCustomerShippingBoxes(filterType, section) {
             }
             
             // Format the value
-            if (filterType === 'truckloads' || filterType === 'mws') {
+            if (isNaN(value)) {
+                statusCount.textContent = 'N/A';
+            } else if (filterType === 'truckloads' || filterType === 'mws') {
                 statusCount.textContent = value % 1 === 0 ? value.toString() : value.toFixed(1);
             } else {
                 statusCount.textContent = Math.round(value).toLocaleString();
@@ -4570,21 +4985,24 @@ function updateDeliveryTables(filterType) {
             sub_rows_status: {}
         };
         
-        // Calculate truckloads data (using average pallets per truck)
-        const palletsPerTruck = <?php echo $average_pallets_per_truck; ?>;
-        window.originalTableData.truckloads = {
-            total_order: (window.originalTableData.pallets.total_order / palletsPerTruck).toFixed(1),
-            delivered: (window.originalTableData.pallets.delivered / palletsPerTruck).toFixed(1),
-            at_manufacturer: (window.originalTableData.pallets.at_manufacturer / palletsPerTruck).toFixed(1),
-            in_warehouse: (window.originalTableData.pallets.in_warehouse / palletsPerTruck).toFixed(1),
-            on_water: (window.originalTableData.pallets.on_water / palletsPerTruck).toFixed(1),
-            cleared_customs: (window.originalTableData.pallets.cleared_customs / palletsPerTruck).toFixed(1),
-            in_transit_to_warehouse: (window.originalTableData.pallets.in_transit_to_warehouse / palletsPerTruck).toFixed(1),
-            in_transit_to_project: (window.originalTableData.pallets.in_transit_to_project / palletsPerTruck).toFixed(1),
-            weeks: window.originalTableData.pallets.weeks.map(w => (w / palletsPerTruck).toFixed(1)),
-            sub_rows: {},
-            sub_rows_status: {}
-        };
+        // Calculate truckloads data only if a pallets-per-truck value is available; otherwise leave as empty
+        const palletsPerTruck = (window.conversionAvailability && window.conversionAvailability.avgPalletsPerTruck) ? window.conversionAvailability.avgPalletsPerTruck : null;
+        window.originalTableData.truckloads = { sub_rows: {}, sub_rows_status: {}, weeks: [], total_order: 0, delivered: 0 };
+        if (palletsPerTruck) {
+            window.originalTableData.truckloads = {
+                total_order: (window.originalTableData.pallets.total_order / palletsPerTruck).toFixed(1),
+                delivered: (window.originalTableData.pallets.delivered / palletsPerTruck).toFixed(1),
+                at_manufacturer: (window.originalTableData.pallets.at_manufacturer / palletsPerTruck).toFixed(1),
+                in_warehouse: (window.originalTableData.pallets.in_warehouse / palletsPerTruck).toFixed(1),
+                on_water: (window.originalTableData.pallets.on_water / palletsPerTruck).toFixed(1),
+                cleared_customs: (window.originalTableData.pallets.cleared_customs / palletsPerTruck).toFixed(1),
+                in_transit_to_warehouse: (window.originalTableData.pallets.in_transit_to_warehouse / palletsPerTruck).toFixed(1),
+                in_transit_to_project: (window.originalTableData.pallets.in_transit_to_project / palletsPerTruck).toFixed(1),
+                weeks: window.originalTableData.pallets.weeks.map(w => (w / palletsPerTruck).toFixed(1)),
+                sub_rows: {},
+                sub_rows_status: {}
+            };
+        }
         
         // Convert sub_rows data
         for (const [key, data] of Object.entries(window.originalTableData.mw.sub_rows)) {
@@ -4603,11 +5021,13 @@ function updateDeliveryTables(filterType) {
                 weeks: window.originalTableData.modules.sub_rows[key].weeks.map(w => Math.round(w / modulesPerPallet))
             };
 
-            window.originalTableData.truckloads.sub_rows[key] = {
-                total_order: (window.originalTableData.pallets.sub_rows[key].total_order / palletsPerTruck).toFixed(1),
-                delivered: (window.originalTableData.pallets.sub_rows[key].delivered / palletsPerTruck).toFixed(1),
-                weeks: window.originalTableData.pallets.sub_rows[key].weeks.map(w => (w / palletsPerTruck).toFixed(1))
-            };
+            if (palletsPerTruck) {
+                window.originalTableData.truckloads.sub_rows[key] = {
+                    total_order: (window.originalTableData.pallets.sub_rows[key].total_order / palletsPerTruck).toFixed(1),
+                    delivered: (window.originalTableData.pallets.sub_rows[key].delivered / palletsPerTruck).toFixed(1),
+                    weeks: window.originalTableData.pallets.sub_rows[key].weeks.map(w => (w / palletsPerTruck).toFixed(1))
+                };
+            }
         }
 
         // Convert sub_rows_status data
@@ -4637,16 +5057,18 @@ function updateDeliveryTables(filterType) {
                 in_transit_to_project: Math.round(window.originalTableData.modules.sub_rows_status[key].in_transit_to_project / modulesPerPallet)
             };
 
-            window.originalTableData.truckloads.sub_rows_status[key] = {
-                total_order: (window.originalTableData.pallets.sub_rows_status[key].total_order / palletsPerTruck).toFixed(1),
-                delivered: (window.originalTableData.pallets.sub_rows_status[key].delivered / palletsPerTruck).toFixed(1),
-                at_manufacturer: (window.originalTableData.pallets.sub_rows_status[key].at_manufacturer / palletsPerTruck).toFixed(1),
-                in_warehouse: (window.originalTableData.pallets.sub_rows_status[key].in_warehouse / palletsPerTruck).toFixed(1),
-                on_water: (window.originalTableData.pallets.sub_rows_status[key].on_water / palletsPerTruck).toFixed(1),
-                cleared_customs: (window.originalTableData.pallets.sub_rows_status[key].cleared_customs / palletsPerTruck).toFixed(1),
-                in_transit_to_warehouse: (window.originalTableData.pallets.sub_rows_status[key].in_transit_to_warehouse / palletsPerTruck).toFixed(1),
-                in_transit_to_project: (window.originalTableData.pallets.sub_rows_status[key].in_transit_to_project / palletsPerTruck).toFixed(1)
-            };
+            if (palletsPerTruck) {
+                window.originalTableData.truckloads.sub_rows_status[key] = {
+                    total_order: (window.originalTableData.pallets.sub_rows_status[key].total_order / palletsPerTruck).toFixed(1),
+                    delivered: (window.originalTableData.pallets.sub_rows_status[key].delivered / palletsPerTruck).toFixed(1),
+                    at_manufacturer: (window.originalTableData.pallets.sub_rows_status[key].at_manufacturer / palletsPerTruck).toFixed(1),
+                    in_warehouse: (window.originalTableData.pallets.sub_rows_status[key].in_warehouse / palletsPerTruck).toFixed(1),
+                    on_water: (window.originalTableData.pallets.sub_rows_status[key].on_water / palletsPerTruck).toFixed(1),
+                    cleared_customs: (window.originalTableData.pallets.sub_rows_status[key].cleared_customs / palletsPerTruck).toFixed(1),
+                    in_transit_to_warehouse: (window.originalTableData.pallets.sub_rows_status[key].in_transit_to_warehouse / palletsPerTruck).toFixed(1),
+                    in_transit_to_project: (window.originalTableData.pallets.sub_rows_status[key].in_transit_to_project / palletsPerTruck).toFixed(1)
+                };
+            }
         }
     }
     
@@ -4680,11 +5102,46 @@ function updateDeliveryTables(filterType) {
     if (mainRow1) {
         const cells = mainRow1.querySelectorAll('td');
         if (cells.length >= 3) {
-            cells[1].textContent = formatNumber(data.total_order, decimals);
-            cells[2].textContent = formatNumber(data.delivered, decimals);
-            // Update week cells
-            for (let i = 0; i < data.weeks.length && i + 3 < cells.length; i++) {
-                cells[i + 3].textContent = formatNumber(data.weeks[i], decimals);
+            if (filterType === 'pallets') {
+                if (window.conversionAvailability.modulesPerPalletAvailable && window.conversionAvailability.avgModulesPerPallet) {
+                    const mpp = window.conversionAvailability.avgModulesPerPallet;
+                    const src = window.originalTableData.modules;
+                    cells[1].textContent = formatNumber(src.total_order / mpp, 0);
+                    cells[2].textContent = formatNumber(src.delivered / mpp, 0);
+                    for (let i = 0; i < src.weeks.length && i + 3 < cells.length; i++) {
+                        cells[i + 3].textContent = formatNumber(src.weeks[i] / mpp, 0);
+                    }
+                } else {
+                    // N/A when missing conversion
+                    for (let i = 1; i < cells.length; i++) { cells[i].textContent = 'N/A'; }
+                }
+            } else if (filterType === 'truckloads') {
+                const src = window.originalTableData.modules;
+                if (window.conversionAvailability.palletsPerTruckAvailable && window.conversionAvailability.avgPalletsPerTruck && window.conversionAvailability.modulesPerPalletAvailable && window.conversionAvailability.avgModulesPerPallet) {
+                    const mpp = window.conversionAvailability.avgModulesPerPallet;
+                    const ppt = window.conversionAvailability.avgPalletsPerTruck;
+                    cells[1].textContent = formatNumber((src.total_order / mpp) / ppt, 1);
+                    cells[2].textContent = formatNumber((src.delivered / mpp) / ppt, 1);
+                    for (let i = 0; i < src.weeks.length && i + 3 < cells.length; i++) {
+                        cells[i + 3].textContent = formatNumber((src.weeks[i] / mpp) / ppt, 1);
+                    }
+                } else if (window.conversionAvailability.modulesPerTruckAvailable && window.conversionAvailability.avgModulesPerTruck) {
+                    const mpt = window.conversionAvailability.avgModulesPerTruck;
+                    cells[1].textContent = formatNumber(src.total_order / mpt, 1);
+                    cells[2].textContent = formatNumber(src.delivered / mpt, 1);
+                    for (let i = 0; i < src.weeks.length && i + 3 < cells.length; i++) {
+                        cells[i + 3].textContent = formatNumber(src.weeks[i] / mpt, 1);
+                    }
+                } else {
+                    for (let i = 1; i < cells.length; i++) { cells[i].textContent = 'N/A'; }
+                }
+            } else {
+                cells[1].textContent = formatNumber(data.total_order, decimals);
+                cells[2].textContent = formatNumber(data.delivered, decimals);
+                // Update week cells
+                for (let i = 0; i < data.weeks.length && i + 3 < cells.length; i++) {
+                    cells[i + 3].textContent = formatNumber(data.weeks[i], decimals);
+                }
             }
         }
     }
@@ -4693,33 +5150,67 @@ function updateDeliveryTables(filterType) {
     if (mainRow2) {
         const cells = mainRow2.querySelectorAll('td');
         if (cells.length >= 3) {
-            cells[1].textContent = formatNumber(data.total_order, decimals);
-            cells[2].textContent = formatNumber((data.at_manufacturer || 0), decimals);
-            // Start placing optional status columns after the first three fixed columns
-            let cellIndex = 3;
-            if (data.on_water > 0 && cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.on_water, decimals);
-                cellIndex++;
-            }
-            if (data.cleared_customs > 0 && cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.cleared_customs, decimals);
-                cellIndex++;
-            }
-            if (data.in_transit_to_warehouse > 0 && cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.in_transit_to_warehouse, decimals);
-                cellIndex++;
-            }
-            if (data.in_warehouse > 0 && cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.in_warehouse, decimals);
-                cellIndex++;
-            }
-            if (data.in_transit_to_project > 0 && cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.in_transit_to_project, decimals);
-                cellIndex++;
-            }
-            // Delivered to Project is always the final column
-            if (cells[cellIndex]) {
-                cells[cellIndex].textContent = formatNumber(data.delivered, decimals);
+            if (filterType === 'pallets') {
+                const pal = window.actualStatusData.pallets.main;
+                let idx = 1;
+                cells[idx++].textContent = formatNumber(pal.total_order || 0, 0);
+                cells[idx++].textContent = formatNumber(pal.at_manufacturer || 0, 0);
+                if (data.on_water > 0 && cells[idx]) cells[idx++].textContent = formatNumber(pal.on_water || 0, 0);
+                if (data.cleared_customs > 0 && cells[idx]) cells[idx++].textContent = formatNumber(pal.cleared_customs || 0, 0);
+                if (data.in_transit_to_warehouse > 0 && cells[idx]) cells[idx++].textContent = formatNumber(pal.in_transit_to_warehouse || 0, 0);
+                if (data.in_warehouse > 0 && cells[idx]) cells[idx++].textContent = formatNumber(pal.in_warehouse || 0, 0);
+                if (data.in_transit_to_project > 0 && cells[idx]) cells[idx++].textContent = formatNumber(pal.in_transit_to_project || 0, 0);
+                if (cells[idx]) cells[idx].textContent = formatNumber(pal.delivered || 0, 0);
+            } else if (filterType === 'truckloads') {
+                const pal = window.actualStatusData.pallets.main;
+                let tl = null;
+                if (window.conversionAvailability.palletsPerTruckAvailable && window.conversionAvailability.avgPalletsPerTruck) {
+                    tl = {
+                        total_order: (pal.total_order || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                        at_manufacturer: (pal.at_manufacturer || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                        on_water: (pal.on_water || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                        cleared_customs: (pal.cleared_customs || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                        in_transit_to_warehouse: (pal.in_transit_to_warehouse || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                        in_warehouse: (pal.in_warehouse || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                        in_transit_to_project: (pal.in_transit_to_project || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                        delivered: (pal.delivered || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                    };
+                } else if (window.conversionAvailability.modulesPerTruckAvailable && window.conversionAvailability.avgModulesPerTruck) {
+                    tl = {
+                        total_order: (data.total_order || 0) / window.conversionAvailability.avgModulesPerTruck,
+                        at_manufacturer: (data.at_manufacturer || 0) / window.conversionAvailability.avgModulesPerTruck,
+                        on_water: (data.on_water || 0) / window.conversionAvailability.avgModulesPerTruck,
+                        cleared_customs: (data.cleared_customs || 0) / window.conversionAvailability.avgModulesPerTruck,
+                        in_transit_to_warehouse: (data.in_transit_to_warehouse || 0) / window.conversionAvailability.avgModulesPerTruck,
+                        in_warehouse: (data.in_warehouse || 0) / window.conversionAvailability.avgModulesPerTruck,
+                        in_transit_to_project: (data.in_transit_to_project || 0) / window.conversionAvailability.avgModulesPerTruck,
+                        delivered: (data.delivered || 0) / window.conversionAvailability.avgModulesPerTruck,
+                    };
+                }
+                let idx = 1;
+                if (!tl) {
+                    while (idx < cells.length) { cells[idx++].textContent = 'N/A'; }
+                } else {
+                    cells[idx++].textContent = formatNumber(tl.total_order, 1);
+                    cells[idx++].textContent = formatNumber(tl.at_manufacturer || 0, 1);
+                    if (data.on_water > 0 && cells[idx]) cells[idx++].textContent = formatNumber(tl.on_water || 0, 1);
+                    if (data.cleared_customs > 0 && cells[idx]) cells[idx++].textContent = formatNumber(tl.cleared_customs || 0, 1);
+                    if (data.in_transit_to_warehouse > 0 && cells[idx]) cells[idx++].textContent = formatNumber(tl.in_transit_to_warehouse || 0, 1);
+                    if (data.in_warehouse > 0 && cells[idx]) cells[idx++].textContent = formatNumber(tl.in_warehouse || 0, 1);
+                    if (data.in_transit_to_project > 0 && cells[idx]) cells[idx++].textContent = formatNumber(tl.in_transit_to_project || 0, 1);
+                    if (cells[idx]) cells[idx].textContent = formatNumber(tl.delivered || 0, 1);
+                }
+            } else {
+                // Default (MWs/modules) with no damaged parentheses
+                cells[1].textContent = formatNumber(data.total_order, decimals);
+                cells[2].textContent = formatNumber((data.at_manufacturer || 0), decimals);
+                let cellIndex = 3;
+                if (data.on_water > 0 && cells[cellIndex]) { cells[cellIndex++].textContent = formatNumber(data.on_water, decimals); }
+                if (data.cleared_customs > 0 && cells[cellIndex]) { cells[cellIndex++].textContent = formatNumber(data.cleared_customs, decimals); }
+                if (data.in_transit_to_warehouse > 0 && cells[cellIndex]) { cells[cellIndex++].textContent = formatNumber(data.in_transit_to_warehouse, decimals); }
+                if (data.in_warehouse > 0 && cells[cellIndex]) { cells[cellIndex++].textContent = formatNumber(data.in_warehouse, decimals); }
+                if (data.in_transit_to_project > 0 && cells[cellIndex]) { cells[cellIndex++].textContent = formatNumber(data.in_transit_to_project, decimals); }
+                if (cells[cellIndex]) { cells[cellIndex].textContent = formatNumber(data.delivered, decimals); }
             }
         }
     }
@@ -4730,12 +5221,57 @@ function updateDeliveryTables(filterType) {
         const cells = row.querySelectorAll('td');
         if (cells.length >= 3) {
             const wattageLabel = cells[0].textContent;
-            const subData = data.sub_rows[wattageLabel];
-            if (subData) {
-                cells[1].textContent = formatNumber(subData.total_order, decimals);
-                cells[2].textContent = formatNumber(subData.delivered, decimals);
-                for (let i = 0; i < subData.weeks.length && i + 3 < cells.length; i++) {
-                    cells[i + 3].textContent = formatNumber(subData.weeks[i], decimals);
+            const subModules = (window.originalTableData.modules.sub_rows || {})[wattageLabel];
+            const subGeneric = (data.sub_rows || {})[wattageLabel];
+            if (filterType === 'pallets') {
+                const wMatch = wattageLabel.match(/(\d+)W/);
+                const w = wMatch ? parseInt(wMatch[1], 10) : null;
+                const mppMap = window.conversionAvailability.wattageModulesPerPallet || {};
+                const mpp = (w && mppMap[w]) ? mppMap[w] : window.conversionAvailability.avgModulesPerPallet;
+                if (subModules && mpp && window.conversionAvailability.modulesPerPalletAvailable) {
+                    cells[1].textContent = formatNumber(subModules.total_order / mpp, 0);
+                    cells[2].textContent = formatNumber(subModules.delivered / mpp, 0);
+                    for (let i = 0; i < subModules.weeks.length && i + 3 < cells.length; i++) {
+                        cells[i + 3].textContent = formatNumber(subModules.weeks[i] / mpp, 0);
+                    }
+                } else {
+                    for (let i = 1; i < cells.length; i++) { cells[i].textContent = 'N/A'; }
+                }
+            } else if (filterType === 'truckloads') {
+                const wMatch = wattageLabel.match(/(\d+)W/);
+                const w = wMatch ? parseInt(wMatch[1], 10) : null;
+                const mppMap = window.conversionAvailability.wattageModulesPerPallet || {};
+                const mpp = (w && mppMap[w]) ? mppMap[w] : window.conversionAvailability.avgModulesPerPallet;
+                if (subModules) {
+                    if (window.conversionAvailability.palletsPerTruckAvailable && window.conversionAvailability.avgPalletsPerTruck && (mpp || window.conversionAvailability.modulesPerPalletAvailable)) {
+                        const ppt = window.conversionAvailability.avgPalletsPerTruck;
+                        const denom = (mpp && mpp > 0) ? mpp : null;
+                        if (denom) {
+                            cells[1].textContent = formatNumber((subModules.total_order / denom) / ppt, 1);
+                            cells[2].textContent = formatNumber((subModules.delivered / denom) / ppt, 1);
+                            for (let i = 0; i < subModules.weeks.length && i + 3 < cells.length; i++) {
+                                cells[i + 3].textContent = formatNumber((subModules.weeks[i] / denom) / ppt, 1);
+                            }
+                        } else {
+                            for (let i = 1; i < cells.length; i++) { cells[i].textContent = 'N/A'; }
+                        }
+                    } else if (window.conversionAvailability.modulesPerTruckAvailable && window.conversionAvailability.avgModulesPerTruck) {
+                        const mpt = window.conversionAvailability.avgModulesPerTruck;
+                        cells[1].textContent = formatNumber(subModules.total_order / mpt, 1);
+                        cells[2].textContent = formatNumber(subModules.delivered / mpt, 1);
+                        for (let i = 0; i < subModules.weeks.length && i + 3 < cells.length; i++) {
+                            cells[i + 3].textContent = formatNumber(subModules.weeks[i] / mpt, 1);
+                        }
+                    } else {
+                        for (let i = 1; i < cells.length; i++) { cells[i].textContent = 'N/A'; }
+                    }
+                }
+            } else if (subGeneric) {
+                // Default (MWs/modules) direct
+                cells[1].textContent = formatNumber(subGeneric.total_order, decimals);
+                cells[2].textContent = formatNumber(subGeneric.delivered, decimals);
+                for (let i = 0; i < subGeneric.weeks.length && i + 3 < cells.length; i++) {
+                    cells[i + 3].textContent = formatNumber(subGeneric.weeks[i], decimals);
                 }
             }
         }
@@ -4749,33 +5285,66 @@ function updateDeliveryTables(filterType) {
             const wattageLabel = cells[0].textContent;
             const subData = data.sub_rows_status[wattageLabel];
             if (subData) {
-                cells[1].textContent = formatNumber(subData.total_order, decimals);
-                cells[2].textContent = formatNumber((subData.at_manufacturer || 0), decimals);
-                // Optional status columns start after the first three cells
-                let idx = 3;
-                if (data.on_water > 0 && cells[idx]) {
-                    cells[idx].textContent = formatNumber((subData.on_water || 0), decimals);
-                    idx++;
-                }
-                if (data.cleared_customs > 0 && cells[idx]) {
-                    cells[idx].textContent = formatNumber((subData.cleared_customs || 0), decimals);
-                    idx++;
-                }
-                if (data.in_transit_to_warehouse > 0 && cells[idx]) {
-                    cells[idx].textContent = formatNumber((subData.in_transit_to_warehouse || 0), decimals);
-                    idx++;
-                }
-                if (data.in_warehouse > 0 && cells[idx]) {
-                    cells[idx].textContent = formatNumber((subData.in_warehouse || 0), decimals);
-                    idx++;
-                }
-                if (data.in_transit_to_project > 0 && cells[idx]) {
-                    cells[idx].textContent = formatNumber((subData.in_transit_to_project || 0), decimals);
-                    idx++;
-                }
-                // Delivered to Project is always the final column
-                if (cells[idx]) {
-                    cells[idx].textContent = formatNumber(subData.delivered, decimals);
+                if (filterType === 'pallets') {
+                    const palSub = window.actualStatusData.pallets.sub[wattageLabel] || {};
+                    let idx2 = 1;
+                    cells[idx2++].textContent = formatNumber(palSub.total_order || 0, 0);
+                    cells[idx2++].textContent = formatNumber(palSub.at_manufacturer || 0, 0);
+                    if (data.on_water > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(palSub.on_water || 0, 0);
+                    if (data.cleared_customs > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(palSub.cleared_customs || 0, 0);
+                    if (data.in_transit_to_warehouse > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(palSub.in_transit_to_warehouse || 0, 0);
+                    if (data.in_warehouse > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(palSub.in_warehouse || 0, 0);
+                    if (data.in_transit_to_project > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(palSub.in_transit_to_project || 0, 0);
+                    if (cells[idx2]) cells[idx2].textContent = formatNumber(palSub.delivered || 0, 0);
+                } else if (filterType === 'truckloads') {
+                    let idx2 = 1;
+                    let source;
+                    if (window.conversionAvailability.palletsPerTruckAvailable && window.conversionAvailability.avgPalletsPerTruck) {
+                        const palSub = window.actualStatusData.pallets.sub[wattageLabel] || {};
+                        source = {
+                            total_order: (palSub.total_order || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                            at_manufacturer: (palSub.at_manufacturer || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                            on_water: (palSub.on_water || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                            cleared_customs: (palSub.cleared_customs || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                            in_transit_to_warehouse: (palSub.in_transit_to_warehouse || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                            in_warehouse: (palSub.in_warehouse || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                            in_transit_to_project: (palSub.in_transit_to_project || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                            delivered: (palSub.delivered || 0) / window.conversionAvailability.avgPalletsPerTruck,
+                        };
+                    } else if (window.conversionAvailability.modulesPerTruckAvailable && window.conversionAvailability.avgModulesPerTruck) {
+                        source = {
+                            total_order: (subData.total_order || 0) / window.conversionAvailability.avgModulesPerTruck,
+                            at_manufacturer: (subData.at_manufacturer || 0) / window.conversionAvailability.avgModulesPerTruck,
+                            on_water: (subData.on_water || 0) / window.conversionAvailability.avgModulesPerTruck,
+                            cleared_customs: (subData.cleared_customs || 0) / window.conversionAvailability.avgModulesPerTruck,
+                            in_transit_to_warehouse: (subData.in_transit_to_warehouse || 0) / window.conversionAvailability.avgModulesPerTruck,
+                            in_warehouse: (subData.in_warehouse || 0) / window.conversionAvailability.avgModulesPerTruck,
+                            in_transit_to_project: (subData.in_transit_to_project || 0) / window.conversionAvailability.avgModulesPerTruck,
+                            delivered: (subData.delivered || 0) / window.conversionAvailability.avgModulesPerTruck,
+                        };
+                    }
+                    if (!source) {
+                        while (idx2 < cells.length) { cells[idx2++].textContent = 'N/A'; }
+                    } else {
+                        cells[idx2++].textContent = formatNumber(source.total_order, 1);
+                        cells[idx2++].textContent = formatNumber(source.at_manufacturer || 0, 1);
+                        if (data.on_water > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(source.on_water || 0, 1);
+                        if (data.cleared_customs > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(source.cleared_customs || 0, 1);
+                        if (data.in_transit_to_warehouse > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(source.in_transit_to_warehouse || 0, 1);
+                        if (data.in_warehouse > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(source.in_warehouse || 0, 1);
+                        if (data.in_transit_to_project > 0 && cells[idx2]) cells[idx2++].textContent = formatNumber(source.in_transit_to_project || 0, 1);
+                        if (cells[idx2]) cells[idx2].textContent = formatNumber(source.delivered || 0, 1);
+                    }
+                } else {
+                    cells[1].textContent = formatNumber(subData.total_order, decimals);
+                    cells[2].textContent = formatNumber((subData.at_manufacturer || 0), decimals);
+                    let idx = 3;
+                    if (data.on_water > 0 && cells[idx]) { cells[idx++].textContent = formatNumber((subData.on_water || 0), decimals); }
+                    if (data.cleared_customs > 0 && cells[idx]) { cells[idx++].textContent = formatNumber((subData.cleared_customs || 0), decimals); }
+                    if (data.in_transit_to_warehouse > 0 && cells[idx]) { cells[idx++].textContent = formatNumber((subData.in_transit_to_warehouse || 0), decimals); }
+                    if (data.in_warehouse > 0 && cells[idx]) { cells[idx++].textContent = formatNumber((subData.in_warehouse || 0), decimals); }
+                    if (data.in_transit_to_project > 0 && cells[idx]) { cells[idx++].textContent = formatNumber((subData.in_transit_to_project || 0), decimals); }
+                    if (cells[idx]) cells[idx].textContent = formatNumber(subData.delivered, decimals);
                 }
             }
         }
@@ -4791,6 +5360,60 @@ function formatNumber(num, decimals) {
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals
     });
+}
+
+// Admin-only conversion prompt helpers
+function openConversionModal(type) {
+    const modal = document.getElementById('conversionModal');
+    const title = document.getElementById('conversionModalTitle');
+    const body = document.getElementById('conversionModalBody');
+    if (!modal || !title || !body) return;
+    if (type === 'mpp') {
+        title.textContent = 'Modules per Pallet not currently listed';
+        body.innerHTML = '<label>Modules per Pallet</label>'+
+            '<input type="number" id="inputModulesPerPallet" min="1" style="width:100%;padding:8px;margin-top:6px;">'+
+            '<p style="margin-top:10px;color:#666;">Temporary for display. Update Module Batch to persist.</p>';
+        modal.setAttribute('data-type','mpp');
+    } else {
+        title.textContent = 'Truckload conversion not currently listed';
+        body.innerHTML = '<label>Pallets per Truck (preferred)</label>'+
+            '<input type="number" id="inputPalletsPerTruck" min="1" style="width:100%;padding:8px;margin-top:6px;">'+
+            '<div style="margin:10px 0;text-align:center;color:#888;">— or —</div>'+
+            '<label>Modules per Truck</label>'+
+            '<input type="number" id="inputModulesPerTruck" min="1" style="width:100%;padding:8px;margin-top:6px;">'+
+            '<p style="margin-top:10px;color:#666;">Temporary for display. Update Module Batch to persist.</p>';
+        modal.setAttribute('data-type','truck');
+    }
+    modal.style.display = 'block';
+}
+function closeConversionModal(){
+    const modal = document.getElementById('conversionModal');
+    if (modal) modal.style.display = 'none';
+}
+function saveConversionModal(){
+    const modal = document.getElementById('conversionModal');
+    if (!modal) return;
+    const type = modal.getAttribute('data-type');
+    if (type === 'mpp') {
+        const val = parseInt(document.getElementById('inputModulesPerPallet').value || '0', 10);
+        if (val > 0) {
+            window.conversionAvailability.modulesPerPalletAvailable = true;
+            window.conversionAvailability.avgModulesPerPallet = val;
+        }
+    } else {
+        const ppt = parseInt(document.getElementById('inputPalletsPerTruck').value || '0', 10);
+        const mpt = parseInt(document.getElementById('inputModulesPerTruck').value || '0', 10);
+        if (ppt > 0) {
+            window.conversionAvailability.palletsPerTruckAvailable = true;
+            window.conversionAvailability.avgPalletsPerTruck = ppt;
+        } else if (mpt > 0) {
+            window.conversionAvailability.modulesPerTruckAvailable = true;
+            window.conversionAvailability.avgModulesPerTruck = mpt;
+        }
+    }
+    closeConversionModal();
+    // Re-apply current filter to refresh
+    syncFiltersToState();
 }
 
 // Customer Shipping Modal functionality
@@ -4833,14 +5456,22 @@ function generateCustomerShippingContent(status) {
             totalMWs = ((totalDeliveredRaw * avgWattage) / 1000000).toFixed(2);
         }
         
+        const customerDeliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+        const palletDisplay = customerDeliveredDamagedTotal > 0 ? 
+            `${totalPallets}<br><small style="color:#e65100;">(${Math.ceil(customerDeliveredDamagedTotal / 30)} damaged)</small>` : 
+            totalPallets;
+        const moduleDisplay = customerDeliveredDamagedTotal > 0 ? 
+            `${totalDeliveredRaw.toLocaleString()}<br><small style="color:#e65100;">(${customerDeliveredDamagedTotal} damaged)</small>` : 
+            totalDeliveredRaw.toLocaleString();
+        
         html += `<div style="margin-bottom:20px;padding:20px;background:#e8f5e8;border-radius:12px;border-left:4px solid #28a745;">` +
                `<h4 style="margin-top:0;color:#28a745;">🎉 Delivered to Project</h4>` +
                `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin:15px 0;">` +
                `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
-               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalPallets}</div>` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${palletDisplay}</div>` +
                `<div style="font-size:0.9rem;color:#666;">Pallets</div></div>` +
                `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
-               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalDeliveredRaw.toLocaleString()}</div>` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${moduleDisplay}</div>` +
                `<div style="font-size:0.9rem;color:#666;">Modules</div></div>` +
                `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
                `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalMWs}</div>` +
@@ -4861,6 +5492,60 @@ function generateCustomerShippingContent(status) {
         
         html += `<div style="text-align:center;margin-top:20px;">` +
                `<a href="view_project.php?project_id=<?php echo $project_id; ?>&status_filter=Delivered" class="customer-modal-btn">View Deliveries</a>` +
+               `</div>`;
+        html += '</div>';
+    } else if (status === 'Exceptions') {
+        // Handle Exceptions (Damaged Pallets)
+        has = true;
+        const exceptionsData = {
+            damaged: <?php echo ($status_totals['Damaged']['pallets'] ?? 0); ?>,
+            damaged_modules: <?php echo ($status_totals['Damaged']['modules'] ?? 0); ?>
+        };
+        
+        const totalExceptionPallets = exceptionsData.damaged_total_loss + exceptionsData.partially_damaged;
+        const totalExceptionModules = exceptionsData.damaged_total_loss_modules + exceptionsData.partially_damaged_modules;
+        
+        // Calculate MWs
+        const wattages = <?php echo json_encode($wattages); ?>;
+        let totalMWs = 0;
+        if (wattages.length > 0 && totalExceptionModules > 0) {
+            const avgWattage = wattages.reduce((a, b) => a + b) / wattages.length;
+            totalMWs = ((totalExceptionModules * avgWattage) / 1000000).toFixed(2);
+        }
+        
+        html += `<div style="margin-bottom:20px;padding:20px;background:#fff3e0;border-radius:12px;border-left:4px solid #f57c00;">` +
+               `<h4 style="margin-top:0;color:#e65100;">⚠️ Module Exceptions</h4>` +
+               `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin:15px 0;">` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#f57c00;">${totalExceptionPallets}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">Pallets</div></div>` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#f57c00;">${totalExceptionModules.toLocaleString()}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">Modules</div></div>` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#f57c00;">${totalMWs}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">MWs</div></div>` +
+               `</div>`;
+        
+        // Show exception type breakdown
+        if (exceptionsData.damaged_total_loss > 0 || exceptionsData.partially_damaged > 0) {
+            html += '<div style="margin-top:20px;"><h5 style="color:#e65100;">Exception Breakdown:</h5><ul style="list-style:none;padding:0;">';
+            
+            if (exceptionsData.damaged_total_loss > 0) {
+                html += `<li style="padding:12px;margin-bottom:8px;background:#ffebee;border-radius:8px;border-left:3px solid #d32f2f;">` +
+                       `<strong>Damaged - Total Loss:</strong> ${exceptionsData.damaged_total_loss} pallets • ${exceptionsData.damaged_total_loss_modules.toLocaleString()} modules</li>`;
+            }
+            
+            if (exceptionsData.partially_damaged > 0) {
+                html += `<li style="padding:12px;margin-bottom:8px;background:#fff8e1;border-radius:8px;border-left:3px solid #ff8f00;">` +
+                       `<strong>Partially Damaged:</strong> ${exceptionsData.partially_damaged} pallets • ${exceptionsData.partially_damaged_modules.toLocaleString()} modules</li>`;
+            }
+            
+            html += '</ul></div>';
+        }
+        
+        html += `<div style="text-align:center;margin-top:20px;">` +
+               `<a href="warranty.php?project_id=<?php echo $project_id; ?>" class="customer-modal-btn" style="background:#f57c00;border-color:#f57c00;">View Exceptions</a>` +
                `</div>`;
         html += '</div>';
     } else {
@@ -5116,7 +5801,9 @@ function updateShippingBoxes(filterType) {
             }
             
             // Format the value based on type
-            if (filterType === 'truckloads' || filterType === 'mws') {
+            if (isNaN(value)) {
+                statusCount.textContent = 'N/A';
+            } else if (filterType === 'truckloads' || filterType === 'mws') {
                 statusCount.textContent = value % 1 === 0 ? value.toString() : value.toFixed(1);
             } else {
                 statusCount.textContent = Math.round(value).toLocaleString();

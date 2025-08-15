@@ -605,6 +605,7 @@ try {
         $placeholders = implode(',', array_fill(0, count($item_ids), '?'));
         $types = str_repeat('i', count($item_ids));
         
+        // First get healthy pallets for palletization calculation
         $sqlPallets = "SELECT ip.id, ip.pallet_identifier, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name as warehouse_name, p.project_name,
                               w.street_address as warehouse_street, w.city as warehouse_city, w.state as warehouse_state, w.zip_code as warehouse_zip,
                               p.street_address as project_street, p.city as project_city, p.state as project_state, p.zip_code as project_zip,
@@ -615,6 +616,24 @@ try {
                        LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
                        LEFT JOIN deliveries d ON dp.delivery_id = d.id
                        WHERE ip.unassigned_module_item_id IN ($placeholders)
+                         AND ip.status != 'Damaged'
+                       GROUP BY ip.id, ip.pallet_identifier, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name, p.project_name,
+                              w.street_address, w.city, w.state, w.zip_code,
+                              p.street_address, p.city, p.state, p.zip_code
+                       ORDER BY ip.id ASC";
+        
+        // Also get damaged pallets separately for display
+        $sqlDamagedPallets = "SELECT ip.id, ip.pallet_identifier, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name as warehouse_name, p.project_name,
+                              w.street_address as warehouse_street, w.city as warehouse_city, w.state as warehouse_state, w.zip_code as warehouse_zip,
+                              p.street_address as project_street, p.city as project_city, p.state as project_state, p.zip_code as project_zip,
+                              GROUP_CONCAT(DISTINCT CONCAT(d.id, ':', COALESCE(d.bol_number, 'No BOL')) ORDER BY d.id SEPARATOR '|') as delivery_info
+                       FROM inventory_pallets ip
+                       LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+                       LEFT JOIN projects p ON ip.current_project_id = p.id
+                       LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+                       LEFT JOIN deliveries d ON dp.delivery_id = d.id
+                       WHERE ip.unassigned_module_item_id IN ($placeholders)
+                         AND ip.status = 'Damaged'
                        GROUP BY ip.id, ip.pallet_identifier, ip.unassigned_module_item_id, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.current_warehouse_id, ip.current_project_id, w.name, p.project_name,
                               w.street_address, w.city, w.state, w.zip_code,
                               p.street_address, p.city, p.state, p.zip_code
@@ -704,6 +723,54 @@ try {
             $summary_stats['status_counts'][$status] = ($summary_stats['status_counts'][$status] ?? 0) + 1;
         }
         $stmtPallets->close();
+        
+        // Now process damaged pallets for display purposes only (don't count toward palletization)
+        $stmtDamagedPallets = $conn->prepare($sqlDamagedPallets);
+        if (!$stmtDamagedPallets) throw new Exception("Prepare damaged pallets fetch failed: " . $conn->error);
+        $stmtDamagedPallets->bind_param($types, ...$item_ids);
+        $stmtDamagedPallets->execute();
+        $resultDamagedPallets = $stmtDamagedPallets->get_result();
+        while ($pallet = $resultDamagedPallets->fetch_assoc()) {
+            $wattage = $pallet['wattage'];
+            $status = $pallet['status'];
+            $quantity = $pallet['quantity'];
+            
+            // Add to pallets array for display
+            if ($pallet['status'] === 'Damaged') {
+                $pallet['display_location'] = 'Damaged';
+            }
+            $pallets[] = $pallet;
+            
+            // Create status breakdown key
+            $breakdown_key = $status;
+            
+            // Initialize if not exists
+            if (!isset($summary_stats['detailed_breakdown'][$breakdown_key])) {
+                $summary_stats['detailed_breakdown'][$breakdown_key] = [
+                    'pallet_count' => 0,
+                    'total_modules' => 0,
+                    'wattage_breakdown' => []
+                ];
+            }
+            
+            // Update counts
+            $summary_stats['detailed_breakdown'][$breakdown_key]['pallet_count']++;
+            $summary_stats['detailed_breakdown'][$breakdown_key]['total_modules'] += $quantity;
+            
+            // Track wattage breakdown
+            if (!isset($summary_stats['detailed_breakdown'][$breakdown_key]['wattage_breakdown'][$wattage])) {
+                $summary_stats['detailed_breakdown'][$breakdown_key]['wattage_breakdown'][$wattage] = [
+                    'pallets' => 0,
+                    'modules' => 0
+                ];
+            }
+            $summary_stats['detailed_breakdown'][$breakdown_key]['wattage_breakdown'][$wattage]['pallets']++;
+            $summary_stats['detailed_breakdown'][$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $quantity;
+            
+            // Keep legacy simple count for compatibility
+            $summary_stats['status_counts'][$status] = ($summary_stats['status_counts'][$status] ?? 0) + 1;
+        }
+        $stmtDamagedPallets->close();
     }
 
     // Calculate remaining quantity for each wattage
