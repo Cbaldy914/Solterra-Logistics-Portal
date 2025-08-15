@@ -5266,52 +5266,57 @@ function updateDeliveryTables(filterType) {
         const cells = row.querySelectorAll('td');
         if (cells.length >= 3) {
             const wattageLabel = cells[0].textContent;
-            const subData = data.sub_rows[wattageLabel];
-            if (subData) {
-                if (filterType === 'pallets') {
-                    // Try wattage-specific MPP, fallback to avg
-                    const wMatch = wattageLabel.match(/(\d+)W/);
-                    const w = wMatch ? parseInt(wMatch[1], 10) : null;
-                    const mppMap = window.conversionAvailability.wattageModulesPerPallet || {};
-                    const mpp = (w && mppMap[w]) ? mppMap[w] : window.conversionAvailability.avgModulesPerPallet;
-                    if (mpp && window.conversionAvailability.modulesPerPalletAvailable) {
-                        cells[1].textContent = formatNumber(subData.total_order / mpp, 0);
-                        cells[2].textContent = formatNumber(subData.delivered / mpp, 0);
-                        for (let i = 0; i < subData.weeks.length && i + 3 < cells.length; i++) {
-                            cells[i + 3].textContent = formatNumber(subData.weeks[i] / mpp, 0);
-                        }
-                    } else {
-                        for (let i = 1; i < cells.length; i++) { cells[i].textContent = 'N/A'; }
+            const subModules = (window.originalTableData.modules.sub_rows || {})[wattageLabel];
+            const subGeneric = (data.sub_rows || {})[wattageLabel];
+            if (filterType === 'pallets') {
+                const wMatch = wattageLabel.match(/(\d+)W/);
+                const w = wMatch ? parseInt(wMatch[1], 10) : null;
+                const mppMap = window.conversionAvailability.wattageModulesPerPallet || {};
+                const mpp = (w && mppMap[w]) ? mppMap[w] : window.conversionAvailability.avgModulesPerPallet;
+                if (subModules && mpp && window.conversionAvailability.modulesPerPalletAvailable) {
+                    cells[1].textContent = formatNumber(subModules.total_order / mpp, 0);
+                    cells[2].textContent = formatNumber(subModules.delivered / mpp, 0);
+                    for (let i = 0; i < subModules.weeks.length && i + 3 < cells.length; i++) {
+                        cells[i + 3].textContent = formatNumber(subModules.weeks[i] / mpp, 0);
                     }
-                } else if (filterType === 'truckloads') {
-                    const wMatch = wattageLabel.match(/(\d+)W/);
-                    const w = wMatch ? parseInt(wMatch[1], 10) : null;
-                    const mppMap = window.conversionAvailability.wattageModulesPerPallet || {};
-                    const hasMPP = !!(window.conversionAvailability.avgModulesPerPallet || (w && mppMap[w]));
-                    if (window.conversionAvailability.palletsPerTruckAvailable && window.conversionAvailability.avgPalletsPerTruck && hasMPP) {
-                        const mpp = (w && mppMap[w]) ? mppMap[w] : window.conversionAvailability.avgModulesPerPallet;
+                } else {
+                    for (let i = 1; i < cells.length; i++) { cells[i].textContent = 'N/A'; }
+                }
+            } else if (filterType === 'truckloads') {
+                const wMatch = wattageLabel.match(/(\d+)W/);
+                const w = wMatch ? parseInt(wMatch[1], 10) : null;
+                const mppMap = window.conversionAvailability.wattageModulesPerPallet || {};
+                const mpp = (w && mppMap[w]) ? mppMap[w] : window.conversionAvailability.avgModulesPerPallet;
+                if (subModules) {
+                    if (window.conversionAvailability.palletsPerTruckAvailable && window.conversionAvailability.avgPalletsPerTruck && (mpp || window.conversionAvailability.modulesPerPalletAvailable)) {
                         const ppt = window.conversionAvailability.avgPalletsPerTruck;
-                        cells[1].textContent = formatNumber((subData.total_order / mpp) / ppt, 1);
-                        cells[2].textContent = formatNumber((subData.delivered / mpp) / ppt, 1);
-                        for (let i = 0; i < subData.weeks.length && i + 3 < cells.length; i++) {
-                            cells[i + 3].textContent = formatNumber((subData.weeks[i] / mpp) / ppt, 1);
+                        const denom = (mpp && mpp > 0) ? mpp : null;
+                        if (denom) {
+                            cells[1].textContent = formatNumber((subModules.total_order / denom) / ppt, 1);
+                            cells[2].textContent = formatNumber((subModules.delivered / denom) / ppt, 1);
+                            for (let i = 0; i < subModules.weeks.length && i + 3 < cells.length; i++) {
+                                cells[i + 3].textContent = formatNumber((subModules.weeks[i] / denom) / ppt, 1);
+                            }
+                        } else {
+                            for (let i = 1; i < cells.length; i++) { cells[i].textContent = 'N/A'; }
                         }
                     } else if (window.conversionAvailability.modulesPerTruckAvailable && window.conversionAvailability.avgModulesPerTruck) {
                         const mpt = window.conversionAvailability.avgModulesPerTruck;
-                        cells[1].textContent = formatNumber(subData.total_order / mpt, 1);
-                        cells[2].textContent = formatNumber(subData.delivered / mpt, 1);
-                        for (let i = 0; i < subData.weeks.length && i + 3 < cells.length; i++) {
-                            cells[i + 3].textContent = formatNumber(subData.weeks[i] / mpt, 1);
+                        cells[1].textContent = formatNumber(subModules.total_order / mpt, 1);
+                        cells[2].textContent = formatNumber(subModules.delivered / mpt, 1);
+                        for (let i = 0; i < subModules.weeks.length && i + 3 < cells.length; i++) {
+                            cells[i + 3].textContent = formatNumber(subModules.weeks[i] / mpt, 1);
                         }
                     } else {
                         for (let i = 1; i < cells.length; i++) { cells[i].textContent = 'N/A'; }
                     }
-                } else {
-                    cells[1].textContent = formatNumber(subData.total_order, decimals);
-                    cells[2].textContent = formatNumber(subData.delivered, decimals);
-                    for (let i = 0; i < subData.weeks.length && i + 3 < cells.length; i++) {
-                        cells[i + 3].textContent = formatNumber(subData.weeks[i], decimals);
-                    }
+                }
+            } else if (subGeneric) {
+                // Default (MWs/modules) direct
+                cells[1].textContent = formatNumber(subGeneric.total_order, decimals);
+                cells[2].textContent = formatNumber(subGeneric.delivered, decimals);
+                for (let i = 0; i < subGeneric.weeks.length && i + 3 < cells.length; i++) {
+                    cells[i + 3].textContent = formatNumber(subGeneric.weeks[i], decimals);
                 }
             }
         }
