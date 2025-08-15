@@ -3567,7 +3567,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                      data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
                                      data-mws="<?php echo $mws; ?>">
                                     <div class="status-label">Delivered to Project</div>
-                                    <div class="status-count"><?php echo $pallets; ?><?php if($delivered_damaged_total > 0): ?> <span style="font-size:0.8em;color:#e65100;">(<?php echo ceil($delivered_damaged_total / 30); ?> damaged)</span><?php endif; ?></div>
+                                    <div class="status-count"><?php echo $pallets; ?></div>
                                     <div class="status-unit">pallets</div>
                                 </div>
                                 <?php endif; ?>
