@@ -70,6 +70,27 @@ $proofPrimary = $claim['proof_of_completion_path'] ?? '';
 $linkedIds = listLinkedReplacementPalletIds($conn, $claimId);
 $linkedMap = getPalletIdentifiers($conn, $linkedIds);
 
+// Replacement shipping status totals for linked pallets
+$replacementStatusTotals = [];
+if (!empty($linkedIds)) {
+    $place = implode(',', array_fill(0, count($linkedIds), '?'));
+    $types = str_repeat('i', count($linkedIds));
+    $stmtShip = $conn->prepare("SELECT status, COUNT(*) AS c, SUM(quantity) AS m FROM inventory_pallets WHERE id IN ($place) GROUP BY status");
+    if ($stmtShip) {
+        $stmtShip->bind_param($types, ...$linkedIds);
+        $stmtShip->execute();
+        $rsShip = $stmtShip->get_result();
+        while ($row = $rsShip->fetch_assoc()) {
+            $key = (string)$row['status'];
+            $replacementStatusTotals[$key] = [
+                'pallets' => (int)($row['c'] ?? 0),
+                'modules' => (int)($row['m'] ?? 0),
+            ];
+        }
+        $stmtShip->close();
+    }
+}
+
 // Pallet choices (same project by default)
 $choices = [];
 $ps = $conn->prepare('SELECT id, COALESCE(pallet_identifier, CONCAT("ID ", id)) label FROM inventory_pallets WHERE assigned_project_id = ? ORDER BY id DESC LIMIT 500');
@@ -141,6 +162,13 @@ $conn->close();
         .admin-form-row.full { grid-template-columns: 1fr; }
         .admin-form-group { margin-bottom:14px; }
         .form-hint { color:#6c757d; font-size:0.8rem; margin-top:4px; }
+
+        /* Mini shipping statuses (replacement) */
+        .ship-statuses { display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; }
+        .ship-box { background:#f8f9fa; border:1px solid #e1e6ea; border-radius:10px; padding:10px 12px; min-width:140px; text-align:center; }
+        .ship-box .status-label { font-weight:700; color:#293E4C; font-size:0.9rem; }
+        .ship-box .status-count { font-size:1.2rem; font-weight:800; color:#488C9A; }
+        .ship-box .status-unit { color:#6c757d; font-size:0.8rem; }
 
         /* Buttons */
         .btn-primary { background: linear-gradient(135deg, #488C9A, #3A6E7F); border:none; border-radius:12px; padding:12px 20px; box-shadow:0 10px 24px rgba(58,110,127,0.25); font-weight:700; color:#fff !important; cursor:pointer; display:inline-flex; align-items:center; gap:8px; }
@@ -246,6 +274,32 @@ $conn->close();
                         <div class="timeline-time"><?php echo htmlspecialchars($latest['event_ts']); ?> · Latest</div>
                         <div><?php echo htmlspecialchars($latest['event_text']); ?></div>
                     </div>
+                    
+                    <!-- Show replacement shipping status if we have linked pallets -->
+                    <?php if (!empty($linkedIds) && !empty($replacementStatusTotals)): ?>
+                        <div style="margin-top:15px; padding:15px; background:#f8fafc; border:1px solid #e6edf1; border-radius:10px;">
+                            <h6 style="margin:0 0 10px 0; color:#293E4C; font-weight:600; font-size:0.9em;">Replacement Module Status:</h6>
+                            <div class="replacement-shipping-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;">
+                                <?php 
+                                    $shipping_statuses = ['At Manufacturer','On Water','Cleared Customs','In Transit to Warehouse','In Warehouse','In Transit to Project','Delivered to Project'];
+                                    foreach ($shipping_statuses as $status):
+                                        $count = $replacementStatusTotals[$status]['pallets'] ?? 0;
+                                        $modules = $replacementStatusTotals[$status]['modules'] ?? 0;
+                                        if ($count <= 0) continue;
+                                ?>
+                                    <div class="replacement-status-box" style="background:#fff; border:1px solid #e8edf2; border-radius:8px; padding:8px; text-align:center; font-size:0.85em;">
+                                        <div style="font-weight:600; color:#293E4C; margin-bottom:3px;"><?php echo htmlspecialchars($status); ?></div>
+                                        <div style="font-size:1.1em; font-weight:700; color:#488C9A;"><?php echo $count; ?></div>
+                                        <div style="color:#6c757d; font-size:0.8em;">pallet<?php echo $count !== 1 ? 's' : ''; ?></div>
+                                        <?php if ($modules > 0): ?>
+                                            <div style="color:#6c757d; font-size:0.75em; margin-top:2px;"><?php echo $modules; ?> modules</div>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                    
                     <?php if (count($eventsPublic) > 1): ?>
                         <details>
                             <summary style="cursor:pointer; font-weight:600; color:#293E4C;">Show previous updates</summary>
@@ -408,15 +462,52 @@ $conn->close();
                                     <div class="admin-form-row full replacement-only">
                                         <div class="admin-form-group">
                                             <label class="form-label">Replacement Pallets</label>
-                                            <a class="btn btn-secondary" href="create_replacements.php?claim_id=<?php echo (int)$claimId; ?>">Create replacement pallet(s)</a>
-                                            <div class="form-hint">Currently linked: <?php echo (int)count($linkedIds); ?> pallet(s).</div>
-                                            <?php if (!empty($linkedIds)): ?>
-                                                <ul class="mt-2">
-                                                    <?php foreach ($linkedIds as $pid): ?>
-                                                        <li><?php echo htmlspecialchars($linkedMap[$pid] ?? ('ID '.$pid)); ?></li>
-                                                    <?php endforeach; ?>
-                                                </ul>
-                                            <?php endif; ?>
+                                            <div style="display: flex; flex-direction: column; gap: 15px;">
+                                                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                                                    <div>
+                                                        <div class="form-hint" style="margin: 0;">Currently linked: <strong><?php echo (int)count($linkedIds); ?> pallet(s)</strong></div>
+                                                    </div>
+                                                    <a class="btn btn-secondary" href="create_replacements.php?claim_id=<?php echo (int)$claimId; ?>" style="white-space: nowrap;">+ Create More Pallets</a>
+                                                </div>
+                                                
+                                                <?php if (!empty($linkedIds)): ?>
+                                                    <div style="background: #f8f9fa; border: 1px solid #e8edf2; border-radius: 10px; padding: 15px;">
+                                                        <h6 style="margin: 0 0 10px 0; color: #293E4C; font-weight: 600;">Linked Pallets:</h6>
+                                                        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                                            <?php foreach ($linkedIds as $pid): ?>
+                                                                <span style="background: #e8f4f6; color: #2c3e50; padding: 4px 10px; border-radius: 20px; font-size: 0.9em; font-weight: 600;">
+                                                                    <?php echo htmlspecialchars($linkedMap[$pid] ?? ('ID '.$pid)); ?>
+                                                                </span>
+                                                            <?php endforeach; ?>
+                                                        </div>
+                                                        
+                                                        <?php 
+                                                            $st = $replacementStatusTotals; 
+                                                            $statuses = ['At Manufacturer','On Water','Cleared Customs','In Transit to Warehouse','In Warehouse','In Transit to Project','Delivered to Project'];
+                                                            $hasAny = false; foreach ($statuses as $s) { if ((int)($st[$s]['pallets'] ?? 0) > 0) { $hasAny = true; break; } }
+                                                        ?>
+                                                        <?php if ($hasAny): ?>
+                                                            <div style="margin-top: 15px;">
+                                                                <h6 style="margin: 0 0 10px 0; color: #293E4C; font-weight: 600;">Shipping Status:</h6>
+                                                                <div class="ship-statuses">
+                                                                    <?php foreach ($statuses as $s): $p=(int)($st[$s]['pallets'] ?? 0); if ($p<=0) continue; ?>
+                                                                        <div class="ship-box">
+                                                                            <div class="status-label"><?php echo htmlspecialchars($s); ?></div>
+                                                                            <div class="status-count"><?php echo $p; ?></div>
+                                                                            <div class="status-unit">pallets</div>
+                                                                        </div>
+                                                                    <?php endforeach; ?>
+                                                                </div>
+                                                            </div>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                <?php else: ?>
+                                                    <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 10px; padding: 15px; text-align: center; color: #856404;">
+                                                        <strong>No replacement pallets linked yet.</strong><br>
+                                                        <span style="font-size: 0.9em;">Create replacement pallets to proceed with this resolution.</span>
+                                                    </div>
+                                                <?php endif; ?>
+                                            </div>
                                         </div>
                                     </div>
 
@@ -682,9 +773,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (fromStatus.startsWith('Pending ')) {
       const decApproveRadio = document.getElementById('dec_approve');
       if (decApproveRadio) decApproveRadio.checked = true;
-      if (sel) sel.value = 'Replacement';
+      if (resSelect) resSelect.value = 'Replacement';
+      // Force show replacement sections immediately
+      toggleReplacementSections();
       syncDecisionUi();
       updateNextStepHelp();
+      // Scroll to the replacement section to show the user what they just created
+      setTimeout(() => {
+        const replacementSection = document.querySelector('.replacement-only');
+        if (replacementSection) {
+          replacementSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
     }
   }
 

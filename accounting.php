@@ -261,12 +261,15 @@ while ($o = $resOrd->fetch_assoc()) {
 }
 $resOrd->close();
 
-// 3) delivered
+// 3) delivered (excluding damaged pallets)
 $sqlDel = "
-    SELECT project_id, SUM(quantity) AS sum_delivered
-      FROM deliveries
-     WHERE status_of_delivery IN ('Delivered to Project', 'Delivered to Warehouse')
-     GROUP BY project_id
+    SELECT d.project_id, SUM(d.quantity) AS sum_delivered
+      FROM deliveries d
+      LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
+      LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+     WHERE d.status_of_delivery IN ('Delivered to Project', 'Delivered to Warehouse')
+       AND (ip.id IS NULL OR ip.status NOT IN ('Damaged - Total Loss', 'Partially Damaged'))
+     GROUP BY d.project_id
 ";
 $resDel = $conn->query($sqlDel);
 while ($d = $resDel->fetch_assoc()) {
