@@ -106,18 +106,20 @@ try {
     } else if ($mode === 'manual') {
         // New manual mode: wattage + comma-separated list of modules-per-pallet; manufacturer and location required
         $wattages = isset($_POST['wattage']) ? (array)$_POST['wattage'] : [];
-        $lists = isset($_POST['mpp_list']) ? (array)$_POST['mpp_list'] : [];
+        $quantities = isset($_POST['quantity']) ? (array)$_POST['quantity'] : [];
+        $mpps = isset($_POST['modules_per_pallet']) ? (array)$_POST['modules_per_pallet'] : [];
         $manuIds = isset($_POST['manufacturer_id']) ? (array)$_POST['manufacturer_id'] : [];
         $locs = isset($_POST['location_id']) ? (array)$_POST['location_id'] : [];
 
-        $rowCount = max(count($wattages), count($lists));
+        $rowCount = max(count($wattages), count($quantities));
         for ($i=0; $i<$rowCount; $i++) {
             $watt = (int)($wattages[$i] ?? 0);
+            $qtyTotal = (int)($quantities[$i] ?? 0);
+            $mpp = (int)($mpps[$i] ?? 0);
             $manufacturerId = isset($manuIds[$i]) ? (int)$manuIds[$i] : 0;
             $locationIdRaw = $locs[$i] ?? '';
             $locationId = ($locationIdRaw === '' || $locationIdRaw === null) ? null : (int)$locationIdRaw;
-            $listRaw = (string)($lists[$i] ?? '');
-            if ($watt <= 0 || $manufacturerId <= 0 || $locationId === null || trim($listRaw) === '') continue;
+            if ($watt <= 0 || $qtyTotal <= 0 || $mpp <= 0 || $manufacturerId <= 0 || $locationId === null) continue;
 
             // Resolve manufacturer name for pallets
             $manufacturer = '';
@@ -145,10 +147,24 @@ try {
             $stmtUmi->close();
 
             $ins = $conn->prepare('INSERT INTO inventory_pallets (pallet_identifier, unassigned_module_item_id, assigned_project_id, wattage, quantity, status, manufacturer, manufacturer_location_id) VALUES (?, ?, ?, ?, ?, "At Manufacturer", ?, ?)');
-            $parts = array_filter(array_map('trim', explode(',', $listRaw)), fn($s)=>$s !== '');
-            foreach ($parts as $val) {
-                $q = (int)$val; if ($q <= 0) continue;
+            $full = intdiv($qtyTotal, $mpp);
+            $rem = $qtyTotal - ($full * $mpp);
+            for ($j=0; $j<$full; $j++) {
                 $empty = '';
+                $q = $mpp;
+                $ins->bind_param('siiidsi', $empty, $umiId, $projectId, $watt, $q, $manufacturer, $locationId);
+                $ins->execute();
+                $newId = (int)$conn->insert_id;
+                $pid = 'P' . $newId;
+                $u = $conn->prepare('UPDATE inventory_pallets SET pallet_identifier = ? WHERE id = ?');
+                $u->bind_param('si', $pid, $newId);
+                $u->execute();
+                $u->close();
+                $createdPalletIds[] = $newId;
+            }
+            if ($rem > 0) {
+                $empty = '';
+                $q = $rem;
                 $ins->bind_param('siiidsi', $empty, $umiId, $projectId, $watt, $q, $manufacturer, $locationId);
                 $ins->execute();
                 $newId = (int)$conn->insert_id;
@@ -180,7 +196,7 @@ try {
     // Do NOT post to public timeline now. Instead, set a flash message and
     // pre-fill approve state on the claim page via query string flags.
     $createdCount = count($createdPalletIds);
-    $_SESSION['flash_success'] = $createdCount . ' replacement pallet' . ($createdCount===1?'':'s') . ' created for this project and set to At Manufacturer.';
+    $_SESSION['flash_success'] = $createdCount . ' replacement pallet' . ($createdCount===1?'':'s') . ' created and linked to this claim. To officially create the pallets, select "Approve" and "Replacement", then click "Apply Decision".';
 
     $conn->close();
     header('Location: warranty_detail.php?id=' . $claimId . '&prefill=approve_replacement');

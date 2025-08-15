@@ -120,23 +120,254 @@ $conn->close();
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Create Replacement Pallets · Claim #<?php echo (int)$claimId; ?></title>
   <link rel="stylesheet" href="portal.css">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    .container { max-width: 1100px; margin:20px auto; background:#fff; border:1px solid #e9ecef; border-radius:14px; box-shadow:0 12px 36px rgba(0,0,0,0.06); }
-    .header { padding:16px 18px; border-bottom:1px solid #eef2f6; font-weight:700; }
-    .body { padding:18px; }
-    .plan-table { width:100%; border-collapse: collapse; }
+    .container { background:#fff; border:1px solid #e9ecef; border-radius:14px; box-shadow:0 12px 36px rgba(0,0,0,0.06); }
+    .header { 
+      padding:20px; 
+    }
+    .header h1 {
+    }
+    .header p {
+      margin: 10px 0 0 0;
+      opacity: 0.9;
+    }
+    .body { padding:40px; }
+    .plan-table { width:100%; border-collapse: collapse; margin-bottom: 20px; }
     .plan-table th, .plan-table td { padding:10px 12px; border-bottom:1px solid #eef2f6; text-align:left; }
     .actions { display:flex; gap:10px; margin-top:14px; }
-    .btn { border:none; border-radius:10px; padding:10px 14px; font-weight:600; cursor:pointer; }
+    .btn { border:none; border-radius:10px; padding:12px 24px; font-weight:600; cursor:pointer; transition: all 0.3s ease; }
     .btn-primary { background: linear-gradient(135deg, #488C9A, #3A6E7F); color:#fff; }
-    .btn-secondary { background:#f8f9fa; border:1px solid #e9ecef; }
-    .notice { background:#f8fafc; border:1px solid #e6edf1; padding:10px 12px; border-radius:10px; margin-bottom:10px; color:#243947; }
+    .btn-primary:hover { background: linear-gradient(135deg, #3A6E7F, #2F5D6A); }
+    .btn-secondary { background:#f8f9fa; border:1px solid #e9ecef; color: #6c757d; }
+    .btn-secondary:hover { background:#e9ecef; }
+    .notice { background:#f8fafc; border:1px solid #e6edf1; padding:15px 20px; border-radius:10px; margin-bottom:20px; color:#243947; }
+    
+    .form-section {
+      margin-bottom: 40px;
+      margin-top: 30px;
+      padding: 30px;
+      background: #f8f9fa;
+      border-radius: 12px;
+      border-left: 4px solid #488C9A;
+    }
+    
+    .form-section h2 {
+      color: #293E4C;
+      margin-bottom: 20px;
+      font-size: 1.3em;
+      font-weight: 600;
+    }
+    
+    .manual-container {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      border: 1px solid #dee2e6;
+    }
+    
+    .replacement-entry {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 20px;
+      padding: 20px;
+      background: #fff;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      transition: border-color 0.3s ease;
+    }
+    
+    .replacement-entry:hover {
+      border-color: #488C9A;
+    }
+    
+    .form-group {
+      margin-bottom: 0;
+    }
+    
+    .form-group label {
+      display: block;
+      font-weight: 600;
+      color: #293E4C;
+      margin-bottom: 8px;
+      font-size: 0.9em;
+    }
+    
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      font-size: 1rem;
+      transition: border-color 0.3s ease;
+      box-sizing: border-box;
+    }
+    
+    .form-group input:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: #488C9A;
+    }
+    
+    .add-entry-btn,
+    .remove-entry-btn {
+      padding: 12px 18px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.3s ease;
+    }
+    
+    .add-entry-btn {
+      background: #488C9A;
+      color: white;
+      margin-bottom: 20px;
+    }
+    
+    .add-entry-btn:hover {
+      background: #3A6E7F;
+    }
+    
+    .remove-entry-btn {
+      background: #dc3545;
+      color: white;
+      height: fit-content;
+    }
+    
+    .remove-entry-btn:hover {
+      background: #c82333;
+    }
+    
+    .pallet-preview {
+      background: #e8f5f8;
+      padding: 10px 15px;
+      border-radius: 6px;
+      margin-top: 10px;
+      font-size: 0.9em;
+      color: #2c5a66;
+      border: 1px solid #b8e3ec;
+    }
+    
+    /* Modal Styles */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.5);
+    }
+    
+    .modal-content {
+      background-color: #fefefe;
+      margin: 10% auto;
+      padding: 30px;
+      border-radius: 12px;
+      width: 90%;
+      max-width: 600px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    
+    .modal-header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    
+    .modal-header h2 {
+      color: #293E4C;
+      margin: 0;
+    }
+    
+    .modal-body {
+      margin-bottom: 20px;
+    }
+    
+    .pallet-summary {
+      background: #f8f9fa;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 15px 0;
+      border-left: 4px solid #488C9A;
+    }
+    
+    .modal-footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 15px;
+    }
+    
+    .modal-btn {
+      flex: 1;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    
+    .modal-btn-cancel {
+      background: #6c757d;
+      color: white;
+    }
+    
+    .modal-btn-cancel:hover {
+      background: #5a6268;
+    }
+    
+    .modal-btn-confirm {
+      background: #488C9A;
+      color: white;
+    }
+    
+    .modal-btn-confirm:hover {
+      background: #3A6E7F;
+    }
+    
+    @media (max-width: 768px) {
+      .container {
+        margin: 10px;
+      }
+      
+      .body {
+        padding: 20px;
+      }
+      
+      .form-section {
+        padding: 20px;
+      }
+      
+      .replacement-entry {
+        grid-template-columns: 1fr;
+        gap: 15px;
+      }
+      
+      .modal-content {
+        margin: 5% auto;
+        padding: 20px;
+      }
+      
+      .modal-footer {
+        flex-direction: column;
+      }
+    }
   </style>
 </head>
+
 <body>
 <?php include 'header.php'; ?>
+<main>
 <div class="container">
-  <div class="header">Create Replacement Pallets<br><span style="font-weight:400; color:#6c757d;">Project: <?php echo htmlspecialchars($projectName); ?> · Claim #<?php echo (int)$claimId; ?></span></div>
+  <div class="header">
+    <h1>Create Replacement Pallets</h1>
+    <p>Project: <?php echo htmlspecialchars($projectName); ?> · Claim #<?php echo (int)$claimId; ?></p>
+  </div>
   <div class="body">
     <div class="notice">Quick Replace will create pallets with status <strong>At Manufacturer</strong>. Manufacturer location is taken from the damaged pallets; pallets are packed as full pallets first with a partial pallet for any remaining modules.</div>
     <?php if (empty($quickPlan)) : ?>
@@ -179,109 +410,259 @@ $conn->close();
           <button type="submit" class="btn btn-primary">Quick Replace</button>
         </div>
       </form>
-      <hr style="margin:16px 0; border:none; border-top:1px solid #eef2f6;">
-      <form method="post" action="process_create_replacements.php" onsubmit="return validateManual();">
-        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf); ?>">
-        <input type="hidden" name="claim_id" value="<?php echo (int)$claimId; ?>">
-        <input type="hidden" name="mode" value="manual">
-        <div class="notice">Manual Builder: add one or more rows. Select Manufacturer and Location. Enter wattage and a comma-separated list of modules-per-pallet values (e.g., 30,30,28) to generate pallets.</div>
-        <table class="plan-table" id="manualTable">
-          <thead>
-            <tr>
-              <th>Wattage</th>
-              <th>Modules per Pallet (comma-separated)</th>
-              <th>Manufacturer</th>
-              <th>Location</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><input type="number" name="wattage[]" class="form-control" style="width:120px" required></td>
-              <td><input type="text" name="mpp_list[]" class="form-control" style="width:280px" placeholder="e.g., 30,30,28" required></td>
-              <td>
-                <select name="manufacturer_id[]" class="form-control" style="width:220px" onchange="syncLocationOptions(this)" required>
-                  <option value="">Select manufacturer</option>
-                  <?php foreach ($manufacturers as $m): ?>
-                    <option value="<?php echo (int)$m['id']; ?>"><?php echo htmlspecialchars($m['name']); ?></option>
-                  <?php endforeach; ?>
-                </select>
-              </td>
-              <td>
-                <select name="location_id[]" class="form-control" style="width:220px" required>
-                  <option value="">Select location</option>
-                  <?php foreach ($locations as $loc): ?>
-                    <option value="<?php echo (int)$loc['id']; ?>" data-manufacturer-id="<?php echo (int)$loc['manufacturer_id']; ?>"><?php echo htmlspecialchars($loc['name']); ?></option>
-                  <?php endforeach; ?>
-                </select>
-              </td>
-              <td><button type="button" class="btn btn-secondary" onclick="addManualRow()">＋</button></td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="actions">
-          <a class="btn btn-secondary" href="warranty_detail.php?id=<?php echo (int)$claimId; ?>">Cancel</a>
-          <button type="submit" class="btn btn-primary">Create (Manual)</button>
-        </div>
-      </form>
+      
+      <!-- Manual Builder Section -->
+      <div class="form-section">
+        <h2>Manual Builder</h2>
+        <div class="notice">Add one or more replacement entries. Enter wattage, total module quantity, and modules per pallet. Full pallets will be generated automatically with a partial pallet for any remainder.</div>
+        
+        <form method="post" action="process_create_replacements.php" onsubmit="return showConfirmationModal(event);" id="manualForm">
+          <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf); ?>">
+          <input type="hidden" name="claim_id" value="<?php echo (int)$claimId; ?>">
+          <input type="hidden" name="mode" value="manual">
+          
+          <div class="manual-container">
+            <div id="replacementEntries">
+              <div class="replacement-entry">
+                <div class="form-group">
+                  <label>Wattage (W) *</label>
+                  <input type="number" name="wattage[]" min="1" required onchange="updatePalletPreview(this)">
+                </div>
+                <div class="form-group">
+                  <label>Total Modules *</label>
+                  <input type="number" name="quantity[]" min="1" required onchange="updatePalletPreview(this)">
+                </div>
+                <div class="form-group">
+                  <label>Modules per Pallet *</label>
+                  <input type="number" name="modules_per_pallet[]" min="1" required onchange="updatePalletPreview(this)">
+                </div>
+                <div class="form-group">
+                  <label>Manufacturer *</label>
+                  <select name="manufacturer_id[]" onchange="syncLocationOptions(this)" required>
+                    <option value="">Select manufacturer</option>
+                    <?php foreach ($manufacturers as $m): ?>
+                      <option value="<?php echo (int)$m['id']; ?>"><?php echo htmlspecialchars($m['name']); ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Location *</label>
+                  <select name="location_id[]" required>
+                    <option value="">Select location</option>
+                    <?php foreach ($locations as $loc): ?>
+                      <option value="<?php echo (int)$loc['id']; ?>" data-manufacturer-id="<?php echo (int)$loc['manufacturer_id']; ?>"><?php echo htmlspecialchars($loc['name']); ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </div>
+                <div class="pallet-preview" style="grid-column: 1 / -1;"></div>
+              </div>
+            </div>
+            
+            <button type="button" class="add-entry-btn" onclick="addReplacementEntry()">+ Add Another Entry</button>
+          </div>
+          
+          <div class="actions">
+            <a class="btn btn-secondary" href="warranty_detail.php?id=<?php echo (int)$claimId; ?>">Cancel</a>
+            <button type="submit" class="btn btn-primary">Create Replacements</button>
+          </div>
+        </form>
+      </div>
     <?php endif; ?>
   </div>
 </div>
+
+<!-- Confirmation Modal -->
+<div id="confirmationModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>Confirm Replacement Creation</h2>
+    </div>
+    <div class="modal-body">
+      <p>You are about to create the following replacement pallets:</p>
+      <div id="modalSummary"></div>
+      <p><strong>Are you sure you want to proceed?</strong></p>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="modal-btn modal-btn-cancel" onclick="closeConfirmationModal()">Cancel</button>
+      <button type="button" class="modal-btn modal-btn-confirm" onclick="confirmSubmission()">Create Pallets</button>
+    </div>
+  </div>
+</div>
+
 <script>
-function addManualRow(){
-  const tb = document.getElementById('manualTable').querySelector('tbody');
-  const tr = document.createElement('tr');
-  tr.innerHTML = `
-    <td><input type=\"number\" name=\"wattage[]\" class=\"form-control\" style=\"width:120px\" required></td>
-    <td><input type=\"text\" name=\"mpp_list[]\" class=\"form-control\" style=\"width:280px\" placeholder=\"e.g., 30,30,28\" required></td>
-    <td>
-      <select name=\"manufacturer_id[]\" class=\"form-control\" style=\"width:220px\" onchange=\"syncLocationOptions(this)\" required>
-        <option value=\"\">Select manufacturer</option>
+// Add new replacement entry
+function addReplacementEntry() {
+  const container = document.getElementById('replacementEntries');
+  const newEntry = document.createElement('div');
+  newEntry.className = 'replacement-entry';
+  newEntry.innerHTML = `
+    <div class="form-group">
+      <label>Wattage (W) *</label>
+      <input type="number" name="wattage[]" min="1" required onchange="updatePalletPreview(this)">
+    </div>
+    <div class="form-group">
+      <label>Total Modules *</label>
+      <input type="number" name="quantity[]" min="1" required onchange="updatePalletPreview(this)">
+    </div>
+    <div class="form-group">
+      <label>Modules per Pallet *</label>
+      <input type="number" name="modules_per_pallet[]" min="1" required onchange="updatePalletPreview(this)">
+    </div>
+    <div class="form-group">
+      <label>Manufacturer *</label>
+      <select name="manufacturer_id[]" onchange="syncLocationOptions(this)" required>
+        <option value="">Select manufacturer</option>
         <?php foreach ($manufacturers as $m): ?>
-          <option value=\"<?php echo (int)$m['id']; ?>\"><?php echo htmlspecialchars($m['name']); ?></option>
+          <option value="<?php echo (int)$m['id']; ?>"><?php echo htmlspecialchars($m['name']); ?></option>
         <?php endforeach; ?>
       </select>
-    </td>
-    <td>
-      <select name=\"location_id[]\" class=\"form-control\" style=\"width:220px\" required>
-        <option value=\"\">Select location</option>
+    </div>
+    <div class="form-group">
+      <label>Location *</label>
+      <select name="location_id[]" required>
+        <option value="">Select location</option>
         <?php foreach ($locations as $loc): ?>
-          <option value=\"<?php echo (int)$loc['id']; ?>\" data-manufacturer-id=\"<?php echo (int)$loc['manufacturer_id']; ?>\"><?php echo htmlspecialchars($loc['name']); ?></option>
+          <option value="<?php echo (int)$loc['id']; ?>" data-manufacturer-id="<?php echo (int)$loc['manufacturer_id']; ?>"><?php echo htmlspecialchars($loc['name']); ?></option>
         <?php endforeach; ?>
       </select>
-    </td>
-    <td><button type="button" class="btn btn-secondary" onclick="this.closest('tr').remove()">—</button></td>
+    </div>
+    <div class="form-group" style="display: flex; align-items: end;">
+      <button type="button" class="remove-entry-btn" onclick="removeReplacementEntry(this)">Remove</button>
+    </div>
+    <div class="pallet-preview" style="grid-column: 1 / -1;"></div>
   `;
-  tb.appendChild(tr);
+  container.appendChild(newEntry);
 }
 
-function validateManual(){
-  const rows = document.querySelectorAll('#manualTable tbody tr');
-  for (const r of rows){
-    const mpp = r.querySelector('input[name="mpp_list[]"]').value.trim();
-    if (!mpp) { alert('Each row must include modules-per-pallet values.'); return false; }
-    const nums = mpp.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n) && n>0);
-    if (nums.length === 0) { alert('Modules per pallet values must be positive integers.'); return false; }
+// Remove replacement entry
+function removeReplacementEntry(button) {
+  const container = document.getElementById('replacementEntries');
+  if (container.children.length > 1) {
+    button.closest('.replacement-entry').remove();
+  } else {
+    alert('At least one replacement entry is required.');
   }
-  return true;
 }
+
+// Update pallet preview for an entry
+function updatePalletPreview(input) {
+  const entry = input.closest('.replacement-entry');
+  const wattage = parseInt(entry.querySelector('input[name="wattage[]"]').value) || 0;
+  const quantity = parseInt(entry.querySelector('input[name="quantity[]"]').value) || 0;
+  const modulesPerPallet = parseInt(entry.querySelector('input[name="modules_per_pallet[]"]').value) || 0;
+  const preview = entry.querySelector('.pallet-preview');
+  
+  if (quantity > 0 && modulesPerPallet > 0) {
+    const fullPallets = Math.floor(quantity / modulesPerPallet);
+    const partialModules = quantity % modulesPerPallet;
+    
+    let text = `${wattage}W: `;
+    if (fullPallets > 0) {
+      text += `${fullPallets} full pallet${fullPallets > 1 ? 's' : ''} (${fullPallets * modulesPerPallet} modules)`;
+    }
+    if (partialModules > 0) {
+      if (fullPallets > 0) text += ' + ';
+      text += `1 partial pallet (${partialModules} modules)`;
+    }
+    
+    preview.textContent = text;
+    preview.style.display = 'block';
+  } else {
+    preview.style.display = 'none';
+  }
+}
+
 // Filter locations when manufacturer changes
-function syncLocationOptions(manufacturerSelect){
-  const tr = manufacturerSelect.closest('tr');
+function syncLocationOptions(manufacturerSelect) {
+  const entry = manufacturerSelect.closest('.replacement-entry');
   const manuId = manufacturerSelect.value;
-  const locSel = tr.querySelector('select[name="location_id[]"]');
+  const locSel = entry.querySelector('select[name="location_id[]"]');
   if (!locSel) return;
+  
   Array.from(locSel.options).forEach(opt => {
     if (!opt.value) return;
     const mid = opt.getAttribute('data-manufacturer-id');
     opt.style.display = (!manuId || mid === manuId) ? '' : 'none';
   });
+  
   if (locSel.selectedIndex > 0) {
     const selOpt = locSel.options[locSel.selectedIndex];
     if (selOpt.style.display === 'none') locSel.value = '';
   }
 }
+
+// Show confirmation modal before submission
+function showConfirmationModal(event) {
+  event.preventDefault();
+  
+  const entries = document.querySelectorAll('.replacement-entry');
+  let summaryHtml = '';
+  let totalFullPallets = 0;
+  let totalPartialPallets = 0;
+  let totalModules = 0;
+  
+  for (const entry of entries) {
+    const wattage = parseInt(entry.querySelector('input[name="wattage[]"]').value) || 0;
+    const quantity = parseInt(entry.querySelector('input[name="quantity[]"]').value) || 0;
+    const modulesPerPallet = parseInt(entry.querySelector('input[name="modules_per_pallet[]"]').value) || 0;
+    const manufacturer = entry.querySelector('select[name="manufacturer_id[]"]').selectedOptions[0]?.text || '';
+    const location = entry.querySelector('select[name="location_id[]"]').selectedOptions[0]?.text || '';
+    
+    if (quantity > 0 && modulesPerPallet > 0) {
+      const fullPallets = Math.floor(quantity / modulesPerPallet);
+      const partialModules = quantity % modulesPerPallet;
+      
+      totalFullPallets += fullPallets;
+      if (partialModules > 0) totalPartialPallets++;
+      totalModules += quantity;
+      
+      summaryHtml += `
+        <div class="pallet-summary">
+          <strong>${wattage}W Modules</strong><br>
+          Manufacturer: ${manufacturer}<br>
+          Location: ${location}<br>
+          Total Modules: ${quantity}<br>
+          ${fullPallets > 0 ? `Full Pallets: ${fullPallets} (${fullPallets * modulesPerPallet} modules)<br>` : ''}
+          ${partialModules > 0 ? `Partial Pallet: 1 (${partialModules} modules)<br>` : ''}
+        </div>
+      `;
+    }
+  }
+  
+  summaryHtml += `
+    <div class="pallet-summary" style="border-left-color: #28a745; font-weight: bold;">
+      <strong>Total Summary:</strong><br>
+      ${totalFullPallets} full pallets + ${totalPartialPallets} partial pallet${totalPartialPallets !== 1 ? 's' : ''}<br>
+      ${totalModules} total modules
+    </div>
+  `;
+  
+  document.getElementById('modalSummary').innerHTML = summaryHtml;
+  document.getElementById('confirmationModal').style.display = 'block';
+  
+  return false;
+}
+
+// Close confirmation modal
+function closeConfirmationModal() {
+  document.getElementById('confirmationModal').style.display = 'none';
+}
+
+// Confirm and submit the form
+function confirmSubmission() {
+  closeConfirmationModal();
+  document.getElementById('manualForm').submit();
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+  const modal = document.getElementById('confirmationModal');
+  if (event.target === modal) {
+    closeConfirmationModal();
+  }
+}
 </script>
+</main>
 </body>
 </html>
 
