@@ -268,7 +268,7 @@ $sqlDel = "
       LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
       LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
      WHERE d.status_of_delivery IN ('Delivered to Project', 'Delivered to Warehouse')
-       AND (ip.id IS NULL OR ip.status NOT IN ('Damaged - Total Loss', 'Partially Damaged'))
+       AND (ip.id IS NULL OR ip.status != 'Damaged')
      GROUP BY d.project_id
 ";
 $resDel = $conn->query($sqlDel);
