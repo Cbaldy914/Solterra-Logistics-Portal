@@ -354,11 +354,10 @@ while ($row = $res_status->fetch_assoc()) {
 }
 $stmt_status->close();
 
-// Process warranty damaged pallets and add to status_totals
+// Process warranty damaged pallets for delivered damaged total calculation only
+// Note: Don't add to status_totals as damaged pallets are already counted with status='Damaged' in main loop
 foreach ($warranty_damaged_pallets as $damaged_pallet) {
     $damaged_qty = $damaged_pallet['damaged'];
-    $actual_qty = $damaged_pallet['actual'];
-    $wattage = $damaged_pallet['wattage'];
     $pallet_id = $damaged_pallet['pallet_id'];
     
     // Check if this damaged pallet was delivered to project site
@@ -378,38 +377,6 @@ foreach ($warranty_damaged_pallets as $damaged_pallet) {
     if ($is_delivered_to_project) {
         $delivered_damaged_total += $damaged_qty;
     }
-    
-    // Determine if total loss or partial damage
-    $damage_status = 'Damaged';
-    
-    // Add to status_totals
-    if (!isset($status_totals[$damage_status])) {
-        $status_totals[$damage_status] = ['pallets' => 0, 'modules' => 0];
-    }
-    $status_totals[$damage_status]['pallets'] += 1;
-    $status_totals[$damage_status]['modules'] += $damaged_qty;
-    
-    // Add to detailed_breakdown
-    if (!isset($detailed_breakdown[$damage_status])) {
-        $detailed_breakdown[$damage_status] = [
-            'pallet_count' => 0,
-            'total_modules' => 0,
-            'wattage_breakdown' => [],
-            'warehouse_id' => null,
-            'project_id' => $project_id
-        ];
-    }
-    $detailed_breakdown[$damage_status]['pallet_count']++;
-    $detailed_breakdown[$damage_status]['total_modules'] += $damaged_qty;
-    
-    if (!isset($detailed_breakdown[$damage_status]['wattage_breakdown'][$wattage])) {
-        $detailed_breakdown[$damage_status]['wattage_breakdown'][$wattage] = [
-            'pallets' => 0,
-            'modules' => 0
-        ];
-    }
-    $detailed_breakdown[$damage_status]['wattage_breakdown'][$wattage]['pallets']++;
-    $detailed_breakdown[$damage_status]['wattage_breakdown'][$wattage]['modules'] += $damaged_qty;
 }
 
 // Calculate combined totals - use status_totals for status data, total_orders for total_order
@@ -4630,25 +4597,17 @@ function generateShippingContent(filter){
             damaged_modules: <?php echo ($status_totals['Damaged']['modules'] ?? 0); ?>
         };
         
-        const totalExceptionPallets = exceptionsData.damaged_total_loss + exceptionsData.partially_damaged;
-        const totalExceptionModules = exceptionsData.damaged_total_loss_modules + exceptionsData.partially_damaged_modules;
+        const totalExceptionPallets = exceptionsData.damaged;
+        const totalExceptionModules = exceptionsData.damaged_modules;
         
         html += `<div style="margin-bottom:20px;padding:15px;background:#fff3e0;border-radius:8px;border-left:4px solid #f57c00;">` +
                `<h4 style="margin-top:0;color:#e65100;">⚠️ Module Exceptions</h4>` +
                `<p><strong>Total:</strong> ${totalExceptionPallets} pallets, ${totalExceptionModules.toLocaleString()} modules</p>`;
         
         // Show exception type breakdown
-        if (exceptionsData.damaged_total_loss > 0 || exceptionsData.partially_damaged > 0) {
+        if (exceptionsData.damaged > 0) {
             html += '<p><strong>Exception Breakdown:</strong></p><ul>';
-            
-            if (exceptionsData.damaged_total_loss > 0) {
-                html += `<li style="color:#d32f2f;"><strong>Damaged - Total Loss:</strong> ${exceptionsData.damaged_total_loss} pallets (${exceptionsData.damaged_total_loss_modules.toLocaleString()} modules)</li>`;
-            }
-            
-            if (exceptionsData.partially_damaged > 0) {
-                html += `<li style="color:#ff8f00;"><strong>Partially Damaged:</strong> ${exceptionsData.partially_damaged} pallets (${exceptionsData.partially_damaged_modules.toLocaleString()} modules)</li>`;
-            }
-            
+            html += `<li style="color:#d32f2f;"><strong>Damaged:</strong> ${exceptionsData.damaged} pallets (${exceptionsData.damaged_modules.toLocaleString()} modules)</li>`;
             html += '</ul>';
         }
         
