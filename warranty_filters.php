@@ -14,7 +14,7 @@ function getWarrantyFiltersFromRequest(): array {
         'statuses' => isset($src['statuses']) ? (array)$src['statuses'] : [],
         'date_from' => isset($src['date_from']) ? (string)$src['date_from'] : '',
         'date_to' => isset($src['date_to']) ? (string)$src['date_to'] : '',
-        'hide_closed' => isset($src['hide_closed']) ? (int)$src['hide_closed'] : 1,
+        'hide_closed' => isset($src['hide_closed']) ? (int)$src['hide_closed'] : 0,
         'search' => isset($src['search']) ? (string)$src['search'] : '',
     ];
     return $filters;
@@ -32,7 +32,7 @@ function loadPersistedWarrantyFilters(): array {
         'statuses' => [],
         'date_from' => '',
         'date_to' => '',
-        'hide_closed' => 1,
+        'hide_closed' => 0,
         'search' => '',
     ];
 }
