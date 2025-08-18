@@ -223,6 +223,7 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
             border: 1px solid rgba(72, 140, 154, 0.08);
             transition: all 0.3s ease;
             cursor: pointer;
+            position: relative;
         }
 
         .document-card:hover {
@@ -236,6 +237,8 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
             align-items: center;
             gap: 16px;
             margin-bottom: 16px;
+            position: relative;
+            padding-right: 44px; /* space for top-right checkbox */
         }
 
         .document-icon {
@@ -400,6 +403,7 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
             transition: all 0.3s ease;
             cursor: pointer;
             margin-bottom: 24px;
+            position: relative;
         }
 
         .upload-area:hover {
@@ -562,6 +566,62 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
             font-size: 0.9em;
         }
 
+        /* Pill-style checkbox in the top-right of each card */
+        .doc-select-pill {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: transparent;
+            border: 0;
+            padding: 0;
+            border-radius: 8px;
+            box-shadow: none;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .doc-select-pill input {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .document-card.selected {
+            border-color: rgba(72, 140, 154, 0.4);
+            box-shadow: 0 12px 35px rgba(72, 140, 154, 0.2);
+        }
+
+        /* Keep file input clickable in all browsers without using display:none */
+        .sr-file-input {
+            position: fixed;
+            left: -9999px;
+            width: 0.1px;
+            height: 0.1px;
+            opacity: 0;
+        }
+
+        /* Invisible overlay to ensure native click opens the picker reliably */
+        .overlay-file-input {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+            z-index: 1;
+        }
+
+        /* Inline notice inside documents container */
+        .inline-notice {
+            margin: 0 0 16px 0;
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+        .inline-notice.success { background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); color: #ffffff; }
+        .inline-notice.error { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: #ffffff; }
+
         @media (max-width: 768px) {
             main { padding: 15px; }
             .documents-container { padding: 20px; border-radius: 16px; }
@@ -649,7 +709,7 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
                         <div class="upload-subtext">
                             Supports: PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, TXT, CSV (Max: 50MB)
                         </div>
-                        <input type="file" id="fileInput" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv" multiple style="display: none;">
+                        <input type="file" id="fileInput" name="document" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv" multiple class="overlay-file-input">
                     </div>
                     
                     <div class="form-group">
@@ -715,8 +775,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     showError('Failed to load documents');
                 }
             })
-            .catch(error => {
-                console.error('Error loading documents:', error);
+            .catch(() => {
                 showError('Error loading documents');
             });
     }
@@ -759,9 +818,9 @@ document.addEventListener('DOMContentLoaded', function() {
                         </div>
                 </div>
             </div>
+                ${canUpload ? `<div class=\"doc-select-pill\"><input type=\"checkbox\" class=\"doc-select\" data-id=\"${doc.id}\" aria-label=\"Select document\"></div>` : ''}
                 ${doc.description ? `<div class=\"document-description\">${escapeHtml(doc.description)}</div>` : ''}
                 <div class="document-actions">
-                    ${canUpload ? `<label class=\"doc-select-label\"><input type=\"checkbox\" class=\"doc-select\" data-id=\"${doc.id}\"> <span>Select</span></label>` : ''}
                     <button class="btn-download" onclick="downloadDocument(${doc.id})">
                         <i class="fas fa-download"></i>
                         Download
@@ -776,7 +835,7 @@ document.addEventListener('DOMContentLoaded', function() {
         documentsList.innerHTML = '';
         documentsList.appendChild(documentsGrid);
 
-        // Wire up header select-all and delete button states
+        // Wire up header select-all and delete button states + card selection behavior
         const selectAll = document.getElementById('selectAllDocs');
         const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
         if (selectAll && deleteSelectedBtn) {
@@ -786,11 +845,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 deleteSelectedBtn.disabled = !anyChecked;
             };
             checkboxes.forEach(cb => cb.addEventListener('change', () => {
+                // toggle visual selection on its card
+                const card = cb.closest('.document-card');
+                if (card) card.classList.toggle('selected', cb.checked);
+                // header state
                 refreshDeleteState();
-                if (!cb.checked) selectAll.checked = false;
+                if (!cb.checked) {
+                    selectAll.checked = false;
+                } else {
+                    selectAll.checked = checkboxes.every(x => x.checked);
+                }
             }));
             selectAll.onchange = () => {
-                checkboxes.forEach(cb => cb.checked = selectAll.checked);
+                checkboxes.forEach(cb => {
+                    cb.checked = selectAll.checked;
+                    const card = cb.closest('.document-card');
+                    if (card) {
+                        card.classList.toggle('selected', cb.checked);
+                    }
+                });
                 refreshDeleteState();
             };
             deleteSelectedBtn.onclick = () => {
@@ -799,6 +872,32 @@ document.addEventListener('DOMContentLoaded', function() {
             };
             refreshDeleteState();
         }
+
+        // Card click toggles selection except when clicking on action buttons or the checkbox itself
+        documentsGrid.querySelectorAll('.document-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                const isButton = e.target.closest('.btn-download, .btn-delete');
+                const isCheckbox = e.target.closest('input[type="checkbox"]');
+                const inSelectPill = e.target.closest('.doc-select-pill');
+                if (isButton || isCheckbox || inSelectPill) return; // do not toggle on action/checkbox clicks
+                const checkbox = card.querySelector('.doc-select');
+                if (checkbox) {
+                    checkbox.checked = !checkbox.checked;
+                    card.classList.toggle('selected', checkbox.checked);
+                    // sync header buttons
+                    const selectAllCb = document.getElementById('selectAllDocs');
+                    if (selectAllCb) {
+                        const all = Array.from(document.querySelectorAll('.doc-select'));
+                        selectAllCb.checked = all.length > 0 && all.every(cb => cb.checked);
+                    }
+                    const delBtn = document.getElementById('deleteSelectedBtn');
+                    if (delBtn) {
+                        const anyChecked = Array.from(document.querySelectorAll('.doc-select')).some(cb => cb.checked);
+                        delBtn.disabled = !anyChecked;
+                    }
+                }
+            });
+        });
     }
 
     function updateDocumentCount(count) {
@@ -823,10 +922,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Upload modal functions
     window.openUploadModal = function() {
         const modal = document.getElementById('uploadModal');
-        
-        console.log('Opening upload modal');
-        console.log('Modal found:', modal);
-        
         modal.style.display = 'block';
         
         // Wait for modal to be visible, then set up listeners
@@ -840,44 +935,21 @@ document.addEventListener('DOMContentLoaded', function() {
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
         
-        console.log('Setting up modal listeners');
-        console.log('UploadArea found:', uploadArea);
-        console.log('FileInput found:', fileInput);
-        
-        if (!uploadArea || !fileInput) {
-            console.error('Upload area or file input not found!');
-            return;
-        }
+        if (!uploadArea || !fileInput) { return; }
         
         // Reset the file input
         fileInput.value = '';
-        console.log('File input reset');
         
         // Store references to prevent them from being lost
         window.modalUploadArea = uploadArea;
         window.modalFileInput = fileInput;
         
-        // Add click listener - robustly ensure a file input exists
+        // Because the input covers the upload area invisibly, we no longer need to proxy clicks.
+        // Keep a fallback click handler in case the overlay input is removed.
         uploadArea.onclick = function(e) {
-            e.preventDefault();
-            console.log('Upload area clicked');
-            let input = window.modalFileInput
-                || document.getElementById('fileInput')
-                || uploadArea.querySelector('#fileInput');
-            if (!input) {
-                console.warn('No file input present; creating a new one');
-                input = document.createElement('input');
-                input.type = 'file';
-                input.id = 'fileInput';
-                input.name = 'document';
-                input.accept = '.pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv';
-                input.multiple = true;
-                input.style.display = 'none';
-                input.onchange = function() { updateUploadArea(); };
-                uploadArea.appendChild(input);
-            }
-            window.modalFileInput = input;
-            console.log('Triggering file input click');
+            const input = document.getElementById('fileInput');
+            if (!input) return; // overlay handles it by default
+            if (e.target === input) return; // native click
             input.click();
         };
         
@@ -895,28 +967,19 @@ document.addEventListener('DOMContentLoaded', function() {
             e.preventDefault();
             e.stopPropagation();
             uploadArea.classList.remove('dragover');
-            
-            console.log('Files dropped');
             if (window.modalFileInput && e.dataTransfer.files.length > 0) {
-                console.log('Processing', e.dataTransfer.files.length, 'dropped files');
                 // Create a new FileList-like object
                 const dt = new DataTransfer();
                 for (let i = 0; i < e.dataTransfer.files.length; i++) {
                     dt.items.add(e.dataTransfer.files[i]);
                 }
                 window.modalFileInput.files = dt.files;
-                console.log('Files assigned to input:', window.modalFileInput.files.length);
                 updateUploadArea();
-            } else {
-                console.error('Stored FileInput not found during drop or no files');
-            }
+            } else { /* no-op */ }
         };
         
         // Add change listener to file input
-        fileInput.onchange = function() {
-            console.log('File input changed, files:', fileInput.files.length);
-            updateUploadArea();
-        };
+        fileInput.onchange = function() { updateUploadArea(); };
     }
 
     window.closeUploadModal = function() {
@@ -929,18 +992,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const uploadArea = document.getElementById('uploadArea');
         let fileInput = window.modalFileInput || document.getElementById('fileInput');
         
-        // Debug logging
-        console.log('updateUploadArea called');
-        console.log('using stored reference:', !!window.modalFileInput);
-        console.log('fileInput:', fileInput);
-        console.log('uploadArea:', uploadArea);
-        console.log('fileInput.files:', fileInput ? fileInput.files : 'no fileInput');
-        console.log('fileInput.files.length:', fileInput && fileInput.files ? fileInput.files.length : 'no files');
-        
-        if (!uploadArea) {
-            console.error('Upload area not found');
-            return;
-        }
+        if (!uploadArea) { return; }
         
         let contentHTML = '';
         if (fileInput && fileInput.files && fileInput.files.length > 0) {
@@ -998,7 +1050,7 @@ document.addEventListener('DOMContentLoaded', function() {
             fileInput.accept = '.pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv';
             fileInput.multiple = true;
         }
-        fileInput.style.display = 'none';
+        fileInput.className = 'overlay-file-input';
         fileInput.onchange = function() { updateUploadArea(); };
         if (!uploadArea.contains(fileInput)) {
             uploadArea.appendChild(fileInput);
@@ -1014,28 +1066,18 @@ document.addEventListener('DOMContentLoaded', function() {
         const progressBar = document.getElementById('progressBar');
         const progressFill = document.getElementById('progressFill');
 
-        // Debug logging
-        console.log('Upload function called');
-        console.log('Using stored reference:', !!window.modalFileInput);
-        console.log('fileInput:', fileInput);
-        console.log('fileInput.files:', fileInput ? fileInput.files : 'fileInput is null');
-        console.log('fileInput.files.length:', fileInput && fileInput.files ? fileInput.files.length : 'no files');
-
         if (!fileInput) {
             alert('File input not found');
-            console.error('Could not locate file input element');
             return;
         }
         
         if (!fileInput.files) {
             alert('No files property found');
-            console.error('FileInput has no files property');
             return;
         }
         
         if (!fileInput.files.length) {
             alert('Please select a file to upload');
-            console.error('FileInput.files.length is 0');
             return;
         }
 
@@ -1114,7 +1156,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
         } catch (error) {
-            console.error('Upload error:', error);
             alert(`Upload failed: ${error.message}`);
         } finally {
             uploadBtn.disabled = false;
@@ -1147,70 +1188,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert(data.message || 'Failed to delete');
             }
         } catch (err) {
-            console.error('Delete error:', err);
             alert('Delete request failed');
         }
     };
-
-    // Debug function - can be called from console
-    window.debugFileInput = function() {
-        let fileInput = document.getElementById('fileInput');
-        const uploadArea = document.getElementById('uploadArea');
-        const modal = document.getElementById('uploadModal');
-        
-        console.log('=== DEBUG FILE INPUT ===');
-        console.log('Direct getElementById fileInput:', fileInput);
-        
-        // Try finding in modal
-        if (!fileInput && modal) {
-            fileInput = modal.querySelector('#fileInput');
-            console.log('fileInput found in modal:', fileInput);
-        }
-        
-        // Try finding by name
-        const fileInputByName = document.querySelector('input[name="document"]');
-        console.log('fileInput by name attribute:', fileInputByName);
-        
-        // Try finding all file inputs
-        const allFileInputs = document.querySelectorAll('input[type="file"]');
-        console.log('All file inputs found:', allFileInputs);
-        
-        console.log('fileInput.files:', fileInput ? fileInput.files : 'fileInput is null');
-        console.log('fileInput.files.length:', fileInput && fileInput.files ? fileInput.files.length : 'no files');
-        console.log('uploadArea:', uploadArea);
-        console.log('modal:', modal);
-        console.log('modal display:', modal ? modal.style.display !== 'none' : 'no modal');
-        
-        if (fileInput && fileInput.files) {
-            for (let i = 0; i < fileInput.files.length; i++) {
-                console.log(`File ${i}:`, fileInput.files[i]);
-            }
-        }
-        
-        return {
-            fileInput: fileInput,
-            fileInputByName: fileInputByName,
-            allFileInputs: allFileInputs,
-            files: fileInput ? fileInput.files : null,
-            fileCount: fileInput && fileInput.files ? fileInput.files.length : 0,
-            modalVisible: modal ? modal.style.display !== 'none' : false
-        };
-    };
-
-    // Test function to simulate file selection
-    window.testFileUpload = function() {
-        console.log('=== TESTING FILE UPLOAD ===');
-        const debug = debugFileInput();
-        
-        if (debug.fileInput) {
-            console.log('FileInput found, triggering click...');
-            debug.fileInput.click();
-        } else {
-            console.log('FileInput not found, cannot test');
-        }
-        
-        return debug;
-    };
+    // (debug helpers removed)
 
     // Helper functions
     function getIconClass(icon) {
@@ -1235,26 +1216,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function showNotification(message, type = 'success') {
-        // Simple notification - you can enhance this
-        const notification = document.createElement('div');
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: ${type === 'success' ? '#22c55e' : '#ef4444'};
-            color: white;
-            padding: 16px 24px;
-            border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-            z-index: 1001;
-            font-weight: 500;
-        `;
-        notification.textContent = message;
-        document.body.appendChild(notification);
-
-        setTimeout(() => {
-            notification.remove();
-        }, 3000);
+        // Inline banner inside documents container instead of fixed toast covering header
+        const container = document.querySelector('.documents-container') || document.querySelector('main');
+        if (!container) return alert(message);
+        const banner = document.createElement('div');
+        banner.className = `inline-notice ${type}`;
+        banner.textContent = message;
+        container.insertBefore(banner, container.firstChild);
+        setTimeout(() => { banner.remove(); }, 3000);
     }
 
     // Close modal when clicking outside
