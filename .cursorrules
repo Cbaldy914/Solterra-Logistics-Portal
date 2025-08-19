@@ -1,0 +1,381 @@
+# Solterra Logistics Portal - AI Assistant Context & Rules
+
+## 🏢 BUSINESS OVERVIEW
+
+### What This System Does
+Solterra Solutions operates a **solar logistics management platform** that handles:
+- **Solar panel/module tracking** throughout supply chain
+- **Multi-tenant customer account management** (DESRI, DDPM, etc.)
+- **Warehouse & delivery coordination** across multiple locations
+- **Document management** for compliance & operations
+- **Financial tracking** (invoices, accounts payable, freight costs)
+- **Project lifecycle management** from planning to delivery
+
+### Key Business Entities
+- **Customer Accounts**: DESRI, DDPM Test, Test Account (multi-tenant)
+- **Projects**: Solar installations (Babacomari, DDPm, Morgan Test, etc.)
+- **Modules**: Individual solar panels with serial numbers & wattages  
+- **Warehouses**: Storage & distribution centers (including ports)
+- **Deliveries**: Shipments between locations (domestic & overseas)
+- **Documents**: Compliance, invoices, PODs, test data, etc.
+
+## 🗄️ DATABASE SCHEMA
+
+### Core Tables (38 total)
+```sql
+-- USERS & ACCOUNTS
+users (id, username, email, password, role)
+customer_accounts (id, name) 
+customer_account_users (user_id, account_id, role)
+account_users (account_id, user_id, role) -- Legacy table
+
+-- PROJECTS & LOGISTICS  
+projects (id, account_id, project_name, warehouse_id, street_address, city, state, zip_code)
+deliveries (id, project_id, supplier, origin_type, warehouse_id, container_number, is_overseas_shipment)
+inventory_pallets (id, current_warehouse_id, current_project_id, assigned_project_id)
+modules (id, project_id, serial_number, wattage, pallet_id)
+
+-- DOCUMENTS & FILES
+project_documents (id, project_id, document_type, file_path, uploaded_by, is_active)
+-- document_types: invoices, pods, flash_test_data, bills_of_lading, warehousing, 
+--                 modules, delivery_packet, incident_reports, safe_harbor_evidence
+
+-- WAREHOUSES & LOCATIONS
+warehouses (id, name, address, is_port, country)
+manufacturers (id, name, country)
+manufacturer_locations (id, manufacturer_id, location_name, address)
+
+-- FINANCIAL
+accounts_payable (id, vendor_name, project_id, amount, receipt_file)
+project_invoices (id, project_id, invoice_number, amount)
+freight_estimates (id, user_id, origin, destination, estimated_cost)
+warehouse_estimates (id, project_id, estimated_cost)
+
+-- SPECIALIZED
+flash_test_data (id, project_id, test_data)
+warranty_claims (id, module_id, claim_status, replacement_serial)
+site_safety (id, project_id, safety_requirements)
+sunny_memory (id, user_id, title, content) -- AI assistant memory
+```
+
+### Key Relationships & Foreign Keys
+```sql
+-- Core hierarchy: customer_accounts → projects → modules/deliveries/documents
+customer_accounts.id → projects.account_id (CASCADE)
+projects.id → project_documents.project_id (CASCADE)
+projects.id → modules.project_id (CASCADE)
+projects.id → deliveries.project_id (CASCADE)
+
+-- User permissions
+users.id → customer_account_users.user_id (CASCADE)
+customer_accounts.id → customer_account_users.account_id (CASCADE)
+
+-- Logistics chain
+warehouses.id → projects.warehouse_id (SET NULL)
+warehouses.id → deliveries.warehouse_id (SET NULL)
+warehouses.id → inventory_pallets.current_warehouse_id (SET NULL)
+
+-- Document tracking
+users.id → project_documents.uploaded_by (CASCADE)
+```
+
+### Sample Data Context
+```sql
+-- Customer Accounts
+(1, 'DESRI'), (2, 'DDPM Test'), (3, 'Test Account')
+
+-- Projects  
+(24, 1, 'Babacomari', 'Huachuca City, AZ') -- DESRI project
+(27, 2, 'DDPm', 'Raleigh, NC') -- DDPM Test project
+(134, 3, 'Test Project', 'RALEIGH, NC') -- Test Account project
+
+-- Users & Roles
+(1, 'adminuser', 'admin'), (3, 'Test', 'user'), (5, 'DESRI', 'user')
+-- Role mappings: global_admin, admin, user, DDPm, carrier
+
+-- Document Types in Use
+modules, delivery_packet, invoices, pods, flash_test_data, etc.
+```
+
+## 🔐 PERMISSION SYSTEM
+
+### User Roles & Access
+```php
+// Role hierarchy (most to least access)
+'global_admin' => 'Full system access, all accounts/projects'
+'admin'        => 'Full access to their account\'s projects only'  
+'user'         => 'Read-only access to their account\'s projects'
+'DDPm'         => 'Special delivery/logistics user'
+'carrier'      => 'Limited carrier-specific access'
+```
+
+### Access Control Pattern
+```php
+// Every operation MUST verify:
+1. User is logged in ($_SESSION['user_id'])
+2. User has role permission ($_SESSION['role'])
+3. Project belongs to user's account (via customer_account_users)
+
+// Standard access check:
+if ($user_role === 'admin') {
+    // Check project belongs to admin's account
+    "SELECT p.id FROM projects p 
+     JOIN customer_account_users cau ON p.account_id = cau.account_id 
+     WHERE p.id = ? AND cau.user_id = ? AND cau.role = 'admin'"
+} elseif ($user_role === 'global_admin') {
+    // Global admin can access any project
+    "SELECT id FROM projects WHERE id = ?"
+}
+```
+
+## 📁 APPLICATION ARCHITECTURE
+
+### File Organization
+```
+/Solterra-Logistics-Portal/
+├── documents.php                    # Main document hub
+├── project_documents.php           # Project-specific document folders
+├── modules_docs.php                # Module documents  
+├── ftd.php                         # Flash test data
+├── safe_harbor_evidence.php       # Safe harbor documents
+├── bills_of_lading.php            # Bill of lading documents
+├── warehousing_docs.php           # Warehousing documents
+├── delivery_packet.php            # Delivery packet documents
+├── incident_reports.php           # Incident reports
+└── [document_type].php            # Other document management pages
+
+# Shared backend files
+├── get_project_documents.php      # Fetch documents via AJAX
+├── upload_project_document.php    # Handle file uploads
+├── delete_project_documents.php   # Delete documents (HARD DELETE)
+├── download_document.php          # Secure file downloads
+```
+
+### Document Management Flow
+```
+1. documents.php → Shows all customer accounts' projects
+2. project_documents.php?project_id=X → Shows 9 document type folders  
+3. [type]_docs.php?project_id=X → Specific document type management
+4. All share same backend: get/upload/delete/download_project_document.php
+```
+
+### Common Patterns
+```php
+// Session management
+session_name("logistics_session");
+session_start();
+
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+
+// File upload structure
+uploads/project_documents/{project_id}/{document_type}/filename.ext
+
+// AJAX responses
+echo json_encode(['success' => true, 'message' => 'Operation successful']);
+```
+
+## 🚨 CRITICAL RULES & PATTERNS
+
+### Database Operations
+```php
+// ALWAYS use prepared statements
+$stmt = $conn->prepare("SELECT * FROM projects WHERE id = ?");
+$stmt->bind_param("i", $project_id);
+
+// Document queries MUST filter by is_active = 1 (except after our hard delete fix)
+"SELECT * FROM project_documents WHERE project_id = ? AND is_active = 1"
+
+// Access verification REQUIRED before any operation
+// Never expose cross-account data
+```
+
+### Security Requirements
+```php
+// 1. ALWAYS verify user login
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login");
+    exit();
+}
+
+// 2. ALWAYS verify project access  
+// 3. ALWAYS validate file uploads (type, size, path)
+// 4. ALWAYS use parameterized queries
+// 5. ALWAYS sanitize file paths and names
+```
+
+### Document Deletion (RECENTLY FIXED)
+```php
+// OLD (broken): Soft delete only
+"UPDATE project_documents SET is_active = 0 WHERE id = ?"
+
+// NEW (fixed): Hard delete 
+"DELETE FROM project_documents WHERE id = ?"
+// + Remove physical file from disk
+```
+
+### File Upload Standards
+```php
+// Allowed types per document category
+$allowed_types = [
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 
+    'jpg', 'jpeg', 'png', 'gif', 'txt', 'csv'
+];
+
+// Size limit: 50MB per file
+// Path structure: uploads/project_documents/{project_id}/{document_type}/
+// Filename format: {timestamp}_{hash}_{original_name}
+```
+
+## 🎯 BUSINESS LOGIC & WORKFLOWS
+
+### Solar Logistics Chain
+```
+1. Manufacturer → Creates modules with serial numbers
+2. Warehouse → Receives & stores module pallets  
+3. Project → Modules assigned & delivered to solar farms
+4. Documents → Track entire chain (invoices, PODs, test data)
+```
+
+### Typical Document Workflow
+```
+1. Project created for customer account
+2. Admin/Global_admin uploads documents to 9 categories:
+   - invoices, pods, flash_test_data, bills_of_lading
+   - warehousing, modules, delivery_packet, incident_reports, safe_harbor_evidence
+3. Users can view/download based on permissions
+4. Document deletion now removes from database (hard delete)
+```
+
+### Multi-Tenant Architecture
+```
+- Each customer account (DESRI, DDPM) is isolated
+- Projects belong to specific accounts  
+- Users assigned to accounts via customer_account_users
+- No cross-account data access (except global_admin)
+```
+
+## 🛠️ DEVELOPMENT GUIDELINES
+
+### Error Handling
+```php
+// Database operations
+if (!$stmt) {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'Database error']);
+    exit();
+}
+
+// File operations  
+if (!move_uploaded_file($tmp_file, $target_path)) {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'File upload failed']);
+    exit();
+}
+```
+
+### AJAX Response Format
+```javascript
+// Success
+{success: true, message: 'Operation completed', data: {...}}
+
+// Error  
+{success: false, message: 'Error description', error: '...'}
+```
+
+### CSS/UI Patterns
+```css
+/* Solterra brand colors */
+primary: #488C9A (teal)
+secondary: #293E4C (dark blue)
+gradient: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%)
+
+/* Common classes */
+.btn-download, .btn-delete, .btn-upload
+.document-card, .project-card
+.search-input, .upload-area
+```
+
+## 📊 PERFORMANCE & SCALING
+
+### Common Queries to Optimize
+```sql
+-- User's accessible projects (frequently used)
+SELECT p.* FROM projects p 
+JOIN customer_account_users cau ON p.account_id = cau.account_id 
+WHERE cau.user_id = ? AND cau.role IN ('admin', 'user')
+
+-- Project documents with filters
+SELECT pd.* FROM project_documents pd 
+WHERE pd.project_id = ? AND pd.document_type = ? AND pd.is_active = 1
+ORDER BY pd.uploaded_at DESC
+
+-- File size tracking
+SELECT SUM(file_size) FROM project_documents WHERE project_id = ?
+```
+
+### Indexes to Monitor
+```sql
+-- Key indexes for performance
+project_documents: (project_id, document_type, is_active)
+customer_account_users: (user_id, account_id)  
+projects: (account_id)
+deliveries: (project_id, warehouse_id)
+```
+
+## 🐛 KNOWN ISSUES & RECENT FIXES
+
+### Recently Fixed
+✅ **Document Deletion**: Changed from soft delete to hard delete in delete_project_documents.php
+✅ **Cross-Account Security**: All document operations verify project access
+✅ **File Upload**: Multi-file upload support with progress tracking
+
+### Watch Out For
+⚠️ **File Path Handling**: Different environments may have path issues
+⚠️ **Large File Uploads**: 50MB limit may timeout on slow connections  
+⚠️ **Database Connections**: High load may require connection pooling
+⚠️ **Legacy Tables**: Both `account_users` and `customer_account_users` exist
+
+### Testing Checklist
+```
+□ Test with different user roles (admin vs global_admin vs user)
+□ Verify cross-account access restrictions  
+□ Test file upload/download/deletion operations
+□ Check search and filtering functions
+□ Verify document type categorization
+□ Test overseas shipment handling
+□ Validate financial calculations
+```
+
+## 🔧 INTEGRATION POINTS
+
+### External Systems
+- **File Storage**: Local filesystem under uploads/
+- **Email**: Password reset, notifications (if implemented)
+- **Shipping APIs**: Potential freight cost calculations
+- **Accounting**: Export capabilities for financial data
+
+### API Endpoints (AJAX)
+```
+GET  get_project_documents.php?project_id=X&document_type=Y
+POST upload_project_document.php (multipart/form-data)
+POST delete_project_documents.php (JSON: {ids: [1,2,3]})
+GET  download_document.php?id=X
+```
+
+---
+
+## 💡 AI ASSISTANT NOTES
+
+When helping with this codebase:
+
+1. **Always verify user permissions** before suggesting any database operations
+2. **Check project access** via customer_account_users table relationships  
+3. **Use hard deletes** for documents (recently fixed)
+4. **Follow established patterns** for AJAX responses and error handling
+5. **Respect multi-tenant isolation** - never expose other accounts' data
+6. **Consider file system operations** when modifying database records
+7. **Test across user roles** when implementing new features
+
+This system handles **sensitive business data** for solar logistics operations. Security and data isolation are paramount.
