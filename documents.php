@@ -32,7 +32,7 @@ $stmt->close();
 
 // Fetch projects associated with the account
 $stmt = $conn->prepare("
-    SELECT p.id, p.project_name 
+    SELECT p.id, p.project_name, p.image_url 
     FROM projects p 
     JOIN customer_accounts ca ON p.account_id = ca.id 
     WHERE ca.id = ?
@@ -206,7 +206,7 @@ while ($project = $projects_result->fetch_assoc()) {
         /* Enhanced Project Grid */
         .projects-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(415px, 1fr));
             gap: 24px;
             margin-top: 20px;
         }
@@ -253,8 +253,8 @@ while ($project = $projects_result->fetch_assoc()) {
         }
 
         .project-icon {
-            width: 56px;
-            height: 56px;
+            width: 150px;
+            height: 110px;
             background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
             border-radius: 16px;
             display: flex;
@@ -264,6 +264,11 @@ while ($project = $projects_result->fetch_assoc()) {
             font-size: 24px;
             box-shadow: 0 8px 20px rgba(72, 140, 154, 0.3);
             transition: transform 0.3s ease;
+            overflow: hidden;
+        }
+
+        .project-icon img {
+            border-radius: 16px;
         }
 
         .project-card:hover .project-icon {
@@ -463,7 +468,11 @@ while ($project = $projects_result->fetch_assoc()) {
                 <div class="project-card">
                     <div class="project-header">
                         <div class="project-icon">
-                            <i class="fas fa-solar-panel"></i>
+                            <?php if (!empty($project['image_url']) && file_exists($project['image_url'])): ?>
+                                <img src="<?php echo htmlspecialchars($project['image_url']); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" style="width: 100%; height: 100%; object-fit: cover; border-radius: 16px;">
+                            <?php else: ?>
+                                <i class="fas fa-solar-panel"></i>
+                            <?php endif; ?>
                         </div>
                         <div class="project-info">
                             <a href="project_documents?project_id=<?php echo $project['id']; ?>" class="project-title">
