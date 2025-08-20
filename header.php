@@ -183,7 +183,13 @@ if (isset($_SESSION['role'])) {
                     </div>
                 </li>
 
-                <li><a href="documents">Documents</a></li>
+                <li class="dropdown">
+                    <a href="#" class="dropbtn">Documents</a>
+                    <div class="dropdown-content">
+                        <a href="documents">Project Documents</a>
+                        <a href="global_documents">Global Documents</a>
+                    </div>
+                </li>
                 <li class="dropdown profile-dropdown">
                 <!-- Avatar or icon that opens the dropdown -->
                     <a href="#" class="dropbtn profile-avatar"><span class="profile-initials"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></span></a>
@@ -217,7 +223,13 @@ if (isset($_SESSION['role'])) {
                 </li>
 
                 <li><a href="freight_estimate">Freight</a></li>
-                <li><a href="documents">Documents</a></li>
+                <li class="dropdown">
+                    <a href="#" class="dropbtn">Documents</a>
+                    <div class="dropdown-content">
+                        <a href="documents">Project Documents</a>
+                        <a href="global_documents">Global Documents</a>
+                    </div>
+                </li>
                 <li><a href="questions">Questions</a></li>
                 <li><a href="logout" class="logout">Sign Out</a></li>           
             <?php else: ?>
@@ -251,7 +263,13 @@ if (isset($_SESSION['role'])) {
                 </li>
 
                 <li><a href="freight_estimate">Freight</a></li>
-                <li><a href="documents">Documents</a></li>
+                <li class="dropdown">
+                    <a href="#" class="dropbtn">Documents</a>
+                    <div class="dropdown-content">
+                        <a href="documents">Project Documents</a>
+                        <a href="global_documents">Global Documents</a>
+                    </div>
+                </li>
                 <li class="dropdown profile-dropdown">
                 <!-- Avatar or icon that opens the dropdown -->
                     <a href="#" class="dropbtn profile-avatar"><span class="profile-initials"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></span></a>

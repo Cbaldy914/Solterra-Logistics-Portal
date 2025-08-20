@@ -439,23 +439,29 @@ while ($project = $projects_result->fetch_assoc()) {
         <span>Documents</span>
     </div>
 
-    <div class="documents-header">
-        <div class="documents-title">
-            <i class="fas fa-folder-open"></i>
-            <h1>Documents</h1>
-        </div>
-        
-        <div class="documents-stats">
-            <div class="stat-item">
-                <p class="stat-number"><?php echo count($projects); ?></p>
-                <p class="stat-label">Projects</p>
+            <div class="documents-header">
+            <div class="documents-title">
+                <i class="fas fa-folder-open"></i>
+                <h1>Documents</h1>
             </div>
-            <div class="stat-item">
-                <p class="stat-number"><?php echo count($projects) * 9; ?></p>
-                <p class="stat-label">Document Types</p>
+            
+            <div class="documents-stats">
+                <div class="stat-item">
+                    <p class="stat-number"><?php echo count($projects); ?></p>
+                    <p class="stat-label">Projects</p>
+                </div>
+                <div class="stat-item">
+                    <p class="stat-number"><?php echo count($projects) * 9; ?></p>
+                    <p class="stat-label">Document Types</p>
+                </div>
+                <div class="stat-item">
+                    <a href="global_documents" style="text-decoration: none; color: inherit;">
+                        <p class="stat-number">🌍</p>
+                        <p class="stat-label">Global View</p>
+                    </a>
+                </div>
             </div>
         </div>
-    </div>
 
     <div class="search-container">
         <input type="text" id="projectFilter" class="search-input" placeholder="Search projects...">

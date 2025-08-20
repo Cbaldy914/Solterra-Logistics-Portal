@@ -1,0 +1,227 @@
+<?php
+// Clean output buffer and suppress any warnings
+if (ob_get_level()) {
+    ob_end_clean();
+}
+ob_start();
+
+// Set content type header
+header('Content-Type: application/json');
+
+session_name("logistics_session");
+session_start();
+
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    ob_end_clean();
+    http_response_code(401);
+    echo json_encode(['success' => false, 'message' => 'Not logged in']);
+    exit();
+}
+
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    ob_end_clean();
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'Database connection failed']);
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+$user_role = $_SESSION['role'];
+
+// Get filter parameters
+$project_id = intval($_GET['project_id'] ?? 0);
+$document_type = trim($_GET['document_type'] ?? '');
+$start_date = trim($_GET['start_date'] ?? '');
+$end_date = trim($_GET['end_date'] ?? '');
+$search = trim($_GET['search'] ?? '');
+$sub_filters = $_GET['sub_filters'] ?? [];
+$page = max(1, intval($_GET['page'] ?? 1));
+$page_size = max(1, min(1000, intval($_GET['page_size'] ?? 100))); // Max 1000 per page
+
+// Build the base query with proper permission checking
+$base_sql = "
+    SELECT 
+        pd.id,
+        pd.original_file_name as filename,
+        pd.file_size,
+        pd.mime_type,
+        pd.uploaded_at,
+        pd.description,
+        pd.file_path,
+        pd.document_type,
+        pd.project_id,
+        p.project_name,
+        u.username as uploaded_by_name
+    FROM project_documents pd
+    LEFT JOIN users u ON pd.uploaded_by = u.id
+    JOIN projects p ON pd.project_id = p.id
+";
+
+// Add permission-based WHERE clause
+$where_conditions = ["pd.is_active = 1"];
+$params = [];
+$param_types = "";
+
+if ($user_role === 'global_admin') {
+    // Global admin can access all projects - no additional WHERE needed
+} else {
+    // Admin and regular users can only access their account's projects
+    $where_conditions[] = "p.account_id IN (
+        SELECT account_id 
+        FROM customer_account_users 
+        WHERE user_id = ?
+    )";
+    $params[] = $user_id;
+    $param_types .= "i";
+}
+
+// Add filter conditions
+if ($project_id > 0) {
+    $where_conditions[] = "pd.project_id = ?";
+    $params[] = $project_id;
+    $param_types .= "i";
+}
+
+if (!empty($document_type)) {
+    $where_conditions[] = "pd.document_type = ?";
+    $params[] = $document_type;
+    $param_types .= "s";
+}
+
+if (!empty($start_date)) {
+    $where_conditions[] = "DATE(pd.uploaded_at) >= ?";
+    $params[] = $start_date;
+    $param_types .= "s";
+}
+
+if (!empty($end_date)) {
+    $where_conditions[] = "DATE(pd.uploaded_at) <= ?";
+    $params[] = $end_date;
+    $param_types .= "s";
+}
+
+if (!empty($search)) {
+    $where_conditions[] = "(pd.original_file_name LIKE ? OR pd.description LIKE ?)";
+    $search_param = '%' . $search . '%';
+    $params[] = $search_param;
+    $params[] = $search_param;
+    $param_types .= "ss";
+}
+
+// Handle sub-filters (for now, we'll implement basic logic)
+// Note: In a real implementation, you might want to store sub-categories in the database
+if (!empty($sub_filters) && is_array($sub_filters)) {
+    // For demo purposes, we'll filter based on description or filename containing the sub-filter terms
+    $sub_filter_conditions = [];
+    foreach ($sub_filters as $sub_filter) {
+        $sub_filter_conditions[] = "(pd.original_file_name LIKE ? OR pd.description LIKE ?)";
+        $sub_filter_param = '%' . trim($sub_filter) . '%';
+        $params[] = $sub_filter_param;
+        $params[] = $sub_filter_param;
+        $param_types .= "ss";
+    }
+    if (!empty($sub_filter_conditions)) {
+        $where_conditions[] = "(" . implode(" OR ", $sub_filter_conditions) . ")";
+    }
+}
+
+// Combine WHERE conditions
+$where_clause = "";
+if (!empty($where_conditions)) {
+    $where_clause = "WHERE " . implode(" AND ", $where_conditions);
+}
+
+// Get total count first
+$count_sql = "
+    SELECT COUNT(*) as total
+    FROM project_documents pd
+    JOIN projects p ON pd.project_id = p.id
+    " . $where_clause;
+
+try {
+    $count_stmt = $conn->prepare($count_sql);
+    if (!empty($params)) {
+        $count_stmt->bind_param($param_types, ...$params);
+    }
+    $count_stmt->execute();
+    $count_result = $count_stmt->get_result();
+    $total_count = $count_result->fetch_assoc()['total'];
+    $count_stmt->close();
+    
+    // Calculate pagination
+    $total_pages = ceil($total_count / $page_size);
+    $offset = ($page - 1) * $page_size;
+    
+    // Get paginated results
+    $data_sql = $base_sql . $where_clause . " ORDER BY pd.uploaded_at DESC LIMIT ? OFFSET ?";
+    
+    // Add pagination parameters
+    $params[] = $page_size;
+    $params[] = $offset;
+    $param_types .= "ii";
+    
+    $data_stmt = $conn->prepare($data_sql);
+    if (!empty($params)) {
+        $data_stmt->bind_param($param_types, ...$params);
+    }
+    $data_stmt->execute();
+    $data_result = $data_stmt->get_result();
+    
+    $documents = [];
+    while ($row = $data_result->fetch_assoc()) {
+        // Format file size
+        $size = $row['file_size'];
+        if ($size < 1024) {
+            $formatted_size = $size . ' B';
+        } elseif ($size < 1024 * 1024) {
+            $formatted_size = round($size / 1024, 1) . ' KB';
+        } else {
+            $formatted_size = round($size / (1024 * 1024), 1) . ' MB';
+        }
+        
+        $documents[] = [
+            'id' => $row['id'],
+            'filename' => $row['filename'],
+            'size' => $formatted_size,
+            'size_bytes' => $row['file_size'],
+            'mime_type' => $row['mime_type'],
+            'uploaded_at' => $row['uploaded_at'],
+            'uploaded_by' => $row['uploaded_by_name'],
+            'description' => $row['description'],
+            'document_type' => $row['document_type'],
+            'project_id' => $row['project_id'],
+            'project_name' => $row['project_name']
+        ];
+    }
+    $data_stmt->close();
+    
+    // Clean any output that might have been generated
+    ob_end_clean();
+    
+    // Send clean JSON response
+    echo json_encode([
+        'success' => true,
+        'documents' => $documents,
+        'total_count' => $total_count,
+        'total_pages' => $total_pages,
+        'current_page' => $page,
+        'page_size' => $page_size,
+        'showing_count' => count($documents)
+    ]);
+    
+} catch (Exception $e) {
+    ob_end_clean();
+    error_log("Error in get_global_documents.php: " . $e->getMessage());
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Database error occurred'
+    ]);
+}
+
+$conn->close();
+exit();
+?>
