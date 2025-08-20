@@ -22,6 +22,7 @@ $delivery_id = (int)$_GET['delivery_id'];
 $project_id_from_url = isset($_GET['project_id']) ? (int)$_GET['project_id'] : null;
 
 require_once '../config.php';
+require_once 'document_helpers.php';
 $conn = getDBConnection();
 if (!$conn) die("Connection failed");
 
@@ -62,11 +63,12 @@ if ($delivery['project_id']) {
 }
 
 /* ──────────────── FETCH ASSOCIATED PALLETS ──────────────── */
-// Fetch ALREADY associated pallets
+// Fetch ALREADY associated pallets with their current status
 $associated_pallets = [];
+$damaged_pallets = [];
 $calculated_quantity = 0;
 $stmt_assoc = $conn->prepare("
-    SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity 
+    SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status
     FROM delivery_pallets dp 
     JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id 
     WHERE dp.delivery_id = ? 
@@ -79,6 +81,11 @@ if ($stmt_assoc) {
     while ($row = $result_assoc->fetch_assoc()) {
         $associated_pallets[] = $row;
         $calculated_quantity += (int)$row['quantity']; // Sum up quantities from all pallets
+        
+        // Track damaged pallets separately
+        if (strtolower($row['status']) === 'damaged') {
+            $damaged_pallets[] = $row;
+        }
     }
     $stmt_assoc->close();
 } else {
@@ -124,74 +131,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         
         // Handle file upload for new POD
         if (isset($_FILES['pod_file']) && $_FILES['pod_file']['error'] === UPLOAD_ERR_OK) {
-            // Get delivery info to determine storage path
-            $project_id = $delivery['project_id'];
-            $warehouse_id = $delivery['warehouse_id'];
-            
-            // Get account name if this is a project delivery
-            $account_name = null;
-            if ($project_id) {
-                $stmt_account = $conn->prepare("
-                    SELECT c.name 
-                    FROM projects p 
-                    JOIN customer_accounts c ON p.account_id = c.id 
-                    WHERE p.id = ?
-                ");
-                if ($stmt_account) {
-                    $stmt_account->bind_param("i", $project_id);
-                    $stmt_account->execute();
-                    $stmt_account->bind_result($account_name);
-                    $stmt_account->fetch();
-                    $stmt_account->close();
+            try {
+                // Get delivery info
+                $project_id = $delivery['project_id'];
+                $warehouse_id = $delivery['warehouse_id'];
+                
+                // For warehouse deliveries, we need a project_id - skip if not available for now
+                if (!$project_id) {
+                    throw new Exception("POD upload requires a project association. Please assign delivery to a project first.");
                 }
-            }
-            
-            $original_name = $_FILES['pod_file']['name'];
-            $file_extension = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
-            $allowed_extensions = ['pdf', 'jpg', 'jpeg', 'png'];
-            
-            if (!in_array($file_extension, $allowed_extensions)) {
-                throw new Exception("Invalid file type for POD. Only PDF, JPG, PNG allowed.");
-            }
-            
-            if ($_FILES['pod_file']['size'] > 5 * 1024 * 1024) { // 5MB limit
-                throw new Exception("POD file exceeds 5MB limit.");
-            }
-            
-            // Use existing directory structure
-            if ($project_id && $account_name) {
-                // Project delivery - use project-based structure
-                $account_dir = preg_replace('/[^A-Za-z0-9_-]/', '_', $account_name);
-                $upload_dir = "customers/{$account_dir}/projects/{$project_id}/documents/pods/";
-            } else {
-                // Warehouse delivery - use warehouse-based structure
-                $upload_dir = "warehouse_documents/pods/";
-            }
-            
-            if (!is_dir($upload_dir)) {
-                if (!mkdir($upload_dir, 0755, true)) {
-                    throw new Exception("Failed to create upload directory.");
+                
+                // Upload POD using new helper function
+                $result = uploadPODDocument(
+                    $conn, 
+                    $project_id, 
+                    $delivery_id, 
+                    $_FILES['pod_file'], 
+                    $status, // Use the new status being set
+                    $warehouse_id
+                );
+                
+                // Remove old POD file if exists (from old structure)
+                if ($pod && file_exists($pod)) {
+                    @unlink($pod);
                 }
+                
+                // Update POD path for backward compatibility
+                $pod = $result['file_path'];
+                
+            } catch (Exception $e) {
+                throw new Exception("POD upload failed: " . $e->getMessage());
             }
-            
-            // Create filename using existing pattern
-            $original_filename = pathinfo($original_name, PATHINFO_FILENAME);
-            $sanitized = preg_replace('/[^A-Za-z0-9_-]/', '_', $original_filename);
-            $sanitized = substr($sanitized, 0, 100);
-            
-            $final_filename = $delivery_id . '_' . $sanitized . '.' . $file_extension;
-            $new_pod_path = $upload_dir . $final_filename;
-            
-            if (!move_uploaded_file($_FILES['pod_file']['tmp_name'], $new_pod_path)) {
-                throw new Exception("Failed to upload POD file.");
-            }
-            
-            // Remove old POD file if exists
-            if ($pod && file_exists($pod)) {
-                @unlink($pod);
-            }
-            
-            $pod = $new_pod_path;
         }
 
         /* Update Delivery */
@@ -266,7 +236,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
                 }
                 $stmt_get_pallets->close();
                 
-                // Update pallet statuses if we found any pallets
+                // Update pallet statuses - but preserve "Damaged" status pallets
                 if (!empty($pallet_ids)) {
                     $placeholders = implode(',', array_fill(0, count($pallet_ids), '?'));
                     $types = 's' . str_repeat('i', count($pallet_ids)); // status + pallet IDs
@@ -274,7 +244,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
                     $stmt_update_pallets = $conn->prepare("
                         UPDATE inventory_pallets 
                         SET status = ? 
-                        WHERE id IN ($placeholders)
+                        WHERE id IN ($placeholders) 
+                          AND status != 'Damaged'
                     ");
                     
                     if ($stmt_update_pallets) {
@@ -293,6 +264,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         $success_msg = "Delivery details updated successfully.";
         if ($pallet_status_update_count > 0) {
             $success_msg .= " Also updated status for $pallet_status_update_count associated pallet(s) to '$new_pallet_status'.";
+        }
+        
+        // Add note about preserved damaged pallets
+        $preserved_damaged_count = count($damaged_pallets);
+        if ($preserved_damaged_count > 0) {
+            $success_msg .= " Note: $preserved_damaged_count damaged pallet(s) maintained their 'Damaged' status.";
         }
         $_SESSION['edit_delivery_success'] = $success_msg;
 
@@ -537,6 +514,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
     </table>
   </div>
 </fieldset>
+
+<!-- Damaged Pallets Alert (if any exist) -->
+<?php if (!empty($damaged_pallets)): ?>
+<fieldset style="border: 2px solid #e74c3c; background-color: #fdf2f2;">
+  <legend style="color: #e74c3c; font-weight: bold;">⚠️ Damaged Pallets</legend>
+  <div style="margin-bottom: 15px;">
+    <p style="color: #721c24; font-weight: 500; margin-bottom: 10px;">
+      <strong>Note:</strong> The following pallets are marked as "Damaged" and will <strong>NOT</strong> be automatically updated when you change the delivery status.
+    </p>
+  </div>
+  <div class="table-responsive">
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="background-color: #f8d7da;">
+          <th style="padding: 8px; border: 1px solid #f5c6cb; text-align: left;">Pallet ID</th>
+          <th style="padding: 8px; border: 1px solid #f5c6cb; text-align: left;">Wattage</th>
+          <th style="padding: 8px; border: 1px solid #f5c6cb; text-align: left;">Quantity</th>
+          <th style="padding: 8px; border: 1px solid #f5c6cb; text-align: left;">Current Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($damaged_pallets as $damaged_pallet): ?>
+        <tr>
+          <td style="padding: 8px; border: 1px solid #f5c6cb;">
+            <?php echo htmlspecialchars($damaged_pallet['pallet_identifier'] ?? 'ID: ' . $damaged_pallet['id']); ?>
+          </td>
+          <td style="padding: 8px; border: 1px solid #f5c6cb;">
+            <?php echo htmlspecialchars($damaged_pallet['wattage'] ?? 'N/A'); ?>W
+          </td>
+          <td style="padding: 8px; border: 1px solid #f5c6cb;">
+            <?php echo htmlspecialchars($damaged_pallet['quantity'] ?? 'N/A'); ?>
+          </td>
+          <td style="padding: 8px; border: 1px solid #f5c6cb;">
+            <span style="background-color: #e74c3c; color: white; padding: 3px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold;">
+              <?php echo htmlspecialchars($damaged_pallet['status']); ?>
+            </span>
+          </td>
+        </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <div style="margin-top: 10px; padding: 8px; background-color: #f8d7da; border-radius: 4px; font-size: 0.9em;">
+    <strong>💡 Tip:</strong> To change the status of damaged pallets, you'll need to update them individually through the pallet management system.
+  </div>
+</fieldset>
+<?php endif; ?>
 
 <!-- Main form for editing Delivery details -->
 <div class="form-container">

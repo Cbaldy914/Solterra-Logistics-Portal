@@ -9,6 +9,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
 }
 
 require_once '../config.php';
+require_once 'document_helpers.php';
 $conn = getDBConnection();
 $google_maps_api_key = getGoogleMapsApiKey();
 
@@ -286,7 +287,15 @@ function fetchInboundHistory($conn, $warehouse_id) {
             GROUP_CONCAT(DISTINCT d.wattage ORDER BY d.wattage SEPARATOR ', ') AS wattages,
             GROUP_CONCAT(DISTINCT p.project_name SEPARATOR ', ') AS projects,
             GROUP_CONCAT(DISTINCT d.id ORDER BY d.id SEPARATOR ',') AS delivery_ids,
-            CASE WHEN COUNT(DISTINCT d.wattage) > 1 THEN 1 ELSE 0 END AS is_mixed_wattage
+            GROUP_CONCAT(DISTINCT d.project_id ORDER BY d.project_id SEPARATOR ',') AS project_ids,
+            CASE WHEN COUNT(DISTINCT d.wattage) > 1 THEN 1 ELSE 0 END AS is_mixed_wattage,
+            (SELECT COUNT(*) FROM project_documents pd 
+             WHERE pd.delivery_id IN (SELECT d_inner.id FROM deliveries d_inner 
+                                     WHERE d_inner.bol_number = d.bol_number 
+                                     AND d_inner.warehouse_id = d.warehouse_id 
+                                     AND d_inner.warehouse_arrival_date = d.warehouse_arrival_date)
+             AND pd.document_type = 'pods' 
+             AND pd.document_sub_type = 'Warehouse PODs') AS has_warehouse_pod
         FROM deliveries d
         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
         LEFT JOIN projects p ON d.project_id = p.id
@@ -434,6 +443,66 @@ function fetchOutboundHistory($conn, $warehouse_id) {
     }
     
     return $outbound_history;
+}
+
+// ===========================================================================================
+// HANDLE WAREHOUSE POD UPLOAD REQUESTS
+// ===========================================================================================
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_warehouse_pod') {
+    header('Content-Type: application/json');
+    
+    try {
+        $delivery_id = isset($_POST['delivery_id']) ? intval($_POST['delivery_id']) : 0;
+        $project_id = isset($_POST['project_id']) ? intval($_POST['project_id']) : 0;
+        $description = trim($_POST['description'] ?? '');
+        
+        if ($delivery_id <= 0 || $project_id <= 0) {
+            throw new Exception("Invalid delivery or project ID");
+        }
+        
+        if (!isset($_FILES['warehouse_pod_file']) || $_FILES['warehouse_pod_file']['error'] !== UPLOAD_ERR_OK) {
+            throw new Exception("Please select a valid file to upload");
+        }
+        
+        // Prepare file data for upload
+        $file_data = [
+            'name' => $_FILES['warehouse_pod_file']['name'],
+            'type' => $_FILES['warehouse_pod_file']['type'],
+            'tmp_name' => $_FILES['warehouse_pod_file']['tmp_name'],
+            'error' => $_FILES['warehouse_pod_file']['error'],
+            'size' => $_FILES['warehouse_pod_file']['size']
+        ];
+        
+        // Upload using new document system
+        $processed_file = processDocumentUpload($file_data, 'pods');
+        
+        // Prepare document data
+        $document_data = [
+            'project_id' => $project_id,
+            'document_type' => 'pods',
+            'document_sub_type' => 'Warehouse PODs',
+            'delivery_id' => $delivery_id,
+            'warehouse_id' => $warehouse_id,
+            'original_name' => $processed_file['original_name'],
+            'file_size' => $processed_file['size'],
+            'mime_type' => $processed_file['mime_type'],
+            'uploaded_by' => $_SESSION['user_id'],
+            'tmp_name' => $processed_file['tmp_name'],
+            'description' => $description,
+            'entity_context' => "Warehouse POD for delivery ID: $delivery_id"
+        ];
+        
+        // Save to project_documents table
+        $result = saveDocumentToProjectDocuments($conn, $document_data);
+        
+        echo json_encode(['success' => true, 'message' => 'Warehouse POD uploaded successfully']);
+        
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    
+    exit();
 }
 
 // ===========================================================================================
@@ -1249,10 +1318,10 @@ $conn->close();
                                         <td><?php echo number_format($delivery['total_modules']) . ' (' . number_format($delivery['total_pallets']) . ')'; ?></td>
                                         <td><?php echo htmlspecialchars($delivery['warehouse_arrival_date'] ?? 'N/A'); ?></td>
                                         <td>
-                                            <?php if (!empty($delivery['proof_of_delivery'])): ?>
+                                            <?php if (!empty($delivery['proof_of_delivery']) || $delivery['has_warehouse_pod'] > 0): ?>
                                                 <a href="view_pod.php?delivery_id=<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>" target="_blank" style="color: #488C9A;">View POD</a>
                                             <?php else: ?>
-                                                <button class="action-button" style="padding: 2px 6px; font-size: 0.8em;" onclick="uploadPOD(<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>)">Upload POD</button>
+                                                <button class="action-button" style="padding: 2px 6px; font-size: 0.8em;" onclick="uploadWarehousePOD(<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>, <?php echo explode(',', $delivery['project_ids'])[0]; ?>)">Upload Warehouse POD</button>
                                             <?php endif; ?>
                                         </td>
                                         <td>
@@ -1879,6 +1948,212 @@ function closeReceiveTruckloadModal() {
 function uploadPOD(deliveryId) {
     // Navigate to the existing upload_pod.php page
     window.location.href = 'upload_pod.php?delivery_id=' + deliveryId;
+}
+
+// Enhanced POD upload function for warehouse operations
+function uploadWarehousePOD(deliveryId, projectId) {
+    // Create modal for POD upload with enhanced Solterra styling
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.style.display = 'flex';
+    modal.innerHTML = `
+        <style>
+            /* Override portal.css conflicts with higher specificity */
+            .warehouse-pod-modal * {
+                box-sizing: border-box !important;
+            }
+            .warehouse-pod-modal .modal-content {
+                position: relative !important;
+                background: white !important;
+                margin: auto !important;
+                padding: 0 !important;
+                border: 1px solid #e1e6ea !important;
+                border-radius: 12px !important;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.25) !important;
+                max-width: 550px !important;
+                width: 90% !important;
+                max-height: 90vh !important;
+                overflow: hidden !important;
+            }
+            .warehouse-pod-modal input[type="file"] {
+                width: 100% !important;
+                padding: 12px 16px !important;
+                border: 2px dashed #bdc3c7 !important;
+                border-radius: 8px !important;
+                background: #f8f9fa !important;
+                font-size: 14px !important;
+                font-family: 'Poppins', sans-serif !important;
+                cursor: pointer !important;
+                transition: all 0.3s ease !important;
+            }
+            .warehouse-pod-modal textarea {
+                width: 100% !important;
+                padding: 12px 16px !important;
+                border: 1px solid #e1e6ea !important;
+                border-radius: 8px !important;
+                background: #f8f9fa !important;
+                font-size: 14px !important;
+                font-family: 'Poppins', sans-serif !important;
+                resize: vertical !important;
+                transition: all 0.3s ease !important;
+            }
+            .warehouse-pod-modal button {
+                border: none !important;
+                border-radius: 8px !important;
+                font-family: 'Poppins', sans-serif !important;
+                cursor: pointer !important;
+                transition: all 0.3s ease !important;
+                text-decoration: none !important;
+            }
+        </style>
+        <div class="modal-content warehouse-pod-modal">
+            <span class="close-modal" onclick="this.closest('.modal').remove()" 
+                  style="position: absolute; top: 16px; right: 20px; font-size: 28px; font-weight: 300; color: #6c757d; cursor: pointer; transition: color 0.2s ease; z-index: 10;"
+                  onmouseover="this.style.color='#e74c3c'" onmouseout="this.style.color='#6c757d'">&times;</span>
+            
+            <div style="background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color: white; padding: 24px 32px; border-radius: 12px 12px 0 0; margin: -1px -1px 0 -1px;">
+                <h2 style="margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px;">📋 Upload Warehouse POD</h2>
+                <p style="margin: 8px 0 0 0; font-size: 14px; opacity: 0.9; font-weight: 300;">Upload proof of delivery document for warehouse operations</p>
+            </div>
+            
+            <form id="warehousePODForm" enctype="multipart/form-data" style="padding: 32px;">
+                <div style="margin-bottom: 24px;">
+                    <label for="warehouse_pod_file" style="display: block; font-weight: 600; color: #2c3e50; margin-bottom: 8px; font-size: 14px;">
+                        📎 Select Document
+                    </label>
+                    <div style="position: relative;">
+                        <input type="file" id="warehouse_pod_file" name="warehouse_pod_file" 
+                               accept=".pdf,.jpg,.jpeg,.png" required
+                               onchange="updateFilePreview(this)"
+                               onfocus="this.style.borderColor='#488C9A'; this.style.backgroundColor='#ffffff'"
+                               onblur="this.style.borderColor='#bdc3c7'; this.style.backgroundColor='#f8f9fa'">
+                    </div>
+                    <div id="filePreview" style="margin-top: 8px; font-size: 12px; color: #7f8c8d;"></div>
+                    <small style="display: block; color: #95a5a6; margin-top: 6px; font-size: 12px;">
+                        📄 Supported: PDF, JPG, PNG files up to 50MB
+                    </small>
+                </div>
+                
+                <div style="margin-bottom: 24px;">
+                    <label for="pod_description" style="display: block; font-weight: 600; color: #2c3e50; margin-bottom: 8px; font-size: 14px;">
+                        📝 Description (Optional)
+                    </label>
+                    <textarea id="pod_description" name="description" rows="3" 
+                              placeholder="Additional notes about this POD document..."
+                              onfocus="this.style.borderColor='#488C9A'; this.style.backgroundColor='#ffffff'"
+                              onblur="this.style.borderColor='#e1e6ea'; this.style.backgroundColor='#f8f9fa'"></textarea>
+                </div>
+                
+                <div style="display: flex; gap: 12px; justify-content: center; padding-top: 16px; border-top: 1px solid #ecf0f1;">
+                    <button type="submit" 
+                            style="background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color: white; 
+                                   padding: 12px 24px; font-weight: 600; font-size: 14px; 
+                                   box-shadow: 0 4px 12px rgba(72,140,154,0.3);"
+                            onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 20px rgba(72,140,154,0.4)'"
+                            onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(72,140,154,0.3)'">
+                        🚀 Upload Document
+                    </button>
+                    <button type="button" onclick="this.closest('.modal').remove()" 
+                            style="background: #ecf0f1; color: #34495e; padding: 12px 24px; font-weight: 500; font-size: 14px;"
+                            onmouseover="this.style.backgroundColor='#d5dbdb'"
+                            onmouseout="this.style.backgroundColor='#ecf0f1'">
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Add file preview functionality
+    window.updateFilePreview = function(input) {
+        const preview = document.getElementById('filePreview');
+        if (input.files && input.files[0]) {
+            const file = input.files[0];
+            const fileName = file.name;
+            const fileSize = (file.size / 1024 / 1024).toFixed(2);
+            const fileType = file.type.split('/')[1].toUpperCase();
+            
+            preview.innerHTML = `
+                <div style="display: flex; align-items: center; padding: 8px 12px; background: #e8f5e8; border-radius: 6px; border-left: 4px solid #27ae60;">
+                    <span style="margin-right: 8px;">✅</span>
+                    <div>
+                        <strong>${fileName}</strong><br>
+                        <span style="color: #7f8c8d;">${fileType} • ${fileSize} MB</span>
+                    </div>
+                </div>
+            `;
+            
+            // Update the input styling to show success
+            input.style.borderColor = '#27ae60';
+            input.style.backgroundColor = '#e8f5e8';
+        } else {
+            preview.innerHTML = '';
+            input.style.borderColor = '#bdc3c7';
+            input.style.backgroundColor = '#f8f9fa';
+        }
+    };
+    
+    // Handle form submission
+    document.getElementById('warehousePODForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const formData = new FormData();
+        const fileInput = document.getElementById('warehouse_pod_file');
+        const description = document.getElementById('pod_description').value;
+        
+        if (!fileInput.files[0]) {
+            // Show error styling
+            fileInput.style.borderColor = '#e74c3c';
+            fileInput.style.backgroundColor = '#fdf2f2';
+            alert('Please select a file to upload.');
+            return;
+        }
+        
+        formData.append('action', 'upload_warehouse_pod');
+        formData.append('delivery_id', deliveryId);
+        formData.append('project_id', projectId);
+        formData.append('warehouse_pod_file', fileInput.files[0]);
+        formData.append('description', description);
+        
+        // Show loading state with enhanced styling
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '⏳ Uploading...';
+        submitBtn.disabled = true;
+        submitBtn.style.opacity = '0.7';
+        
+        fetch('manage_warehouse_inventory.php?warehouse_id=<?php echo $warehouse_id; ?>', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Show success state
+                submitBtn.innerHTML = '✅ Upload Complete!';
+                submitBtn.style.background = 'linear-gradient(135deg, #27ae60 0%, #229954 100%)';
+                
+                setTimeout(() => {
+                    modal.remove();
+                    location.reload(); // Refresh to show updated data
+                }, 1500);
+            } else {
+                alert('Error: ' + (data.error || 'Unknown error occurred'));
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
+                submitBtn.style.opacity = '1';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Network error occurred. Please try again.');
+            submitBtn.innerHTML = originalText;
+            submitBtn.disabled = false;
+            submitBtn.style.opacity = '1';
+        });
+    });
 }
 
 // ========== EVENT LISTENERS ==========
