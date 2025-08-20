@@ -24,6 +24,7 @@ if (!$is_admin && !$is_user) {
 
 // Database connection
 require_once '../config.php';
+require_once 'document_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
@@ -144,21 +145,73 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
         $pallet_accepted = isset($_POST['pallet_accepted']) ? json_decode($_POST['pallet_accepted'], true) : [];
         $pallet_notes = isset($_POST['pallet_notes']) ? json_decode($_POST['pallet_notes'], true) : [];
 
-        // Handle photo uploads first
+        // Handle photo uploads using new document management system
         $pictures = [];
         if (isset($_FILES['damage_pictures']) && is_array($_FILES['damage_pictures']['name'])) {
-            $upload_dir = 'uploads/damage_photos/';
-            if (!is_dir($upload_dir)) {
-                mkdir($upload_dir, 0755, true);
-            }
-
             $count = count($_FILES['damage_pictures']['name']);
             for ($i = 0; $i < $count; $i++) {
                 if ($_FILES['damage_pictures']['error'][$i] === UPLOAD_ERR_OK) {
-                    $filename = 'damage_' . $appointment_id . '_' . time() . '_' . $i . '.jpg';
-                    $filepath = $upload_dir . $filename;
-                    move_uploaded_file($_FILES['damage_pictures']['tmp_name'][$i], $filepath);
-                    $pictures[] = $filepath;
+                    try {
+                        // Get project_id from the appointment
+                        global $project_id;
+                        
+                        // Get delivery_id from appointment
+                        $delivery_id = null;
+                        $delivery_stmt = $conn->prepare("SELECT delivery_ids FROM site_scheduling WHERE id = ?");
+                        $delivery_stmt->bind_param("i", $appointment_id);
+                        $delivery_stmt->execute();
+                        $delivery_stmt->bind_result($delivery_ids_str);
+                        if ($delivery_stmt->fetch()) {
+                            // Get first delivery ID if multiple
+                            $delivery_ids = explode(',', $delivery_ids_str);
+                            $delivery_id = intval($delivery_ids[0]);
+                        }
+                        $delivery_stmt->close();
+                        
+                        // Prepare file data for upload
+                        $file_data = [
+                            'name' => $_FILES['damage_pictures']['name'][$i],
+                            'type' => $_FILES['damage_pictures']['type'][$i],
+                            'tmp_name' => $_FILES['damage_pictures']['tmp_name'][$i],
+                            'error' => $_FILES['damage_pictures']['error'][$i],
+                            'size' => $_FILES['damage_pictures']['size'][$i]
+                        ];
+                        
+                        // Upload using new document system
+                        $processed_file = processDocumentUpload($file_data, 'incident_reports');
+                        
+                        // Prepare document data
+                        $document_data = [
+                            'project_id' => $project_id,
+                            'document_type' => 'incident_reports',
+                            'document_sub_type' => 'Damage Reports',
+                            'delivery_id' => $delivery_id,
+                            'original_name' => $processed_file['original_name'],
+                            'file_size' => $processed_file['size'],
+                            'mime_type' => $processed_file['mime_type'],
+                            'uploaded_by' => $_SESSION['user_id'],
+                            'tmp_name' => $processed_file['tmp_name'],
+                            'entity_context' => "Damage report for appointment ID: $appointment_id"
+                        ];
+                        
+                        // Save to project_documents table
+                        $result = saveDocumentToProjectDocuments($conn, $document_data);
+                        $pictures[] = $result['file_path'];
+                        
+                    } catch (Exception $e) {
+                        error_log("Failed to upload damage photo: " . $e->getMessage());
+                        // Fallback to legacy upload method
+                        $upload_dir = 'uploads/damage_photos/';
+                        if (!is_dir($upload_dir)) {
+                            mkdir($upload_dir, 0755, true);
+                        }
+                        
+                        $filename = 'damage_' . $appointment_id . '_' . time() . '_' . $i . '.jpg';
+                        $filepath = $upload_dir . $filename;
+                        if (move_uploaded_file($_FILES['damage_pictures']['tmp_name'][$i], $filepath)) {
+                            $pictures[] = $filepath;
+                        }
+                    }
                 }
             }
         }
@@ -293,21 +346,73 @@ function processSafetyIncident($conn, $appointment_id, $bol_number) {
         $safety_notes = trim($_POST['safety_notes'] ?? '');
         $report_driver = ($_POST['report_driver'] ?? 'no') === 'yes' ? 'Yes' : 'No';
         
-        // Handle safety photo uploads
+        // Handle safety photo uploads using new document management system
         $safety_pictures = [];
         if (isset($_FILES['safety_pictures']) && is_array($_FILES['safety_pictures']['name'])) {
-            $upload_dir = 'uploads/safety_photos/';
-            if (!is_dir($upload_dir)) {
-                mkdir($upload_dir, 0755, true);
-            }
-            
             $count = count($_FILES['safety_pictures']['name']);
             for ($i = 0; $i < $count; $i++) {
                 if ($_FILES['safety_pictures']['error'][$i] === UPLOAD_ERR_OK) {
-                    $filename = 'safety_' . $appointment_id . '_' . time() . '_' . $i . '.jpg';
-                    $filepath = $upload_dir . $filename;
-                    move_uploaded_file($_FILES['safety_pictures']['tmp_name'][$i], $filepath);
-                    $safety_pictures[] = $filepath;
+                    try {
+                        // Get project_id from the appointment
+                        global $project_id;
+                        
+                        // Get delivery_id from appointment
+                        $delivery_id = null;
+                        $delivery_stmt = $conn->prepare("SELECT delivery_ids FROM site_scheduling WHERE id = ?");
+                        $delivery_stmt->bind_param("i", $appointment_id);
+                        $delivery_stmt->execute();
+                        $delivery_stmt->bind_result($delivery_ids_str);
+                        if ($delivery_stmt->fetch()) {
+                            // Get first delivery ID if multiple
+                            $delivery_ids = explode(',', $delivery_ids_str);
+                            $delivery_id = intval($delivery_ids[0]);
+                        }
+                        $delivery_stmt->close();
+                        
+                        // Prepare file data for upload
+                        $file_data = [
+                            'name' => $_FILES['safety_pictures']['name'][$i],
+                            'type' => $_FILES['safety_pictures']['type'][$i],
+                            'tmp_name' => $_FILES['safety_pictures']['tmp_name'][$i],
+                            'error' => $_FILES['safety_pictures']['error'][$i],
+                            'size' => $_FILES['safety_pictures']['size'][$i]
+                        ];
+                        
+                        // Upload using new document system
+                        $processed_file = processDocumentUpload($file_data, 'incident_reports');
+                        
+                        // Prepare document data
+                        $document_data = [
+                            'project_id' => $project_id,
+                            'document_type' => 'incident_reports',
+                            'document_sub_type' => 'Safety Reports',
+                            'delivery_id' => $delivery_id,
+                            'original_name' => $processed_file['original_name'],
+                            'file_size' => $processed_file['size'],
+                            'mime_type' => $processed_file['mime_type'],
+                            'uploaded_by' => $_SESSION['user_id'],
+                            'tmp_name' => $processed_file['tmp_name'],
+                            'entity_context' => "Safety incident report for appointment ID: $appointment_id"
+                        ];
+                        
+                        // Save to project_documents table
+                        $result = saveDocumentToProjectDocuments($conn, $document_data);
+                        $safety_pictures[] = $result['file_path'];
+                        
+                    } catch (Exception $e) {
+                        error_log("Failed to upload safety photo: " . $e->getMessage());
+                        // Fallback to legacy upload method
+                        $upload_dir = 'uploads/safety_photos/';
+                        if (!is_dir($upload_dir)) {
+                            mkdir($upload_dir, 0755, true);
+                        }
+                        
+                        $filename = 'safety_' . $appointment_id . '_' . time() . '_' . $i . '.jpg';
+                        $filepath = $upload_dir . $filename;
+                        if (move_uploaded_file($_FILES['safety_pictures']['tmp_name'][$i], $filepath)) {
+                            $safety_pictures[] = $filepath;
+                        }
+                    }
                 }
             }
         }
@@ -749,21 +854,69 @@ if ($action) {
             $arrival_utc = !empty($arrival_time) ? local_to_utc($arrival_time, $site_tz) : null;
             $departure_utc = !empty($departure_time) ? local_to_utc($departure_time, $site_tz) : null;
             
-            // Handle POD upload
+            // Handle POD upload using new document management system
             $pod_path = null;
             if (isset($_FILES['proof_of_delivery']) && $_FILES['proof_of_delivery']['error'] === UPLOAD_ERR_OK) {
-                $upload_dir = 'uploads/pods/';
-                if (!is_dir($upload_dir)) {
-                    mkdir($upload_dir, 0755, true);
-                }
-                
-                $file_ext = strtolower(pathinfo($_FILES['proof_of_delivery']['name'], PATHINFO_EXTENSION));
-                $allowed_exts = ['jpg', 'jpeg', 'png', 'pdf'];
-                
-                if (in_array($file_ext, $allowed_exts)) {
-                    $filename = 'pod_' . $appointment_id . '_' . time() . '.' . $file_ext;
-                    $pod_path = $upload_dir . $filename;
-                    move_uploaded_file($_FILES['proof_of_delivery']['tmp_name'], $pod_path);
+                try {
+                    // Get delivery_id from appointment
+                    $delivery_id = null;
+                    $delivery_stmt = $conn->prepare("SELECT delivery_ids FROM site_scheduling WHERE id = ?");
+                    $delivery_stmt->bind_param("i", $appointment_id);
+                    $delivery_stmt->execute();
+                    $delivery_stmt->bind_result($delivery_ids_str);
+                    if ($delivery_stmt->fetch()) {
+                        // Get first delivery ID if multiple
+                        $delivery_ids = explode(',', $delivery_ids_str);
+                        $delivery_id = intval($delivery_ids[0]);
+                    }
+                    $delivery_stmt->close();
+                    
+                    // Prepare file data for upload
+                    $file_data = [
+                        'name' => $_FILES['proof_of_delivery']['name'],
+                        'type' => $_FILES['proof_of_delivery']['type'],
+                        'tmp_name' => $_FILES['proof_of_delivery']['tmp_name'],
+                        'error' => $_FILES['proof_of_delivery']['error'],
+                        'size' => $_FILES['proof_of_delivery']['size']
+                    ];
+                    
+                    // Upload using new document system
+                    $processed_file = processDocumentUpload($file_data, 'pods');
+                    
+                    // Prepare document data
+                    $document_data = [
+                        'project_id' => $project_id,
+                        'document_type' => 'pods',
+                        'document_sub_type' => 'Project PODs',
+                        'delivery_id' => $delivery_id,
+                        'original_name' => $processed_file['original_name'],
+                        'file_size' => $processed_file['size'],
+                        'mime_type' => $processed_file['mime_type'],
+                        'uploaded_by' => $_SESSION['user_id'],
+                        'tmp_name' => $processed_file['tmp_name'],
+                        'entity_context' => "Project POD for appointment ID: $appointment_id"
+                    ];
+                    
+                    // Save to project_documents table
+                    $result = saveDocumentToProjectDocuments($conn, $document_data);
+                    $pod_path = $result['file_path'];
+                    
+                } catch (Exception $e) {
+                    error_log("Failed to upload POD via new system: " . $e->getMessage());
+                    // Fallback to legacy upload method
+                    $upload_dir = 'uploads/pods/';
+                    if (!is_dir($upload_dir)) {
+                        mkdir($upload_dir, 0755, true);
+                    }
+                    
+                    $file_ext = strtolower(pathinfo($_FILES['proof_of_delivery']['name'], PATHINFO_EXTENSION));
+                    $allowed_exts = ['jpg', 'jpeg', 'png', 'pdf'];
+                    
+                    if (in_array($file_ext, $allowed_exts)) {
+                        $filename = 'pod_' . $appointment_id . '_' . time() . '.' . $file_ext;
+                        $pod_path = $upload_dir . $filename;
+                        move_uploaded_file($_FILES['proof_of_delivery']['tmp_name'], $pod_path);
+                    }
                 }
             }
             

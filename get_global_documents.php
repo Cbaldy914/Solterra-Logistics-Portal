@@ -52,11 +52,18 @@ $base_sql = "
         pd.description,
         pd.file_path,
         pd.document_type,
+        pd.document_sub_type,
+        pd.delivery_id,
+        pd.warehouse_id,
         pd.project_id,
         p.project_name,
-        u.username as uploaded_by_name
+        u.username as uploaded_by_name,
+        d.bol_number,
+        w.name as warehouse_name
     FROM project_documents pd
     LEFT JOIN users u ON pd.uploaded_by = u.id
+    LEFT JOIN deliveries d ON pd.delivery_id = d.id
+    LEFT JOIN warehouses w ON pd.warehouse_id = w.id
     JOIN projects p ON pd.project_id = p.id
 ";
 
@@ -111,17 +118,13 @@ if (!empty($search)) {
     $param_types .= "ss";
 }
 
-// Handle sub-filters (for now, we'll implement basic logic)
-// Note: In a real implementation, you might want to store sub-categories in the database
+// Handle sub-filters using the new document_sub_type field
 if (!empty($sub_filters) && is_array($sub_filters)) {
-    // For demo purposes, we'll filter based on description or filename containing the sub-filter terms
     $sub_filter_conditions = [];
     foreach ($sub_filters as $sub_filter) {
-        $sub_filter_conditions[] = "(pd.original_file_name LIKE ? OR pd.description LIKE ?)";
-        $sub_filter_param = '%' . trim($sub_filter) . '%';
-        $params[] = $sub_filter_param;
-        $params[] = $sub_filter_param;
-        $param_types .= "ss";
+        $sub_filter_conditions[] = "pd.document_sub_type = ?";
+        $params[] = trim($sub_filter);
+        $param_types .= "s";
     }
     if (!empty($sub_filter_conditions)) {
         $where_conditions[] = "(" . implode(" OR ", $sub_filter_conditions) . ")";
@@ -192,8 +195,13 @@ try {
             'uploaded_by' => $row['uploaded_by_name'],
             'description' => $row['description'],
             'document_type' => $row['document_type'],
+            'document_sub_type' => $row['document_sub_type'],
+            'delivery_id' => $row['delivery_id'],
+            'warehouse_id' => $row['warehouse_id'],
             'project_id' => $row['project_id'],
-            'project_name' => $row['project_name']
+            'project_name' => $row['project_name'],
+            'bol_number' => $row['bol_number'],
+            'warehouse_name' => $row['warehouse_name']
         ];
     }
     $data_stmt->close();
