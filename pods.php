@@ -18,6 +18,7 @@ $user_id = $_SESSION['user_id'];
 
 // Database connection
 require_once '../config.php';
+require_once 'document_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -52,16 +53,28 @@ if (!$project_name) {
     die("You do not have access to this project or it does not exist.");
 }
 
-// Fetch PODs (and BOL numbers) for this project
+// Get PODs from the new project_documents table
+$pod_filters = [
+    'project_id' => $project_id,
+    'document_type' => 'pods'
+];
+$pods = getProjectDocuments($conn, $pod_filters);
+
+// Also get legacy PODs from deliveries table for backward compatibility
+$legacy_pods = [];
 $stmt = $conn->prepare("
-    SELECT d.id, d.proof_of_delivery, d.bol_number
+    SELECT d.id as delivery_id, d.proof_of_delivery, d.bol_number, d.status_of_delivery
     FROM deliveries d
     WHERE d.project_id = ? 
       AND d.proof_of_delivery IS NOT NULL
+      AND d.proof_of_delivery != ''
 ");
 $stmt->bind_param("i", $project_id);
 $stmt->execute();
-$pods_result = $stmt->get_result();
+$legacy_result = $stmt->get_result();
+while ($row = $legacy_result->fetch_assoc()) {
+    $legacy_pods[] = $row;
+}
 $stmt->close();
 ?>
 
@@ -526,7 +539,10 @@ $stmt->close();
         <h1>PODs for <?php echo htmlspecialchars($project_name); ?></h1>
     </div>
     
-    <?php if ($pods_result->num_rows > 0): ?>
+    <?php 
+    $total_pods = count($pods) + count($legacy_pods);
+    if ($total_pods > 0): 
+    ?>
         <div class="pods-container">
             <form action="download_pods" method="post" id="downloadForm">
                 <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
@@ -552,23 +568,40 @@ $stmt->close();
                         <tr>
                             <th style="width: 60px;">Select</th>
                             <th>POD File</th>
-                            <th style="width: 180px;">BOL Number</th>
+                            <th>Type</th>
+                            <th>BOL Number</th>
+                            <th>Upload Date</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php while ($pod = $pods_result->fetch_assoc()): ?>
+                        <?php 
+                        // Display new project_documents PODs first
+                        foreach ($pods as $pod): 
+                        ?>
                             <tr onclick="toggleCheckbox(this, event)">
                                 <td>
-                                    <input type="checkbox" name="selected_pods[]" value="<?php echo $pod['id']; ?>" class="pod-checkbox">
+                                    <input type="checkbox" name="selected_pods[]" value="document_<?php echo $pod['id']; ?>" class="pod-checkbox">
                                 </td>
                                 <td>
-                                    <a href="view_pod?delivery_id=<?php echo $pod['id']; ?>" target="_blank" class="pod-file-link" onclick="event.stopPropagation();">
-                                        <?php echo htmlspecialchars(basename($pod['proof_of_delivery'])); ?>
+                                    <a href="download_document.php?id=<?php echo $pod['id']; ?>" target="_blank" class="pod-file-link" onclick="event.stopPropagation();">
+                                        <?php echo htmlspecialchars($pod['original_file_name']); ?>
+                                        <span style="font-size: 0.8em; color: #6c757d; margin-left: 8px;">(<?php echo $pod['formatted_size']; ?>)</span>
                                     </a>
                                 </td>
                                 <td>
+                                    <?php if ($pod['document_sub_type']): ?>
+                                        <span class="bol-number" style="background: linear-gradient(135deg, #22c55e, #16a34a); color: white; border: none;">
+                                            <?php echo htmlspecialchars($pod['document_sub_type']); ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="bol-number" style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; border: none;">
+                                            POD
+                                        </span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
                                     <?php if ($pod['bol_number']): ?>
-                                        <a href="view_project.php?project_id=<?php echo $project_id; ?>&delivery_id=<?php echo $pod['id']; ?>" 
+                                        <a href="view_project.php?project_id=<?php echo $project_id; ?>&delivery_id=<?php echo $pod['delivery_id']; ?>" 
                                            class="bol-number-link" 
                                            onclick="event.stopPropagation();"
                                            title="View delivery details">
@@ -582,8 +615,56 @@ $stmt->close();
                                         </span>
                                     <?php endif; ?>
                                 </td>
+                                <td>
+                                    <span style="color: #6c757d; font-size: 0.9em;">
+                                        <?php echo date('M j, Y g:i A', strtotime($pod['uploaded_at'])); ?>
+                                    </span>
+                                </td>
                             </tr>
-                        <?php endwhile; ?>
+                        <?php endforeach; ?>
+                        
+                        <?php 
+                        // Display legacy PODs for backward compatibility
+                        foreach ($legacy_pods as $legacy_pod): 
+                        ?>
+                            <tr onclick="toggleCheckbox(this, event)" style="opacity: 0.8;">
+                                <td>
+                                    <input type="checkbox" name="selected_pods[]" value="legacy_<?php echo $legacy_pod['delivery_id']; ?>" class="pod-checkbox">
+                                </td>
+                                <td>
+                                    <a href="view_pod?delivery_id=<?php echo $legacy_pod['delivery_id']; ?>" target="_blank" class="pod-file-link" onclick="event.stopPropagation();">
+                                        <?php echo htmlspecialchars(basename($legacy_pod['proof_of_delivery'])); ?>
+                                        <span style="font-size: 0.7em; color: #dc3545; margin-left: 8px;">(Legacy)</span>
+                                    </a>
+                                </td>
+                                <td>
+                                    <span class="bol-number" style="background: linear-gradient(135deg, #6c757d, #495057); color: white; border: none;">
+                                        Legacy POD
+                                    </span>
+                                </td>
+                                <td>
+                                    <?php if ($legacy_pod['bol_number']): ?>
+                                        <a href="view_project.php?project_id=<?php echo $project_id; ?>&delivery_id=<?php echo $legacy_pod['delivery_id']; ?>" 
+                                           class="bol-number-link" 
+                                           onclick="event.stopPropagation();"
+                                           title="View delivery details">
+                                            <span class="bol-number">
+                                                <?php echo htmlspecialchars($legacy_pod['bol_number']); ?>
+                                            </span>
+                                        </a>
+                                    <?php else: ?>
+                                        <span class="bol-number no-bol">
+                                            No BOL
+                                        </span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <span style="color: #6c757d; font-size: 0.9em;">
+                                        N/A
+                                    </span>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
                     </tbody>
                 </table>
             </form>

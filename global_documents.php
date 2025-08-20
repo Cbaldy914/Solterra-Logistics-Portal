@@ -896,11 +896,18 @@ let totalDocuments = 0;
 let selectedDocuments = new Set();
 let allDocuments = [];
 
-// Document type sub-filters
-const subFilters = {
-    'invoices': ['Solterra Invoices', 'OEM Invoices', 'Warehouse Invoices'],
-    'pods': ['Warehouse PODs', 'Project PODs']
-};
+ // Document type sub-filters
+ const subFilters = {
+     'invoices': ['Solterra Invoices', 'OEM Invoices', 'Warehouse Invoices', 'Freight Invoices'],
+     'pods': ['Warehouse PODs', 'Project PODs', 'Delivery PODs'],
+     'bills_of_lading': ['Inbound BOL', 'Outbound BOL', 'Intercompany BOL'],
+     'warehousing': ['Storage Receipts', 'Handling Receipts', 'Inspection Reports'],
+     'modules': ['Specifications', 'Certifications', 'Test Reports'],
+     'delivery_packet': ['Complete Packets', 'Partial Packets'],
+     'incident_reports': ['Safety Reports', 'Damage Reports', 'Delay Reports'],
+     'safe_harbor_evidence': ['Legal Documents', 'Compliance Certificates'],
+     'flash_test_data': ['Flash Test Results', 'Quality Reports']
+ };
 
 // Initialize page
 document.addEventListener('DOMContentLoaded', function() {
@@ -1073,43 +1080,46 @@ function renderDocumentRow(doc) {
     const iconStyle = `background: ${getDocumentTypeColor(doc.document_type)};`;
     
     return `
-        <tr onclick="toggleDocumentSelection(${doc.id}, event)" data-doc-id="${doc.id}">
-            <td>
-                <input type="checkbox" class="document-checkbox" ${isSelected ? 'checked' : ''} 
-                       onchange="toggleDocumentSelection(${doc.id}, event)">
-            </td>
-            <td>
-                <div class="document-info">
-                    <div class="document-icon" style="${iconStyle}">
-                        <i class="${getDocumentTypeIcon(doc.document_type)}"></i>
-                    </div>
-                    <div class="document-details">
-                        <div class="document-name">${escapeHtml(doc.filename)}</div>
-                        <div class="document-meta">
-                            ${doc.description ? escapeHtml(doc.description) : 'No description'}
-                        </div>
-                    </div>
-                </div>
-            </td>
-            <td>
-                <span class="document-type-badge">${getDocumentTypeName(doc.document_type)}</span>
-            </td>
-            <td>
-                <a href="project_documents.php?project_id=${doc.project_id}" class="project-link">
-                    ${escapeHtml(doc.project_name)}
-                </a>
-            </td>
-            <td>${doc.size}</td>
-            <td>${formatDate(doc.uploaded_at)}</td>
-            <td>
-                <div class="action-buttons">
-                    <a href="download_document.php?id=${doc.id}" class="btn-download" target="_blank">
-                        <i class="fas fa-download"></i>
-                        Download
-                    </a>
-                </div>
-            </td>
-        </tr>
+                 <tr onclick="toggleDocumentSelection(${doc.id}, event)" data-doc-id="${doc.id}">
+             <td>
+                 <input type="checkbox" class="document-checkbox" ${isSelected ? 'checked' : ''} 
+                        onchange="toggleDocumentSelection(${doc.id}, event)">
+             </td>
+             <td>
+                 <div class="document-info">
+                     <div class="document-icon" style="${iconStyle}">
+                         <i class="${getDocumentTypeIcon(doc.document_type)}"></i>
+                     </div>
+                     <div class="document-details">
+                         <div class="document-name">${escapeHtml(doc.filename)}</div>
+                         <div class="document-meta">
+                             ${doc.description ? escapeHtml(doc.description) : 'No description'}
+                             ${doc.bol_number ? `<br><strong>BOL:</strong> ${escapeHtml(doc.bol_number)}` : ''}
+                             ${doc.warehouse_name ? `<br><strong>Warehouse:</strong> ${escapeHtml(doc.warehouse_name)}` : ''}
+                         </div>
+                     </div>
+                 </div>
+             </td>
+             <td>
+                 <span class="document-type-badge">${getDocumentTypeName(doc.document_type)}</span>
+                 ${doc.document_sub_type ? `<br><span class="document-type-badge" style="background: rgba(34, 197, 94, 0.1); color: #16a34a; margin-top: 4px; font-size: 0.7em;">${escapeHtml(doc.document_sub_type)}</span>` : ''}
+             </td>
+             <td>
+                 <a href="project_documents.php?project_id=${doc.project_id}" class="project-link">
+                     ${escapeHtml(doc.project_name)}
+                 </a>
+             </td>
+             <td>${doc.size}</td>
+             <td>${formatDate(doc.uploaded_at)}</td>
+             <td>
+                 <div class="action-buttons">
+                     <a href="download_document.php?id=${doc.id}" class="btn-download" target="_blank">
+                         <i class="fas fa-download"></i>
+                         Download
+                     </a>
+                 </div>
+             </td>
+         </tr>
     `;
 }
 
