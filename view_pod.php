@@ -15,38 +15,76 @@ $current_role = isset($_SESSION['role']) ? $_SESSION['role'] : 'unknown';
 $delivery_id = isset($_GET['delivery_id']) ? intval($_GET['delivery_id']) : 0;
 
 require_once '../config.php';
+require_once 'document_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
 }
 
 /**
- * We'll fetch:
- *  d.proof_of_delivery,
- *  p.account_id,
- *  c.name as account_name,
- *  p.id as project_id,
- *  d.warehouse_id
+ * First check for PODs in the new project_documents table,
+ * then fall back to legacy deliveries.proof_of_delivery field
  */
-$sql = "
-    SELECT d.proof_of_delivery,
+
+// Check for POD in new project_documents table first
+$sql_new = "
+    SELECT pd.file_path,
+           pd.original_file_name,
            p.account_id,
            c.name       AS account_name,
            p.id         AS project_id,
            d.warehouse_id
-      FROM deliveries d
-      LEFT JOIN projects p            ON d.project_id = p.id
-      LEFT JOIN customer_accounts c   ON p.account_id = c.id
-     WHERE d.id = ?
+      FROM project_documents pd
+      JOIN deliveries d           ON pd.delivery_id = d.id
+      LEFT JOIN projects p        ON pd.project_id = p.id
+      LEFT JOIN customer_accounts c ON p.account_id = c.id
+     WHERE pd.delivery_id = ?
+       AND pd.document_type = 'pods'
+       AND (pd.document_sub_type = 'Warehouse PODs' OR pd.document_sub_type = 'Project PODs')
+     ORDER BY pd.uploaded_at DESC
+     LIMIT 1
 ";
-$stmt = $conn->prepare($sql);
-$stmt->bind_param("i", $delivery_id);
-$stmt->execute();
-$stmt->bind_result($pod_path, $account_id, $account_name, $project_id, $warehouse_id);
-$stmt->fetch();
-$stmt->close();
+$stmt_new = $conn->prepare($sql_new);
+$stmt_new->bind_param("i", $delivery_id);
+$stmt_new->execute();
+$stmt_new->bind_result($pod_path, $original_filename, $account_id, $account_name, $project_id, $warehouse_id);
+$found_new_pod = $stmt_new->fetch();
+$stmt_new->close();
 
-// If there's no record or no POD, bail out
+// If no POD found in new system, check legacy system
+if (!$found_new_pod) {
+    $sql_legacy = "
+        SELECT d.proof_of_delivery,
+               '',                  -- no original filename in legacy
+               p.account_id,
+               c.name       AS account_name,
+               p.id         AS project_id,
+               d.warehouse_id
+          FROM deliveries d
+          LEFT JOIN projects p            ON d.project_id = p.id
+          LEFT JOIN customer_accounts c   ON p.account_id = c.id
+         WHERE d.id = ?
+           AND d.proof_of_delivery IS NOT NULL
+           AND d.proof_of_delivery != ''
+    ";
+    $stmt_legacy = $conn->prepare($sql_legacy);
+    $stmt_legacy->bind_param("i", $delivery_id);
+    $stmt_legacy->execute();
+    $stmt_legacy->bind_result($pod_path, $original_filename, $account_id, $account_name, $project_id, $warehouse_id);
+    $found_legacy_pod = $stmt_legacy->fetch();
+    $stmt_legacy->close();
+    
+    if (!$found_legacy_pod) {
+        die("POD file not found or invalid delivery ID.");
+    }
+} else {
+    // If we found a new POD, set the original filename for better display
+    if (empty($original_filename)) {
+        $original_filename = basename($pod_path);
+    }
+}
+
+// If there's no POD path at this point, bail out
 if (empty($pod_path)) {
     die("POD file not found or invalid delivery ID.");
 }
@@ -115,7 +153,9 @@ if (file_exists($full_path)) {
     }
 
     header('Content-Type: ' . $content_type);
-    header('Content-Disposition: inline; filename="' . basename($pod_path) . '"');
+    // Use original filename if available, otherwise use basename of path
+    $display_filename = !empty($original_filename) ? $original_filename : basename($pod_path);
+    header('Content-Disposition: inline; filename="' . $display_filename . '"');
     // Optionally skip Content-Length for dynamic or partial content issues
     readfile($full_path);
     exit();

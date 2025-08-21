@@ -4789,7 +4789,7 @@ function closeShippingModal(){
     if(modal) modal.style.display = 'none';
 }
 function generateShippingContent(filter){
-    let html='<div style="max-height:400px;overflow-y:auto;">';
+    let html='<div style="height:250px;overflow-y:auto;">';
     let has=false;
     
     // Handle special case for "Delivered" status
@@ -5753,7 +5753,7 @@ function closeCustomerShippingModal() {
 
 function generateCustomerShippingContent(status) {
     const shippingBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
-    let html = '<div style="max-height:400px;overflow-y:auto;">';
+    let html = '<div style="height:250px;overflow-y:auto;">';
     let has = false;
     
     // Handle special case for "Delivered" status
