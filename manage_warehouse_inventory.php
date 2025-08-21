@@ -775,6 +775,8 @@ $conn->close();
             border-radius: 8px;
             position: relative;
             box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            max-height: 550px;
+            overflow-y: auto;
         }
         .modal-header {
             text-align: center;
@@ -1321,7 +1323,7 @@ $conn->close();
                                             <?php if (!empty($delivery['proof_of_delivery']) || $delivery['has_warehouse_pod'] > 0): ?>
                                                 <a href="view_pod.php?delivery_id=<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>" target="_blank" style="color: #488C9A;">View POD</a>
                                             <?php else: ?>
-                                                <button class="action-button" style="padding: 2px 6px; font-size: 0.8em;" onclick="uploadWarehousePOD(<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>, <?php echo explode(',', $delivery['project_ids'])[0]; ?>)">Upload Warehouse POD</button>
+                                                <button class="action-button" style="padding: 8px 15px;" onclick="uploadWarehousePOD(<?php echo explode(',', $delivery['delivery_ids'])[0]; ?>, <?php echo explode(',', $delivery['project_ids'])[0]; ?>)">Upload POD</button>
                                             <?php endif; ?>
                                         </td>
                                         <td>
@@ -1972,7 +1974,7 @@ function uploadWarehousePOD(deliveryId, projectId) {
                 box-shadow: 0 20px 60px rgba(0,0,0,0.25) !important;
                 max-width: 550px !important;
                 width: 90% !important;
-                max-height: 90vh !important;
+                max-height: 500px !important;
                 overflow: hidden !important;
             }
             .warehouse-pod-modal input[type="file"] {
@@ -2012,8 +2014,8 @@ function uploadWarehousePOD(deliveryId, projectId) {
                   onmouseover="this.style.color='#e74c3c'" onmouseout="this.style.color='#6c757d'">&times;</span>
             
             <div style="background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color: white; padding: 24px 32px; border-radius: 12px 12px 0 0; margin: -1px -1px 0 -1px;">
-                <h2 style="margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.5px;">📋 Upload Warehouse POD</h2>
-                <p style="margin: 8px 0 0 0; font-size: 14px; opacity: 0.9; font-weight: 300;">Upload proof of delivery document for warehouse operations</p>
+                <h2 style="margin: 0; color: white; font-size: 24px; font-weight: 600; letter-spacing: -0.5px;">📋 Upload Warehouse POD</h2>
+                <p style="margin: 8px 0 0 0; color: white; font-size: 14px; opacity: 0.9; font-weight: 300;">Upload proof of delivery document for warehouse operations</p>
             </div>
             
             <form id="warehousePODForm" enctype="multipart/form-data" style="padding: 32px;">
