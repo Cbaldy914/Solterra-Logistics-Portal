@@ -157,7 +157,7 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
                         
                         // Get delivery_id from appointment
                         $delivery_id = null;
-                        $delivery_stmt = $conn->prepare("SELECT delivery_ids FROM site_scheduling WHERE id = ?");
+                        $delivery_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ?");
                         $delivery_stmt->bind_param("i", $appointment_id);
                         $delivery_stmt->execute();
                         $delivery_stmt->bind_result($delivery_ids_str);
@@ -358,7 +358,7 @@ function processSafetyIncident($conn, $appointment_id, $bol_number) {
                         
                         // Get delivery_id from appointment
                         $delivery_id = null;
-                        $delivery_stmt = $conn->prepare("SELECT delivery_ids FROM site_scheduling WHERE id = ?");
+                        $delivery_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ?");
                         $delivery_stmt->bind_param("i", $appointment_id);
                         $delivery_stmt->execute();
                         $delivery_stmt->bind_result($delivery_ids_str);
@@ -855,19 +855,17 @@ if ($action) {
             $departure_utc = !empty($departure_time) ? local_to_utc($departure_time, $site_tz) : null;
             
             // Handle POD upload using new document management system
-            $pod_path = null;
+            $pod_uploaded_successfully = false;
             if (isset($_FILES['proof_of_delivery']) && $_FILES['proof_of_delivery']['error'] === UPLOAD_ERR_OK) {
                 try {
                     // Get delivery_id from appointment
                     $delivery_id = null;
-                    $delivery_stmt = $conn->prepare("SELECT delivery_ids FROM site_scheduling WHERE id = ?");
+                    $delivery_stmt = $conn->prepare("SELECT delivery_id FROM site_scheduling WHERE id = ?");
                     $delivery_stmt->bind_param("i", $appointment_id);
                     $delivery_stmt->execute();
-                    $delivery_stmt->bind_result($delivery_ids_str);
+                    $delivery_stmt->bind_result($delivery_id);
                     if ($delivery_stmt->fetch()) {
-                        // Get first delivery ID if multiple
-                        $delivery_ids = explode(',', $delivery_ids_str);
-                        $delivery_id = intval($delivery_ids[0]);
+                        $delivery_id = intval($delivery_id);
                     }
                     $delivery_stmt->close();
                     
@@ -899,46 +897,23 @@ if ($action) {
                     
                     // Save to project_documents table
                     $result = saveDocumentToProjectDocuments($conn, $document_data);
-                    $pod_path = $result['file_path'];
+                    $pod_uploaded_successfully = true;
                     
                 } catch (Exception $e) {
-                    error_log("Failed to upload POD via new system: " . $e->getMessage());
-                    // Fallback to legacy upload method
-                    $upload_dir = 'uploads/pods/';
-                    if (!is_dir($upload_dir)) {
-                        mkdir($upload_dir, 0755, true);
-                    }
-                    
-                    $file_ext = strtolower(pathinfo($_FILES['proof_of_delivery']['name'], PATHINFO_EXTENSION));
-                    $allowed_exts = ['jpg', 'jpeg', 'png', 'pdf'];
-                    
-                    if (in_array($file_ext, $allowed_exts)) {
-                        $filename = 'pod_' . $appointment_id . '_' . time() . '.' . $file_ext;
-                        $pod_path = $upload_dir . $filename;
-                        move_uploaded_file($_FILES['proof_of_delivery']['tmp_name'], $pod_path);
-                    }
+                    error_log("Failed to upload POD for appointment ID $appointment_id: " . $e->getMessage());
+                    $pod_uploaded_successfully = false;
                 }
             }
             
-            // Update appointment
+            // Update appointment (removed POD path update since we use project_documents now)
             $update_sql = "
                 UPDATE site_scheduling 
                 SET bol_number = ?, reference_numbers = ?, description = ?, 
-                    arrival_time = ?, departure_time = ?";
+                    arrival_time = ?, departure_time = ?
+                WHERE id = ? AND project_id = ?";
             
-            $params = [$bol_number, $reference_numbers, $description, $arrival_utc, $departure_utc];
-            $param_types = "sssss";
-            
-            if ($pod_path) {
-                $update_sql .= ", proof_of_delivery = ?";
-                $params[] = $pod_path;
-                $param_types .= "s";
-            }
-            
-            $update_sql .= " WHERE id = ? AND project_id = ?";
-            $params[] = $appointment_id;
-            $params[] = $project_id;
-            $param_types .= "ii";
+            $params = [$bol_number, $reference_numbers, $description, $arrival_utc, $departure_utc, $appointment_id, $project_id];
+            $param_types = "sssssii";
             
             $stmt = $conn->prepare($update_sql);
             $stmt->bind_param($param_types, ...$params);
@@ -998,25 +973,18 @@ if ($action) {
                     $get_all_deliveries_stmt->close();
                     
                     if (!empty($delivery_ids_to_update)) {
-                        // Update ALL delivery records for this grouped shipment
+                        // Update ALL delivery records for this grouped shipment (removed POD update since we use project_documents now)
                         $placeholders = implode(',', array_fill(0, count($delivery_ids_to_update), '?'));
                         $update_delivery_sql = "
                             UPDATE deliveries 
                             SET status_of_delivery = 'Delivered to Project', 
-                                actual_delivery_date = ?";
+                                actual_delivery_date = ?
+                            WHERE id IN ($placeholders)";
                         // Use arrival time if provided, otherwise use current timestamp
                         $delivery_date = !empty($arrival_time) ? $arrival_time : date('Y-m-d H:i:s');
                         $delivery_params = [$delivery_date];
                         $delivery_param_types = "s";
                         
-                        // If POD was uploaded, copy it to all delivery records
-                        if ($pod_path) {
-                            $update_delivery_sql .= ", proof_of_delivery = ?";
-                            $delivery_params[] = $pod_path;
-                            $delivery_param_types .= "s";
-                        }
-                        
-                        $update_delivery_sql .= " WHERE id IN ($placeholders)";
                         foreach ($delivery_ids_to_update as $delivery_id) {
                             $delivery_params[] = $delivery_id;
                             $delivery_param_types .= "i";
