@@ -29,6 +29,7 @@ $highlight_delivery_id = isset($_GET['delivery_id']) ? intval($_GET['delivery_id
 
 // Database connection
 require_once '../config.php';
+require_once 'document_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -1047,6 +1048,75 @@ if (isset($_POST['upload_csv'])) {
     }
 }
 
+// Handle POD Upload via AJAX
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_pod') {
+    header('Content-Type: application/json');
+    
+    try {
+        $delivery_id = intval($_POST['delivery_id']);
+        $project_id = !empty($_POST['project_id']) ? intval($_POST['project_id']) : null;
+        
+        if ($delivery_id <= 0) {
+            throw new Exception('Invalid delivery ID');
+        }
+        
+        if (!isset($_FILES['pod_file']) || $_FILES['pod_file']['error'] !== UPLOAD_ERR_OK) {
+            throw new Exception('No file uploaded or upload error');
+        }
+        
+        // Prepare file data for upload
+        $file_data = [
+            'name' => $_FILES['pod_file']['name'],
+            'type' => $_FILES['pod_file']['type'],
+            'tmp_name' => $_FILES['pod_file']['tmp_name'],
+            'error' => $_FILES['pod_file']['error'],
+            'size' => $_FILES['pod_file']['size']
+        ];
+        
+        // Upload using new document system
+        $processed_file = processDocumentUpload($file_data, 'pods');
+        
+        // Determine sub-type based on delivery status
+        $sub_type = 'Project PODs'; // Default
+        if ($project_id) {
+            // Check delivery status to determine sub-type
+            $status_stmt = $conn->prepare("SELECT status_of_delivery FROM deliveries WHERE id = ?");
+            $status_stmt->bind_param("i", $delivery_id);
+            $status_stmt->execute();
+            $status_stmt->bind_result($delivery_status);
+            if ($status_stmt->fetch() && strpos($delivery_status, 'Warehouse') !== false) {
+                $sub_type = 'Warehouse PODs';
+            }
+            $status_stmt->close();
+        }
+        
+        // Prepare document data
+        $document_data = [
+            'project_id' => $project_id,
+            'document_type' => 'pods',
+            'document_sub_type' => $sub_type,
+            'delivery_id' => $delivery_id,
+            'original_name' => $processed_file['original_name'],
+            'file_size' => $processed_file['size'],
+            'mime_type' => $processed_file['mime_type'],
+            'uploaded_by' => $_SESSION['user_id'],
+            'tmp_name' => $processed_file['tmp_name'],
+            'entity_context' => "POD uploaded from manage_deliveries for delivery ID: $delivery_id"
+        ];
+        
+        // Save to project_documents table
+        $result = saveDocumentToProjectDocuments($conn, $document_data);
+        
+        echo json_encode(['success' => true, 'message' => 'POD uploaded successfully']);
+        exit;
+        
+    } catch (Exception $e) {
+        error_log("POD upload error in manage_deliveries: " . $e->getMessage());
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        exit;
+    }
+}
+
 /*
   -----------------------------------------------------------------------------
   4) Fetch Deliveries for Display
@@ -1167,7 +1237,12 @@ $sql = "
                    d.supplier
                )
            END AS manufacturer_name,
-           ss.id AS appointment_id
+           ss.id AS appointment_id,
+           (SELECT COUNT(*) FROM project_documents pd 
+            WHERE pd.delivery_id = d.id 
+            AND pd.document_type = 'pods' 
+            AND (pd.document_sub_type = 'Project PODs' OR pd.document_sub_type = 'Warehouse PODs')
+           ) AS has_pod_in_documents
     FROM deliveries d
     LEFT JOIN projects p ON d.project_id = p.id
     LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
@@ -2702,10 +2777,6 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                 Actual Delivery Date
                             </label>
                             <label class="column-option">
-                                <input type="checkbox" class="column-toggle" data-column="pod-column" checked>
-                                Proof of Delivery
-                            </label>
-                            <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="miles-column" checked>
                                 Miles
                             </label>
@@ -2724,6 +2795,10 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                             <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="scheduled-column" checked>
                                 Scheduled
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="pod-column" checked>
+                                Proof of Delivery
                             </label>
                             <label class="column-option">
                                 <input type="checkbox" class="column-toggle" data-column="pallets-column" checked>
@@ -2768,12 +2843,12 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                     <th class="anticipated-column">Anticipated Delivery Date</th>
                     <th class="warehouse-arrival-column">Warehouse Arrival Date</th>
                     <th class="actual-column">Actual Delivery Date</th>
-                    <th class="pod-column">Proof of Delivery</th>
                     <th class="miles-column">Miles</th>
                     <th class="freight-column">Freight Cost</th>
                     <th class="accessorial-column">Accessorial Costs</th>
                     <th class="customer-column">Customer Cost</th>
                     <th class="scheduled-column">Scheduled</th>
+                    <th class="pod-column">Proof of Delivery</th>
                     <th class="pallets-column">Associated Pallets</th>
                     <th class="actions-column">Actions</th>
                 </tr>
@@ -2942,17 +3017,6 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                             <td class="anticipated-column"><?php echo htmlspecialchars($delivery['anticipated_delivery_date']); ?></td>
                             <td class="warehouse-arrival-column"><?php echo htmlspecialchars($delivery['warehouse_arrival_date']); ?></td>
                             <td class="actual-column"><?php echo htmlspecialchars($delivery['actual_delivery_date']); ?></td>
-                            <td class="pod-column">
-                                <?php if (!empty($delivery['proof_of_delivery'])): ?>
-                                    <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">View POD</a>
-                                <?php else: ?>
-                                    <?php if ($_SESSION['role'] == 'global_admin'): ?>
-                                        <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>">Upload POD</a>
-                                    <?php else: ?>
-                                        N/A
-                                    <?php endif; ?>
-                                <?php endif; ?>
-                            </td>
                             <td class="miles-column">
                                 <?php if ($delivery['is_grouped']): ?>
                                     <?php echo htmlspecialchars($delivery['total_miles']); ?>
@@ -2995,6 +3059,17 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
                                            style="color: #fbb040; text-decoration: underline;">Schedule Delivery</a>
                                     <?php else: ?>
                                         <span style="color: #666;">N/A</span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            </td>
+                            <td class="pod-column">
+                                <?php if (!empty($delivery['proof_of_delivery']) || !empty($delivery['has_pod_in_documents'])): ?>
+                                    <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank" class="pod-link">View POD</a>
+                                <?php else: ?>
+                                    <?php if (in_array($_SESSION['role'], ['global_admin', 'admin'])): ?>
+                                        <button class="upload-pod-btn" onclick="openUploadPodModal(<?php echo $delivery['id']; ?>, <?php echo $delivery['project_id'] ?? 'null'; ?>); return false;">Upload POD</button>
+                                    <?php else: ?>
+                                        N/A
                                     <?php endif; ?>
                                 <?php endif; ?>
                             </td>
@@ -3786,6 +3861,262 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
 
 
 </script>
+<!-- Upload POD Modal -->
+<div id="uploadPodModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>📋 Upload Proof of Delivery</h2>
+            <span class="close" onclick="closeUploadPodModal()">&times;</span>
+        </div>
+        <form id="uploadPodForm" enctype="multipart/form-data">
+            <input type="hidden" id="upload_delivery_id" name="delivery_id">
+            <input type="hidden" id="upload_project_id" name="project_id">
+            <input type="hidden" name="action" value="upload_pod">
+            
+            <div class="form-group">
+                <label for="pod_file">Select POD File:</label>
+                <input type="file" id="pod_file" name="pod_file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" required>
+                <small>Accepted formats: PDF, JPG, PNG, DOC, DOCX (Max: 50MB)</small>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeUploadPodModal()">Cancel</button>
+                <button type="submit">Upload POD</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+/* Upload POD Button */
+.upload-pod-btn {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85em;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(72, 140, 154, 0.2);
+}
+
+.upload-pod-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(72, 140, 154, 0.3);
+    background: linear-gradient(135deg, #3A6E7F 0%, #488C9A 100%);
+}
+
+.pod-link {
+    color: #488C9A;
+    text-decoration: none;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.pod-link:hover {
+    background: rgba(72, 140, 154, 0.1);
+    color: #3A6E7F;
+}
+
+/* Upload Modal Styles */
+#uploadPodModal {
+    position: fixed;
+    z-index: 9999;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#uploadPodModal .modal-content {
+    max-width: 500px;
+    width: 90%;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    position: relative;
+}
+
+#uploadPodModal .modal-header {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: white;
+    padding: 20px;
+    border-radius: 12px 12px 0 0;
+    position: relative;
+}
+
+#uploadPodModal .modal-header h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: white;
+}
+
+#uploadPodModal .close {
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+}
+
+#uploadPodModal .close:hover {
+    opacity: 1;
+}
+
+#uploadPodModal .form-group {
+    padding: 20px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+#uploadPodModal .form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #333;
+}
+
+#uploadPodModal .form-group input[type="file"] {
+    width: 100%;
+    padding: 12px;
+    border: 2px dashed #ddd;
+    border-radius: 8px;
+    background: #fafafa;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+#uploadPodModal .form-group input[type="file"]:hover {
+    border-color: #488C9A;
+    background: #f0f8f9;
+}
+
+#uploadPodModal .form-group small {
+    color: #666;
+    font-size: 0.85em;
+    margin-top: 5px;
+    display: block;
+}
+
+#uploadPodModal .form-actions {
+    padding: 20px;
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+#uploadPodModal .form-actions button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+#uploadPodModal .form-actions button[type="button"] {
+    background: #f5f5f5;
+    color: #666;
+}
+
+#uploadPodModal .form-actions button[type="submit"] {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: white;
+}
+
+#uploadPodModal .form-actions button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+</style>
+
+<script>
+function openUploadPodModal(deliveryId, projectId) {
+    // Prevent event bubbling
+    event.stopPropagation();
+    
+    document.getElementById('upload_delivery_id').value = deliveryId;
+    document.getElementById('upload_project_id').value = projectId || '';
+    document.getElementById('uploadPodModal').style.display = 'block';
+    
+    // Add a small delay to prevent immediate closure
+    setTimeout(() => {
+        document.body.classList.add('modal-open');
+    }, 50);
+}
+
+function closeUploadPodModal() {
+    document.getElementById('uploadPodModal').style.display = 'none';
+    document.getElementById('uploadPodForm').reset();
+    document.body.classList.remove('modal-open');
+}
+
+// Wait for DOM to be ready before setting up event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle form submission
+    const uploadForm = document.getElementById('uploadPodForm');
+    if (uploadForm) {
+        uploadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            
+            fetch('manage_deliveries.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('POD uploaded successfully!');
+                    closeUploadPodModal();
+                    location.reload(); // Refresh to show updated data
+                } else {
+                    alert('Error uploading POD: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Network error occurred while uploading POD.');
+            });
+        });
+    }
+
+    // Close modal when clicking outside (improved version)
+    document.addEventListener('click', function(event) {
+        const modal = document.getElementById('uploadPodModal');
+        const modalContent = modal?.querySelector('.modal-content');
+        
+        // Only close if clicking directly on the modal overlay (not the content)
+        if (event.target === modal && !modalContent?.contains(event.target)) {
+            closeUploadPodModal();
+        }
+    });
+
+    // Handle escape key
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            const modal = document.getElementById('uploadPodModal');
+            if (modal && modal.style.display === 'block') {
+                closeUploadPodModal();
+            }
+        }
+    });
+});
+</script>
+
 </body>
 </html>
 <?php
