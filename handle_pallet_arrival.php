@@ -107,7 +107,7 @@ if ($action === 'receive_truckload') {
                 $document_data = [
                     'project_id' => $project_id,
                     'document_type' => 'pods',
-                    'document_sub_type' => 'Warehouse PODs',
+                    'document_sub_type' => 'Warehouse POD',
                     'delivery_id' => $delivery_id,
                     'warehouse_id' => $receiving_warehouse_id,
                     'original_name' => $processed_file['original_name'],
@@ -370,7 +370,7 @@ if ($action === 'receive_truckload') {
                     $document_data = [
                         'project_id' => $uploaded_pod_data['project_id'],
                         'document_type' => 'pods',
-                        'document_sub_type' => 'Warehouse PODs',
+                        'document_sub_type' => 'Warehouse POD',
                         'delivery_id' => $delivery_id,
                         'warehouse_id' => $receiving_warehouse_id,
                         'original_name' => $uploaded_pod_data['processed_file']['original_name'],

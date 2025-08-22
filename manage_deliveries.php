@@ -1077,7 +1077,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $processed_file = processDocumentUpload($file_data, 'pods');
         
         // Determine sub-type based on delivery status
-        $sub_type = 'Project PODs'; // Default
+        $sub_type = 'Project POD'; // Default
         if ($project_id) {
             // Check delivery status to determine sub-type
             $status_stmt = $conn->prepare("SELECT status_of_delivery FROM deliveries WHERE id = ?");
@@ -1085,7 +1085,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $status_stmt->execute();
             $status_stmt->bind_result($delivery_status);
             if ($status_stmt->fetch() && strpos($delivery_status, 'Warehouse') !== false) {
-                $sub_type = 'Warehouse PODs';
+                $sub_type = 'Warehouse POD';
             }
             $status_stmt->close();
         }
@@ -1241,7 +1241,7 @@ $sql = "
            (SELECT COUNT(*) FROM project_documents pd 
             WHERE pd.delivery_id = d.id 
             AND pd.document_type = 'pods' 
-            AND (pd.document_sub_type = 'Project PODs' OR pd.document_sub_type = 'Warehouse PODs')
+            AND (pd.document_sub_type = 'Project POD' OR pd.document_sub_type = 'Warehouse POD')
            ) AS has_pod_in_documents
     FROM deliveries d
     LEFT JOIN projects p ON d.project_id = p.id

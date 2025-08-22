@@ -32,8 +32,8 @@ function getDocumentTypeConfig() {
             'icon' => 'fas fa-clipboard-check',
             'color' => '#3b82f6',
             'sub_types' => [
-                'Warehouse PODs' => ['description' => 'Proof of delivery to warehouse'],
-                'Project PODs' => ['description' => 'Proof of delivery to project site'],
+                'Warehouse POD' => ['description' => 'Proof of delivery to warehouse'],
+                'Project POD' => ['description' => 'Proof of delivery to project site'],
                 'Delivery PODs' => ['description' => 'General delivery confirmations']
             ],
             'required_context' => ['delivery_id'],
@@ -164,9 +164,9 @@ function determineEnhancedDocumentSubType($document_type, $context = [], $user_s
             if (isset($context['delivery_status'])) {
                 $status = strtolower($context['delivery_status']);
                 if (strpos($status, 'warehouse') !== false) {
-                    return 'Warehouse PODs';
+                    return 'Warehouse POD';
                 } elseif (strpos($status, 'project') !== false || strpos($status, 'site') !== false) {
-                    return 'Project PODs';
+                    return 'Project POD';
                 }
             }
             return 'Delivery PODs';
