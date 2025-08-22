@@ -885,7 +885,7 @@ if ($action) {
                     $document_data = [
                         'project_id' => $project_id,
                         'document_type' => 'pods',
-                        'document_sub_type' => 'Project PODs',
+                        'document_sub_type' => 'Project POD',
                         'delivery_id' => $delivery_id,
                         'original_name' => $processed_file['original_name'],
                         'file_size' => $processed_file['size'],

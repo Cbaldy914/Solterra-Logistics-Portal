@@ -295,7 +295,7 @@ function fetchInboundHistory($conn, $warehouse_id) {
                                      AND d_inner.warehouse_id = d.warehouse_id 
                                      AND d_inner.warehouse_arrival_date = d.warehouse_arrival_date)
              AND pd.document_type = 'pods' 
-             AND pd.document_sub_type = 'Warehouse PODs') AS has_warehouse_pod
+             AND pd.document_sub_type = 'Warehouse POD') AS has_warehouse_pod
         FROM deliveries d
         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
         LEFT JOIN projects p ON d.project_id = p.id
@@ -481,7 +481,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $document_data = [
             'project_id' => $project_id,
             'document_type' => 'pods',
-            'document_sub_type' => 'Warehouse PODs',
+            'document_sub_type' => 'Warehouse POD',
             'delivery_id' => $delivery_id,
             'warehouse_id' => $warehouse_id,
             'original_name' => $processed_file['original_name'],

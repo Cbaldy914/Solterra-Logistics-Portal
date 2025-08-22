@@ -3401,10 +3401,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         Documents <span class="dropdown-arrow">▼</span>
                     </button>
                     <div class="dropdown-content" id="adminDocumentsDropdown">
-                        <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 All Documents</a>
-                        <a href="invoices.php?project_id=<?php echo $project_id; ?>">📄 Invoices</a>
-                        <a href="pods.php?project_id=<?php echo $project_id; ?>">📋 PODs</a>
-                        <a href="ftd.php?project_id=<?php echo $project_id; ?>">⚡ Flash Test Data</a>
+                        <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 Project Documents</a>
+                        <a href="global_documents.php">🌐 Global Documents</a>
                     </div>
                 </div>
                 <button onclick="handleAdminWarehousing()">Warehousing</button>
@@ -3437,10 +3435,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         Documents <span class="dropdown-arrow">▼</span>
                     </button>
                     <div class="dropdown-content" id="customerDocumentsDropdown">
-                        <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 All Documents</a>
-                        <a href="invoices.php?project_id=<?php echo $project_id; ?>">📄 Invoices</a>
-                        <a href="pods.php?project_id=<?php echo $project_id; ?>">📋 PODs</a>
-                        <a href="ftd.php?project_id=<?php echo $project_id; ?>">⚡ Flash Test Data</a>
+                        <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 Project Documents</a>
+                        <a href="global_documents.php">🌐 Global Documents</a>
                     </div>
                 </div>
                 <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Exceptions</button>

@@ -29,16 +29,16 @@ function determineDocumentSubType($document_type, $context = []) {
             if (isset($context['delivery_status'])) {
                 $status = strtolower($context['delivery_status']);
                 if (strpos($status, 'warehouse') !== false || strpos($status, 'received') !== false) {
-                    return 'Warehouse PODs';
+                    return 'Warehouse POD';
                 } elseif (strpos($status, 'project') !== false || strpos($status, 'delivered') !== false) {
-                    return 'Project PODs';
+                    return 'Project POD';
                 }
             }
             // Fallback to warehouse_id check
             if (isset($context['warehouse_id']) && $context['warehouse_id']) {
-                return 'Warehouse PODs';
+                return 'Warehouse POD';
             }
-            return 'Project PODs';
+            return 'Project POD';
             
         case 'invoices':
             if (isset($context['invoice_type'])) {

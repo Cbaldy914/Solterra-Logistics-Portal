@@ -59,7 +59,7 @@ $document_types = [
         'name' => 'PODs',
         'icon' => 'fas fa-clipboard-check',
         'color' => '#3b82f6',
-        'sub_filters' => ['Warehouse PODs', 'Project PODs']
+        'sub_filters' => ['Warehouse POD', 'Project POD']
     ],
     'flash_test_data' => [
         'name' => 'Flash Test Data',
@@ -899,7 +899,7 @@ let allDocuments = [];
  // Document type sub-filters
  const subFilters = {
      'invoices': ['Solterra Invoices', 'OEM Invoices', 'Warehouse Invoices', 'Freight Invoices'],
-     'pods': ['Warehouse PODs', 'Project PODs', 'Delivery PODs'],
+     'pods': ['Warehouse POD', 'Project POD', 'Delivery PODs'],
      'bills_of_lading': ['Inbound BOL', 'Outbound BOL', 'Intercompany BOL'],
      'warehousing': ['Storage Receipts', 'Handling Receipts', 'Inspection Reports'],
      'modules': ['Specifications', 'Certifications', 'Test Reports'],
