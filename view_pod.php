@@ -40,7 +40,7 @@ $sql_new = "
       LEFT JOIN customer_accounts c ON p.account_id = c.id
      WHERE pd.delivery_id = ?
        AND pd.document_type = 'pods'
-       AND (pd.document_sub_type = 'Warehouse PODs' OR pd.document_sub_type = 'Project PODs')
+       AND (pd.document_sub_type = 'Warehouse POD' OR pd.document_sub_type = 'Project POD')
      ORDER BY pd.uploaded_at DESC
      LIMIT 1
 ";
