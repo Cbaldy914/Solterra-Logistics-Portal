@@ -1089,6 +1089,12 @@ if ($current_step >= 4 && $step3_completed) $progress_percentage = 60;
 if ($current_step >= 5 && $step4_completed) $progress_percentage = 80;
 if ($step5_completed) $progress_percentage = 100;
 
+// Delivered-based completion percentage for the circular indicator
+$delivered_percentage = 0;
+if ($total_raw_modules > 0) {
+    $delivered_percentage = max(0, min(100, (int)round(($delivered_raw_total / $total_raw_modules) * 100)));
+}
+
 // Fetch module batches for this project with wattage information
 $module_batches = [];
 $stmt_modules = $conn->prepare("
@@ -1408,20 +1414,19 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 .timeline-circular-progress {
     width: 100px;
     height: 100px;
-    transform: rotate(-90deg);
+    /* start at 9 o'clock instead of 12 */
+    transform: rotate(-160deg);
     filter: drop-shadow(0 6px 15px rgba(72, 140, 154, 0.25));
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+
 .timeline-progress-step.completed .timeline-circular-progress {
-    filter: drop-shadow(0 8px 20px rgba(72, 140, 154, 0.4));
-    transform: rotate(-90deg) scale(1.05);
+    transform: rotate(-160deg) scale(1.02);
 }
 
 .timeline-progress-step.current .timeline-circular-progress {
-    filter: drop-shadow(0 8px 20px rgba(255, 193, 7, 0.4));
-    transform: rotate(-90deg) scale(1.02);
-    animation: timelineProgressPulse 2s infinite;
+    transform: rotate(-160deg) scale(1.0);
 }
 
 @keyframes timelineProgressPulse {
@@ -1448,6 +1453,11 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     transition: stroke-dashoffset 2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Fill the center to visually mask the straight progress bar beneath */
+.timeline-progress-center {
+    fill: #ffffff;
+}
+
 /* Admin view uses specific gradient ID */
 #progress-info .timeline-progress-fill {
     stroke: url(#timelineProgressGradient);
@@ -1460,12 +1470,11 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 
 .timeline-progress-text {
     font-family: 'Poppins', sans-serif;
-    font-size: 20px;
+    font-size: 25px;
     font-weight: 700;
     fill: #293E4C;
     text-anchor: middle;
-    dominant-baseline: central;
-    transform: rotate(90deg);
+    transform: rotate(160deg);
     transform-origin: 60px 60px;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
 }
@@ -1496,7 +1505,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     fill: #293E4C;
     text-anchor: middle;
     dominant-baseline: central;
-    transform: rotate(90deg);
+    transform: rotate(180deg);
     transform-origin: 60px 60px;
     filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
 }
@@ -1574,7 +1583,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     position: absolute;
     top: 35px;
     left: 10%;
-    right: 10%;
+    /* stop before the Percent Completion ring */
+    right: calc(10%);
     height: 6px;
     background: #e9ecef;
     border-radius: 3px;
@@ -1588,7 +1598,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     top: 35px;
     left: 10%;
     width: var(--progress-width, 0%);
-    max-width: 80%;
+    /* leave room for the ring so the fill doesn't go underneath it */
+    max-width: calc(80% - 50px);
     height: 6px;
     background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
     border-radius: 3px;
@@ -1998,11 +2009,11 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .timeline-progress-step.completed .timeline-circular-progress {
-        transform: rotate(-90deg) scale(1.02);
+        transform: rotate(180deg) scale(1.02);
     }
     
     .timeline-progress-step.current .timeline-circular-progress {
-        transform: rotate(-90deg) scale(1.0);
+        transform: rotate(180deg) scale(1.0);
     }
 
     /* Timeline Mobile Responsiveness */
@@ -3777,10 +3788,11 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                         </linearGradient>
                                     </defs>
                                     <circle class="timeline-progress-track" cx="60" cy="60" r="45"></circle>
+                                    <circle class="timeline-progress-center" cx="60" cy="60" r="41"></circle>
                                     <circle class="timeline-progress-fill" cx="60" cy="60" r="45" 
-                                            style="--progress-percentage: <?php echo $progress_percentage; ?>"></circle>
+                                            style="--progress-percentage: <?php echo $delivered_percentage; ?>"></circle>
                                     <text class="timeline-progress-text" x="60" y="60" text-anchor="middle" dy="0.35em">
-                                        <?php echo $progress_percentage; ?>%
+                                        <?php echo $delivered_percentage; ?>%
                                     </text>
                                 </svg>
                             </div>
@@ -4290,10 +4302,11 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                         </linearGradient>
                                     </defs>
                                     <circle class="timeline-progress-track" cx="60" cy="60" r="45"></circle>
+                                    <circle class="timeline-progress-center" cx="60" cy="60" r="41"></circle>
                                     <circle class="timeline-progress-fill" cx="60" cy="60" r="45" 
-                                            style="--progress-percentage: <?php echo $progress_percentage; ?>"></circle>
+                                            style="--progress-percentage: <?php echo $delivered_percentage; ?>"></circle>
                                     <text class="timeline-progress-text" x="60" y="60" text-anchor="middle" dy="0.35em">
-                                        <?php echo $progress_percentage; ?>%
+                                        <?php echo $delivered_percentage; ?>%
                                     </text>
                                 </svg>
                             </div>
