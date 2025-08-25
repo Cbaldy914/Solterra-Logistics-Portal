@@ -61,6 +61,12 @@ $document_types = [
         'color' => '#3b82f6',
         'sub_filters' => ['Warehouse POD', 'Project POD']
     ],
+    'shipments' => [
+        'name' => 'Shipments',
+        'icon' => 'fas fa-shipping-fast',
+        'color' => '#8b5cf6',
+        'sub_filters' => ['Arrival Notice', 'Customs Document', 'Delivery SOP']
+    ],
     'flash_test_data' => [
         'name' => 'Flash Test Data',
         'icon' => 'fas fa-bolt',
@@ -107,6 +113,34 @@ $document_types = [
 
 // Check if user can upload (admin or global_admin only)
 $can_upload = in_array($user_role, ['admin', 'global_admin']);
+
+// Check for upload parameters from project documents integration
+$auto_open_upload = isset($_GET['upload']) && $_GET['upload'] === '1';
+$pre_selected_project = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
+$pre_selected_folder = isset($_GET['folder']) ? trim($_GET['folder']) : '';
+$pre_selected_subfolder = isset($_GET['subfolder']) ? trim($_GET['subfolder']) : '';
+
+// Map folder keys to document types and sub-types
+$folder_mapping = [
+    'invoices' => ['document_type' => 'invoices', 'subfolders' => ['freight_invoice' => 'Freight Invoice', 'solterra_invoice' => 'Solterra Invoice', 'module_invoice' => 'Module Invoice']],
+    'pods' => ['document_type' => 'pods', 'subfolders' => ['project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
+    'shipments' => ['document_type' => 'shipments', 'subfolders' => ['arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'delivery_sop' => 'Delivery SOP']],
+    'warehousing' => ['document_type' => 'warehousing', 'subfolders' => ['warehouse_pod' => 'Warehouse POD', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo']],
+    'modules' => ['document_type' => 'modules', 'subfolders' => ['module_invoice' => 'Module Invoice', 'flash_test_data' => 'Flash Test Data', 'spec_sheet' => 'Spec Sheet']],
+    'incident_reports' => ['document_type' => 'incident_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
+    'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']]
+];
+
+$pre_selected_document_type = '';
+$pre_selected_document_sub_type = '';
+
+if (!empty($pre_selected_folder) && isset($folder_mapping[$pre_selected_folder])) {
+    $pre_selected_document_type = $folder_mapping[$pre_selected_folder]['document_type'];
+    
+    if (!empty($pre_selected_subfolder) && isset($folder_mapping[$pre_selected_folder]['subfolders'][$pre_selected_subfolder])) {
+        $pre_selected_document_sub_type = $folder_mapping[$pre_selected_folder]['subfolders'][$pre_selected_subfolder];
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -738,6 +772,389 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
         .documents-table tbody tr {
             animation: fadeInUp 0.3s ease forwards;
         }
+
+        /* Upload Documents Button */
+        .upload-documents {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.95em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3);
+        }
+
+        .upload-documents:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(34, 197, 94, 0.4);
+        }
+
+        /* Upload Modal */
+        .upload-modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background-color: #fff;
+            margin: 2% auto;
+            padding: 0;
+            border: none;
+            width: 90%;
+            max-width: 800px;
+            border-radius: 24px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 24px 32px;
+            border-radius: 24px 24px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 1.5em;
+            font-weight: 600;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: white;
+        }
+
+        .close-modal {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 8px;
+            transition: background-color 0.3s ease;
+        }
+
+        .close-modal:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .modal-body {
+            padding: 32px;
+        }
+
+        .upload-step {
+            margin-bottom: 32px;
+        }
+
+        .step-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .step-number {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.95em;
+        }
+
+        .step-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 8px;
+            font-size: 0.95em;
+        }
+
+        .form-select, .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 0.95em;
+            transition: all 0.3s ease;
+            background-color: #fff;
+            resize: vertical;
+        }
+
+        .form-select:focus, .form-input:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
+        }
+
+        .bol-autocomplete-container {
+            position: relative;
+        }
+
+        .bol-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 2px solid #e5e7eb;
+            border-top: none;
+            border-radius: 0 0 12px 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+
+        .bol-suggestion {
+            padding: 12px 16px;
+            cursor: pointer;
+            border-bottom: 1px solid #f3f4f6;
+            transition: background-color 0.2s ease;
+        }
+
+        .bol-suggestion:hover {
+            background-color: #f8f9fa;
+        }
+
+        .bol-suggestion.highlighted {
+            background-color: #e5f3f4;
+        }
+
+        .bol-suggestion:last-child {
+            border-bottom: none;
+        }
+
+        .bol-suggestion-main {
+            font-weight: 500;
+            color: #374151;
+        }
+
+        .bol-suggestion-details {
+            font-size: 0.85em;
+            color: #6b7280;
+            margin-top: 2px;
+        }
+
+        .bol-validation {
+            margin-top: 6px;
+            font-size: 0.85em;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .bol-validation.valid {
+            color: #059669;
+        }
+
+        .bol-validation.invalid {
+            color: #dc2626;
+        }
+
+        .bol-validation.searching {
+            color: #6b7280;
+        }
+
+        .form-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .form-checkbox input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #488C9A;
+        }
+
+        .dynamic-fields {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 16px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .file-upload-area {
+            border: 2px dashed #d1d5db;
+            border-radius: 12px;
+            padding: 32px;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .file-upload-area:hover {
+            border-color: #488C9A;
+            background-color: #f8f9fa;
+        }
+
+        .file-upload-area.dragover {
+            border-color: #22c55e;
+            background-color: #f0f9ff;
+        }
+
+        .upload-icon {
+            font-size: 3em;
+            color: #9ca3af;
+            margin-bottom: 16px;
+        }
+
+        .upload-text {
+            font-size: 1.1em;
+            color: #6b7280;
+            margin-bottom: 8px;
+        }
+
+        .upload-subtext {
+            font-size: 0.9em;
+            color: #9ca3af;
+        }
+
+        .file-list {
+            margin-top: 20px;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .file-icon {
+            color: #488C9A;
+        }
+
+        .remove-file {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.8em;
+            cursor: pointer;
+        }
+
+        .modal-footer {
+            padding: 24px 32px;
+            background: #f8f9fa;
+            border-radius: 0 0 24px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .upload-progress {
+            display: none;
+            flex: 1;
+            margin-right: 20px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn-cancel {
+            background: #6b7280;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        .btn-cancel:hover {
+            background: #4b5563;
+        }
+
+        .btn-upload {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-upload:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3);
+        }
+
+        .btn-upload:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
     </style>
  </head>
  <body class="global-documents-page">
@@ -794,6 +1211,12 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
                     <i class="fas fa-search"></i>
                     Apply Filters
                 </button>
+                <?php if ($can_upload): ?>
+                <button type="button" class="upload-documents" onclick="openUploadModal()">
+                    <i class="fas fa-upload"></i>
+                    Upload Documents
+                </button>
+                <?php endif; ?>
                 <button type="button" class="bulk-download" id="bulkDownload" onclick="downloadSelected()" disabled>
                     <i class="fas fa-download"></i>
                     Download Selected
@@ -882,6 +1305,117 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
                 </div>
                 <div class="pagination-buttons" id="paginationButtons">
                     <!-- Will be populated dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Documents Modal -->
+    <div id="uploadModal" class="upload-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">
+                    <i class="fas fa-upload"></i>
+                    Upload Documents
+                </h2>
+                <button class="close-modal" onclick="closeUploadModal()">&times;</button>
+            </div>
+            
+            <div class="modal-body">
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <!-- Step 1: Project Selection -->
+                    <div class="upload-step">
+                        <div class="step-header">
+                            <div class="step-number">1</div>
+                            <h3 class="step-title">Select Project</h3>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="uploadProjectSelect">Project *</label>
+                            <select id="uploadProjectSelect" name="project_id" class="form-select" required>
+                                <option value="">Choose a project...</option>
+                                <?php foreach ($accessible_projects as $project): ?>
+                                    <option value="<?php echo $project['id']; ?>"><?php echo htmlspecialchars($project['project_name']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Document Type Selection -->
+                    <div class="upload-step">
+                        <div class="step-header">
+                            <div class="step-number">2</div>
+                            <h3 class="step-title">Document Type & Sub-Type</h3>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="uploadDocumentType">Document Type *</label>
+                            <select id="uploadDocumentType" name="document_type" class="form-select" required onchange="updateSubTypes()">
+                                <option value="">Choose document type...</option>
+                                <option value="invoices">Invoices</option>
+                                <option value="pods">PODs</option>
+                                <option value="shipments">Shipments</option>
+                                <option value="warehousing">Warehousing</option>
+                                <option value="modules">Modules</option>
+                                <option value="incident_reports">Incident Reports</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="uploadDocumentSubType">Sub-Type *</label>
+                            <select id="uploadDocumentSubType" name="document_sub_type" class="form-select" required onchange="updateDynamicFields()">
+                                <option value="">Choose sub-type...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: Dynamic Fields Based on Selection -->
+                    <div class="upload-step">
+                        <div class="step-header">
+                            <div class="step-number">3</div>
+                            <h3 class="step-title">Document Details</h3>
+                        </div>
+                        <div id="dynamicFields" class="dynamic-fields" style="display: none;">
+                            <!-- Will be populated dynamically -->
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="documentDescription">Description (Optional)</label>
+                            <textarea id="documentDescription" name="description" class="form-input" rows="3" placeholder="Enter a description for this document..."></textarea>
+                        </div>
+                        <div class="form-checkbox">
+                            <input type="checkbox" id="isSafeHarbor" name="is_safe_harbor" value="1">
+                            <label for="isSafeHarbor" class="form-label">This is a Safe Harbor document</label>
+                        </div>
+                    </div>
+
+                    <!-- Step 4: File Upload -->
+                    <div class="upload-step">
+                        <div class="step-header">
+                            <div class="step-number">4</div>
+                            <h3 class="step-title">Upload Files</h3>
+                        </div>
+                        <div class="file-upload-area" onclick="document.getElementById('fileInput').click()">
+                            <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                            <div class="upload-text">Drop files here or click to browse</div>
+                            <div class="upload-subtext">Supports: PDF, DOC, DOCX, XLS, XLSX, JPG, PNG (Max: 50MB each)</div>
+                        </div>
+                        <input type="file" id="fileInput" name="files[]" multiple style="display: none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv" onchange="handleFileSelection(event)">
+                        <div id="fileList" class="file-list"></div>
+                    </div>
+                </form>
+            </div>
+
+            <div class="modal-footer">
+                <div class="upload-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div id="progressText">Uploading...</div>
+                </div>
+                <div class="modal-buttons">
+                    <button type="button" class="btn-cancel" onclick="closeUploadModal()">Cancel</button>
+                    <button type="button" class="btn-upload" id="uploadBtn" onclick="uploadDocuments()" disabled>
+                        <i class="fas fa-upload"></i>
+                        Upload Documents
+                    </button>
                 </div>
             </div>
         </div>
@@ -1315,6 +1849,555 @@ function showError(message) {
             <p>${escapeHtml(message)}</p>
         </div>
     `;
+}
+
+// Upload Modal Functions
+let selectedFiles = [];
+
+function openUploadModal() {
+    document.getElementById('uploadModal').style.display = 'block';
+    resetUploadForm();
+}
+
+function closeUploadModal() {
+    document.getElementById('uploadModal').style.display = 'none';
+    resetUploadForm();
+}
+
+function resetUploadForm() {
+    document.getElementById('uploadForm').reset();
+    selectedFiles = [];
+    document.getElementById('fileList').innerHTML = '';
+    document.getElementById('dynamicFields').style.display = 'none';
+    document.getElementById('uploadBtn').disabled = true;
+    document.getElementById('uploadProgress').style.display = 'none';
+    document.getElementById('documentDescription').value = '';
+    updateSubTypes(); // Clear sub-types
+}
+
+// Document type and sub-type configurations
+const documentConfig = {
+    'invoices': {
+        'sub_types': ['Freight Invoice', 'Solterra Invoice', 'Module Invoice'],
+        'fields': {
+            'Freight Invoice': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true},
+                {type: 'number', name: 'invoice_total', label: 'Invoice Total ($)', required: false, step: '0.01'},
+                {type: 'date', name: 'invoice_date', label: 'Invoice Date', required: false}
+            ],
+            'Solterra Invoice': [
+                {type: 'number', name: 'invoice_total', label: 'Invoice Total ($)', required: false, step: '0.01'},
+                {type: 'date', name: 'invoice_date', label: 'Invoice Date', required: false}
+            ],
+            'Module Invoice': [
+                {type: 'select', name: 'manufacturer_id', label: 'Manufacturer', required: true, data_source: 'manufacturers'},
+                {type: 'number', name: 'invoice_total', label: 'Invoice Total ($)', required: false, step: '0.01'},
+                {type: 'date', name: 'invoice_date', label: 'Invoice Date', required: false}
+            ]
+        }
+    },
+    'pods': {
+        'sub_types': ['Project POD', 'Warehouse POD'],
+        'fields': {
+            'Project POD': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true}
+            ],
+            'Warehouse POD': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true},
+                {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
+            ]
+        }
+    },
+    'shipments': {
+        'sub_types': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
+        'fields': {
+            'Arrival Notice': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: false},
+                {type: 'select', name: 'warehouse_id', label: 'Warehouse/Port', required: false, data_source: 'warehouses'}
+            ],
+            'Customs Document': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: false},
+                {type: 'select', name: 'warehouse_id', label: 'Warehouse/Port', required: false, data_source: 'warehouses'}
+            ],
+            'Delivery SOP': []
+        }
+    },
+    'warehousing': {
+        'sub_types': ['Warehouse POD', 'Inventory Report', 'Warehouse Photo'],
+        'fields': {
+            'Warehouse POD': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true},
+                {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
+            ],
+            'Inventory Report': [
+                {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
+            ],
+            'Warehouse Photo': [
+                {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
+            ]
+        }
+    },
+    'modules': {
+        'sub_types': ['Module Invoice', 'Flash Test Data', 'Data/Spec Sheet'],
+        'fields': {
+            'Module Invoice': [
+                {type: 'select', name: 'manufacturer_id', label: 'Manufacturer', required: true, data_source: 'manufacturers'},
+                {type: 'number', name: 'invoice_total', label: 'Invoice Total ($)', required: false, step: '0.01'},
+                {type: 'date', name: 'invoice_date', label: 'Invoice Date', required: false}
+            ],
+            'Flash Test Data': [
+                {type: 'select', name: 'manufacturer_id', label: 'Manufacturer', required: false, data_source: 'manufacturers'}
+            ],
+            'Data/Spec Sheet': [
+                {type: 'select', name: 'manufacturer_id', label: 'Manufacturer', required: false, data_source: 'manufacturers'}
+            ]
+        }
+    },
+    'incident_reports': {
+        'sub_types': ['Damage Photo', 'Warranty Document', 'Project POD', 'Warehouse POD'],
+        'fields': {
+            'Damage Photo': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: false}
+            ],
+            'Warranty Document': [],
+            'Project POD': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true}
+            ],
+            'Warehouse POD': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true},
+                {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
+            ]
+        }
+    },
+    'other': {
+        'sub_types': ['General'],
+        'fields': {
+            'General': []
+        }
+    }
+};
+
+function updateSubTypes() {
+    const documentType = document.getElementById('uploadDocumentType').value;
+    const subTypeSelect = document.getElementById('uploadDocumentSubType');
+    
+    // Clear existing options
+    subTypeSelect.innerHTML = '<option value="">Choose sub-type...</option>';
+    
+    if (documentType && documentConfig[documentType]) {
+        documentConfig[documentType].sub_types.forEach(subType => {
+            const option = document.createElement('option');
+            option.value = subType;
+            option.textContent = subType;
+            subTypeSelect.appendChild(option);
+        });
+    }
+    
+    // Clear dynamic fields when document type changes
+    document.getElementById('dynamicFields').style.display = 'none';
+    validateForm();
+}
+
+async function updateDynamicFields() {
+    const documentType = document.getElementById('uploadDocumentType').value;
+    const subType = document.getElementById('uploadDocumentSubType').value;
+    const dynamicFields = document.getElementById('dynamicFields');
+    
+    if (!documentType || !subType) {
+        dynamicFields.style.display = 'none';
+        validateForm();
+        return;
+    }
+    
+    const fields = documentConfig[documentType]?.fields?.[subType] || [];
+    
+    if (fields.length === 0) {
+        dynamicFields.style.display = 'none';
+        validateForm();
+        return;
+    }
+    
+    let html = '';
+    
+    for (const field of fields) {
+        html += `<div class="form-group">
+            <label class="form-label" for="${field.name}">
+                ${field.label}${field.required ? ' *' : ''}
+            </label>`;
+        
+        if (field.type === 'bol_autocomplete') {
+            html += `<div class="bol-autocomplete-container">
+                <input type="text" id="${field.name}" name="${field.name}_text" class="form-input" 
+                    ${field.required ? 'required' : ''} 
+                    placeholder="Type BOL number..." 
+                    autocomplete="off"
+                    oninput="handleBolAutocomplete(this, '${field.name}')"
+                    onfocus="showBolSuggestions('${field.name}')"
+                    onblur="hideBolSuggestions('${field.name}')">
+                <input type="hidden" id="${field.name}_hidden" name="${field.name}" value="">
+                <div id="${field.name}_suggestions" class="bol-suggestions"></div>
+                <div id="${field.name}_validation" class="bol-validation" style="display: none;"></div>
+            </div>`;
+        } else if (field.type === 'select' && field.data_source) {
+            html += `<select id="${field.name}" name="${field.name}" class="form-select" ${field.required ? 'required' : ''} onchange="validateForm()">
+                <option value="">Choose ${field.label.toLowerCase()}...</option>
+            </select>`;
+            
+            // Load data for select fields
+            try {
+                const response = await fetch(`get_${field.data_source}.php?project_id=${document.getElementById('uploadProjectSelect').value}`);
+                const data = await response.json();
+                if (data.success) {
+                    const selectElement = document.getElementById(field.name);
+                    data.data.forEach(item => {
+                        const option = document.createElement('option');
+                        option.value = item.id;
+                        option.textContent = item.name || item.bol_number || item.location_name;
+                        selectElement.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.warn(`Failed to load ${field.data_source}:`, error);
+            }
+        } else if (field.type === 'number') {
+            html += `<input type="number" id="${field.name}" name="${field.name}" class="form-input" 
+                ${field.required ? 'required' : ''} ${field.step ? `step="${field.step}"` : ''} 
+                onchange="validateForm()" placeholder="Enter ${field.label.toLowerCase()}">`;
+        } else if (field.type === 'date') {
+            html += `<input type="date" id="${field.name}" name="${field.name}" class="form-input" 
+                ${field.required ? 'required' : ''} onchange="validateForm()">`;
+        } else {
+            html += `<input type="text" id="${field.name}" name="${field.name}" class="form-input" 
+                ${field.required ? 'required' : ''} onchange="validateForm()" 
+                placeholder="Enter ${field.label.toLowerCase()}">`;
+        }
+        
+        html += '</div>';
+    }
+    
+    dynamicFields.innerHTML = html;
+    dynamicFields.style.display = 'block';
+    validateForm();
+}
+
+function handleFileSelection(event) {
+    const files = Array.from(event.target.files);
+    selectedFiles = [...selectedFiles, ...files];
+    updateFileList();
+    validateForm();
+}
+
+function updateFileList() {
+    const fileList = document.getElementById('fileList');
+    
+    if (selectedFiles.length === 0) {
+        fileList.innerHTML = '';
+        return;
+    }
+    
+    let html = '';
+    selectedFiles.forEach((file, index) => {
+        const fileSize = (file.size / 1024 / 1024).toFixed(2);
+        html += `
+            <div class="file-item">
+                <div class="file-info">
+                    <i class="fas fa-file file-icon"></i>
+                    <div>
+                        <div>${escapeHtml(file.name)}</div>
+                        <div style="font-size: 0.8em; color: #9ca3af;">${fileSize} MB</div>
+                    </div>
+                </div>
+                <button type="button" class="remove-file" onclick="removeFile(${index})">Remove</button>
+            </div>
+        `;
+    });
+    
+    fileList.innerHTML = html;
+}
+
+function removeFile(index) {
+    selectedFiles.splice(index, 1);
+    updateFileList();
+    validateForm();
+}
+
+function validateForm() {
+    const projectId = document.getElementById('uploadProjectSelect').value;
+    const documentType = document.getElementById('uploadDocumentType').value;
+    const subType = document.getElementById('uploadDocumentSubType').value;
+    const hasFiles = selectedFiles.length > 0;
+    
+    // Check required dynamic fields
+    let requiredFieldsValid = true;
+    if (documentType && subType && documentConfig[documentType]?.fields?.[subType]) {
+        const fields = documentConfig[documentType].fields[subType];
+        fields.forEach(field => {
+            if (field.required) {
+                let element;
+                if (field.type === 'bol_autocomplete') {
+                    // For BOL autocomplete, check the hidden field
+                    element = document.getElementById(field.name + '_hidden');
+                } else {
+                    element = document.getElementById(field.name);
+                }
+                if (element && !element.value) {
+                    requiredFieldsValid = false;
+                }
+            }
+        });
+    }
+    
+    const isValid = projectId && documentType && subType && hasFiles && requiredFieldsValid;
+    document.getElementById('uploadBtn').disabled = !isValid;
+}
+
+async function uploadDocuments() {
+    if (selectedFiles.length === 0) {
+        alert('Please select files to upload.');
+        return;
+    }
+    
+    const formData = new FormData();
+    
+    // Add form fields
+    formData.append('project_id', document.getElementById('uploadProjectSelect').value);
+    formData.append('document_type', document.getElementById('uploadDocumentType').value);
+    formData.append('document_sub_type', document.getElementById('uploadDocumentSubType').value);
+    formData.append('is_safe_harbor', document.getElementById('isSafeHarbor').checked ? '1' : '0');
+    formData.append('description', document.getElementById('documentDescription').value);
+    
+    // Add dynamic field values
+    const documentType = document.getElementById('uploadDocumentType').value;
+    const subType = document.getElementById('uploadDocumentSubType').value;
+    if (documentConfig[documentType]?.fields?.[subType]) {
+        documentConfig[documentType].fields[subType].forEach(field => {
+            let element;
+            if (field.type === 'bol_autocomplete') {
+                // For BOL autocomplete, use the hidden field value
+                element = document.getElementById(field.name + '_hidden');
+            } else {
+                element = document.getElementById(field.name);
+            }
+            if (element && element.value) {
+                formData.append(field.name, element.value);
+            }
+        });
+    }
+    
+    // Add files
+    selectedFiles.forEach(file => {
+        formData.append('files[]', file);
+    });
+    
+    // Show progress
+    document.getElementById('uploadProgress').style.display = 'block';
+    document.getElementById('uploadBtn').disabled = true;
+    
+    try {
+        const response = await fetch('upload_global_document.php', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('Documents uploaded successfully!');
+            closeUploadModal();
+            loadDocuments(); // Refresh the documents list
+        } else {
+            alert('Upload failed: ' + result.message);
+        }
+    } catch (error) {
+        alert('Upload failed: ' + error.message);
+    } finally {
+        document.getElementById('uploadProgress').style.display = 'none';
+        document.getElementById('uploadBtn').disabled = false;
+    }
+}
+
+// Add drag and drop functionality
+document.addEventListener('DOMContentLoaded', function() {
+    const fileUploadArea = document.querySelector('.file-upload-area');
+    
+    if (fileUploadArea) {
+        fileUploadArea.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            this.classList.add('dragover');
+        });
+        
+        fileUploadArea.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            this.classList.remove('dragover');
+        });
+        
+        fileUploadArea.addEventListener('drop', function(e) {
+            e.preventDefault();
+            this.classList.remove('dragover');
+            
+            const files = Array.from(e.dataTransfer.files);
+            selectedFiles = [...selectedFiles, ...files];
+            updateFileList();
+            validateForm();
+        });
+    }
+
+    // Auto-open upload modal and pre-populate if coming from project documents
+    <?php if ($auto_open_upload && $can_upload): ?>
+        // Pre-populate form fields
+        <?php if ($pre_selected_project > 0): ?>
+            document.getElementById('uploadProjectSelect').value = '<?php echo $pre_selected_project; ?>';
+        <?php endif; ?>
+        
+        <?php if (!empty($pre_selected_document_type)): ?>
+            document.getElementById('uploadDocumentType').value = '<?php echo $pre_selected_document_type; ?>';
+            updateSubTypes(); // Populate sub-types
+            
+            <?php if (!empty($pre_selected_document_sub_type)): ?>
+                // Wait for sub-types to be populated, then select the sub-type
+                setTimeout(() => {
+                    document.getElementById('uploadDocumentSubType').value = '<?php echo $pre_selected_document_sub_type; ?>';
+                    updateDynamicFields(); // Show relevant fields
+                    validateForm(); // Check if form is now valid
+                }, 100);
+            <?php endif; ?>
+        <?php endif; ?>
+        
+        // Open the upload modal
+        setTimeout(() => {
+            openUploadModal();
+        }, 200);
+    <?php endif; ?>
+    
+});
+
+// BOL Autocomplete Functions
+let bolSearchTimeout;
+let currentBolSuggestions = {};
+
+async function handleBolAutocomplete(input, fieldName) {
+    const query = input.value.trim();
+    const validationDiv = document.getElementById(fieldName + '_validation');
+    const hiddenInput = document.getElementById(fieldName + '_hidden');
+    
+    // Clear previous timeout
+    if (bolSearchTimeout) {
+        clearTimeout(bolSearchTimeout);
+    }
+    
+    // Clear hidden value when text changes
+    hiddenInput.value = '';
+    
+    if (query.length === 0) {
+        hideBolSuggestions(fieldName);
+        validationDiv.style.display = 'none';
+        validateForm();
+        return;
+    }
+    
+    // Show searching state
+    validationDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Searching...';
+    validationDiv.className = 'bol-validation searching';
+    validationDiv.style.display = 'flex';
+    
+    // Debounce the search
+    bolSearchTimeout = setTimeout(async () => {
+        try {
+            const projectId = document.getElementById('uploadProjectSelect').value;
+            const response = await fetch(`search_bol.php?project_id=${projectId}&q=${encodeURIComponent(query)}`);
+            const data = await response.json();
+            
+            if (data.success) {
+                currentBolSuggestions[fieldName] = data.deliveries;
+                showBolSuggestions(fieldName, data.deliveries, query);
+                
+                // Check for exact match
+                const exactMatch = data.deliveries.find(d => 
+                    d.bol_number && d.bol_number.toLowerCase() === query.toLowerCase()
+                );
+                
+                if (exactMatch) {
+                    validationDiv.innerHTML = '<i class="fas fa-check-circle"></i> BOL found';
+                    validationDiv.className = 'bol-validation valid';
+                    hiddenInput.value = exactMatch.id;
+                } else if (data.deliveries.length > 0) {
+                    validationDiv.innerHTML = '<i class="fas fa-search"></i> Similar BOLs found - select one';
+                    validationDiv.className = 'bol-validation searching';
+                } else {
+                    validationDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> BOL not found';
+                    validationDiv.className = 'bol-validation invalid';
+                }
+            } else {
+                validationDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Search error';
+                validationDiv.className = 'bol-validation invalid';
+            }
+        } catch (error) {
+            console.error('BOL search error:', error);
+            validationDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Search error';
+            validationDiv.className = 'bol-validation invalid';
+        }
+        
+        validateForm();
+    }, 300);
+}
+
+function showBolSuggestions(fieldName, suggestions = null, query = '') {
+    const suggestionsDiv = document.getElementById(fieldName + '_suggestions');
+    
+    if (!suggestions) {
+        suggestions = currentBolSuggestions[fieldName] || [];
+    }
+    
+    if (suggestions.length === 0) {
+        suggestionsDiv.style.display = 'none';
+        return;
+    }
+    
+    let html = '';
+    suggestions.forEach(delivery => {
+        const bolNumber = delivery.bol_number || `Delivery #${delivery.id}`;
+        const details = [];
+        
+        if (delivery.supplier) details.push(delivery.supplier);
+        if (delivery.status) details.push(delivery.status);
+        if (delivery.warehouse_name) details.push(`→ ${delivery.warehouse_name}`);
+        
+        html += `
+            <div class="bol-suggestion" onclick="selectBolSuggestion('${fieldName}', ${delivery.id}, '${bolNumber.replace(/'/g, "\\'")}')">
+                <div class="bol-suggestion-main">${escapeHtml(bolNumber)}</div>
+                ${details.length > 0 ? `<div class="bol-suggestion-details">${escapeHtml(details.join(' • '))}</div>` : ''}
+            </div>
+        `;
+    });
+    
+    suggestionsDiv.innerHTML = html;
+    suggestionsDiv.style.display = 'block';
+}
+
+function selectBolSuggestion(fieldName, deliveryId, bolNumber) {
+    const input = document.getElementById(fieldName);
+    const hiddenInput = document.getElementById(fieldName + '_hidden');
+    const validationDiv = document.getElementById(fieldName + '_validation');
+    
+    input.value = bolNumber;
+    hiddenInput.value = deliveryId;
+    
+    validationDiv.innerHTML = '<i class="fas fa-check-circle"></i> BOL selected';
+    validationDiv.className = 'bol-validation valid';
+    validationDiv.style.display = 'flex';
+    
+    hideBolSuggestions(fieldName);
+    validateForm();
+}
+
+function hideBolSuggestions(fieldName) {
+    // Add a small delay to allow for clicks on suggestions
+    setTimeout(() => {
+        const suggestionsDiv = document.getElementById(fieldName + '_suggestions');
+        if (suggestionsDiv) {
+            suggestionsDiv.style.display = 'none';
+        }
+    }, 150);
 }
 </script>
 </body>

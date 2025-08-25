@@ -55,15 +55,23 @@ $base_sql = "
         pd.document_sub_type,
         pd.delivery_id,
         pd.warehouse_id,
+        pd.project_invoice_id,
+        pd.manufacturer_id,
+        pd.is_safe_harbor,
         pd.project_id,
         p.project_name,
         u.username as uploaded_by_name,
         d.bol_number,
-        w.name as warehouse_name
+        w.name as warehouse_name,
+        pi.invoice_number,
+        pi.amount as invoice_amount,
+        m.name as manufacturer_name
     FROM project_documents pd
     LEFT JOIN users u ON pd.uploaded_by = u.id
     LEFT JOIN deliveries d ON pd.delivery_id = d.id
     LEFT JOIN warehouses w ON pd.warehouse_id = w.id
+    LEFT JOIN project_invoices pi ON pd.project_invoice_id = pi.id
+    LEFT JOIN manufacturers m ON pd.manufacturer_id = m.id
     JOIN projects p ON pd.project_id = p.id
 ";
 
@@ -198,10 +206,16 @@ try {
             'document_sub_type' => $row['document_sub_type'],
             'delivery_id' => $row['delivery_id'],
             'warehouse_id' => $row['warehouse_id'],
+            'project_invoice_id' => $row['project_invoice_id'],
+            'manufacturer_id' => $row['manufacturer_id'],
+            'is_safe_harbor' => (bool)$row['is_safe_harbor'],
             'project_id' => $row['project_id'],
             'project_name' => $row['project_name'],
             'bol_number' => $row['bol_number'],
-            'warehouse_name' => $row['warehouse_name']
+            'warehouse_name' => $row['warehouse_name'],
+            'invoice_number' => $row['invoice_number'],
+            'invoice_amount' => $row['invoice_amount'],
+            'manufacturer_name' => $row['manufacturer_name']
         ];
     }
     $data_stmt->close();
