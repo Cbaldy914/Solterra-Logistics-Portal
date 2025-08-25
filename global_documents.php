@@ -1404,7 +1404,7 @@ if (!empty($pre_selected_folder) && isset($folder_mapping[$pre_selected_folder])
             </div>
 
             <div class="modal-footer">
-                <div class="upload-progress">
+                <div class="upload-progress" id="uploadProgress" style="display: none;">
                     <div class="progress-bar">
                         <div class="progress-fill" id="progressFill"></div>
                     </div>
@@ -1432,19 +1432,37 @@ let allDocuments = [];
 
  // Document type sub-filters
  const subFilters = {
-     'invoices': ['Solterra Invoices', 'OEM Invoices', 'Warehouse Invoices', 'Freight Invoices'],
-     'pods': ['Warehouse POD', 'Project POD', 'Delivery PODs'],
+     'invoices': ['Solterra Invoice', 'OEM Invoices', 'Warehouse Invoices', 'Freight Invoice', 'Module Invoice'],
+     'pods': ['Warehouse POD', 'Project POD'],
+     'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
      'bills_of_lading': ['Inbound BOL', 'Outbound BOL', 'Intercompany BOL'],
-     'warehousing': ['Storage Receipts', 'Handling Receipts', 'Inspection Reports'],
-     'modules': ['Specifications', 'Certifications', 'Test Reports'],
+     'warehousing': ['Warehouse POD', 'Inventory Report', 'Warehouse Photo'],
+     'modules': ['Module Invoice', 'Flash Test Data', 'Data/Spec Sheet'],
      'delivery_packet': ['Complete Packets', 'Partial Packets'],
-     'incident_reports': ['Safety Reports', 'Damage Reports', 'Delay Reports'],
+     'incident_reports': ['Damage Photo', 'Warranty Document', 'Project POD', 'Warehouse POD'],
      'safe_harbor_evidence': ['Legal Documents', 'Compliance Certificates'],
      'flash_test_data': ['Flash Test Results', 'Quality Reports']
  };
 
 // Initialize page
 document.addEventListener('DOMContentLoaded', function() {
+    // Preselect filters from query params (project, folder, subfolder)
+    <?php if ($pre_selected_project > 0): ?>
+      document.getElementById('projectFilter').value = '<?php echo $pre_selected_project; ?>';
+    <?php endif; ?>
+    <?php if (!empty($pre_selected_document_type)): ?>
+      document.getElementById('documentTypeFilter').value = '<?php echo $pre_selected_document_type; ?>';
+      toggleSubFilters();
+      <?php if (!empty($pre_selected_document_sub_type)): ?>
+        // Select the matching sub-filter chip if present
+        Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option')).forEach(el => {
+          if (el.textContent.trim() === '<?php echo $pre_selected_document_sub_type; ?>') {
+            el.classList.add('selected');
+          }
+        });
+      <?php endif; ?>
+    <?php endif; ?>
+
     loadDocuments();
     
     // Set up real-time search
@@ -2404,5 +2422,7 @@ function hideBolSuggestions(fieldName) {
 </html>
 
 <?php
-$conn->close();
+if (isset($conn) && $conn instanceof mysqli) {
+    @mysqli_close($conn);
+}
 ?>
