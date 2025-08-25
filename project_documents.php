@@ -51,18 +51,105 @@ if (!$project_name) {
     die("You do not have access to this project.");
 }
 
-// Define the folders
-$folders = [
-    ['name' => 'Invoices', 'link' => 'invoices?project_id=' . $project_id, 'has_upload' => true, 'type' => 'invoices'],
-    ['name' => 'PODs', 'link' => 'pods?project_id=' . $project_id, 'has_upload' => true, 'type' => 'pods'],
-    ['name' => 'Flash Test Data', 'link' => 'ftd?project_id=' . $project_id, 'has_upload' => true, 'type' => 'flash_test_data'],
-    ['name' => 'Bills of Lading', 'link' => 'bills_of_lading?project_id=' . $project_id, 'has_upload' => true, 'type' => 'bills_of_lading'],
-    ['name' => 'Warehousing', 'link' => 'warehousing_docs?project_id=' . $project_id, 'has_upload' => true, 'type' => 'warehousing'],
-    ['name' => 'Modules', 'link' => 'modules_docs?project_id=' . $project_id, 'has_upload' => true, 'type' => 'modules'],
-    ['name' => 'Delivery Packet', 'link' => 'delivery_packet?project_id=' . $project_id, 'has_upload' => true, 'type' => 'delivery_packet'],
-    ['name' => 'Incident Reports', 'link' => 'incident_reports?project_id=' . $project_id, 'has_upload' => true, 'type' => 'incident_reports'],
-    ['name' => 'Safe Harbor', 'link' => 'safe_harbor_evidence?project_id=' . $project_id, 'has_upload' => true, 'type' => 'safe_harbor_evidence'],
+// New folder → subfolder structure and icons
+$folder_key = isset($_GET['folder']) ? trim(strtolower($_GET['folder'])) : '';
+
+$folders_structure = [
+    'invoices' => [
+        'label' => 'Invoices',
+        'icon' => 'fas fa-file-invoice-dollar',
+        'class' => 'doc-invoices',
+        'description' => 'Project invoices and billing documents',
+        'subfolders' => [
+            'freight_invoice' => ['label' => 'Freight Invoice', 'icon' => 'fas fa-truck'],
+            'solterra_invoice' => ['label' => 'Solterra Invoice', 'icon' => 'fas fa-building'],
+            'module_invoice' => ['label' => 'Module Invoice', 'icon' => 'fas fa-microchip']
+        ]
+    ],
+    'pods' => [
+        'label' => 'PODs',
+        'icon' => 'fas fa-clipboard-check',
+        'class' => 'doc-pods',
+        'description' => 'Proof of delivery confirmations',
+        'subfolders' => [
+            'project_pod' => ['label' => 'Project POD', 'icon' => 'fas fa-clipboard'],
+            'warehouse_pod' => ['label' => 'Warehouse POD', 'icon' => 'fas fa-warehouse']
+        ]
+    ],
+    'shipments' => [
+        'label' => 'Shipments',
+        'icon' => 'fas fa-shipping-fast',
+        'class' => 'doc-bills',
+        'description' => 'Shipping and transport documents',
+        'subfolders' => [
+            'arrival_notice' => ['label' => 'Arrival Notice', 'icon' => 'fas fa-bell'],
+            'customs_document' => ['label' => 'Customs Document', 'icon' => 'fas fa-passport'],
+            'delivery_sop' => ['label' => 'Delivery SOP', 'icon' => 'fas fa-list-check']
+        ]
+    ],
+    'warehousing' => [
+        'label' => 'Warehousing',
+        'icon' => 'fas fa-warehouse',
+        'class' => 'doc-warehousing',
+        'description' => 'Storage and inventory documentation',
+        'subfolders' => [
+            'warehouse_pod' => ['label' => 'Warehouse POD', 'icon' => 'fas fa-clipboard'],
+            'inventory_report' => ['label' => 'Inventory Report', 'icon' => 'fas fa-clipboard-list'],
+            'warehouse_photo' => ['label' => 'Warehouse Photo', 'icon' => 'fas fa-camera']
+        ]
+    ],
+    'modules' => [
+        'label' => 'Modules',
+        'icon' => 'fas fa-microchip',
+        'class' => 'doc-modules',
+        'description' => 'Module specifications and certifications',
+        'subfolders' => [
+            'module_invoice' => ['label' => 'Module Invoice', 'icon' => 'fas fa-file-invoice'],
+            'flash_test_data' => ['label' => 'Flash Test Data', 'icon' => 'fas fa-bolt'],
+            'spec_sheet' => ['label' => 'Spec Sheet', 'icon' => 'fas fa-file']
+        ]
+    ],
+    'incident_reports' => [
+        'label' => 'Incident Reports',
+        'icon' => 'fas fa-exclamation-triangle',
+        'class' => 'doc-incident',
+        'description' => 'Safety and incident documentation',
+        'subfolders' => [
+            'damage_photo' => ['label' => 'Damage Photos', 'icon' => 'fas fa-image'],
+            'warranty_document' => ['label' => 'Warranty Document', 'icon' => 'fas fa-shield-alt'],
+            'project_pod' => ['label' => 'Project POD', 'icon' => 'fas fa-clipboard'],
+            'warehouse_pod' => ['label' => 'Warehouse POD', 'icon' => 'fas fa-warehouse']
+        ]
+    ],
+    'safe_harbor' => [
+        'label' => 'Safe Harbor',
+        'icon' => 'fas fa-gavel',
+        'class' => 'doc-safe-harbor',
+        'description' => 'All docs for compliance review',
+        'subfolders' => [
+            'module_invoice' => ['label' => 'Module Invoice', 'icon' => 'fas fa-file-invoice'],
+            'project_pod' => ['label' => 'Project POD', 'icon' => 'fas fa-clipboard'],
+            'warehouse_pod' => ['label' => 'Warehouse POD', 'icon' => 'fas fa-warehouse'],
+            'arrival_notice' => ['label' => 'Arrival Notice', 'icon' => 'fas fa-bell'],
+            'customs_document' => ['label' => 'Customs Document', 'icon' => 'fas fa-passport'],
+            'inventory_report' => ['label' => 'Warehouse Inventory Report', 'icon' => 'fas fa-clipboard-list'],
+            'warehouse_photo' => ['label' => 'Warehouse Photo', 'icon' => 'fas fa-camera'],
+            'flash_test_data' => ['label' => 'Flash Test Data', 'icon' => 'fas fa-bolt']
+        ]
+    ],
 ];
+
+// Flatten for top-level folder cards
+$folders = [];
+foreach ($folders_structure as $key => $meta) {
+    $folders[] = [
+        'key' => $key,
+        'name' => $meta['label'],
+        'link' => 'project_documents.php?project_id=' . $project_id . '&folder=' . urlencode($key),
+        'has_upload' => false,
+        'type' => $key
+    ];
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -663,7 +750,13 @@ $folders = [
     <div class="breadcrumb">
         <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
         <span class="separator">&raquo;</span>
-        <span>Documents</span>
+        <?php if (!$folder_key): ?>
+            <span>Documents</span>
+        <?php else: ?>
+            <a href="project_documents.php?project_id=<?php echo $project_id; ?>">Documents</a>
+            <span class="separator">&raquo;</span>
+            <span><?php echo htmlspecialchars($folders_structure[$folder_key]['label'] ?? ''); ?></span>
+        <?php endif; ?>
     </div>
 
     <div class="project-header">
@@ -697,65 +790,62 @@ $folders = [
     </div>
 
     <div class="search-container">
-        <input type="text" id="folderFilter" class="search-input" placeholder="Search document types...">
+        <input type="text" id="folderFilter" class="search-input" placeholder="Search folders...">
         <i class="fas fa-search search-icon"></i>
     </div>
 
     <div class="document-types-grid" id="folderList">
-        <?php 
-                 $documentTypes = [
-             'Invoices' => ['icon' => 'fas fa-file-invoice-dollar', 'class' => 'doc-invoices', 'description' => 'Project invoices and billing documents'],
-             'PODs' => ['icon' => 'fas fa-clipboard-check', 'class' => 'doc-pods', 'description' => 'Proof of delivery confirmations'],
-             'Flash Test Data' => ['icon' => 'fas fa-bolt', 'class' => 'doc-flash-test', 'description' => 'Module performance test results'],
-             'Bills of Lading' => ['icon' => 'fas fa-shipping-fast', 'class' => 'doc-bills', 'description' => 'Shipping and transport documents'],
-             'Warehousing' => ['icon' => 'fas fa-warehouse', 'class' => 'doc-warehousing', 'description' => 'Storage and inventory documentation'],
-             'Modules' => ['icon' => 'fas fa-microchip', 'class' => 'doc-modules', 'description' => 'Module specifications and certifications'],
-             'Delivery Packet' => ['icon' => 'fas fa-box-open', 'class' => 'doc-delivery', 'description' => 'Complete delivery documentation'],
-             'Incident Reports' => ['icon' => 'fas fa-exclamation-triangle', 'class' => 'doc-incident', 'description' => 'Safety and incident documentation'],
-             'Safe Harbor' => ['icon' => 'fas fa-gavel', 'class' => 'doc-safe-harbor', 'description' => 'Legal compliance documentation']
-         ];
-        
-        foreach ($folders as $folder): 
-            $folderName = $folder['name'];
-            $docType = $documentTypes[$folderName] ?? ['icon' => 'fas fa-file', 'class' => 'doc-default', 'description' => 'Project documentation'];
-            $hasUpload = $folder['has_upload'] ?? false;
-            $documentTypeKey = $folder['type'] ?? '';
-        ?>
-            <div class="document-type-card <?php echo $docType['class']; ?>" data-folder="<?php echo strtolower(str_replace(' ', '-', $folder['name'])); ?>" data-type="<?php echo $documentTypeKey; ?>">
-                <div class="document-count" data-count="0">0</div>
-                <div class="document-card-header">
-                    <div class="document-icon">
-                        <i class="<?php echo $docType['icon']; ?>"></i>
+        <?php if (!$folder_key): ?>
+            <?php foreach ($folders as $folder): 
+                $meta = $folders_structure[$folder['key']];
+                $label = $meta['label'];
+                $icon = $meta['icon'];
+                $class = $meta['class'] ?? 'doc-default';
+                $desc = $meta['description'] ?? 'Project documentation';
+            ?>
+                <div class="document-type-card <?php echo $class; ?>" data-folder-key="<?php echo htmlspecialchars($folder['key']); ?>">
+                    <div class="document-card-header">
+                        <div class="document-icon"><i class="<?php echo $icon; ?>"></i></div>
+                        <div class="document-info">
+                            <a href="<?php echo $folder['link']; ?>" class="document-title"><?php echo htmlspecialchars($label); ?></a>
+                            <p class="document-description"><?php echo htmlspecialchars($desc); ?></p>
+                        </div>
                     </div>
-                    <div class="document-info">
-                        <a href="<?php echo $folder['link']; ?>" class="document-title">
-                            <?php echo htmlspecialchars($folder['name']); ?>
+                    <div class="document-actions">
+                        <a href="<?php echo $folder['link']; ?>" class="document-button">
+                            <i class="fas fa-folder-open"></i> Open Folder
                         </a>
-                        <p class="document-description">
-                            <?php echo $docType['description']; ?>
-                        </p>
                     </div>
                 </div>
-                <div class="document-actions">
-                    <?php if ($hasUpload): ?>
-                        <button class="preview-toggle" data-type="<?php echo $documentTypeKey; ?>">
-                            <i class="fas fa-eye"></i>
-                            Preview Files
-                            <i class="fas fa-chevron-down"></i>
-                        </button>
-                        <div class="preview-dropdown" data-type="<?php echo $documentTypeKey; ?>">
-                            <div class="preview-loading">
-                                <i class="fas fa-spinner fa-spin"></i> Loading files...
+            <?php endforeach; ?>
+        <?php else: ?>
+            <?php if (!isset($folders_structure[$folder_key])): ?>
+                <div class="empty-state" style="grid-column: 1 / -1;">
+                    <i class="fas fa-folder-open"></i>
+                    <h3>Folder Not Found</h3>
+                    <p>The selected folder is unavailable. <a href="project_documents.php?project_id=<?php echo $project_id; ?>">Go back</a>.</p>
+                </div>
+            <?php else: ?>
+                <?php foreach ($folders_structure[$folder_key]['subfolders'] as $sub_key => $sub_meta): ?>
+                    <div class="document-type-card" data-subfolder-key="<?php echo htmlspecialchars($sub_key); ?>">
+                        <div class="document-card-header">
+                            <div class="document-icon"><i class="<?php echo $sub_meta['icon']; ?>"></i></div>
+                            <div class="document-info">
+                                <a href="<?php echo 'global_documents.php?project_id=' . $project_id . '&folder=' . urlencode($folder_key) . '&subfolder=' . urlencode($sub_key); ?>" class="document-title">
+                                    <?php echo htmlspecialchars($sub_meta['label']); ?>
+                                </a>
+                                <p class="document-description">Click to view files in table view</p>
                             </div>
                         </div>
-                    <?php endif; ?>
-                    <a href="<?php echo $folder['link']; ?>" class="document-button">
-                        <i class="fas fa-arrow-right"></i>
-                        View Documents
-                    </a>
-                </div>
-            </div>
-        <?php endforeach; ?>
+                        <div class="document-actions">
+                            <a href="<?php echo 'global_documents.php?project_id=' . $project_id . '&folder=' . urlencode($folder_key) . '&subfolder=' . urlencode($sub_key); ?>" class="document-button">
+                                <i class="fas fa-table"></i> View Files
+                            </a>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        <?php endif; ?>
     </div>
 </main>
 
