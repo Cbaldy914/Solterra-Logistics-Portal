@@ -1,0 +1,261 @@
+<?php
+session_name("logistics_session");
+session_start();
+
+// Check if the user is logged in and has upload permissions
+if (!isset($_SESSION['user_id'])) {
+    http_response_code(401);
+    echo json_encode(['success' => false, 'message' => 'User not logged in']);
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+$user_role = $_SESSION['role'];
+
+// Only admin and global_admin can upload
+if (!in_array($user_role, ['admin', 'global_admin'])) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Insufficient permissions']);
+    exit();
+}
+
+// Database connection
+require_once '../config.php';
+$conn = getDBConnection();
+if (!$conn) {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'Database connection failed']);
+    exit();
+}
+
+// Include helper functions
+require_once 'document_helpers.php';
+
+try {
+    // Validate required fields
+    if (!isset($_POST['project_id']) || !isset($_POST['document_type']) || !isset($_POST['document_sub_type'])) {
+        throw new Exception('Missing required fields: project_id, document_type, or document_sub_type');
+    }
+
+    $project_id = (int)$_POST['project_id'];
+    $document_type = trim($_POST['document_type']);
+    $document_sub_type = trim($_POST['document_sub_type']);
+    $is_safe_harbor = isset($_POST['is_safe_harbor']) && $_POST['is_safe_harbor'] === '1';
+
+    // Verify user has access to this project
+    if ($user_role === 'global_admin') {
+        // Global admin can access any project
+        $stmt = $conn->prepare("SELECT id, project_name FROM projects WHERE id = ?");
+        $stmt->bind_param("i", $project_id);
+    } else {
+        // Admin can only access projects in their account
+        $stmt = $conn->prepare("
+            SELECT p.id, p.project_name 
+            FROM projects p 
+            JOIN customer_account_users cau ON p.account_id = cau.account_id 
+            WHERE p.id = ? AND cau.user_id = ? AND cau.role = 'admin'
+        ");
+        $stmt->bind_param("ii", $project_id, $user_id);
+    }
+    
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($result->num_rows === 0) {
+        throw new Exception('Project not found or access denied');
+    }
+    $project = $result->fetch_assoc();
+    $stmt->close();
+
+    // Validate files
+    if (!isset($_FILES['files']) || empty($_FILES['files']['name'][0])) {
+        throw new Exception('No files were uploaded');
+    }
+
+    $uploaded_documents = [];
+    $safe_harbor_documents = [];
+
+    // Process each file
+    for ($i = 0; $i < count($_FILES['files']['name']); $i++) {
+        if ($_FILES['files']['error'][$i] !== UPLOAD_ERR_OK) {
+            throw new Exception('File upload error for file: ' . $_FILES['files']['name'][$i]);
+        }
+
+        // Prepare file data for processing
+        $file_data = [
+            'name' => $_FILES['files']['name'][$i],
+            'type' => $_FILES['files']['type'][$i],
+            'tmp_name' => $_FILES['files']['tmp_name'][$i],
+            'error' => $_FILES['files']['error'][$i],
+            'size' => $_FILES['files']['size'][$i]
+        ];
+
+        // Process the uploaded file
+        $processed_file = processDocumentUpload($file_data, $document_type);
+
+        // Get description from form
+        $description = isset($_POST['description']) ? trim($_POST['description']) : '';
+        if (empty($description)) {
+            $description = "Global upload: {$document_sub_type}";
+        }
+
+        // Prepare document data
+        $document_data = [
+            'project_id' => $project_id,
+            'document_type' => $document_type,
+            'document_sub_type' => $document_sub_type,
+            'original_name' => $processed_file['original_name'],
+            'file_size' => $processed_file['size'],
+            'mime_type' => $processed_file['mime_type'],
+            'uploaded_by' => $user_id,
+            'tmp_name' => $processed_file['tmp_name'],
+            'description' => $description,
+            'entity_context' => "Global document upload for project: {$project['project_name']}"
+        ];
+
+        // Add optional foreign key references based on form data
+        if (isset($_POST['delivery_id']) && !empty($_POST['delivery_id'])) {
+            $document_data['delivery_id'] = (int)$_POST['delivery_id'];
+        }
+        
+        if (isset($_POST['warehouse_id']) && !empty($_POST['warehouse_id'])) {
+            $document_data['warehouse_id'] = (int)$_POST['warehouse_id'];
+        }
+        
+        if (isset($_POST['manufacturer_id']) && !empty($_POST['manufacturer_id'])) {
+            $document_data['manufacturer_id'] = (int)$_POST['manufacturer_id'];
+        }
+
+        // Handle invoice documents - save to project_invoices if it's an invoice
+        if ($document_type === 'invoices' && in_array($document_sub_type, ['Freight Invoice', 'Solterra Invoice', 'Module Invoice'])) {
+            $invoice_id = createProjectInvoice($conn, $project_id, $_POST, $processed_file);
+            if ($invoice_id) {
+                $document_data['project_invoice_id'] = $invoice_id;
+            }
+        }
+
+        // Save to project_documents table
+        $document_id = saveDocumentToProjectDocuments($conn, $document_data);
+        
+        if (!$document_id) {
+            throw new Exception('Failed to save document: ' . $processed_file['original_name']);
+        }
+
+        // Update is_safe_harbor flag if needed
+        if ($is_safe_harbor) {
+            $stmt = $conn->prepare("UPDATE project_documents SET is_safe_harbor = 1 WHERE id = ?");
+            $stmt->bind_param("i", $document_id);
+            $stmt->execute();
+            $stmt->close();
+            
+            // Copy to Safe Harbor folder
+            $safe_harbor_path = copySafeHarborDocument($processed_file, $project_id, $document_type);
+            if ($safe_harbor_path) {
+                $safe_harbor_documents[] = [
+                    'original_name' => $processed_file['original_name'],
+                    'safe_harbor_path' => $safe_harbor_path
+                ];
+            }
+        }
+
+        $uploaded_documents[] = [
+            'id' => $document_id,
+            'original_name' => $processed_file['original_name'],
+            'document_type' => $document_type,
+            'document_sub_type' => $document_sub_type,
+            'is_safe_harbor' => $is_safe_harbor
+        ];
+    }
+
+    $response = [
+        'success' => true,
+        'message' => count($uploaded_documents) . ' document(s) uploaded successfully',
+        'uploaded_documents' => $uploaded_documents
+    ];
+
+    if (!empty($safe_harbor_documents)) {
+        $response['safe_harbor_documents'] = $safe_harbor_documents;
+        $response['message'] .= ' (' . count($safe_harbor_documents) . ' also saved to Safe Harbor)';
+    }
+
+    echo json_encode($response);
+
+} catch (Exception $e) {
+    error_log("Global document upload error: " . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+}
+
+$conn->close();
+
+/**
+ * Create a project invoice record for invoice documents
+ */
+function createProjectInvoice($conn, $project_id, $post_data, $processed_file) {
+    try {
+        $amount = isset($post_data['invoice_total']) ? (float)$post_data['invoice_total'] : 0.00;
+        $invoice_date = isset($post_data['invoice_date']) ? $post_data['invoice_date'] : date('Y-m-d');
+        $due_date = date('Y-m-d', strtotime($invoice_date . ' +30 days'));
+        
+        $stmt = $conn->prepare("
+            INSERT INTO project_invoices (
+                project_id, amount, status, issued_date, due_date, 
+                invoice_file, uploaded_at, notes
+            ) VALUES (?, ?, 'Open', ?, ?, ?, NOW(), ?)
+        ");
+        
+        $invoice_file = $processed_file['file_path'] ?? '';
+        $notes = "Uploaded via Global Documents";
+        
+        $stmt->bind_param("idssss", 
+            $project_id, 
+            $amount, 
+            $invoice_date, 
+            $due_date, 
+            $invoice_file, 
+            $notes
+        );
+        
+        if ($stmt->execute()) {
+            $invoice_id = $conn->insert_id;
+            $stmt->close();
+            return $invoice_id;
+        }
+        
+        $stmt->close();
+        return null;
+        
+    } catch (Exception $e) {
+        error_log("Failed to create project invoice: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Copy document to Safe Harbor folder for compliance
+ */
+function copySafeHarborDocument($processed_file, $project_id, $document_type) {
+    try {
+        $safe_harbor_dir = "uploads/safe_harbor_evidence/{$project_id}/";
+        
+        // Create directory if it doesn't exist
+        if (!is_dir($safe_harbor_dir)) {
+            if (!mkdir($safe_harbor_dir, 0755, true)) {
+                throw new Exception("Failed to create Safe Harbor directory");
+            }
+        }
+        
+        $source_path = $processed_file['file_path'] ?? $processed_file['tmp_name'];
+        $destination_path = $safe_harbor_dir . basename($processed_file['file_name']);
+        
+        if (copy($source_path, $destination_path)) {
+            return $destination_path;
+        }
+        
+        return null;
+        
+    } catch (Exception $e) {
+        error_log("Failed to copy Safe Harbor document: " . $e->getMessage());
+        return null;
+    }
+}
+?>
