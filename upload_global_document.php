@@ -126,7 +126,13 @@ try {
         }
 
         // Handle invoice documents - save to project_invoices if it's an invoice
-        if ($document_type === 'invoices' && in_array($document_sub_type, ['Freight Invoice', 'Solterra Invoice', 'Module Invoice'])) {
+        if ($document_type === 'invoices' && in_array($document_sub_type, ['Solterra Invoice', 'Module Invoice', 'Freight Invoice'])) {
+            // Validate required invoice fields for Solterra/Module
+            if (in_array($document_sub_type, ['Solterra Invoice', 'Module Invoice'])) {
+                if (empty($_POST['invoice_total']) || empty($_POST['invoice_date']) || empty($_POST['invoice_due_date'])) {
+                    throw new Exception('Invoice Total, Invoice Date, and Due Date are required for invoice uploads.');
+                }
+            }
             $invoice_id = createProjectInvoice($conn, $project_id, $_POST, $processed_file);
             if ($invoice_id) {
                 $document_data['project_invoice_id'] = $invoice_id;
@@ -194,7 +200,7 @@ function createProjectInvoice($conn, $project_id, $post_data, $processed_file) {
     try {
         $amount = isset($post_data['invoice_total']) ? (float)$post_data['invoice_total'] : 0.00;
         $invoice_date = isset($post_data['invoice_date']) ? $post_data['invoice_date'] : date('Y-m-d');
-        $due_date = date('Y-m-d', strtotime($invoice_date . ' +30 days'));
+        $due_date = isset($post_data['invoice_due_date']) ? $post_data['invoice_due_date'] : date('Y-m-d', strtotime($invoice_date . ' +30 days'));
         
         $stmt = $conn->prepare("
             INSERT INTO project_invoices (
