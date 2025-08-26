@@ -52,6 +52,16 @@ $pods_wattages = isset($_GET['pods_wattages']) ? (array)$_GET['pods_wattages'] :
 $pods_wattage_min = isset($_GET['pods_wattage_min']) && $_GET['pods_wattage_min'] !== '' ? intval($_GET['pods_wattage_min']) : null;
 $pods_wattage_max = isset($_GET['pods_wattage_max']) && $_GET['pods_wattage_max'] !== '' ? intval($_GET['pods_wattage_max']) : null;
 
+// Invoices-specific filters (optional)
+$invoice_total_min = isset($_GET['invoice_total_min']) && $_GET['invoice_total_min'] !== '' ? floatval($_GET['invoice_total_min']) : null;
+$invoice_total_max = isset($_GET['invoice_total_max']) && $_GET['invoice_total_max'] !== '' ? floatval($_GET['invoice_total_max']) : null;
+$invoice_date_start = trim($_GET['invoice_date_start'] ?? '');
+$invoice_date_end = trim($_GET['invoice_date_end'] ?? '');
+$invoice_due_start = trim($_GET['invoice_due_start'] ?? '');
+$invoice_due_end = trim($_GET['invoice_due_end'] ?? '');
+$invoice_bol = trim($_GET['invoice_bol'] ?? '');
+$invoice_manufacturer = trim($_GET['invoice_manufacturer'] ?? '');
+
 // Build the base query with proper permission checking
 $base_sql = "
     SELECT 
@@ -79,6 +89,8 @@ $base_sql = "
         w.name as warehouse_name,
         pi.invoice_number,
         pi.amount as invoice_amount,
+        pi.issued_date as invoice_issued_date,
+        pi.due_date as invoice_due_date,
         m.name as manufacturer_name
     FROM project_documents pd
     LEFT JOIN users u ON pd.uploaded_by = u.id
@@ -214,6 +226,51 @@ if (!empty($where_conditions)) {
     $where_clause = "WHERE " . implode(" AND ", $where_conditions);
 }
 
+// Invoices-specific filter conditions
+if ($invoice_total_min !== null) {
+    $where_conditions[] = "pi.amount >= ?";
+    $params[] = $invoice_total_min;
+    $param_types .= 'd';
+}
+if ($invoice_total_max !== null) {
+    $where_conditions[] = "pi.amount <= ?";
+    $params[] = $invoice_total_max;
+    $param_types .= 'd';
+}
+if (!empty($invoice_date_start)) {
+    $where_conditions[] = "DATE(pi.issued_date) >= ?";
+    $params[] = $invoice_date_start;
+    $param_types .= 's';
+}
+if (!empty($invoice_date_end)) {
+    $where_conditions[] = "DATE(pi.issued_date) <= ?";
+    $params[] = $invoice_date_end;
+    $param_types .= 's';
+}
+if (!empty($invoice_bol)) {
+    $where_conditions[] = "d.bol_number LIKE ?";
+    $params[] = '%' . $invoice_bol . '%';
+    $param_types .= 's';
+}
+if (!empty($invoice_manufacturer)) {
+    $where_conditions[] = "(m.name = ? OR d.supplier = ?)";
+    $params[] = $invoice_manufacturer;
+    $params[] = $invoice_manufacturer;
+    $param_types .= 'ss';
+}
+
+// Invoice due date filters
+if (!empty($invoice_due_start)) {
+    $where_conditions[] = "DATE(pi.due_date) >= ?";
+    $params[] = $invoice_due_start;
+    $param_types .= 's';
+}
+if (!empty($invoice_due_end)) {
+    $where_conditions[] = "DATE(pi.due_date) <= ?";
+    $params[] = $invoice_due_end;
+    $param_types .= 's';
+}
+
 // Get total count first
 $count_sql = "
     SELECT COUNT(*) as total
@@ -290,6 +347,8 @@ try {
             'warehouse_name' => $row['warehouse_name'],
             'invoice_number' => $row['invoice_number'],
             'invoice_amount' => $row['invoice_amount'],
+            'invoice_issued_date' => $row['invoice_issued_date'],
+            'invoice_due_date' => $row['invoice_due_date'],
             'manufacturer_name' => ($row['manufacturer_name'] ?: $row['supplier_name'])
         ];
     }
@@ -322,3 +381,5 @@ try {
 $conn->close();
 exit();
 ?>
+$invoice_due_start = trim($_GET['invoice_due_start'] ?? '');
+$invoice_due_end = trim($_GET['invoice_due_end'] ?? '');
