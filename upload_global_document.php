@@ -112,9 +112,30 @@ try {
             'entity_context' => "Global document upload for project: {$project['project_name']}"
         ];
 
-        // Add optional foreign key references based on form data
+        // Add optional/derived foreign key references based on form data
         if (isset($_POST['delivery_id']) && !empty($_POST['delivery_id'])) {
             $document_data['delivery_id'] = (int)$_POST['delivery_id'];
+        }
+
+        // For shipments, require container number and lookup delivery_id by project + container
+        if ($document_type === 'shipments') {
+            $container_number = isset($_POST['container_number']) ? trim($_POST['container_number']) : '';
+            if ($container_number === '') {
+                throw new Exception('Container number is required for shipments.');
+            }
+            // Find matching delivery on this project by container number
+            $dlv = null;
+            $stmt = $conn->prepare("SELECT id FROM deliveries WHERE project_id = ? AND container_number = ? LIMIT 1");
+            $stmt->bind_param("is", $project_id, $container_number);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            if ($res && $res->num_rows > 0) {
+                $dlv = $res->fetch_assoc();
+                $document_data['delivery_id'] = (int)$dlv['id'];
+            } else {
+                throw new Exception('No delivery found with that container number for the selected project.');
+            }
+            $stmt->close();
         }
         
         if (isset($_POST['warehouse_id']) && !empty($_POST['warehouse_id'])) {
