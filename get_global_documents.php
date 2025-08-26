@@ -52,6 +52,13 @@ $pods_wattages = isset($_GET['pods_wattages']) ? (array)$_GET['pods_wattages'] :
 $pods_wattage_min = isset($_GET['pods_wattage_min']) && $_GET['pods_wattage_min'] !== '' ? intval($_GET['pods_wattage_min']) : null;
 $pods_wattage_max = isset($_GET['pods_wattage_max']) && $_GET['pods_wattage_max'] !== '' ? intval($_GET['pods_wattage_max']) : null;
 
+// Shipments-specific filters (optional)
+$ship_cleared_start = trim($_GET['ship_cleared_start'] ?? '');
+$ship_cleared_end = trim($_GET['ship_cleared_end'] ?? '');
+$ship_container = trim($_GET['ship_container'] ?? '');
+$ship_supplier = trim($_GET['ship_supplier'] ?? '');
+$ship_wattages = isset($_GET['ship_wattages']) ? (array)$_GET['ship_wattages'] : [];
+
 // Invoices-specific filters (optional)
 $invoice_total_min = isset($_GET['invoice_total_min']) && $_GET['invoice_total_min'] !== '' ? floatval($_GET['invoice_total_min']) : null;
 $invoice_total_max = isset($_GET['invoice_total_max']) && $_GET['invoice_total_max'] !== '' ? floatval($_GET['invoice_total_max']) : null;
@@ -86,6 +93,8 @@ $base_sql = "
         d.supplier as supplier_name,
         d.actual_delivery_date,
         d.wattage as delivery_wattage,
+        d.container_number,
+        d.customs_cleared_date,
         w.name as warehouse_name,
         pi.invoice_number,
         pi.amount as invoice_amount,
@@ -213,6 +222,37 @@ if ($pods_wattage_max !== null) {
 if (!empty($pods_wattages)) {
     // Build IN clause safely
     $wlist = array_values(array_filter(array_map('intval', $pods_wattages), function($v){ return $v !== 0 || $v === 0; }));
+    if (!empty($wlist)) {
+        $placeholders = implode(',', array_fill(0, count($wlist), '?'));
+        $where_conditions[] = "d.wattage IN ($placeholders)";
+        foreach ($wlist as $w) { $params[] = $w; $param_types .= 'i'; }
+    }
+}
+
+// Shipments-specific filter conditions
+if (!empty($ship_container)) {
+    $where_conditions[] = "d.container_number LIKE ?";
+    $params[] = '%' . $ship_container . '%';
+    $param_types .= 's';
+}
+if (!empty($ship_cleared_start)) {
+    $where_conditions[] = "DATE(d.customs_cleared_date) >= ?";
+    $params[] = $ship_cleared_start;
+    $param_types .= 's';
+}
+if (!empty($ship_cleared_end)) {
+    $where_conditions[] = "DATE(d.customs_cleared_date) <= ?";
+    $params[] = $ship_cleared_end;
+    $param_types .= 's';
+}
+if (!empty($ship_supplier)) {
+    $where_conditions[] = "(d.supplier = ? OR m.name = ?)";
+    $params[] = $ship_supplier;
+    $params[] = $ship_supplier;
+    $param_types .= 'ss';
+}
+if (!empty($ship_wattages)) {
+    $wlist = array_values(array_filter(array_map('intval', $ship_wattages), function($v){ return $v !== 0 || $v === 0; }));
     if (!empty($wlist)) {
         $placeholders = implode(',', array_fill(0, count($wlist), '?'));
         $where_conditions[] = "d.wattage IN ($placeholders)";
@@ -349,7 +389,9 @@ try {
             'invoice_amount' => $row['invoice_amount'],
             'invoice_issued_date' => $row['invoice_issued_date'],
             'invoice_due_date' => $row['invoice_due_date'],
-            'manufacturer_name' => ($row['manufacturer_name'] ?: $row['supplier_name'])
+            'manufacturer_name' => ($row['manufacturer_name'] ?: $row['supplier_name']),
+            'container_number' => $row['container_number'],
+            'customs_cleared_date' => $row['customs_cleared_date']
         ];
     }
     $data_stmt->close();
