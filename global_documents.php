@@ -141,6 +141,7 @@ if (!empty($pre_selected_folder) && isset($folder_mapping[$pre_selected_folder])
         $pre_selected_document_sub_type = $folder_mapping[$pre_selected_folder]['subfolders'][$pre_selected_subfolder];
     }
 }
+$is_pods_context = ($pre_selected_folder === 'pods');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1207,7 +1208,7 @@ if (!empty($pre_selected_folder) && isset($folder_mapping[$pre_selected_folder])
                     <i class="fas fa-times"></i>
                     Clear All
                 </button>
-                <button type="button" class="apply-filters" onclick="loadDocuments()">
+                <button type="button" class="apply-filters" onclick="applyFilters()">
                     <i class="fas fa-search"></i>
                     Apply Filters
                 </button>
@@ -1264,6 +1265,40 @@ if (!empty($pre_selected_folder) && isset($folder_mapping[$pre_selected_folder])
             <div class="filter-group">
                 <label class="filter-label" for="searchFilter">Search Documents</label>
                 <input type="text" id="searchFilter" class="filter-input" placeholder="Search by filename, description...">
+            </div>
+        </div>
+    </div>
+
+    <!-- Context subfilters: appear below advanced filters when Doc Type selected -->
+    <div id="contextSubfilters" style="display: none; margin-bottom: 16px;">
+        <div class="filter-section" style="padding: 16px; margin-bottom: 0;">
+            <div id="podsSubfilters" style="display: none;">
+                <div class="filter-grid">
+                    <div class="filter-group">
+                        <label class="filter-label">Delivery Date (Actual)</label>
+                        <div class="date-range-group">
+                            <input type="date" id="podsDeliveryStart" class="filter-input" placeholder="Start Date">
+                            <input type="date" id="podsDeliveryEnd" class="filter-input" placeholder="End Date">
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label" for="podsBolNumber">BOL Number</label>
+                        <input type="text" id="podsBolNumber" class="filter-input" placeholder="e.g., 8086343">
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label" for="podsManufacturerSelect">Manufacturer</label>
+                        <select id="podsManufacturerSelect" class="filter-select">
+                            <option value="">All Manufacturers</option>
+                        </select>
+                    </div>
+                    <div class="filter-group" style="position: relative;">
+                        <label class="filter-label" for="podsWattageDisplay">Wattage</label>
+                        <div>
+                            <input type="text" id="podsWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleWattageMenu(event)">
+                            <div id="podsWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1429,6 +1464,7 @@ let pageSize = 100;
 let totalDocuments = 0;
 let selectedDocuments = new Set();
 let allDocuments = [];
+let filtersApplied = false; // Show context subfilters/extra columns only after Apply
 
  // Document type sub-filters
  const subFilters = {
@@ -1453,6 +1489,16 @@ document.addEventListener('DOMContentLoaded', function() {
     <?php if (!empty($pre_selected_document_type)): ?>
       document.getElementById('documentTypeFilter').value = '<?php echo $pre_selected_document_type; ?>';
       toggleSubFilters();
+      // Ensure context subfilters match preselected type
+      const docTypeSelectInit = document.getElementById('documentTypeFilter');
+      if (docTypeSelectInit) {
+        const ctx = document.getElementById('contextSubfilters');
+        const pods = document.getElementById('podsSubfilters');
+        if (docTypeSelectInit.value === 'pods') {
+            ctx.style.display = '';
+            pods.style.display = '';
+        }
+      }
       <?php if (!empty($pre_selected_document_sub_type)): ?>
         // Select the matching sub-filter chip if present
         Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option')).forEach(el => {
@@ -1463,7 +1509,30 @@ document.addEventListener('DOMContentLoaded', function() {
       <?php endif; ?>
     <?php endif; ?>
 
+    // Show/hide context subfilters based on document type (only after Apply)
+    const docTypeSelect = document.getElementById('documentTypeFilter');
+    function toggleContextSubfilters() {
+        const type = docTypeSelect.value;
+        const ctx = document.getElementById('contextSubfilters');
+        const pods = document.getElementById('podsSubfilters');
+        if (filtersApplied && type === 'pods') {
+            ctx.style.display = '';
+            pods.style.display = '';
+            loadPodsFilterOptions();
+        } else {
+            pods.style.display = 'none';
+            ctx.style.display = 'none';
+        }
+    }
+    docTypeSelect.addEventListener('change', toggleContextSubfilters);
+
+    // Initial state if coming from folder context
+    <?php if ($pre_selected_document_type === 'pods' || $is_pods_context): ?>
+        // Do not auto-show subfilters until Apply is used
+    <?php endif; ?>
+
     loadDocuments();
+    attachSubfilterListeners();
     
     // Set up real-time search
     let searchTimeout;
@@ -1475,6 +1544,115 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 500);
     });
 });
+
+async function loadPodsFilterOptions() {
+    const projectId = document.getElementById('projectFilter').value || '';
+    try {
+        // Manufacturers (fallback load; will be refined from docs after load)
+        const mRes = await fetch(`get_account_manufacturers.php${projectId ? `?project_id=${projectId}` : ''}`);
+        const mData = await mRes.json();
+        const sel = document.getElementById('podsManufacturerSelect');
+        if (sel && mData.success) {
+            const current = sel.value;
+            sel.innerHTML = '<option value="">All Manufacturers</option>';
+            mData.data.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                sel.appendChild(opt);
+            });
+            if (current) sel.value = current;
+        }
+
+        // Wattages are derived from current documents after load
+    } catch (e) {
+        console.warn('Failed to load PODs filter options', e);
+    }
+}
+
+function updatePodsWattagesFromDocs(documents) {
+    const menu = document.getElementById('podsWattageMenu');
+    const display = document.getElementById('podsWattageDisplay');
+    if (!menu || !display) return;
+    const previously = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    const set = new Set();
+    documents.forEach(d => { if (d.delivery_wattage) set.add(String(d.delivery_wattage)); });
+    const sorted = Array.from(set).map(v => parseInt(v, 10)).sort((a,b)=>a-b).map(n => String(n));
+    menu.innerHTML = '';
+    sorted.forEach(val => {
+        const id = `watt_${val}`;
+        const wrap = document.createElement('label');
+        wrap.style.display = 'flex';
+        wrap.style.alignItems = 'center';
+        wrap.style.gap = '8px';
+        wrap.style.padding = '4px 2px';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = val;
+        cb.id = id;
+        if (previously.includes(val)) cb.checked = true;
+        cb.addEventListener('change', () => {
+            updateWattageDisplay();
+            if (filtersApplied) loadDocuments();
+        });
+        const span = document.createElement('span');
+        span.textContent = val;
+        wrap.appendChild(cb);
+        wrap.appendChild(span);
+        menu.appendChild(wrap);
+    });
+    updateWattageDisplay();
+}
+
+function updateWattageDisplay() {
+    const display = document.getElementById('podsWattageDisplay');
+    const menu = document.getElementById('podsWattageMenu');
+    if (!display || !menu) return;
+    const selected = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    display.value = selected.length ? selected.join(', ') : '';
+}
+
+function toggleWattageMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('podsWattageMenu');
+    if (!menu) return;
+    if (menu.style.display === 'none') {
+        // position under the input
+        const input = document.getElementById('podsWattageDisplay');
+        const rect = input.getBoundingClientRect();
+        const menuWidth = 260;
+        const left = Math.min(rect.left, window.innerWidth - menuWidth - 12);
+        menu.style.left = left + 'px';
+        menu.style.top = (rect.bottom + window.scrollY) + 'px';
+        menu.style.display = 'block';
+        document.addEventListener('click', closeWattMenuOnOutside);
+    } else {
+        menu.style.display = 'none';
+        document.removeEventListener('click', closeWattMenuOnOutside);
+    }
+}
+
+function closeWattMenuOnOutside(e) {
+    const menu = document.getElementById('podsWattageMenu');
+    const input = document.getElementById('podsWattageDisplay');
+    if (!menu || !input) return;
+    if (!menu.contains(e.target) && e.target !== input) {
+        menu.style.display = 'none';
+        document.removeEventListener('click', closeWattMenuOnOutside);
+    }
+}
+
+function attachSubfilterListeners() {
+    const podsStart = document.getElementById('podsDeliveryStart');
+    const podsEnd = document.getElementById('podsDeliveryEnd');
+    const podsBol = document.getElementById('podsBolNumber');
+    const podsMan = document.getElementById('podsManufacturerSelect');
+    [podsStart, podsEnd, podsBol, podsMan].forEach(el => {
+        if (!el) return;
+        const evt = (el.tagName === 'SELECT') ? 'change' : 'input';
+        el.addEventListener(evt, () => { if (filtersApplied) { currentPage = 1; loadDocuments(); } });
+    });
+}
 
 // Toggle sub-filters based on document type selection
 function toggleSubFilters() {
@@ -1517,11 +1695,31 @@ function clearAllFilters() {
     // Clear sub-filters
     document.getElementById('subFilterGroup').classList.remove('active');
     document.querySelectorAll('.sub-filter-option').forEach(el => el.classList.remove('selected'));
+
+    // Clear context subfilters and hide
+    const ctx = document.getElementById('contextSubfilters');
+    const pods = document.getElementById('podsSubfilters');
+    if (document.getElementById('podsDeliveryStart')) document.getElementById('podsDeliveryStart').value = '';
+    if (document.getElementById('podsDeliveryEnd')) document.getElementById('podsDeliveryEnd').value = '';
+    if (document.getElementById('podsBolNumber')) document.getElementById('podsBolNumber').value = '';
+    const podsManSel = document.getElementById('podsManufacturerSelect');
+    if (podsManSel) podsManSel.value = '';
+    const podsWattSel = document.getElementById('podsWattageSelect');
+    if (podsWattSel) Array.from(podsWattSel.options).forEach(o => o.selected = false);
+    if (pods) pods.style.display = 'none';
+    if (ctx) ctx.style.display = 'none';
     
     // Reset pagination
     currentPage = 1;
     
     // Reload documents
+    filtersApplied = false;
+    loadDocuments();
+}
+
+function applyFilters() {
+    filtersApplied = true;
+    currentPage = 1;
     loadDocuments();
 }
 
@@ -1555,6 +1753,21 @@ async function loadDocuments() {
             page: currentPage,
             page_size: pageSize
         };
+
+        // Context extra filters (pods)
+        const podsStart = document.getElementById('podsDeliveryStart');
+        const podsEnd = document.getElementById('podsDeliveryEnd');
+        const podsBol = document.getElementById('podsBolNumber');
+        const podsManSel = document.getElementById('podsManufacturerSelect');
+        const podsWattMenu = document.getElementById('podsWattageMenu');
+        if (podsStart) filters.pods_delivery_start = podsStart.value;
+        if (podsEnd) filters.pods_delivery_end = podsEnd.value;
+        if (podsBol) filters.pods_bol = podsBol.value;
+        if (podsManSel) filters.pods_supplier = podsManSel.value;
+        if (podsWattMenu) {
+            const watts = Array.from(podsWattMenu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+            if (watts.length) filters.pods_wattages = watts;
+        }
         
         // Build query string
         const queryParams = new URLSearchParams();
@@ -1576,6 +1789,20 @@ async function loadDocuments() {
             totalDocuments = data.total_count;
             
             renderDocumentsTable(data.documents);
+            attachSortHandlers();
+            // If PODs is selected and filters applied, keep subfilters bound to current table
+            if (filtersApplied && document.getElementById('documentTypeFilter').value === 'pods') {
+                updatePodsManufacturersFromDocs(data.documents);
+                updatePodsWattagesFromDocs(data.documents);
+            }
+            // Update subfilters visibility according to Apply state
+            (function(){
+                const type = document.getElementById('documentTypeFilter').value;
+                const ctx = document.getElementById('contextSubfilters');
+                const pods = document.getElementById('podsSubfilters');
+                if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; }
+                else { pods.style.display = 'none'; ctx.style.display = 'none'; }
+            })();
             updatePagination(data.total_count, data.total_pages);
             updateStats();
         } else {
@@ -1602,6 +1829,7 @@ function renderDocumentsTable(documents) {
         return;
     }
     
+    const showPodsCols = (filtersApplied && document.getElementById('documentTypeFilter').value === 'pods');
     const tableHTML = `
         <table class="documents-table">
             <thead>
@@ -1609,16 +1837,20 @@ function renderDocumentsTable(documents) {
                     <th>
                         <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)">
                     </th>
-                    <th>Document</th>
-                    <th>Type</th>
-                    <th>Project</th>
-                    <th>Size</th>
-                    <th>Uploaded</th>
+                    <th class="sortable" data-sort="document">Document</th>
+                    <th class="sortable" data-sort="type">Type</th>
+                    <th class="sortable" data-sort="project">Project</th>
+                    ${showPodsCols ? '<th class="sortable" data-sort="bol">BOL</th>' : ''}
+                    ${showPodsCols ? '<th class="sortable" data-sort="manufacturer">Manufacturer</th>' : ''}
+                    ${showPodsCols ? '<th class="sortable" data-sort="wattage">Wattage</th>' : ''}
+                    ${showPodsCols ? '<th class="sortable" data-sort="delivered">Delivered</th>' : ''}
+                    <th class="sortable" data-sort="size">Size</th>
+                    <th class="sortable" data-sort="uploaded">Uploaded</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                ${documents.map(doc => renderDocumentRow(doc)).join('')}
+                ${documents.map(doc => renderDocumentRow(doc, showPodsCols)).join('')}
             </tbody>
         </table>
     `;
@@ -1626,17 +1858,102 @@ function renderDocumentsTable(documents) {
     container.innerHTML = tableHTML;
 }
 
+// Sorting
+let currentSortKey = '';
+let currentSortDir = 'asc';
+
+function attachSortHandlers() {
+    const headerCells = document.querySelectorAll('.documents-table thead th.sortable');
+    headerCells.forEach(th => {
+        th.style.cursor = 'pointer';
+        th.onclick = () => {
+            const key = th.getAttribute('data-sort');
+            if (currentSortKey === key) {
+                currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSortKey = key;
+                currentSortDir = 'asc';
+            }
+            sortDocuments();
+        };
+    });
+}
+
+function sortDocuments() {
+    if (!currentSortKey) return;
+
+    const dir = currentSortDir === 'asc' ? 1 : -1;
+    const docs = [...allDocuments];
+    const cmp = (a, b) => {
+        switch (currentSortKey) {
+            case 'document': {
+                const A = (a.filename || '').toLowerCase();
+                const B = (b.filename || '').toLowerCase();
+                return A > B ? dir : A < B ? -dir : 0;
+            }
+            case 'type': {
+                const A = `${a.document_type || ''}-${a.document_sub_type || ''}`.toLowerCase();
+                const B = `${b.document_type || ''}-${b.document_sub_type || ''}`.toLowerCase();
+                return A > B ? dir : A < B ? -dir : 0;
+            }
+            case 'project': {
+                const A = (a.project_name || '').toLowerCase();
+                const B = (b.project_name || '').toLowerCase();
+                return A > B ? dir : A < B ? -dir : 0;
+            }
+            case 'bol': {
+                const A = (a.bol_number || '').toLowerCase();
+                const B = (b.bol_number || '').toLowerCase();
+                return A > B ? dir : A < B ? -dir : 0;
+            }
+            case 'manufacturer': {
+                const A = (a.manufacturer_name || '').toLowerCase();
+                const B = (b.manufacturer_name || '').toLowerCase();
+                return A > B ? dir : A < B ? -dir : 0;
+            }
+            case 'wattage': {
+                const A = Number(a.delivery_wattage || 0);
+                const B = Number(b.delivery_wattage || 0);
+                return (A - B) * dir;
+            }
+            case 'delivered': {
+                const A = new Date(a.actual_delivery_date || 0).getTime();
+                const B = new Date(b.actual_delivery_date || 0).getTime();
+                return (A - B) * dir;
+            }
+            case 'size': {
+                const A = Number(a.size_bytes || 0);
+                const B = Number(b.size_bytes || 0);
+                return (A - B) * dir;
+            }
+            case 'uploaded': {
+                const A = new Date(a.uploaded_at || 0).getTime();
+                const B = new Date(b.uploaded_at || 0).getTime();
+                return (A - B) * dir;
+            }
+            default:
+                return 0;
+        }
+    };
+
+    docs.sort(cmp);
+    renderDocumentsTable(docs);
+    attachSortHandlers();
+    updateCheckboxes();
+}
+
 // Render individual document row
-function renderDocumentRow(doc) {
+function renderDocumentRow(doc, showPodsCols = false) {
     const isSelected = selectedDocuments.has(doc.id);
     const iconStyle = `background: ${getDocumentTypeColor(doc.document_type)};`;
     
     return `
                  <tr onclick="toggleDocumentSelection(${doc.id}, event)" data-doc-id="${doc.id}">
-             <td>
-                 <input type="checkbox" class="document-checkbox" ${isSelected ? 'checked' : ''} 
-                        onchange="toggleDocumentSelection(${doc.id}, event)">
-             </td>
+            <td>
+                <input type="checkbox" class="document-checkbox" ${isSelected ? 'checked' : ''}
+                       onclick="event.stopPropagation();"
+                       onchange="toggleDocumentSelection(${doc.id}, event)">
+            </td>
              <td>
                  <div class="document-info">
                      <div class="document-icon" style="${iconStyle}">
@@ -1647,28 +1964,38 @@ function renderDocumentRow(doc) {
                          <div class="document-meta">
                              ${doc.description ? escapeHtml(doc.description) : 'No description'}
                              ${doc.bol_number ? `<br><strong>BOL:</strong> ${escapeHtml(doc.bol_number)}` : ''}
+                             ${doc.actual_delivery_date ? `<br><strong>Delivered:</strong> ${formatDate(doc.actual_delivery_date)}` : ''}
+                             ${doc.delivery_wattage ? `<br><strong>Wattage:</strong> ${escapeHtml(String(doc.delivery_wattage))}` : ''}
                              ${doc.warehouse_name ? `<br><strong>Warehouse:</strong> ${escapeHtml(doc.warehouse_name)}` : ''}
                          </div>
                      </div>
                  </div>
              </td>
-             <td>
-                 <span class="document-type-badge">${getDocumentTypeName(doc.document_type)}</span>
-                 ${doc.document_sub_type ? `<br><span class="document-type-badge" style="background: rgba(34, 197, 94, 0.1); color: #16a34a; margin-top: 4px; font-size: 0.7em;">${escapeHtml(doc.document_sub_type)}</span>` : ''}
-             </td>
-             <td>
-                 <a href="project_documents.php?project_id=${doc.project_id}" class="project-link">
-                     ${escapeHtml(doc.project_name)}
-                 </a>
-             </td>
-             <td>${doc.size}</td>
-             <td>${formatDate(doc.uploaded_at)}</td>
+            <td>
+                <span class="document-type-badge">${getDocumentTypeName(doc.document_type)}</span>
+                ${doc.document_sub_type ? `<br><span class="document-type-badge" style="background: rgba(34, 197, 94, 0.1); color: #16a34a; margin-top: 4px; font-size: 0.7em;">${escapeHtml(doc.document_sub_type)}</span>` : ''}
+            </td>
+            <td>
+                <a href="project_documents.php?project_id=${doc.project_id}" class="project-link">
+                    ${escapeHtml(doc.project_name)}
+                </a>
+            </td>
+            ${showPodsCols ? `<td>${doc.bol_number ? escapeHtml(doc.bol_number) : ''}</td>` : ''}
+            ${showPodsCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
+            ${showPodsCols ? `<td>${doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : ''}</td>` : ''}
+            ${showPodsCols ? `<td>${doc.actual_delivery_date ? formatDate(doc.actual_delivery_date) : ''}</td>` : ''}
+            <td>${doc.size}</td>
+            <td>${formatDate(doc.uploaded_at)}</td>
              <td>
                  <div class="action-buttons">
                      <a href="download_document.php?id=${doc.id}" class="btn-download" target="_blank">
                          <i class="fas fa-download"></i>
                          Download
                      </a>
+                     ${doc.delivery_id ? `<a href="view_project.php?project_id=${doc.project_id}&delivery_id=${doc.delivery_id}" class="btn-download" style="background: linear-gradient(135deg, #3b82f6, #2563eb);" title="View delivery details">
+                         <i class=\"fas fa-eye\"></i>
+                         Details
+                     </a>` : ''}
                  </div>
              </td>
          </tr>
@@ -2417,12 +2744,23 @@ function hideBolSuggestions(fieldName) {
         }
     }, 150);
 }
+function updatePodsManufacturersFromDocs(documents) {
+    const sel = document.getElementById('podsManufacturerSelect');
+    if (!sel) return;
+    const current = sel.value;
+    const names = new Set();
+    documents.forEach(d => {
+        if (d.manufacturer_name) names.add(String(d.manufacturer_name));
+    });
+    sel.innerHTML = '<option value="">All Manufacturers</option>';
+    Array.from(names).sort((a,b)=>a.localeCompare(b)).forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+    });
+    if (current && Array.from(names).includes(current)) sel.value = current;
+}
 </script>
 </body>
 </html>
-
-<?php
-if (isset($conn) && $conn instanceof mysqli) {
-    @mysqli_close($conn);
-}
-?>
