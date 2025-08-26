@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost:3306
--- Generation Time: Aug 19, 2025 at 08:57 AM
+-- Generation Time: Aug 25, 2025 at 10:07 AM
 -- Server version: 10.6.22-MariaDB-cll-lve
 -- PHP Version: 8.3.22
 
@@ -719,7 +719,9 @@ INSERT INTO `deliveries` (`id`, `project_id`, `supplier`, `origin_type`, `origin
 (1916, 132, 'Test Manufacturer', 'manufacturer', 2, 560, 'Delivered to Warehouse', 510, 'MW2', '2025-08-15', '2025-08-14', NULL, NULL, '2025-08-14 15:14:34', NULL, 300.00, 0.00, 300.00, 1196.62, NULL, NULL, 0.00, 'Unpaid', NULL, NULL, 1, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL),
 (1917, 132, 'Test Manufacturer', 'manufacturer', 2, 560, 'Delivered to Warehouse', 510, 'MW3', '2025-08-15', '2025-08-14', NULL, NULL, '2025-08-14 15:14:34', NULL, 300.00, 0.00, 300.00, 1196.62, NULL, NULL, 0.00, 'Unpaid', NULL, NULL, 1, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL),
 (1918, 132, 'Test Manufacturer', 'manufacturer', 2, 560, 'In Transit to Warehouse', 510, 'MW4', '2025-08-15', NULL, NULL, NULL, '2025-08-14 15:14:35', NULL, 300.00, 0.00, 300.00, 1196.62, NULL, NULL, 0.00, 'Unpaid', NULL, NULL, 1, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL),
-(1922, 134, 'Meyer Burger', 'manufacturer', 1, 555, 'Delivered to Project', 510, 'Test22', '2025-08-19', NULL, '2025-08-19', NULL, '2025-08-15 16:54:58', NULL, 900.00, 0.00, 0.00, 2229.66, NULL, NULL, 0.00, 'Unpaid', NULL, NULL, NULL, 1, NULL, NULL, NULL, NULL, NULL, 0, NULL);
+(1933, 135, 'Meyer Burger', 'manufacturer', 1, 555, 'Delivered to Warehouse', 510, 'Test9532', '2025-08-25', '2025-08-22', NULL, NULL, '2025-08-22 17:02:57', NULL, 900.00, 0.00, 0.00, 537.84, NULL, NULL, 0.00, 'Unpaid', NULL, NULL, 9, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL),
+(1934, 135, 'Meyer Burger', 'manufacturer', 1, 555, 'Delivered to Project', 510, 'Test22', '2025-08-25', NULL, '2025-08-25', NULL, '2025-08-22 17:04:05', NULL, 2000.00, 0.00, 0.00, 2231.54, NULL, NULL, 0.00, 'Unpaid', NULL, NULL, NULL, 1, NULL, NULL, NULL, NULL, NULL, 0, NULL),
+(1935, 135, 'Meyer Burger', 'warehouse', 9, 555, 'In Transit to Project', 510, 'Test11', '2025-08-25', NULL, NULL, NULL, '2025-08-22 18:41:25', '2025-08-22', 700.00, 0.00, 0.00, 1747.17, NULL, NULL, 0.00, 'Unpaid', NULL, NULL, 9, 1, NULL, NULL, NULL, NULL, NULL, 0, NULL);
 
 -- --------------------------------------------------------
 
@@ -6058,23 +6060,57 @@ INSERT INTO `delivery_pallets` (`delivery_id`, `inventory_pallet_id`) VALUES
 (1918, 93845),
 (1918, 93846),
 (1918, 93847),
-(1922, 93919),
-(1922, 93920),
-(1922, 93921),
-(1922, 93922),
-(1922, 93923),
-(1922, 93924),
-(1922, 93925),
-(1922, 93926),
-(1922, 93927),
-(1922, 93928),
-(1922, 93929),
-(1922, 93930),
-(1922, 93931),
-(1922, 93932),
-(1922, 93933),
-(1922, 93934),
-(1922, 93935);
+(1933, 93990),
+(1933, 93991),
+(1933, 93992),
+(1933, 93993),
+(1933, 93994),
+(1933, 93995),
+(1933, 93996),
+(1933, 93997),
+(1933, 93998),
+(1933, 93999),
+(1933, 94000),
+(1933, 94001),
+(1933, 94002),
+(1933, 94003),
+(1933, 94004),
+(1933, 94005),
+(1933, 94006),
+(1934, 94007),
+(1934, 94008),
+(1934, 94009),
+(1934, 94010),
+(1934, 94011),
+(1934, 94012),
+(1934, 94013),
+(1934, 94014),
+(1934, 94015),
+(1934, 94016),
+(1934, 94017),
+(1934, 94018),
+(1934, 94019),
+(1934, 94020),
+(1934, 94021),
+(1934, 94022),
+(1934, 94023),
+(1935, 93990),
+(1935, 93991),
+(1935, 93992),
+(1935, 93993),
+(1935, 93994),
+(1935, 93995),
+(1935, 93996),
+(1935, 93997),
+(1935, 93998),
+(1935, 93999),
+(1935, 94000),
+(1935, 94001),
+(1935, 94002),
+(1935, 94003),
+(1935, 94004),
+(1935, 94005),
+(1935, 94006);
 
 -- --------------------------------------------------------
 
@@ -18367,78 +18403,75 @@ INSERT INTO `inventory_pallets` (`id`, `pallet_identifier`, `unassigned_module_i
 (93845, 'P93845', 192, 132, 560, 30, 1, NULL, 'In Transit to Warehouse', '2025-08-15 00:00:00', '2025-08-14 15:11:26', '2025-08-14 15:14:35', NULL, 'Test Manufacturer', 2),
 (93846, 'P93846', 192, 132, 560, 30, 1, NULL, 'In Transit to Warehouse', '2025-08-15 00:00:00', '2025-08-14 15:11:26', '2025-08-14 15:14:35', NULL, 'Test Manufacturer', 2),
 (93847, 'P93847', 192, 132, 560, 30, 1, NULL, 'In Transit to Warehouse', '2025-08-15 00:00:00', '2025-08-14 15:11:26', '2025-08-14 15:14:35', NULL, 'Test Manufacturer', 2),
-(93919, 'P93919', 195, 134, 555, 30, NULL, 134, 'Damaged', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93920, 'P93920', 195, 134, 555, 30, NULL, 134, 'Damaged', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93921, 'P93921', 195, 134, 555, 30, NULL, 134, 'Damaged', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93922, 'P93922', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93923, 'P93923', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93924, 'P93924', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93925, 'P93925', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93926, 'P93926', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93927, 'P93927', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93928, 'P93928', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93929, 'P93929', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93930, 'P93930', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93931, 'P93931', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93932, 'P93932', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93933, 'P93933', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93934, 'P93934', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93935, 'P93935', 195, 134, 555, 30, NULL, 134, 'Delivered to Project', '2025-08-19 00:00:00', '2025-08-15 16:54:05', '2025-08-15 16:55:36', NULL, 'Meyer Burger', 1),
-(93936, 'P93936', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93937, 'P93937', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93938, 'P93938', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93939, 'P93939', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93940, 'P93940', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93941, 'P93941', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93942, 'P93942', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93943, 'P93943', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93944, 'P93944', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93945, 'P93945', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93946, 'P93946', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93947, 'P93947', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93948, 'P93948', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93949, 'P93949', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93950, 'P93950', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93951, 'P93951', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93952, 'P93952', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93953, 'P93953', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93954, 'P93954', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93955, 'P93955', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93956, 'P93956', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:05', '2025-08-15 16:54:05', NULL, 'Meyer Burger', 1),
-(93957, 'P93957', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93958, 'P93958', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93959, 'P93959', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93960, 'P93960', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93961, 'P93961', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93962, 'P93962', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93963, 'P93963', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93964, 'P93964', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93965, 'P93965', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93966, 'P93966', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93967, 'P93967', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1);
+(93990, 'P93990', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(93991, 'P93991', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(93992, 'P93992', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(93993, 'P93993', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(93994, 'P93994', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(93995, 'P93995', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(93996, 'P93996', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(93997, 'P93997', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(93998, 'P93998', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(93999, 'P93999', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(94000, 'P94000', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(94001, 'P94001', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(94002, 'P94002', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(94003, 'P94003', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(94004, 'P94004', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(94005, 'P94005', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(94006, 'P94006', 197, 135, 555, 30, NULL, 135, 'In Transit to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 18:41:25', NULL, 'Meyer Burger', 1),
+(94007, 'P94007', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94008, 'P94008', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94009, 'P94009', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94010, 'P94010', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94011, 'P94011', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94012, 'P94012', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94013, 'P94013', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94014, 'P94014', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94015, 'P94015', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94016, 'P94016', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94017, 'P94017', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94018, 'P94018', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94019, 'P94019', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94020, 'P94020', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94021, 'P94021', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94022, 'P94022', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94023, 'P94023', 197, 135, 555, 30, NULL, 135, 'Delivered to Project', '2025-08-25 00:00:00', '2025-08-22 17:02:19', '2025-08-22 17:04:30', NULL, 'Meyer Burger', 1),
+(94024, 'P94024', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94025, 'P94025', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94026, 'P94026', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94027, 'P94027', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94028, 'P94028', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94029, 'P94029', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94030, 'P94030', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94031, 'P94031', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94032, 'P94032', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94033, 'P94033', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94034, 'P94034', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94035, 'P94035', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1);
 INSERT INTO `inventory_pallets` (`id`, `pallet_identifier`, `unassigned_module_item_id`, `assigned_project_id`, `wattage`, `quantity`, `current_warehouse_id`, `current_project_id`, `status`, `arrival_date`, `created_at`, `updated_at`, `flash_test_data`, `manufacturer`, `manufacturer_location_id`) VALUES
-(93968, 'P93968', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93969, 'P93969', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93970, 'P93970', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93971, 'P93971', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93972, 'P93972', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93973, 'P93973', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93974, 'P93974', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93975, 'P93975', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93976, 'P93976', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93977, 'P93977', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93978, 'P93978', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93979, 'P93979', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93980, 'P93980', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93981, 'P93981', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93982, 'P93982', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93983, 'P93983', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93984, 'P93984', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93985, 'P93985', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93986, 'P93986', 195, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-15 16:54:06', '2025-08-15 16:54:06', NULL, 'Meyer Burger', 1),
-(93987, 'P93987', 196, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-16 15:25:23', '2025-08-16 15:25:23', NULL, 'Meyer Burger', 1),
-(93988, 'P93988', 196, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-16 15:25:23', '2025-08-16 15:25:23', NULL, 'Meyer Burger', 1),
-(93989, 'P93989', 196, 134, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-16 15:25:23', '2025-08-16 15:25:23', NULL, 'Meyer Burger', 1);
+(94036, 'P94036', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94037, 'P94037', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94038, 'P94038', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94039, 'P94039', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94040, 'P94040', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94041, 'P94041', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94042, 'P94042', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94043, 'P94043', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94044, 'P94044', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94045, 'P94045', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94046, 'P94046', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94047, 'P94047', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94048, 'P94048', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94049, 'P94049', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94050, 'P94050', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94051, 'P94051', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94052, 'P94052', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94053, 'P94053', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94054, 'P94054', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94055, 'P94055', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94056, 'P94056', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1),
+(94057, 'P94057', 197, 135, 555, 30, NULL, NULL, 'At Manufacturer', NULL, '2025-08-22 17:02:19', '2025-08-22 17:02:19', NULL, 'Meyer Burger', 1);
 
 -- --------------------------------------------------------
 
@@ -18595,8 +18628,7 @@ CREATE TABLE `modules` (
 INSERT INTO `modules` (`id`, `account_id`, `vendor_name`, `initial_location`, `created_at`, `last_updated_at`, `project_id`, `modules_per_pallet`, `pallets_per_truck`, `modules_per_truck`, `pallet_length_mm`, `pallet_depth_mm`, `pallet_double_stacked_height_mm`, `pallet_total_weight_kg`, `stacking_in_warehouse`, `stacking_during_transport`, `forklift_truck_long_side_mm`, `forklift_truck_short_side_mm`, `pallet_jack_long_side_mm`, `pallet_jack_short_side_mm`, `module_notes`, `module_docs_url`, `module_additional_notes`) VALUES
 (52, 1, 'Meyer Burger', '1685 S Litchfield Rd, Goodyear, AZ 85338, USA', '2025-06-13 13:01:39', '2025-06-13 13:01:39', 24, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
 (120, 3, 'Test Manufacturer', '8801 Fast Park Drive, Raleigh, NORTH CAROLINA, 27617', '2025-08-14 15:05:52', '2025-08-14 15:05:52', 132, 30, 17, 510, 0, 0, 0, 0, '', '', 0, 0, 0, 0, '0', NULL, NULL),
-(123, 3, 'Meyer Burger', '1685 S Litchfield Rd, Goodyear, AZ, 85338', '2025-08-15 16:53:38', '2025-08-15 16:53:38', 134, 30, 17, 510, 0, 0, 0, 0, '', '', 0, 0, 0, 0, '0', NULL, NULL),
-(124, 3, 'Meyer Burger', 'Manufacturer', '2025-08-16 15:25:23', '2025-08-16 15:25:23', 134, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+(125, 3, 'Meyer Burger', '1685 S Litchfield Rd, Goodyear, AZ, 85338', '2025-08-22 17:02:03', '2025-08-22 17:02:03', 135, 30, 17, 510, 0, 0, 0, 0, '', '', 0, 0, 0, 0, '0', NULL, NULL);
 
 -- --------------------------------------------------------
 
@@ -18672,7 +18704,7 @@ INSERT INTO `projects` (`id`, `account_id`, `project_name`, `image_url`, `estima
 (24, 1, 'Babacomari', 'uploads/project_67227cc03ce169.71111233.jpg', '2025-11-07', '2024-10-30 18:36:48', 0, NULL, '1107 W Manresa Way, Huachuca City, AZ 85616', 900.00, NULL, '{\"freight\":633600,\"warehousing\":0,\"accessorial\":50500}', 0.0010, '1107 W Manresa Way', 'Huachuca City', 'AZ', '85616', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 30),
 (27, 2, 'DDPm', 'uploads/project_678ff6c2b2c261.29410900.jpeg', '2025-03-21', '2025-01-21 19:32:36', 0, 1, '7610 Shelter Cove, Raleigh, NC 27617', 1100.00, NULL, NULL, 0.0000, '7610 Shelter Cove', 'Raleigh', 'NC', '27617', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 30),
 (132, 3, 'Morgan Test Project', 'pictures/test.png', '2026-11-14', '2025-08-14 15:05:52', 0, NULL, '6037 Ladish Lane, Raleigh, North Carolina 27610', NULL, NULL, NULL, 0.0000, '6037 Ladish Lane', 'Raleigh', 'North Carolina', '27610', '7852366122', '', 'America/New_York', '', '', NULL, NULL, NULL, '', 30),
-(134, 3, 'Test Project', 'uploads/project_689f661260d477.25629430.png', '2025-10-11', '2025-08-15 16:53:38', 0, NULL, '7610 Shelter Cv, RALEIGH, NC 27617', NULL, NULL, NULL, 0.0000, '7610 Shelter Cv', 'RALEIGH', 'NC', '27617', '9196378842', '', 'America/New_York', '', '', NULL, NULL, NULL, '', 30);
+(135, 3, 'Test Project', 'pictures/test.png', '2025-10-11', '2025-08-22 17:02:02', 0, NULL, '7610 Shelter Cv, RALEIGH, NC 27617', NULL, NULL, NULL, 0.0000, '7610 Shelter Cv', 'RALEIGH', 'NC', '27617', '9196378842', '', 'America/New_York', '', '', NULL, NULL, NULL, '', 30);
 
 --
 -- Triggers `projects`
@@ -18728,6 +18760,7 @@ CREATE TABLE `project_documents` (
   `id` int(11) NOT NULL,
   `project_id` int(11) NOT NULL,
   `document_type` varchar(100) NOT NULL COMMENT 'invoices, pods, flash_test_data, bills_of_lading, warehousing, modules, delivery_packet, incident_reports, safe_harbor_evidence',
+  `document_sub_type` varchar(100) DEFAULT NULL COMMENT 'Sub-category for better filtering (e.g., Warehouse PODs, Project PODs, Solterra Invoices, OEM Invoices)',
   `file_name` varchar(255) NOT NULL COMMENT 'Unique filename on server',
   `original_file_name` varchar(255) NOT NULL COMMENT 'Original filename from user',
   `file_path` varchar(500) NOT NULL COMMENT 'Full path to file',
@@ -18736,29 +18769,25 @@ CREATE TABLE `project_documents` (
   `uploaded_by` int(11) NOT NULL COMMENT 'User ID who uploaded the file',
   `uploaded_at` datetime NOT NULL DEFAULT current_timestamp(),
   `description` text DEFAULT NULL COMMENT 'Optional description of the document',
-  `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT 'Soft delete flag'
+  `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT 'Soft delete flag',
+  `delivery_id` int(11) DEFAULT NULL COMMENT 'Links to specific delivery if applicable',
+  `warehouse_id` int(11) DEFAULT NULL COMMENT 'Links to specific warehouse if applicable',
+  `pallet_id` int(11) DEFAULT NULL COMMENT 'Links to specific pallet if applicable',
+  `module_id` int(11) DEFAULT NULL COMMENT 'Links to specific module if applicable',
+  `entity_context` varchar(100) DEFAULT NULL COMMENT 'Additional context about what this document relates to',
+  `project_invoice_id` int(11) DEFAULT NULL,
+  `manufacturer_id` int(11) DEFAULT NULL,
+  `is_safe_harbor` tinyint(1) DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='General project documents not tied to specific entities';
 
 --
 -- Dumping data for table `project_documents`
 --
 
-INSERT INTO `project_documents` (`id`, `project_id`, `document_type`, `file_name`, `original_file_name`, `file_path`, `file_size`, `mime_type`, `uploaded_by`, `uploaded_at`, `description`, `is_active`) VALUES
-(1, 134, 'modules', '1755525910_68a33316880fc_LoanActivity_8198895978.pdf', 'LoanActivity_8198895978.pdf', 'uploads/project_documents/134/modules/1755525910_68a33316880fc_LoanActivity_8198895978.pdf', 24464, 'application/pdf', 3, '2025-08-18 07:05:10', '', 0),
-(2, 134, 'modules', '1755527100_68a337bc6b9e0_Lease-Briana_Crenshaw-20240930__1_.pdf', 'Lease-Briana Crenshaw-20240930 (1).pdf', 'uploads/project_documents/134/modules/1755527100_68a337bc6b9e0_Lease-Briana_Crenshaw-20240930__1_.pdf', 1701555, 'application/pdf', 3, '2025-08-18 07:25:00', '', 0),
-(3, 134, 'modules', '1755527100_68a337bcb7787_RESIDENT_INFORMATION-_completed.doc', 'RESIDENT INFORMATION- completed.doc', 'uploads/project_documents/134/modules/1755527100_68a337bcb7787_RESIDENT_INFORMATION-_completed.doc', 33280, 'application/msword', 3, '2025-08-18 07:25:00', '', 0),
-(4, 134, 'modules', '1755527400_68a338e843ecd_RESIDENT_INFORMATION-_completed.doc', 'RESIDENT INFORMATION- completed.doc', 'uploads/project_documents/134/modules/1755527400_68a338e843ecd_RESIDENT_INFORMATION-_completed.doc', 33280, 'application/msword', 3, '2025-08-18 07:30:00', 'Test', 0),
-(5, 134, 'modules', '1755527403_68a338ebd259b_Lease-Briana_Crenshaw-20240930__1_.pdf', 'Lease-Briana Crenshaw-20240930 (1).pdf', 'uploads/project_documents/134/modules/1755527403_68a338ebd259b_Lease-Briana_Crenshaw-20240930__1_.pdf', 1701555, 'application/pdf', 3, '2025-08-18 07:30:03', 'Test', 0),
-(6, 134, 'modules', '1755528453_68a33d051dd66_RESIDENT_INFORMATION-_completed__1_.doc', 'RESIDENT INFORMATION- completed (1).doc', 'uploads/project_documents/134/modules/1755528453_68a33d051dd66_RESIDENT_INFORMATION-_completed__1_.doc', 33280, 'application/msword', 3, '2025-08-18 07:47:33', '', 0),
-(7, 134, 'modules', '1755530999_68a346f7c2cb1_LoanActivity_8198895978__1_.pdf', 'LoanActivity_8198895978 (1).pdf', 'uploads/project_documents/134/modules/1755530999_68a346f7c2cb1_LoanActivity_8198895978__1_.pdf', 24464, 'application/pdf', 3, '2025-08-18 08:29:59', '', 0),
-(8, 134, 'modules', '1755534835_68a355f37335f_Solterra_Solutions_Valuation_Analysis.pdf', 'Solterra Solutions Valuation Analysis.pdf', 'uploads/project_documents/134/modules/1755534835_68a355f37335f_Solterra_Solutions_Valuation_Analysis.pdf', 54595, 'application/pdf', 3, '2025-08-18 09:33:55', '', 0),
-(9, 134, 'modules', '1755540008_68a36a285d50e_Solterra_Solutions-_Edmund_Equity_Offer__RD_8.18.25_.docx', 'Solterra Solutions- Edmund Equity Offer (RD 8.18.25).docx', 'uploads/project_documents/134/modules/1755540008_68a36a285d50e_Solterra_Solutions-_Edmund_Equity_Offer__RD_8.18.25_.docx', 22692, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 3, '2025-08-18 11:00:08', '', 1),
-(10, 134, 'delivery_packet', '1755540027_68a36a3be5eb3_Solterra_Solutions-_Edmund_Equity_Offer__RD_8.18.25_.docx', 'Solterra Solutions- Edmund Equity Offer (RD 8.18.25).docx', 'uploads/project_documents/134/delivery_packet/1755540027_68a36a3be5eb3_Solterra_Solutions-_Edmund_Equity_Offer__RD_8.18.25_.docx', 22692, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 3, '2025-08-18 11:00:27', '', 1),
-(11, 134, 'incident_reports', '1755540457_68a36be92ea82_Solterra_Solutions_Valuation_Analysis.pdf', 'Solterra Solutions Valuation Analysis.pdf', 'uploads/project_documents/134/incident_reports/1755540457_68a36be92ea82_Solterra_Solutions_Valuation_Analysis.pdf', 54595, 'application/pdf', 3, '2025-08-18 11:07:37', '', 1),
-(12, 134, 'safe_harbor_evidence', '1755545419_68a37f4b6c6d4_Solterra_Solutions-_Edmund_Equity_Offer__RD_8.18.25_.docx', 'Solterra Solutions- Edmund Equity Offer (RD 8.18.25).docx', 'uploads/project_documents/134/safe_harbor_evidence/1755545419_68a37f4b6c6d4_Solterra_Solutions-_Edmund_Equity_Offer__RD_8.18.25_.docx', 22692, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 3, '2025-08-18 12:30:19', '', 1),
-(13, 134, 'safe_harbor_evidence', '1755546584_68a383d84289d_Solterra_Solutions_Valuation_Analysis.pdf', 'Solterra Solutions Valuation Analysis.pdf', 'uploads/project_documents/134/safe_harbor_evidence/1755546584_68a383d84289d_Solterra_Solutions_Valuation_Analysis.pdf', 54595, 'application/pdf', 3, '2025-08-18 12:49:44', '', 1),
-(14, 132, 'modules', '1755617939_68a49a935cea6_BALDY_LL_EOI-_FRANKLIN_SPRINGS_CIR.pdf', 'BALDY LL EOI- FRANKLIN SPRINGS CIR.pdf', 'uploads/project_documents/132/modules/1755617939_68a49a935cea6_BALDY_LL_EOI-_FRANKLIN_SPRINGS_CIR.pdf', 125158, 'application/pdf', 3, '2025-08-19 08:38:59', '', 0),
-(15, 132, 'modules', '1755618006_68a49ad6ca54d_BALDY_LL_EOI-_FRANKLIN_SPRINGS_CIR.pdf', 'BALDY LL EOI- FRANKLIN SPRINGS CIR.pdf', 'uploads/project_documents/132/modules/1755618006_68a49ad6ca54d_BALDY_LL_EOI-_FRANKLIN_SPRINGS_CIR.pdf', 125158, 'application/pdf', 3, '2025-08-19 08:40:06', '', 0);
+INSERT INTO `project_documents` (`id`, `project_id`, `document_type`, `document_sub_type`, `file_name`, `original_file_name`, `file_path`, `file_size`, `mime_type`, `uploaded_by`, `uploaded_at`, `description`, `is_active`, `delivery_id`, `warehouse_id`, `pallet_id`, `module_id`, `entity_context`, `project_invoice_id`, `manufacturer_id`, `is_safe_harbor`) VALUES
+(25, 135, 'pods', 'Warehouse POD', '1755882196', '9013595 POD.png', 'uploads/project_documents/135/pods/1755882196_373c996b_9013595_POD.png', 513964, 'image/png', 3, '2025-08-22 10:03:16', '', 1, 1933, 9, NULL, NULL, 'Warehouse POD uploaded during bulk truckload receiving for delivery ID: 1933', NULL, NULL, 0),
+(26, 135, 'pods', 'Project POD', '1755882270', '8559411 POD.png', 'uploads/project_documents/135/pods/1755882270_a4db8e7e_8559411_POD.png', 444954, 'image/png', 3, '2025-08-22 10:04:30', '', 1, 1934, NULL, NULL, NULL, 'Project POD for appointment ID: 232', NULL, NULL, 0),
+(27, 132, 'pods', 'Project POD', '1756140799', '8510248 POD.png', 'uploads/project_documents/132/pods/1756140799_96f5aa59_8510248_POD.png', 638357, 'image/png', 3, '2025-08-25 09:53:19', 'Testing global_upload functionality', 1, 1914, NULL, NULL, NULL, 'Global document upload for project: Morgan Test Project', NULL, NULL, 0);
 
 -- --------------------------------------------------------
 
@@ -18826,7 +18855,7 @@ INSERT INTO `project_wattage_orders` (`id`, `project_id`, `wattage`, `total_orde
 (106, 24, '565', 31710),
 (107, 24, '570', 1590),
 (186, 132, '560', 5100),
-(188, 134, '555', 2040);
+(189, 135, '555', 2040);
 
 -- --------------------------------------------------------
 
@@ -18935,11 +18964,11 @@ INSERT INTO `site_operating_hours` (`id`, `site_id`, `project_id`, `day_of_week`
 (658, NULL, 132, 3, '08:00:00', '17:00:00'),
 (659, NULL, 132, 4, '08:00:00', '17:00:00'),
 (660, NULL, 132, 5, '08:00:00', '17:00:00'),
-(666, NULL, 134, 1, '08:00:00', '17:00:00'),
-(667, NULL, 134, 2, '08:00:00', '17:00:00'),
-(668, NULL, 134, 3, '08:00:00', '17:00:00'),
-(669, NULL, 134, 4, '08:00:00', '17:00:00'),
-(670, NULL, 134, 5, '08:00:00', '17:00:00');
+(671, NULL, 135, 1, '08:00:00', '17:00:00'),
+(672, NULL, 135, 2, '08:00:00', '17:00:00'),
+(673, NULL, 135, 3, '08:00:00', '17:00:00'),
+(674, NULL, 135, 4, '08:00:00', '17:00:00'),
+(675, NULL, 135, 5, '08:00:00', '17:00:00');
 
 -- --------------------------------------------------------
 
@@ -19002,7 +19031,8 @@ INSERT INTO `site_scheduling` (`id`, `site_id`, `project_id`, `account_id`, `sta
 (221, NULL, 132, 0, '2025-08-18 12:30:00', 'MP02', '[{\"watt\":560,\"qty\":510}]', 0, 0, '', '', '2025-08-14 08:16:29', '2025-08-14 08:16:51', '2025-08-18 12:30:00', NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, 1910),
 (222, NULL, 132, 0, '2025-08-18 13:00:00', 'MP03', '[{\"watt\":560,\"qty\":510}]', 0, 0, '', '', '2025-08-14 08:16:35', '2025-08-14 08:16:55', '2025-08-18 13:00:00', NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, 1911),
 (223, NULL, 132, 0, '2025-08-18 13:30:00', 'MP04', '[{\"watt\":560,\"qty\":510}]', 0, 0, '', '', '2025-08-14 08:16:41', '2025-08-14 08:16:58', '2025-08-18 13:30:00', NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, 1912),
-(227, NULL, 134, 0, '2025-08-19 12:00:00', 'Test22', '[{\"watt\":555,\"qty\":510}]', 0, 0, '', '', '2025-08-15 09:55:07', '2025-08-15 09:55:36', '2025-08-19 12:00:00', NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, 1922);
+(232, NULL, 135, 0, '2025-08-25 12:00:00', 'Test22', '[{\"watt\":555,\"qty\":510}]', 0, 0, '', '', '2025-08-22 10:04:14', '2025-08-22 10:04:30', '2025-08-25 12:00:00', NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, 1934),
+(233, NULL, 135, 0, '2025-08-25 12:30:00', 'Test11', '[{\"watt\":555,\"qty\":510}]', 0, 0, '', '', '2025-08-22 11:41:34', '2025-08-22 11:41:34', NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, 1935);
 
 -- --------------------------------------------------------
 
@@ -19090,8 +19120,7 @@ INSERT INTO `unassigned_module_items` (`id`, `unassigned_module_id`, `wattage`, 
 (112, 52, 565, 31710, '2025-06-13 13:01:39', '2025-06-13 13:01:39'),
 (113, 52, 570, 1590, '2025-06-13 13:01:39', '2025-06-13 13:01:39'),
 (192, 120, 560, 5100, '2025-08-14 15:05:52', '2025-08-14 15:05:52'),
-(195, 123, 555, 2040, '2025-08-15 16:53:38', '2025-08-15 16:53:38'),
-(196, 124, 555, 30, '2025-08-16 15:25:23', '2025-08-16 15:25:23');
+(197, 125, 555, 2040, '2025-08-22 17:02:03', '2025-08-22 17:02:03');
 
 -- --------------------------------------------------------
 
@@ -19332,13 +19361,6 @@ CREATE TABLE `warranty_claims` (
   `last_public_update_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
---
--- Dumping data for table `warranty_claims`
---
-
-INSERT INTO `warranty_claims` (`id`, `scheduling_id`, `bol_number`, `delivery_date`, `status`, `notes`, `pictures`, `created_at`, `updated_at`, `pallet_id`, `issue_type`, `expected_quantity`, `actual_quantity`, `damaged_quantity`, `accepted_quantity`, `responsible_party`, `resolution_type`, `credit_amount`, `replacement_tracking`, `proof_of_completion_path`, `public_notes`, `internal_notes`, `last_public_update_at`) VALUES
-(84, 227, 'Test22', '2025-08-19 12:00:00', 'Approved - Replacement', '{\"pallets\":[{\"pallet_id\":93919,\"wattage\":555,\"expected\":30,\"actual\":30,\"damaged\":30,\"accepted\":0,\"notes\":\"\"},{\"pallet_id\":93920,\"wattage\":555,\"expected\":30,\"actual\":30,\"damaged\":30,\"accepted\":0,\"notes\":\"\"},{\"pallet_id\":93921,\"wattage\":555,\"expected\":30,\"actual\":30,\"damaged\":30,\"accepted\":0,\"notes\":\"\"}]}', '[\"uploads/damage_photos/damage_227_1755276936_0.jpg\",\"uploads/warranty/84/1755357970_8559413_POD.png\"]', '2025-08-15 09:55:36', '2025-08-16 08:26:10', NULL, 'damaged', 90, 90, 90, 0, 'Manufacturer', 'Replacement', NULL, NULL, 'uploads/warranty/84/1755357970_8559413_POD.png', NULL, NULL, '2025-08-16 08:26:10');
-
 -- --------------------------------------------------------
 
 --
@@ -19354,16 +19376,6 @@ CREATE TABLE `warranty_claim_events` (
   `is_public` tinyint(1) NOT NULL DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
---
--- Dumping data for table `warranty_claim_events`
---
-
-INSERT INTO `warranty_claim_events` (`id`, `claim_id`, `event_ts`, `user_id`, `event_text`, `is_public`) VALUES
-(57, 84, '2025-08-15 09:55:36', 3, 'Warranty claim submitted for delivery with multiple pallet issues (3 pallets)', 1),
-(58, 84, '2025-08-16 08:25:10', 3, 'Status changed: Submitted to In Review', 1),
-(59, 84, '2025-08-16 08:25:12', 3, 'Status changed: In Review to Pending Manufacturer', 1),
-(60, 84, '2025-08-16 08:26:10', 3, 'Status changed: Pending Manufacturer to Approved - Replacement | Resolution Changed: — to Replacement | Proof uploaded | Files added: 1755357970_8559413_POD.png', 1);
-
 -- --------------------------------------------------------
 
 --
@@ -19375,15 +19387,6 @@ CREATE TABLE `warranty_claim_replacements` (
   `claim_id` int(11) NOT NULL,
   `pallet_id` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
-
---
--- Dumping data for table `warranty_claim_replacements`
---
-
-INSERT INTO `warranty_claim_replacements` (`id`, `claim_id`, `pallet_id`) VALUES
-(30, 84, 93987),
-(31, 84, 93988),
-(32, 84, 93989);
 
 --
 -- Indexes for dumped tables
@@ -19535,7 +19538,13 @@ ALTER TABLE `project_documents`
   ADD KEY `idx_document_type` (`document_type`),
   ADD KEY `idx_uploaded_by` (`uploaded_by`),
   ADD KEY `idx_uploaded_at` (`uploaded_at`),
-  ADD KEY `idx_is_active` (`is_active`);
+  ADD KEY `idx_is_active` (`is_active`),
+  ADD KEY `fk_project_documents_delivery` (`delivery_id`),
+  ADD KEY `fk_project_documents_warehouse` (`warehouse_id`),
+  ADD KEY `fk_project_documents_invoice` (`project_invoice_id`),
+  ADD KEY `fk_project_documents_manufacturer` (`manufacturer_id`),
+  ADD KEY `idx_project_documents_safe_harbor` (`is_safe_harbor`),
+  ADD KEY `idx_project_documents_type_subtype` (`document_type`,`document_sub_type`);
 
 --
 -- Indexes for table `project_invoices`
@@ -19721,7 +19730,7 @@ ALTER TABLE `customer_account_users`
 -- AUTO_INCREMENT for table `deliveries`
 --
 ALTER TABLE `deliveries`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=1923;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=1936;
 
 --
 -- AUTO_INCREMENT for table `flash_test_data`
@@ -19751,7 +19760,7 @@ ALTER TABLE `freight_estimates`
 -- AUTO_INCREMENT for table `inventory_pallets`
 --
 ALTER TABLE `inventory_pallets`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT COMMENT 'Unique ID for each pallet', AUTO_INCREMENT=93990;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT COMMENT 'Unique ID for each pallet', AUTO_INCREMENT=94058;
 
 --
 -- AUTO_INCREMENT for table `manufacturers`
@@ -19769,7 +19778,7 @@ ALTER TABLE `manufacturer_locations`
 -- AUTO_INCREMENT for table `modules`
 --
 ALTER TABLE `modules`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=125;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=126;
 
 --
 -- AUTO_INCREMENT for table `overheads`
@@ -19781,13 +19790,13 @@ ALTER TABLE `overheads`
 -- AUTO_INCREMENT for table `projects`
 --
 ALTER TABLE `projects`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=135;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=136;
 
 --
 -- AUTO_INCREMENT for table `project_documents`
 --
 ALTER TABLE `project_documents`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=16;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=28;
 
 --
 -- AUTO_INCREMENT for table `project_invoices`
@@ -19799,7 +19808,7 @@ ALTER TABLE `project_invoices`
 -- AUTO_INCREMENT for table `project_wattage_orders`
 --
 ALTER TABLE `project_wattage_orders`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=189;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=190;
 
 --
 -- AUTO_INCREMENT for table `sites`
@@ -19823,7 +19832,7 @@ ALTER TABLE `site_module_wattages`
 -- AUTO_INCREMENT for table `site_operating_hours`
 --
 ALTER TABLE `site_operating_hours`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=671;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=676;
 
 --
 -- AUTO_INCREMENT for table `site_safety`
@@ -19835,7 +19844,7 @@ ALTER TABLE `site_safety`
 -- AUTO_INCREMENT for table `site_scheduling`
 --
 ALTER TABLE `site_scheduling`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=228;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=234;
 
 --
 -- AUTO_INCREMENT for table `site_users`
@@ -19853,7 +19862,7 @@ ALTER TABLE `sunny_memory`
 -- AUTO_INCREMENT for table `unassigned_module_items`
 --
 ALTER TABLE `unassigned_module_items`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=197;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=198;
 
 --
 -- AUTO_INCREMENT for table `users`
@@ -19895,13 +19904,13 @@ ALTER TABLE `warehouse_quotes`
 -- AUTO_INCREMENT for table `warranty_claims`
 --
 ALTER TABLE `warranty_claims`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=85;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=86;
 
 --
 -- AUTO_INCREMENT for table `warranty_claim_events`
 --
 ALTER TABLE `warranty_claim_events`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=61;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=62;
 
 --
 -- AUTO_INCREMENT for table `warranty_claim_replacements`
@@ -20007,8 +20016,14 @@ ALTER TABLE `projects`
 -- Constraints for table `project_documents`
 --
 ALTER TABLE `project_documents`
+  ADD CONSTRAINT `fk_manufacturer` FOREIGN KEY (`manufacturer_id`) REFERENCES `manufacturers` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_project_documents_delivery` FOREIGN KEY (`delivery_id`) REFERENCES `deliveries` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_project_documents_invoice` FOREIGN KEY (`project_invoice_id`) REFERENCES `project_invoices` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_project_documents_manufacturer` FOREIGN KEY (`manufacturer_id`) REFERENCES `manufacturers` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_project_documents_project` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `fk_project_documents_user` FOREIGN KEY (`uploaded_by`) REFERENCES `users` (`id`) ON DELETE CASCADE;
+  ADD CONSTRAINT `fk_project_documents_user` FOREIGN KEY (`uploaded_by`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_project_documents_warehouse` FOREIGN KEY (`warehouse_id`) REFERENCES `warehouses` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_project_invoice` FOREIGN KEY (`project_invoice_id`) REFERENCES `project_invoices` (`id`) ON DELETE SET NULL;
 
 --
 -- Constraints for table `project_invoices`

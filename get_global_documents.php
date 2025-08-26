@@ -41,6 +41,17 @@ $sub_filters = $_GET['sub_filters'] ?? [];
 $page = max(1, intval($_GET['page'] ?? 1));
 $page_size = max(1, min(1000, intval($_GET['page_size'] ?? 100))); // Max 1000 per page
 
+// PODs-specific filters (optional)
+$pods_delivery_start = trim($_GET['pods_delivery_start'] ?? '');
+$pods_delivery_end = trim($_GET['pods_delivery_end'] ?? '');
+$pods_bol = trim($_GET['pods_bol'] ?? '');
+$pods_manufacturer = trim($_GET['pods_manufacturer'] ?? '');
+$pods_manufacturer_id = isset($_GET['pods_manufacturer_id']) ? intval($_GET['pods_manufacturer_id']) : 0;
+$pods_supplier = trim($_GET['pods_supplier'] ?? '');
+$pods_wattages = isset($_GET['pods_wattages']) ? (array)$_GET['pods_wattages'] : [];
+$pods_wattage_min = isset($_GET['pods_wattage_min']) && $_GET['pods_wattage_min'] !== '' ? intval($_GET['pods_wattage_min']) : null;
+$pods_wattage_max = isset($_GET['pods_wattage_max']) && $_GET['pods_wattage_max'] !== '' ? intval($_GET['pods_wattage_max']) : null;
+
 // Build the base query with proper permission checking
 $base_sql = "
     SELECT 
@@ -62,6 +73,9 @@ $base_sql = "
         p.project_name,
         u.username as uploaded_by_name,
         d.bol_number,
+        d.supplier as supplier_name,
+        d.actual_delivery_date,
+        d.wattage as delivery_wattage,
         w.name as warehouse_name,
         pi.invoice_number,
         pi.amount as invoice_amount,
@@ -139,6 +153,61 @@ if (!empty($sub_filters) && is_array($sub_filters)) {
     }
 }
 
+// PODs-specific filter conditions (apply when values present)
+if (!empty($pods_bol)) {
+    $where_conditions[] = "d.bol_number LIKE ?";
+    $params[] = '%' . $pods_bol . '%';
+    $param_types .= "s";
+}
+if (!empty($pods_delivery_start)) {
+    $where_conditions[] = "DATE(d.actual_delivery_date) >= ?";
+    $params[] = $pods_delivery_start;
+    $param_types .= "s";
+}
+if (!empty($pods_delivery_end)) {
+    $where_conditions[] = "DATE(d.actual_delivery_date) <= ?";
+    $params[] = $pods_delivery_end;
+    $param_types .= "s";
+}
+if (!empty($pods_manufacturer)) {
+    // Match by manufacturer name when joined; keep LEFT JOIN safe
+    $where_conditions[] = "(m.name LIKE ? OR pd.manufacturer_id IN (SELECT id FROM manufacturers WHERE name LIKE ?))";
+    $like = '%' . $pods_manufacturer . '%';
+    $params[] = $like;
+    $params[] = $like;
+    $param_types .= "ss";
+}
+if (!empty($pods_supplier)) {
+    $where_conditions[] = "d.supplier = ?";
+    $params[] = $pods_supplier;
+    $param_types .= "s";
+}
+if ($pods_manufacturer_id > 0) {
+    $where_conditions[] = "(m.id = ? OR pd.manufacturer_id = ?)";
+    $params[] = $pods_manufacturer_id;
+    $params[] = $pods_manufacturer_id;
+    $param_types .= "ii";
+}
+if ($pods_wattage_min !== null) {
+    $where_conditions[] = "d.wattage >= ?";
+    $params[] = $pods_wattage_min;
+    $param_types .= "i";
+}
+if ($pods_wattage_max !== null) {
+    $where_conditions[] = "d.wattage <= ?";
+    $params[] = $pods_wattage_max;
+    $param_types .= "i";
+}
+if (!empty($pods_wattages)) {
+    // Build IN clause safely
+    $wlist = array_values(array_filter(array_map('intval', $pods_wattages), function($v){ return $v !== 0 || $v === 0; }));
+    if (!empty($wlist)) {
+        $placeholders = implode(',', array_fill(0, count($wlist), '?'));
+        $where_conditions[] = "d.wattage IN ($placeholders)";
+        foreach ($wlist as $w) { $params[] = $w; $param_types .= 'i'; }
+    }
+}
+
 // Combine WHERE conditions
 $where_clause = "";
 if (!empty($where_conditions)) {
@@ -150,6 +219,10 @@ $count_sql = "
     SELECT COUNT(*) as total
     FROM project_documents pd
     JOIN projects p ON pd.project_id = p.id
+    LEFT JOIN deliveries d ON pd.delivery_id = d.id
+    LEFT JOIN warehouses w ON pd.warehouse_id = w.id
+    LEFT JOIN project_invoices pi ON pd.project_invoice_id = pi.id
+    LEFT JOIN manufacturers m ON pd.manufacturer_id = m.id
     " . $where_clause;
 
 try {
@@ -212,10 +285,12 @@ try {
             'project_id' => $row['project_id'],
             'project_name' => $row['project_name'],
             'bol_number' => $row['bol_number'],
+            'actual_delivery_date' => $row['actual_delivery_date'],
+            'delivery_wattage' => $row['delivery_wattage'],
             'warehouse_name' => $row['warehouse_name'],
             'invoice_number' => $row['invoice_number'],
             'invoice_amount' => $row['invoice_amount'],
-            'manufacturer_name' => $row['manufacturer_name']
+            'manufacturer_name' => ($row['manufacturer_name'] ?: $row['supplier_name'])
         ];
     }
     $data_stmt->close();
