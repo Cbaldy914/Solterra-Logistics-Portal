@@ -1300,6 +1300,37 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                     </div>
                 </div>
             </div>
+            <div id="invoicesSubfilters" style="display: none;">
+                <div class="filter-grid">
+                    <div class="filter-group">
+                        <label class="filter-label">Invoice Total ($)</label>
+                        <div class="date-range-group">
+                            <input type="number" id="invTotalMin" class="filter-input" placeholder="Min" step="0.01" min="0">
+                            <input type="number" id="invTotalMax" class="filter-input" placeholder="Max" step="0.01" min="0">
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">Invoice Date</label>
+                        <div class="date-range-group">
+                            <input type="date" id="invDateStart" class="filter-input" placeholder="Start Date">
+                            <input type="date" id="invDateEnd" class="filter-input" placeholder="End Date">
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">Due Date</label>
+                        <div class="date-range-group">
+                            <input type="date" id="invDueStart" class="filter-input" placeholder="Start Date">
+                            <input type="date" id="invDueEnd" class="filter-input" placeholder="End Date">
+                        </div>
+                    </div>
+                    <div class="filter-group" id="invManufacturerGroup" style="display: none;">
+                        <label class="filter-label" for="invManufacturerSelect">Manufacturer</label>
+                        <select id="invManufacturerSelect" class="filter-select">
+                            <option value="">All Manufacturers</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1468,7 +1499,7 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
 
  // Document type sub-filters
  const subFilters = {
-     'invoices': ['Solterra Invoice', 'OEM Invoices', 'Warehouse Invoices', 'Freight Invoice', 'Module Invoice'],
+     'invoices': ['Solterra Invoice', 'Module Invoice'],
      'pods': ['Warehouse POD', 'Project POD'],
      'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
      'bills_of_lading': ['Inbound BOL', 'Outbound BOL', 'Intercompany BOL'],
@@ -1515,12 +1546,20 @@ document.addEventListener('DOMContentLoaded', function() {
         const type = docTypeSelect.value;
         const ctx = document.getElementById('contextSubfilters');
         const pods = document.getElementById('podsSubfilters');
+        const invoices = document.getElementById('invoicesSubfilters');
         if (filtersApplied && type === 'pods') {
             ctx.style.display = '';
             pods.style.display = '';
+            invoices.style.display = 'none';
             loadPodsFilterOptions();
+        } else if (filtersApplied && type === 'invoices') {
+            ctx.style.display = '';
+            pods.style.display = 'none';
+            invoices.style.display = '';
+            updateInvoicesSubfilterVisibility();
         } else {
             pods.style.display = 'none';
+            invoices.style.display = 'none';
             ctx.style.display = 'none';
         }
     }
@@ -1647,11 +1686,47 @@ function attachSubfilterListeners() {
     const podsEnd = document.getElementById('podsDeliveryEnd');
     const podsBol = document.getElementById('podsBolNumber');
     const podsMan = document.getElementById('podsManufacturerSelect');
-    [podsStart, podsEnd, podsBol, podsMan].forEach(el => {
+    const invMin = document.getElementById('invTotalMin');
+    const invMax = document.getElementById('invTotalMax');
+    const invStart = document.getElementById('invDateStart');
+    const invEnd = document.getElementById('invDateEnd');
+    const invBol = document.getElementById('invBolNumber');
+    const invMan = document.getElementById('invManufacturerSelect');
+    [podsStart, podsEnd, podsBol, podsMan, invMin, invMax, invStart, invEnd, invBol, invMan].forEach(el => {
         if (!el) return;
         const evt = (el.tagName === 'SELECT') ? 'change' : 'input';
         el.addEventListener(evt, () => { if (filtersApplied) { currentPage = 1; loadDocuments(); } });
     });
+}
+
+function updateInvoicesSubfilterVisibility() {
+    const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
+    const showBol = chips.includes('Solterra Invoice');
+    const showMan = chips.includes('Module Invoice');
+    const bolGroup = document.getElementById('invBolGroup');
+    const manGroup = document.getElementById('invManufacturerGroup');
+    if (bolGroup) bolGroup.style.display = showBol ? '' : 'none';
+    if (manGroup) manGroup.style.display = showMan ? '' : 'none';
+}
+
+function updateInvoicesManufacturersFromDocs(documents) {
+    const sel = document.getElementById('invManufacturerSelect');
+    if (!sel) return;
+    const current = sel.value;
+    const names = new Set();
+    documents.forEach(d => {
+        if (d.document_sub_type === 'Module Invoice' && d.manufacturer_name) {
+            names.add(String(d.manufacturer_name));
+        }
+    });
+    sel.innerHTML = '<option value="">All Manufacturers</option>';
+    Array.from(names).sort((a,b)=>a.localeCompare(b)).forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+    });
+    if (current && Array.from(names).includes(current)) sel.value = current;
 }
 
 // Toggle sub-filters based on document type selection
@@ -1682,6 +1757,9 @@ function toggleSubFilters() {
 // Toggle individual sub-filter selection
 function toggleSubFilter(element) {
     element.classList.toggle('selected');
+    if (filtersApplied && document.getElementById('documentTypeFilter').value === 'invoices') {
+        updateInvoicesSubfilterVisibility();
+    }
 }
 
 // Clear all filters
@@ -1768,6 +1846,22 @@ async function loadDocuments() {
             const watts = Array.from(podsWattMenu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
             if (watts.length) filters.pods_wattages = watts;
         }
+
+        // Invoices context filters
+        const invMin = document.getElementById('invTotalMin');
+        const invMax = document.getElementById('invTotalMax');
+        const invStart = document.getElementById('invDateStart');
+        const invEnd = document.getElementById('invDateEnd');
+        const invDueStart = document.getElementById('invDueStart');
+        const invDueEnd = document.getElementById('invDueEnd');
+        const invMan = document.getElementById('invManufacturerSelect');
+        if (invMin && invMin.value) filters.invoice_total_min = invMin.value;
+        if (invMax && invMax.value) filters.invoice_total_max = invMax.value;
+        if (invStart && invStart.value) filters.invoice_date_start = invStart.value;
+        if (invEnd && invEnd.value) filters.invoice_date_end = invEnd.value;
+        if (invDueStart && invDueStart.value) filters.invoice_due_start = invDueStart.value;
+        if (invDueEnd && invDueEnd.value) filters.invoice_due_end = invDueEnd.value;
+        if (invMan && invMan.value) filters.invoice_manufacturer = invMan.value;
         
         // Build query string
         const queryParams = new URLSearchParams();
@@ -1791,17 +1885,22 @@ async function loadDocuments() {
             renderDocumentsTable(data.documents);
             attachSortHandlers();
             // If PODs is selected and filters applied, keep subfilters bound to current table
-            if (filtersApplied && document.getElementById('documentTypeFilter').value === 'pods') {
+            const docType = document.getElementById('documentTypeFilter').value;
+            if (filtersApplied && docType === 'pods') {
                 updatePodsManufacturersFromDocs(data.documents);
                 updatePodsWattagesFromDocs(data.documents);
+            } else if (filtersApplied && docType === 'invoices') {
+                updateInvoicesManufacturersFromDocs(data.documents);
             }
             // Update subfilters visibility according to Apply state
             (function(){
                 const type = document.getElementById('documentTypeFilter').value;
                 const ctx = document.getElementById('contextSubfilters');
                 const pods = document.getElementById('podsSubfilters');
-                if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; }
-                else { pods.style.display = 'none'; ctx.style.display = 'none'; }
+                const invoices = document.getElementById('invoicesSubfilters');
+                if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; invoices.style.display='none'; }
+                else if (filtersApplied && type === 'invoices') { ctx.style.display=''; pods.style.display='none'; invoices.style.display=''; }
+                else { pods.style.display = 'none'; invoices.style.display='none'; ctx.style.display = 'none'; }
             })();
             updatePagination(data.total_count, data.total_pages);
             updateStats();
@@ -1829,7 +1928,11 @@ function renderDocumentsTable(documents) {
         return;
     }
     
-    const showPodsCols = (filtersApplied && document.getElementById('documentTypeFilter').value === 'pods');
+    const docType = document.getElementById('documentTypeFilter').value;
+    const showPodsCols = (filtersApplied && docType === 'pods');
+    const showInvCols = (filtersApplied && docType === 'invoices');
+    const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
+    const showInvMan = showInvCols && chips.includes('Module Invoice');
     const tableHTML = `
         <table class="documents-table">
             <thead>
@@ -1844,13 +1947,17 @@ function renderDocumentsTable(documents) {
                     ${showPodsCols ? '<th class="sortable" data-sort="manufacturer">Manufacturer</th>' : ''}
                     ${showPodsCols ? '<th class="sortable" data-sort="wattage">Wattage</th>' : ''}
                     ${showPodsCols ? '<th class="sortable" data-sort="delivered">Delivered</th>' : ''}
+                    ${showInvMan ? '<th class="sortable" data-sort="manufacturer">Manufacturer</th>' : ''}
+                    ${showInvCols ? '<th class="sortable" data-sort="inv_amount">Invoice Total</th>' : ''}
+                    ${showInvCols ? '<th class="sortable" data-sort="inv_date">Invoice Date</th>' : ''}
+                    ${showInvCols ? '<th class="sortable" data-sort="inv_due">Due Date</th>' : ''}
                     <th class="sortable" data-sort="size">Size</th>
                     <th class="sortable" data-sort="uploaded">Uploaded</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                ${documents.map(doc => renderDocumentRow(doc, showPodsCols)).join('')}
+                ${documents.map(doc => renderDocumentRow(doc, showPodsCols, showInvCols, showInvMan)).join('')}
             </tbody>
         </table>
     `;
@@ -1931,6 +2038,16 @@ function sortDocuments() {
                 const B = new Date(b.uploaded_at || 0).getTime();
                 return (A - B) * dir;
             }
+            case 'inv_amount': {
+                const A = Number(a.invoice_amount || 0);
+                const B = Number(b.invoice_amount || 0);
+                return (A - B) * dir;
+            }
+            case 'inv_date': {
+                const A = new Date(a.invoice_issued_date || 0).getTime();
+                const B = new Date(b.invoice_issued_date || 0).getTime();
+                return (A - B) * dir;
+            }
             default:
                 return 0;
         }
@@ -1943,7 +2060,7 @@ function sortDocuments() {
 }
 
 // Render individual document row
-function renderDocumentRow(doc, showPodsCols = false) {
+function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showInvMan = false) {
     const isSelected = selectedDocuments.has(doc.id);
     const iconStyle = `background: ${getDocumentTypeColor(doc.document_type)};`;
     
@@ -1984,6 +2101,10 @@ function renderDocumentRow(doc, showPodsCols = false) {
             ${showPodsCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
             ${showPodsCols ? `<td>${doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : ''}</td>` : ''}
             ${showPodsCols ? `<td>${doc.actual_delivery_date ? formatDate(doc.actual_delivery_date) : ''}</td>` : ''}
+            ${showInvMan ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
+            ${showInvCols ? `<td>${doc.invoice_amount != null ? formatAmount(doc.invoice_amount) : ''}</td>` : ''}
+            ${showInvCols ? `<td>${doc.invoice_issued_date ? formatDate(doc.invoice_issued_date) : ''}</td>` : ''}
+            ${showInvCols ? `<td>${doc.invoice_due_date ? formatDate(doc.invoice_due_date) : ''}</td>` : ''}
             <td>${doc.size}</td>
             <td>${formatDate(doc.uploaded_at)}</td>
              <td>
@@ -2186,6 +2307,12 @@ function formatDate(dateString) {
     });
 }
 
+function formatAmount(val) {
+    const n = Number(val);
+    if (isNaN(n)) return '';
+    return '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function showError(message) {
     document.getElementById('documentsTableContainer').innerHTML = `
         <div class="empty-state">
@@ -2223,21 +2350,18 @@ function resetUploadForm() {
 // Document type and sub-type configurations
 const documentConfig = {
     'invoices': {
-        'sub_types': ['Freight Invoice', 'Solterra Invoice', 'Module Invoice'],
+        'sub_types': ['Solterra Invoice', 'Module Invoice'],
         'fields': {
-            'Freight Invoice': [
-                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true},
-                {type: 'number', name: 'invoice_total', label: 'Invoice Total ($)', required: false, step: '0.01'},
-                {type: 'date', name: 'invoice_date', label: 'Invoice Date', required: false}
-            ],
             'Solterra Invoice': [
-                {type: 'number', name: 'invoice_total', label: 'Invoice Total ($)', required: false, step: '0.01'},
-                {type: 'date', name: 'invoice_date', label: 'Invoice Date', required: false}
+                {type: 'number', name: 'invoice_total', label: 'Invoice Total ($)', required: true, step: '0.01'},
+                {type: 'date', name: 'invoice_date', label: 'Invoice Date', required: true},
+                {type: 'date', name: 'invoice_due_date', label: 'Due Date', required: true}
             ],
             'Module Invoice': [
                 {type: 'select', name: 'manufacturer_id', label: 'Manufacturer', required: true, data_source: 'manufacturers'},
-                {type: 'number', name: 'invoice_total', label: 'Invoice Total ($)', required: false, step: '0.01'},
-                {type: 'date', name: 'invoice_date', label: 'Invoice Date', required: false}
+                {type: 'number', name: 'invoice_total', label: 'Invoice Total ($)', required: true, step: '0.01'},
+                {type: 'date', name: 'invoice_date', label: 'Invoice Date', required: true},
+                {type: 'date', name: 'invoice_due_date', label: 'Due Date', required: true}
             ]
         }
     },

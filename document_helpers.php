@@ -201,9 +201,9 @@ function saveDocumentToProjectDocuments($conn, $document_data) {
     $stmt = $conn->prepare("
         INSERT INTO project_documents (
             project_id, document_type, document_sub_type, delivery_id, warehouse_id, 
-            pallet_id, module_id, entity_context, file_name, original_file_name, 
+            pallet_id, module_id, project_invoice_id, entity_context, file_name, original_file_name, 
             file_path, file_size, mime_type, uploaded_by, description
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     
     // Extract values into variables for bind_param (required for pass-by-reference)
@@ -215,13 +215,14 @@ function saveDocumentToProjectDocuments($conn, $document_data) {
     $pallet_id = $document_data['pallet_id'] ?? null;
     $module_id = $document_data['module_id'] ?? null;
     $entity_context = $document_data['entity_context'] ?? null;
+    $project_invoice_id = $document_data['project_invoice_id'] ?? null;
     $original_name = $document_data['original_name'];
     $file_size = $document_data['file_size'];
     $mime_type = $document_data['mime_type'];
     $uploaded_by = $document_data['uploaded_by'];
     $description = $document_data['description'] ?? '';
     
-    $stmt->bind_param("issiiiisissssss",
+    $stmt->bind_param("issiiiiissssisis",
         $project_id,
         $document_type,
         $document_sub_type,
@@ -229,6 +230,7 @@ function saveDocumentToProjectDocuments($conn, $document_data) {
         $warehouse_id,
         $pallet_id,
         $module_id,
+        $project_invoice_id,
         $entity_context,
         $server_filename,
         $original_name,
