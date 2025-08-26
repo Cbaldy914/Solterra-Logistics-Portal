@@ -192,6 +192,18 @@ if ($action === 'receive_truckload') {
             throw new Exception("Failed to update delivery: " . $stmt_update_delivery->error);
         }
         $stmt_update_delivery->close();
+
+        // If receiving at a port, also stamp customs_cleared_date
+        if ($is_port) {
+            $stmt_update_customs = $conn->prepare("UPDATE deliveries SET customs_cleared_date = ? WHERE id = ?");
+            if ($stmt_update_customs) {
+                $stmt_update_customs->bind_param("si", $actual_arrival_date, $delivery_id);
+                if (!$stmt_update_customs->execute()) {
+                    throw new Exception("Failed to update customs cleared date: " . $stmt_update_customs->error);
+                }
+                $stmt_update_customs->close();
+            }
+        }
         
         $conn->commit();
         $_SESSION['move_pallet_message'] = "Successfully received truckload with $updated_count pallets. Delivery updated with arrival date: $actual_arrival_date.";
@@ -364,6 +376,18 @@ if ($action === 'receive_truckload') {
                     throw new Exception("Failed to update delivery $delivery_id: " . $stmt_update_delivery->error);
                 }
                 $stmt_update_delivery->close();
+
+                // If receiving at a port, also stamp customs_cleared_date
+                if ($is_port) {
+                    $stmt_update_customs = $conn->prepare("UPDATE deliveries SET customs_cleared_date = ? WHERE id = ?");
+                    if ($stmt_update_customs) {
+                        $stmt_update_customs->bind_param("si", $actual_arrival_date, $delivery_id);
+                        if (!$stmt_update_customs->execute()) {
+                            throw new Exception("Failed to update customs cleared date for delivery $delivery_id: " . $stmt_update_customs->error);
+                        }
+                        $stmt_update_customs->close();
+                    }
+                }
                 
                 // Save POD to project_documents table if uploaded
                 if ($uploaded_pod_data) {
@@ -433,6 +457,7 @@ if ($action === 'receive_truckload') {
     $successes = [];
     $errors = [];
     $current_timestamp = date('Y-m-d H:i:s');
+    $current_date = date('Y-m-d');
     $new_pallet_status = $received_pallet_status;
     $new_delivery_status = $delivery_status;
     
@@ -477,6 +502,18 @@ if ($action === 'receive_truckload') {
                     error_log("Warning: Failed to update delivery status for ID $delivery_id: " . $stmt_update_delivery->error);
                 }
                 $stmt_update_delivery->close();
+            }
+
+            // 2b. If receiving at a port, stamp customs_cleared_date (DATE)
+            if ($is_port) {
+                $stmt_update_customs = $conn->prepare("UPDATE deliveries SET customs_cleared_date = ? WHERE id = ?");
+                if ($stmt_update_customs) {
+                    $stmt_update_customs->bind_param("si", $current_date, $delivery_id);
+                    if (!$stmt_update_customs->execute()) {
+                        error_log("Warning: Failed to set customs cleared date for delivery ID $delivery_id: " . $stmt_update_customs->error);
+                    }
+                    $stmt_update_customs->close();
+                }
             }
             $successes[] = $pallet_id;
         }

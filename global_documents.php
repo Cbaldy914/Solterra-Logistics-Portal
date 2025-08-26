@@ -1331,6 +1331,34 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                     </div>
                 </div>
             </div>
+            <div id="shipmentsSubfilters" style="display: none;">
+                <div class="filter-grid">
+                    <div class="filter-group">
+                        <label class="filter-label">Cleared Customs Date</label>
+                        <div class="date-range-group">
+                            <input type="date" id="shipClearedStart" class="filter-input" placeholder="Start Date">
+                            <input type="date" id="shipClearedEnd" class="filter-input" placeholder="End Date">
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label" for="shipContainerNumber">Container Number</label>
+                        <input type="text" id="shipContainerNumber" class="filter-input" placeholder="e.g., TEMU1234567">
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label" for="shipManufacturerSelect">Manufacturer</label>
+                        <select id="shipManufacturerSelect" class="filter-select">
+                            <option value="">All Manufacturers</option>
+                        </select>
+                    </div>
+                    <div class="filter-group" style="position: relative;">
+                        <label class="filter-label" for="shipWattageDisplay">Wattage</label>
+                        <div>
+                            <input type="text" id="shipWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleShipWattageMenu(event)">
+                            <div id="shipWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1547,19 +1575,29 @@ document.addEventListener('DOMContentLoaded', function() {
         const ctx = document.getElementById('contextSubfilters');
         const pods = document.getElementById('podsSubfilters');
         const invoices = document.getElementById('invoicesSubfilters');
+        const ships = document.getElementById('shipmentsSubfilters');
         if (filtersApplied && type === 'pods') {
             ctx.style.display = '';
             pods.style.display = '';
             invoices.style.display = 'none';
+            if (ships) ships.style.display = 'none';
             loadPodsFilterOptions();
         } else if (filtersApplied && type === 'invoices') {
             ctx.style.display = '';
             pods.style.display = 'none';
             invoices.style.display = '';
+            if (ships) ships.style.display = 'none';
             updateInvoicesSubfilterVisibility();
+        } else if (filtersApplied && type === 'shipments') {
+            ctx.style.display = '';
+            pods.style.display = 'none';
+            invoices.style.display = 'none';
+            if (ships) ships.style.display = '';
+            loadShipFilterOptions();
         } else {
             pods.style.display = 'none';
             invoices.style.display = 'none';
+            if (ships) ships.style.display = 'none';
             ctx.style.display = 'none';
         }
     }
@@ -1609,6 +1647,29 @@ async function loadPodsFilterOptions() {
     }
 }
 
+async function loadShipFilterOptions() {
+    const projectId = document.getElementById('projectFilter').value || '';
+    try {
+        const mRes = await fetch(`get_account_manufacturers.php${projectId ? `?project_id=${projectId}` : ''}`);
+        const mData = await mRes.json();
+        const sel = document.getElementById('shipManufacturerSelect');
+        if (sel && mData.success) {
+            const current = sel.value;
+            sel.innerHTML = '<option value="">All Manufacturers</option>';
+            mData.data.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                sel.appendChild(opt);
+            });
+            if (current) sel.value = current;
+        }
+        // Wattages menu is derived from documents post-load
+    } catch (e) {
+        console.warn('Failed to load Shipments filter options', e);
+    }
+}
+
 function updatePodsWattagesFromDocs(documents) {
     const menu = document.getElementById('podsWattageMenu');
     const display = document.getElementById('podsWattageDisplay');
@@ -1641,6 +1702,99 @@ function updatePodsWattagesFromDocs(documents) {
         menu.appendChild(wrap);
     });
     updateWattageDisplay();
+}
+
+// Shipments: dynamic manufacturer list from docs
+function updateShipManufacturersFromDocs(documents) {
+    const sel = document.getElementById('shipManufacturerSelect');
+    if (!sel) return;
+    const current = sel.value;
+    const names = new Set();
+    documents.forEach(d => {
+        if (d.document_type === 'shipments' && d.manufacturer_name) {
+            names.add(String(d.manufacturer_name));
+        }
+    });
+    sel.innerHTML = '<option value="">All Manufacturers</option>';
+    Array.from(names).sort((a,b)=>a.localeCompare(b)).forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+    });
+    if (current && Array.from(names).includes(current)) sel.value = current;
+}
+
+// Shipments: wattage checkbox menu from docs
+function updateShipWattagesFromDocs(documents) {
+    const menu = document.getElementById('shipWattageMenu');
+    const display = document.getElementById('shipWattageDisplay');
+    if (!menu || !display) return;
+    const previously = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    const set = new Set();
+    documents.forEach(d => { if (d.delivery_wattage && d.document_type === 'shipments') set.add(String(d.delivery_wattage)); });
+    const sorted = Array.from(set).map(v => parseInt(v, 10)).sort((a,b)=>a-b).map(n => String(n));
+    menu.innerHTML = '';
+    sorted.forEach(val => {
+        const id = `ship_watt_${val}`;
+        const wrap = document.createElement('label');
+        wrap.style.display = 'flex';
+        wrap.style.alignItems = 'center';
+        wrap.style.gap = '8px';
+        wrap.style.padding = '4px 2px';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = val;
+        cb.id = id;
+        if (previously.includes(val)) cb.checked = true;
+        cb.addEventListener('change', () => {
+            updateShipWattageDisplay();
+            if (filtersApplied) loadDocuments();
+        });
+        const span = document.createElement('span');
+        span.textContent = val;
+        wrap.appendChild(cb);
+        wrap.appendChild(span);
+        menu.appendChild(wrap);
+    });
+    updateShipWattageDisplay();
+}
+
+function updateShipWattageDisplay() {
+    const display = document.getElementById('shipWattageDisplay');
+    const menu = document.getElementById('shipWattageMenu');
+    if (!display || !menu) return;
+    const selected = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    display.value = selected.length ? selected.join(', ') : '';
+}
+
+function toggleShipWattageMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('shipWattageMenu');
+    if (!menu) return;
+    if (menu.style.display === 'none') {
+        const input = document.getElementById('shipWattageDisplay');
+        const rect = input.getBoundingClientRect();
+        const menuWidth = 260;
+        const left = Math.min(rect.left, window.innerWidth - menuWidth - 12);
+        menu.style.left = left + 'px';
+        menu.style.top = (rect.bottom + window.scrollY) + 'px';
+        menu.style.display = 'block';
+        document.addEventListener('click', closeShipWattMenuOnOutside);
+    } else {
+        menu.style.display = 'none';
+        document.removeEventListener('click', closeShipWattMenuOnOutside);
+    }
+}
+
+function closeShipWattMenuOnOutside(e) {
+    const menu = document.getElementById('shipWattageMenu');
+    const input = document.getElementById('shipWattageDisplay');
+    if (!menu || !input) return;
+    if (!menu.contains(e.target) && e.target !== input) {
+        menu.style.display = 'none';
+        document.removeEventListener('click', closeShipWattMenuOnOutside);
+    }
 }
 
 function updateWattageDisplay() {
@@ -1692,7 +1846,11 @@ function attachSubfilterListeners() {
     const invEnd = document.getElementById('invDateEnd');
     const invBol = document.getElementById('invBolNumber');
     const invMan = document.getElementById('invManufacturerSelect');
-    [podsStart, podsEnd, podsBol, podsMan, invMin, invMax, invStart, invEnd, invBol, invMan].forEach(el => {
+    const shipStart = document.getElementById('shipClearedStart');
+    const shipEnd = document.getElementById('shipClearedEnd');
+    const shipCont = document.getElementById('shipContainerNumber');
+    const shipMan = document.getElementById('shipManufacturerSelect');
+    [podsStart, podsEnd, podsBol, podsMan, invMin, invMax, invStart, invEnd, invBol, invMan, shipStart, shipEnd, shipCont, shipMan].forEach(el => {
         if (!el) return;
         const evt = (el.tagName === 'SELECT') ? 'change' : 'input';
         el.addEventListener(evt, () => { if (filtersApplied) { currentPage = 1; loadDocuments(); } });
@@ -1777,6 +1935,7 @@ function clearAllFilters() {
     // Clear context subfilters and hide
     const ctx = document.getElementById('contextSubfilters');
     const pods = document.getElementById('podsSubfilters');
+    const ships = document.getElementById('shipmentsSubfilters');
     if (document.getElementById('podsDeliveryStart')) document.getElementById('podsDeliveryStart').value = '';
     if (document.getElementById('podsDeliveryEnd')) document.getElementById('podsDeliveryEnd').value = '';
     if (document.getElementById('podsBolNumber')) document.getElementById('podsBolNumber').value = '';
@@ -1784,7 +1943,15 @@ function clearAllFilters() {
     if (podsManSel) podsManSel.value = '';
     const podsWattSel = document.getElementById('podsWattageSelect');
     if (podsWattSel) Array.from(podsWattSel.options).forEach(o => o.selected = false);
+    if (document.getElementById('shipClearedStart')) document.getElementById('shipClearedStart').value = '';
+    if (document.getElementById('shipClearedEnd')) document.getElementById('shipClearedEnd').value = '';
+    if (document.getElementById('shipContainerNumber')) document.getElementById('shipContainerNumber').value = '';
+    const shipManSel = document.getElementById('shipManufacturerSelect');
+    if (shipManSel) shipManSel.value = '';
+    const shipWattMenu = document.getElementById('shipWattageMenu');
+    if (shipWattMenu) shipWattMenu.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
     if (pods) pods.style.display = 'none';
+    if (ships) ships.style.display = 'none';
     if (ctx) ctx.style.display = 'none';
     
     // Reset pagination
@@ -1847,6 +2014,21 @@ async function loadDocuments() {
             if (watts.length) filters.pods_wattages = watts;
         }
 
+        // Shipments context filters
+        const shipStart = document.getElementById('shipClearedStart');
+        const shipEnd = document.getElementById('shipClearedEnd');
+        const shipCont = document.getElementById('shipContainerNumber');
+        const shipManSel = document.getElementById('shipManufacturerSelect');
+        const shipWattMenu = document.getElementById('shipWattageMenu');
+        if (shipStart && shipStart.value) filters.ship_cleared_start = shipStart.value;
+        if (shipEnd && shipEnd.value) filters.ship_cleared_end = shipEnd.value;
+        if (shipCont && shipCont.value) filters.ship_container = shipCont.value;
+        if (shipManSel && shipManSel.value) filters.ship_supplier = shipManSel.value;
+        if (shipWattMenu) {
+            const watts = Array.from(shipWattMenu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+            if (watts.length) filters.ship_wattages = watts;
+        }
+
         // Invoices context filters
         const invMin = document.getElementById('invTotalMin');
         const invMax = document.getElementById('invTotalMax');
@@ -1891,6 +2073,9 @@ async function loadDocuments() {
                 updatePodsWattagesFromDocs(data.documents);
             } else if (filtersApplied && docType === 'invoices') {
                 updateInvoicesManufacturersFromDocs(data.documents);
+            } else if (filtersApplied && docType === 'shipments') {
+                updateShipManufacturersFromDocs(data.documents);
+                updateShipWattagesFromDocs(data.documents);
             }
             // Update subfilters visibility according to Apply state
             (function(){
@@ -1898,9 +2083,11 @@ async function loadDocuments() {
                 const ctx = document.getElementById('contextSubfilters');
                 const pods = document.getElementById('podsSubfilters');
                 const invoices = document.getElementById('invoicesSubfilters');
-                if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; invoices.style.display='none'; }
-                else if (filtersApplied && type === 'invoices') { ctx.style.display=''; pods.style.display='none'; invoices.style.display=''; }
-                else { pods.style.display = 'none'; invoices.style.display='none'; ctx.style.display = 'none'; }
+                const ships = document.getElementById('shipmentsSubfilters');
+                if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; invoices.style.display='none'; ships.style.display='none'; }
+                else if (filtersApplied && type === 'invoices') { ctx.style.display=''; pods.style.display='none'; invoices.style.display=''; ships.style.display='none'; }
+                else if (filtersApplied && type === 'shipments') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display=''; }
+                else { pods.style.display = 'none'; invoices.style.display='none'; if (ships) ships.style.display='none'; ctx.style.display = 'none'; }
             })();
             updatePagination(data.total_count, data.total_pages);
             updateStats();
@@ -1931,6 +2118,7 @@ function renderDocumentsTable(documents) {
     const docType = document.getElementById('documentTypeFilter').value;
     const showPodsCols = (filtersApplied && docType === 'pods');
     const showInvCols = (filtersApplied && docType === 'invoices');
+    const showShipCols = (filtersApplied && docType === 'shipments');
     const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
     const showInvMan = showInvCols && chips.includes('Module Invoice');
     const tableHTML = `
@@ -1948,6 +2136,10 @@ function renderDocumentsTable(documents) {
                     ${showPodsCols ? '<th class="sortable" data-sort="wattage">Wattage</th>' : ''}
                     ${showPodsCols ? '<th class="sortable" data-sort="delivered">Delivered</th>' : ''}
                     ${showInvMan ? '<th class="sortable" data-sort="manufacturer">Manufacturer</th>' : ''}
+                    ${showShipCols ? '<th class="sortable" data-sort="container">Container</th>' : ''}
+                    ${showShipCols ? '<th class="sortable" data-sort="manufacturer">Manufacturer</th>' : ''}
+                    ${showShipCols ? '<th class="sortable" data-sort="wattage">Wattage</th>' : ''}
+                    ${showShipCols ? '<th class="sortable" data-sort="cleared">Cleared Customs</th>' : ''}
                     ${showInvCols ? '<th class="sortable" data-sort="inv_amount">Invoice Total</th>' : ''}
                     ${showInvCols ? '<th class="sortable" data-sort="inv_date">Invoice Date</th>' : ''}
                     ${showInvCols ? '<th class="sortable" data-sort="inv_due">Due Date</th>' : ''}
@@ -1957,7 +2149,7 @@ function renderDocumentsTable(documents) {
                 </tr>
             </thead>
             <tbody>
-                ${documents.map(doc => renderDocumentRow(doc, showPodsCols, showInvCols, showInvMan)).join('')}
+                ${documents.map(doc => renderDocumentRow(doc, showPodsCols, showInvCols, showInvMan, showShipCols)).join('')}
             </tbody>
         </table>
     `;
@@ -2028,6 +2220,16 @@ function sortDocuments() {
                 const B = new Date(b.actual_delivery_date || 0).getTime();
                 return (A - B) * dir;
             }
+            case 'container': {
+                const A = (a.container_number || '').toLowerCase();
+                const B = (b.container_number || '').toLowerCase();
+                return A > B ? dir : A < B ? -dir : 0;
+            }
+            case 'cleared': {
+                const A = new Date(a.customs_cleared_date || 0).getTime();
+                const B = new Date(b.customs_cleared_date || 0).getTime();
+                return (A - B) * dir;
+            }
             case 'size': {
                 const A = Number(a.size_bytes || 0);
                 const B = Number(b.size_bytes || 0);
@@ -2060,7 +2262,7 @@ function sortDocuments() {
 }
 
 // Render individual document row
-function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showInvMan = false) {
+function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showInvMan = false, showShipCols = false) {
     const isSelected = selectedDocuments.has(doc.id);
     const iconStyle = `background: ${getDocumentTypeColor(doc.document_type)};`;
     
@@ -2105,6 +2307,10 @@ function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showI
             ${showInvCols ? `<td>${doc.invoice_amount != null ? formatAmount(doc.invoice_amount) : ''}</td>` : ''}
             ${showInvCols ? `<td>${doc.invoice_issued_date ? formatDate(doc.invoice_issued_date) : ''}</td>` : ''}
             ${showInvCols ? `<td>${doc.invoice_due_date ? formatDate(doc.invoice_due_date) : ''}</td>` : ''}
+            ${showShipCols ? `<td>${doc.container_number ? escapeHtml(doc.container_number) : ''}</td>` : ''}
+            ${showShipCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
+            ${showShipCols ? `<td>${doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : ''}</td>` : ''}
+            ${showShipCols ? `<td>${doc.customs_cleared_date ? formatDate(doc.customs_cleared_date) : ''}</td>` : ''}
             <td>${doc.size}</td>
             <td>${formatDate(doc.uploaded_at)}</td>
              <td>
@@ -2381,14 +2587,14 @@ const documentConfig = {
         'sub_types': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
         'fields': {
             'Arrival Notice': [
-                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: false},
-                {type: 'select', name: 'warehouse_id', label: 'Warehouse/Port', required: false, data_source: 'warehouses'}
+                {type: 'container_autocomplete', name: 'container_number', label: 'Container Number', required: true}
             ],
             'Customs Document': [
-                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: false},
-                {type: 'select', name: 'warehouse_id', label: 'Warehouse/Port', required: false, data_source: 'warehouses'}
+                {type: 'container_autocomplete', name: 'container_number', label: 'Container Number', required: true}
             ],
-            'Delivery SOP': []
+            'Delivery SOP': [
+                {type: 'container_autocomplete', name: 'container_number', label: 'Container Number', required: true}
+            ]
         }
     },
     'warehousing': {
@@ -2507,6 +2713,18 @@ async function updateDynamicFields() {
                 <div id="${field.name}_suggestions" class="bol-suggestions"></div>
                 <div id="${field.name}_validation" class="bol-validation" style="display: none;"></div>
             </div>`;
+        } else if (field.type === 'container_autocomplete') {
+            html += `<div class="bol-autocomplete-container">
+                <input type="text" id="${field.name}" name="${field.name}" class="form-input" 
+                    ${field.required ? 'required' : ''} 
+                    placeholder="Type container number..." 
+                    autocomplete="off"
+                    oninput="handleContainerAutocomplete(this, '${field.name}')"
+                    onfocus="showContainerSuggestions('${field.name}')"
+                    onblur="hideContainerSuggestions('${field.name}')">
+                <div id="${field.name}_suggestions" class="bol-suggestions"></div>
+                <div id="${field.name}_validation" class="bol-validation" style="display: none;"></div>
+            </div>`;
         } else if (field.type === 'select' && field.data_source) {
             html += `<select id="${field.name}" name="${field.name}" class="form-select" ${field.required ? 'required' : ''} onchange="validateForm()">
                 <option value="">Choose ${field.label.toLowerCase()}...</option>
@@ -2606,6 +2824,8 @@ function validateForm() {
                 if (field.type === 'bol_autocomplete') {
                     // For BOL autocomplete, check the hidden field
                     element = document.getElementById(field.name + '_hidden');
+                } else if (field.type === 'container_autocomplete') {
+                    element = document.getElementById(field.name);
                 } else {
                     element = document.getElementById(field.name);
                 }
@@ -2808,6 +3028,108 @@ async function handleBolAutocomplete(input, fieldName) {
         
         validateForm();
     }, 300);
+}
+
+// Container Autocomplete Functions (Shipments)
+let containerSearchTimeout;
+let currentContainerSuggestions = {};
+
+async function handleContainerAutocomplete(input, fieldName) {
+    const query = input.value.trim();
+    const validationDiv = document.getElementById(fieldName + '_validation');
+    
+    if (containerSearchTimeout) clearTimeout(containerSearchTimeout);
+    if (query.length === 0) {
+        hideContainerSuggestions(fieldName);
+        if (validationDiv) validationDiv.style.display = 'none';
+        validateForm();
+        return;
+    }
+    if (validationDiv) {
+        validationDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Searching...';
+        validationDiv.className = 'bol-validation searching';
+        validationDiv.style.display = 'flex';
+    }
+
+    containerSearchTimeout = setTimeout(async () => {
+        try {
+            const projectId = document.getElementById('uploadProjectSelect').value;
+            const response = await fetch(`search_container.php?project_id=${projectId}&q=${encodeURIComponent(query)}`);
+            const data = await response.json();
+            if (data.success) {
+                currentContainerSuggestions[fieldName] = data.deliveries;
+                showContainerSuggestions(fieldName, data.deliveries, query);
+                const exactMatch = data.deliveries.find(d => d.container_number && d.container_number.toLowerCase() === query.toLowerCase());
+                if (validationDiv) {
+                    if (exactMatch) {
+                        validationDiv.innerHTML = '<i class="fas fa-check-circle"></i> Container found';
+                        validationDiv.className = 'bol-validation valid';
+                    } else if (data.deliveries.length > 0) {
+                        validationDiv.innerHTML = '<i class="fas fa-search"></i> Similar containers found - select one';
+                        validationDiv.className = 'bol-validation searching';
+                    } else {
+                        validationDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Container not found';
+                        validationDiv.className = 'bol-validation invalid';
+                    }
+                }
+            } else {
+                if (validationDiv) {
+                    validationDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Search error';
+                    validationDiv.className = 'bol-validation invalid';
+                }
+            }
+        } catch (err) {
+            console.error('Container search error:', err);
+            if (validationDiv) {
+                validationDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Search error';
+                validationDiv.className = 'bol-validation invalid';
+            }
+        }
+        validateForm();
+    }, 300);
+}
+
+function showContainerSuggestions(fieldName, suggestions = null) {
+    const suggestionsDiv = document.getElementById(fieldName + '_suggestions');
+    if (!suggestions) suggestions = currentContainerSuggestions[fieldName] || [];
+    if (!suggestionsDiv) return;
+    if (suggestions.length === 0) { suggestionsDiv.style.display = 'none'; return; }
+    let html = '';
+    suggestions.forEach(del => {
+        const label = del.container_number || `Delivery #${del.id}`;
+        const details = [];
+        if (del.supplier) details.push(del.supplier);
+        if (del.status) details.push(del.status);
+        if (del.warehouse_name) details.push(`→ ${del.warehouse_name}`);
+        html += `
+            <div class="bol-suggestion" onclick="selectContainerSuggestion('${fieldName}', '${(del.container_number||'').replace(/'/g, "\\'")}')">
+                <div class="bol-suggestion-main">${escapeHtml(label)}</div>
+                ${details.length ? `<div class=\"bol-suggestion-details\">${escapeHtml(details.join(' • '))}</div>` : ''}
+            </div>
+        `;
+    });
+    suggestionsDiv.innerHTML = html;
+    suggestionsDiv.style.display = 'block';
+}
+
+function selectContainerSuggestion(fieldName, containerNumber) {
+    const input = document.getElementById(fieldName);
+    const validationDiv = document.getElementById(fieldName + '_validation');
+    input.value = containerNumber;
+    if (validationDiv) {
+        validationDiv.innerHTML = '<i class="fas fa-check-circle"></i> Container selected';
+        validationDiv.className = 'bol-validation valid';
+        validationDiv.style.display = 'flex';
+    }
+    hideContainerSuggestions(fieldName);
+    validateForm();
+}
+
+function hideContainerSuggestions(fieldName) {
+    setTimeout(() => {
+        const suggestionsDiv = document.getElementById(fieldName + '_suggestions');
+        if (suggestionsDiv) suggestionsDiv.style.display = 'none';
+    }, 150);
 }
 
 function showBolSuggestions(fieldName, suggestions = null, query = '') {
