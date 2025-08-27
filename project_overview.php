@@ -1089,6 +1089,12 @@ if ($current_step >= 4 && $step3_completed) $progress_percentage = 60;
 if ($current_step >= 5 && $step4_completed) $progress_percentage = 80;
 if ($step5_completed) $progress_percentage = 100;
 
+// Delivered-based completion percentage for the circular indicator
+$delivered_percentage = 0;
+if ($total_raw_modules > 0) {
+    $delivered_percentage = max(0, min(100, (int)round(($delivered_raw_total / $total_raw_modules) * 100)));
+}
+
 // Fetch module batches for this project with wattage information
 $module_batches = [];
 $stmt_modules = $conn->prepare("
@@ -1356,6 +1362,164 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     opacity: 0.7;
 }
 
+/* Circular Progress Indicator - Jony Ive Inspired */
+.circular-progress-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 40px;
+    position: relative;
+}
+
+.circular-progress {
+    width: 160px;
+    height: 160px;
+    transform: rotate(-90deg);
+    filter: drop-shadow(0 8px 20px rgba(72, 140, 154, 0.2));
+}
+
+.progress-track {
+    fill: none;
+    stroke: #e9ecef;
+    stroke-width: 8;
+    stroke-linecap: round;
+    opacity: 0.3;
+}
+
+.progress-fill {
+    fill: none;
+    stroke: url(#progressGradient);
+    stroke-width: 8;
+    stroke-linecap: round;
+    stroke-dasharray: 314.16; /* 2 * π * 50 */
+    stroke-dashoffset: calc(314.16 - (314.16 * var(--progress-percentage, 0) / 100));
+    transition: stroke-dashoffset 2s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: progressGlow 3s ease-in-out infinite alternate;
+}
+
+/* Timeline Circular Progress - Step 5 Replacement */
+.timeline-progress-step {
+    position: relative;
+}
+
+.timeline-progress-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 20px;
+    position: relative;
+    z-index: 2;
+}
+
+.timeline-circular-progress {
+    width: 100px;
+    height: 100px;
+    /* start at 9 o'clock instead of 12 */
+    transform: rotate(-160deg);
+    filter: drop-shadow(0 6px 15px rgba(72, 140, 154, 0.25));
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+
+.timeline-progress-step.completed .timeline-circular-progress {
+    transform: rotate(-160deg) scale(1.02);
+}
+
+.timeline-progress-step.current .timeline-circular-progress {
+    transform: rotate(-160deg) scale(1.0);
+}
+
+@keyframes timelineProgressPulse {
+    0% { filter: drop-shadow(0 8px 20px rgba(255, 193, 7, 0.4)); }
+    50% { filter: drop-shadow(0 8px 20px rgba(255, 193, 7, 0.6)) drop-shadow(0 0 0 8px rgba(255, 193, 7, 0.1)); }
+    100% { filter: drop-shadow(0 8px 20px rgba(255, 193, 7, 0.4)); }
+}
+
+.timeline-progress-track {
+    fill: none;
+    stroke: #e9ecef;
+    stroke-width: 6;
+    stroke-linecap: round;
+    opacity: 0.4;
+}
+
+.timeline-progress-fill {
+    fill: none;
+    stroke: url(#timelineProgressGradient);
+    stroke-width: 6;
+    stroke-linecap: round;
+    stroke-dasharray: 282.74; /* 2 * π * 45 */
+    stroke-dashoffset: calc(282.74 - (282.74 * var(--progress-percentage, 0) / 100));
+    transition: stroke-dashoffset 2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Fill the center to visually mask the straight progress bar beneath */
+.timeline-progress-center {
+    fill: #ffffff;
+}
+
+/* Admin view uses specific gradient ID */
+#progress-info .timeline-progress-fill {
+    stroke: url(#timelineProgressGradient);
+}
+
+/* User view uses different gradient ID */
+#project-progress .timeline-progress-fill {
+    stroke: url(#timelineProgressGradientUser);
+}
+
+.timeline-progress-text {
+    font-family: 'Poppins', sans-serif;
+    font-size: 25px;
+    font-weight: 700;
+    fill: #293E4C;
+    text-anchor: middle;
+    transform: rotate(160deg);
+    transform-origin: 60px 60px;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+}
+
+.timeline-progress-step.completed .timeline-progress-text {
+    fill: #488C9A;
+    font-weight: 800;
+}
+
+.timeline-progress-step.current .timeline-progress-text {
+    fill: #ffc107;
+    font-weight: 800;
+}
+
+@keyframes progressGlow {
+    0% {
+        filter: drop-shadow(0 0 5px rgba(72, 140, 154, 0.4));
+    }
+    100% {
+        filter: drop-shadow(0 0 15px rgba(72, 140, 154, 0.6));
+    }
+}
+
+.progress-text {
+    font-family: 'Poppins', sans-serif;
+    font-size: 28px;
+    font-weight: 700;
+    fill: #293E4C;
+    text-anchor: middle;
+    dominant-baseline: central;
+    transform: rotate(180deg);
+    transform-origin: 60px 60px;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+}
+
+.progress-label {
+    margin-top: 15px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #293E4C;
+    text-align: center;
+    opacity: 0.8;
+    letter-spacing: 0.5px;
+}
+
 /* Enhanced Timeline Styles - Jony Ive Inspired */
 .timeline-container {
     background: linear-gradient(135deg, #fafbfc 0%, #f1f3f4 100%);
@@ -1419,7 +1583,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     position: absolute;
     top: 35px;
     left: 10%;
-    right: 10%;
+    /* stop before the Percent Completion ring */
+    right: calc(10%);
     height: 6px;
     background: #e9ecef;
     border-radius: 3px;
@@ -1433,7 +1598,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     top: 35px;
     left: 10%;
     width: var(--progress-width, 0%);
-    max-width: 80%;
+    /* leave room for the ring so the fill doesn't go underneath it */
+    max-width: calc(80% - 50px);
     height: 6px;
     background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
     border-radius: 3px;
@@ -1828,6 +1994,28 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         min-width: auto;
     }
     
+    /* Timeline Circular Progress Mobile Responsiveness */
+    .timeline-progress-container {
+        margin-bottom: 15px;
+    }
+    
+    .timeline-circular-progress {
+        width: 80px;
+        height: 80px;
+    }
+    
+    .timeline-progress-text {
+        font-size: 16px;
+    }
+    
+    .timeline-progress-step.completed .timeline-circular-progress {
+        transform: rotate(180deg) scale(1.02);
+    }
+    
+    .timeline-progress-step.current .timeline-circular-progress {
+        transform: rotate(180deg) scale(1.0);
+    }
+
     /* Timeline Mobile Responsiveness */
     .timeline-container {
         margin: 0 15px 20px 15px;
@@ -3208,6 +3396,15 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         <a href="scheduling.php?project_id=<?php echo $project_id; ?>">Scheduling</a>
                     </div>
                 </div>
+                <div class="dropdown">
+                    <button class="dropdown-btn" onclick="toggleAdminDocumentsDropdown()">
+                        Documents <span class="dropdown-arrow">▼</span>
+                    </button>
+                    <div class="dropdown-content" id="adminDocumentsDropdown">
+                        <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 Project Documents</a>
+                        <a href="global_documents.php">🌐 Global Documents</a>
+                    </div>
+                </div>
                 <button onclick="handleAdminWarehousing()">Warehousing</button>
                 <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Exceptions</button>
             </div>
@@ -3238,10 +3435,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         Documents <span class="dropdown-arrow">▼</span>
                     </button>
                     <div class="dropdown-content" id="customerDocumentsDropdown">
-                        <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 All Documents</a>
-                        <a href="invoices.php?project_id=<?php echo $project_id; ?>">📄 Invoices</a>
-                        <a href="pods.php?project_id=<?php echo $project_id; ?>">📋 PODs</a>
-                        <a href="ftd.php?project_id=<?php echo $project_id; ?>">⚡ Flash Test Data</a>
+                        <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 Project Documents</a>
+                        <a href="global_documents.php">🌐 Global Documents</a>
                     </div>
                 </div>
                 <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Exceptions</button>
@@ -3262,6 +3457,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                 <!-- Project Progress -->
                 <div id="progress-info">        
                     <div class="timeline-container">
+                        
+                        
                         <ul class="timeline" style="--progress-width: <?php echo $progress_percentage; ?>%">
                         <li class="timeline-item<?php echo $step1_completed ? ' completed' : ''; ?><?php echo $current_step == 1 ? ' current' : ''; ?>">
                             <div class="circle clickable" onclick="window.location.href='edit_project.php?project_id=<?php echo $project_id; ?>'">1</div>
@@ -3577,18 +3774,39 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                             <?php endif; ?>
                         </li>
                         
-                        <li class="timeline-item<?php echo $step5_completed ? ' completed' : ''; ?><?php echo $current_step == 5 ? ' current' : ''; ?>">
-                            <div class="circle clickable" onclick="window.location.href='project_overview.php?project_id=<?php echo $project_id; ?>'">5</div>
+                        <li class="timeline-item timeline-progress-step<?php echo $step5_completed ? ' completed' : ''; ?><?php echo $current_step == 5 ? ' current' : ''; ?>">
+                            <div class="timeline-progress-container">
+                                <svg class="timeline-circular-progress" viewBox="0 0 120 120">
+                                    <defs>
+                                        <linearGradient id="timelineProgressGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                            <stop offset="0%" style="stop-color:#488C9A;stop-opacity:1" />
+                                            <stop offset="100%" style="stop-color:#3A6E7F;stop-opacity:1" />
+                                        </linearGradient>
+                                    </defs>
+                                    <circle class="timeline-progress-track" cx="60" cy="60" r="45"></circle>
+                                    <circle class="timeline-progress-center" cx="60" cy="60" r="41"></circle>
+                                    <circle class="timeline-progress-fill" cx="60" cy="60" r="45" 
+                                            style="--progress-percentage: <?php echo $delivered_percentage; ?>"></circle>
+                                    <text class="timeline-progress-text" x="60" y="60" text-anchor="middle" dy="0.35em">
+                                        <?php echo $delivered_percentage; ?>%
+                                    </text>
+                                </svg>
+                            </div>
                             <span class="label">
-                                <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Completed</a>
+                                <?php if ($step5_completed): ?>
+                                    <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Completed</a>
+                                <?php else: ?>
+                                    <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Percent Completion</a>
+                                <?php endif; ?>
                             </span>
-                            <div class="description">
+                            <div class="description timeline-remaining-text" data-project-id="<?php echo $project_id; ?>">
                                 <?php 
                                 if ($step5_completed) {
-                                    echo "All modules delivered";
+                                    echo "All modules delivered and project finalized";
                                 } else {
+                                    // Default to modules remaining, will be updated by JavaScript based on active filter
                                     $remaining = $total_raw_modules - $delivered_raw_total;
-                                    echo number_format($remaining) . ' modules remaining';
+                                    echo '<span class="remaining-count">' . number_format($remaining) . '</span> <span class="remaining-unit">modules</span> remaining';
                                 }
                                 ?>
                             </div>
@@ -3889,6 +4107,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                 </div>
                 
                 <div class="timeline-container">
+                    
+                    
                     <ul class="timeline" style="--progress-width: <?php echo $progress_percentage; ?>%">
                         <li class="timeline-item<?php echo $step1_completed ? ' completed' : ''; ?><?php echo $current_step == 1 ? ' current' : ''; ?>">
                             <div class="circle clickable" onclick="window.location.href='project_information.php?project_id=<?php echo $project_id; ?>'">1</div>
@@ -4068,11 +4288,38 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 <?php endif; ?>
                             </div>
                         </li>
-                        <li class="timeline-item<?php echo $step5_completed ? ' completed' : ''; ?><?php echo $current_step == 5 ? ' current' : ''; ?>">
-                            <div class="circle">5</div>
+                        <li class="timeline-item timeline-progress-step<?php echo $step5_completed ? ' completed' : ''; ?><?php echo $current_step == 5 ? ' current' : ''; ?>">
+                            <div class="timeline-progress-container">
+                                <svg class="timeline-circular-progress" viewBox="0 0 120 120">
+                                    <defs>
+                                        <linearGradient id="timelineProgressGradientUser" x1="0%" y1="0%" x2="100%" y2="0%">
+                                            <stop offset="0%" style="stop-color:#488C9A;stop-opacity:1" />
+                                            <stop offset="100%" style="stop-color:#3A6E7F;stop-opacity:1" />
+                                        </linearGradient>
+                                    </defs>
+                                    <circle class="timeline-progress-track" cx="60" cy="60" r="45"></circle>
+                                    <circle class="timeline-progress-center" cx="60" cy="60" r="41"></circle>
+                                    <circle class="timeline-progress-fill" cx="60" cy="60" r="45" 
+                                            style="--progress-percentage: <?php echo $delivered_percentage; ?>"></circle>
+                                    <text class="timeline-progress-text" x="60" y="60" text-anchor="middle" dy="0.35em">
+                                        <?php echo $delivered_percentage; ?>%
+                                    </text>
+                                </svg>
+                            </div>
                             <div class="timeline-content">
-                                <h3>Project Completed</h3>
-                                <p>All modules delivered and project finalized</p>
+                                <?php if ($step5_completed): ?>
+                                    <h3>Project Completed</h3>
+                                    <p>All modules delivered and project finalized</p>
+                                <?php else: ?>
+                                    <h3>Percent Completion</h3>
+                                    <p class="timeline-remaining-text" data-project-id="<?php echo $project_id; ?>">
+                                        <?php 
+                                        // Default to modules remaining, will be updated by JavaScript based on active filter
+                                        $remaining = $total_raw_modules - $delivered_raw_total;
+                                        echo '<span class="remaining-count">' . number_format($remaining) . '</span> <span class="remaining-unit">modules</span> remaining';
+                                        ?>
+                                    </p>
+                                <?php endif; ?>
                             </div>
                         </li>
                     </ul>
@@ -4551,7 +4798,7 @@ function closeShippingModal(){
     if(modal) modal.style.display = 'none';
 }
 function generateShippingContent(filter){
-    let html='<div style="max-height:400px;overflow-y:auto;">';
+    let html='<div style="height:250px;overflow-y:auto;">';
     let has=false;
     
     // Handle special case for "Delivered" status
@@ -4825,6 +5072,82 @@ function syncFiltersToState() {
     // Update all sections with current filter
     updateCustomerShippingBoxes(currentFilter, document.getElementById('project-progress'));
     updateCustomerShippingBoxes(currentFilter, document.getElementById('delivery-info'));
+    
+    // Update timeline remaining text
+    updateTimelineRemainingText(currentFilter);
+}
+
+// Update timeline remaining text based on current filter
+function updateTimelineRemainingText(filterType) {
+    const timelineTexts = document.querySelectorAll('.timeline-remaining-text');
+    if (!timelineTexts.length) return;
+    
+    // Check if project is completed
+    const isCompleted = <?php echo $step5_completed ? 'true' : 'false'; ?>;
+    if (isCompleted) return; // Don't update if project is already completed
+    
+    // Get project data for calculations  
+    const totalModules = <?php echo $total_raw_modules; ?>;
+    const deliveredModules = <?php echo $delivered_raw_total; ?>;
+    const projectSizeMW = <?php echo number_format($project_size_mw, 2); ?>;
+    
+    // Calculate delivered MW (approximate based on delivered/total ratio)
+    const deliveryRatio = totalModules > 0 ? (deliveredModules / totalModules) : 0;
+    const deliveredMW = projectSizeMW * deliveryRatio;
+    
+    // Calculate totals and remaining for each filter type
+    let remaining, unit;
+    
+    switch(filterType) {
+        case 'modules':
+            remaining = totalModules - deliveredModules;
+            unit = 'modules';
+            break;
+            
+        case 'mws':
+            remaining = projectSizeMW - deliveredMW;
+            unit = 'MWs';
+            remaining = Math.max(0, parseFloat(remaining.toFixed(2)));
+            break;
+            
+        case 'pallets':
+            // Estimate pallets based on modules (using average modules per pallet if available)
+            const avgModulesPerPallet = <?php echo !empty($weighted_avg_modules_per_pallet) ? $weighted_avg_modules_per_pallet : 20; ?>;
+            const totalPallets = Math.ceil(totalModules / avgModulesPerPallet);
+            const deliveredPallets = Math.floor(deliveredModules / avgModulesPerPallet);
+            remaining = totalPallets - deliveredPallets;
+            unit = 'pallets';
+            break;
+            
+        case 'truckloads':
+            // Estimate truckloads based on modules (using average modules per truck if available)  
+            const avgModulesPerTruck = <?php echo !empty($weighted_avg_modules_per_truck) ? $weighted_avg_modules_per_truck : 500; ?>;
+            const totalTrucks = Math.ceil(totalModules / avgModulesPerTruck);
+            const deliveredTrucks = Math.floor(deliveredModules / avgModulesPerTruck);
+            remaining = totalTrucks - deliveredTrucks;
+            unit = 'truckloads';
+            break;
+            
+        default:
+            remaining = totalModules - deliveredModules;
+            unit = 'modules';
+    }
+    
+    // Update all timeline remaining text elements
+    timelineTexts.forEach(element => {
+        const countSpan = element.querySelector('.remaining-count');
+        const unitSpan = element.querySelector('.remaining-unit');
+        
+        if (countSpan && unitSpan) {
+            // Format the number properly
+            const formattedRemaining = filterType === 'mws' ? 
+                remaining.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) :
+                remaining.toLocaleString('en-US');
+                
+            countSpan.textContent = formattedRemaining;
+            unitSpan.textContent = unit;
+        }
+    });
 }
 
 // Customer Unit Filter functionality
@@ -5439,7 +5762,7 @@ function closeCustomerShippingModal() {
 
 function generateCustomerShippingContent(status) {
     const shippingBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
-    let html = '<div style="max-height:400px;overflow-y:auto;">';
+    let html = '<div style="height:250px;overflow-y:auto;">';
     let has = false;
     
     // Handle special case for "Delivered" status
@@ -5626,6 +5949,9 @@ function generateCustomerShippingContent(status) {
 document.addEventListener('DOMContentLoaded', function() {
     initializeCustomerUnitFilters();
     syncFiltersToState(); // Set initial state
+    
+    // Initialize timeline remaining text with current filter
+    updateTimelineRemainingText(currentFilter);
 });
 
 // Prepare costPie + budgetLineChart (for regular users)
@@ -5819,7 +6145,39 @@ document.addEventListener('DOMContentLoaded', function() {
     if (document.querySelector('.shipping-filters')) {
         initializeShippingFilters();
     }
+    
+    // Initialize timeline remaining text for admin view (always uses modules)
+    updateTimelineRemainingTextAdmin();
 });
+
+// Admin version of timeline remaining text update (no filters)
+function updateTimelineRemainingTextAdmin() {
+    const timelineTexts = document.querySelectorAll('.timeline-remaining-text');
+    if (!timelineTexts.length) return;
+    
+    // Check if project is completed
+    const isCompleted = <?php echo $step5_completed ? 'true' : 'false'; ?>;
+    if (isCompleted) return; // Don't update if project is already completed
+    
+    // Get project data for calculations  
+    const totalModules = <?php echo $total_raw_modules; ?>;
+    const deliveredModules = <?php echo $delivered_raw_total; ?>;
+    
+    // Admin view always shows modules remaining
+    const remaining = totalModules - deliveredModules;
+    const unit = 'modules';
+    
+    // Update all timeline remaining text elements
+    timelineTexts.forEach(element => {
+        const countSpan = element.querySelector('.remaining-count');
+        const unitSpan = element.querySelector('.remaining-unit');
+        
+        if (countSpan && unitSpan) {
+            countSpan.textContent = remaining.toLocaleString('en-US');
+            unitSpan.textContent = unit;
+        }
+    });
+}
 
 <?php endif; ?>
 
@@ -5858,7 +6216,15 @@ function toggleModulesDropdown() {
 
 function toggleAdminDeliveriesDropdown() {
     var dropdown = document.getElementById("adminDeliveriesDropdown");
-    var dropdownBtn = document.querySelector("#admin-buttons .dropdown:last-child .dropdown-btn");
+    var dropdownBtn = document.querySelector("#admin-buttons .dropdown:nth-child(2) .dropdown-btn");
+    
+    dropdown.classList.toggle("show");
+    dropdownBtn.classList.toggle("active");
+}
+
+function toggleAdminDocumentsDropdown() {
+    var dropdown = document.getElementById("adminDocumentsDropdown");
+    var dropdownBtn = document.querySelector("#admin-buttons .dropdown:nth-child(3) .dropdown-btn");
     
     dropdown.classList.toggle("show");
     dropdownBtn.classList.toggle("active");
