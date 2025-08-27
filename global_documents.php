@@ -89,7 +89,7 @@ $document_types = [
         'name' => 'Modules',
         'icon' => 'fas fa-microchip',
         'color' => '#10b981',
-        'sub_filters' => []
+        'sub_filters' => ['Module Invoice', 'Flash Test Data', 'Spec Sheets']
     ],
     'delivery_packet' => [
         'name' => 'Delivery Packet',
@@ -126,7 +126,7 @@ $folder_mapping = [
     'pods' => ['document_type' => 'pods', 'subfolders' => ['project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
     'shipments' => ['document_type' => 'shipments', 'subfolders' => ['arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'delivery_sop' => 'Delivery SOP']],
     'warehousing' => ['document_type' => 'warehousing', 'subfolders' => ['warehouse_pod' => 'Warehouse POD', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Photos']],
-    'modules' => ['document_type' => 'modules', 'subfolders' => ['module_invoice' => 'Module Invoice', 'flash_test_data' => 'Flash Test Data', 'spec_sheet' => 'Spec Sheet']],
+    'modules' => ['document_type' => 'modules', 'subfolders' => ['module_invoice' => 'Module Invoice', 'flash_test_data' => 'Flash Test Data', 'spec_sheet' => 'Spec Sheets']],
     'incident_reports' => ['document_type' => 'incident_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
     'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']]
 ];
@@ -1409,6 +1409,23 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                     </div>
                 </div>
             </div>
+            <div id="modulesSubfilters" style="display: none;">
+                <div class="filter-grid">
+                    <div class="filter-group" data-modbasic>
+                        <label class="filter-label" for="modManufacturerSelect">Manufacturer</label>
+                        <select id="modManufacturerSelect" class="filter-select">
+                            <option value="">All Manufacturers</option>
+                        </select>
+                    </div>
+                    <div class="filter-group" data-modbasic style="position: relative;">
+                        <label class="filter-label" for="modWattageDisplay">Wattage</label>
+                        <div>
+                            <input type="text" id="modWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleModWattageMenu(event)">
+                            <div id="modWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1582,7 +1599,7 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
      'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
      'bills_of_lading': ['Inbound BOL', 'Outbound BOL', 'Intercompany BOL'],
      'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos'],
-     'modules': ['Module Invoice', 'Flash Test Data', 'Data/Spec Sheet'],
+     'modules': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
      'delivery_packet': ['Complete Packets', 'Partial Packets'],
      'incident_reports': ['Damage Photo', 'Warranty Document', 'Project POD', 'Warehouse POD'],
      'safe_harbor_evidence': ['Legal Documents', 'Compliance Certificates'],
@@ -1906,7 +1923,8 @@ function attachSubfilterListeners() {
     const whPodsMan = document.getElementById('whPodsManufacturerSelect');
     const whWhSel = document.getElementById('whWarehouseSelect');
     const whManSel = document.getElementById('whManufacturerSelect');
-    [podsStart, podsEnd, podsBol, podsMan, invMin, invMax, invStart, invEnd, invBol, invMan, shipStart, shipEnd, shipCont, shipMan, whPodsStart, whPodsEnd, whPodsBol, whPodsMan, whWhSel, whManSel].forEach(el => {
+    const modManSel = document.getElementById('modManufacturerSelect');
+    [podsStart, podsEnd, podsBol, podsMan, invMin, invMax, invStart, invEnd, invBol, invMan, shipStart, shipEnd, shipCont, shipMan, whPodsStart, whPodsEnd, whPodsBol, whPodsMan, whWhSel, whManSel, modManSel].forEach(el => {
         if (!el) return;
         const evt = (el.tagName === 'SELECT') ? 'change' : 'input';
         el.addEventListener(evt, () => { if (filtersApplied) { currentPage = 1; loadDocuments(); } });
@@ -1984,6 +2002,65 @@ function toggleWarehousingSections() {
     document.querySelectorAll('#warehousingSubfilters [data-whbasic]')?.forEach(el => el.style.display = basic ? '' : 'none');
 }
 
+function toggleModulesSections() {
+    const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
+    const basic = (chips.includes('Flash Test Data') || chips.includes('Spec Sheets'));
+    document.querySelectorAll('#modulesSubfilters [data-modbasic]')?.forEach(el => el.style.display = basic ? '' : 'none');
+}
+
+function updateModDynamicFiltersFromDocs(documents) {
+    const sel = document.getElementById('modManufacturerSelect');
+    if (sel) {
+        const cur = sel.value;
+        const names = new Set();
+        documents.forEach(d => { if (d.manufacturer_name) names.add(String(d.manufacturer_name)); });
+        sel.innerHTML = '<option value="">All Manufacturers</option>';
+        Array.from(names).sort((a,b)=>a.localeCompare(b)).forEach(name => {
+            const opt = document.createElement('option'); opt.value = name; opt.textContent = name; sel.appendChild(opt);
+        });
+        if (cur && Array.from(names).includes(cur)) sel.value = cur;
+    }
+    const menu = document.getElementById('modWattageMenu');
+    const display = document.getElementById('modWattageDisplay');
+    if (menu && display) {
+        const prev = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+        const set = new Set();
+        documents.forEach(d => { if (d.module_wattages_label) { d.module_wattages_label.split(',').forEach(x=>{ const v=x.trim(); if (v) set.add(v); }); } else if (d.delivery_wattage) set.add(String(d.delivery_wattage)); });
+        const nums = Array.from(set).map(v=>parseInt(v,10)).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
+        menu.innerHTML='';
+        nums.forEach(val => {
+            const wrap = document.createElement('label'); wrap.style.display='flex'; wrap.style.alignItems='center'; wrap.style.gap='8px'; wrap.style.padding='4px 2px';
+            const cb = document.createElement('input'); cb.type='checkbox'; cb.value=String(val); if (prev.includes(String(val))) cb.checked=true; cb.addEventListener('change',()=>{ updateModWattageDisplay(); if (filtersApplied) loadDocuments(); });
+            const span = document.createElement('span'); span.textContent=String(val);
+            wrap.appendChild(cb); wrap.appendChild(span); menu.appendChild(wrap);
+        });
+        updateModWattageDisplay();
+    }
+}
+
+function updateModWattageDisplay() {
+    const input = document.getElementById('modWattageDisplay');
+    const menu = document.getElementById('modWattageMenu');
+    if (!input || !menu) return;
+    const selected = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    input.value = selected.join(', ');
+}
+function toggleModWattageMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('modWattageMenu');
+    if (!menu) return;
+    const input = document.getElementById('modWattageDisplay');
+    const rect = input.getBoundingClientRect();
+    const menuWidth = 260; const left = Math.min(rect.left, window.innerWidth - menuWidth - 12);
+    menu.style.left = left + 'px'; menu.style.top = (rect.bottom + window.scrollY) + 'px';
+    menu.style.display = (menu.style.display==='block') ? 'none' : 'block';
+    if (menu.style.display==='block') document.addEventListener('click', closeModWattMenuOnOutside);
+}
+function closeModWattMenuOnOutside(e) {
+    const menu = document.getElementById('modWattageMenu'); const input = document.getElementById('modWattageDisplay');
+    if (!menu || !input) return;
+    if (!menu.contains(e.target) && e.target !== input) { menu.style.display='none'; document.removeEventListener('click', closeModWattMenuOnOutside); }
+}
 function updateWhDynamicFiltersFromDocs(documents) {
     // Populate warehouse select from docs
     const whSel = document.getElementById('whWarehouseSelect');
@@ -2160,6 +2237,9 @@ function clearAllFilters() {
     const whWhSel = document.getElementById('whWarehouseSelect'); if (whWhSel) whWhSel.value='';
     const whManSel2 = document.getElementById('whManufacturerSelect'); if (whManSel2) whManSel2.value='';
     const whMenu = document.getElementById('whWattageMenu'); if (whMenu) whMenu.querySelectorAll('input[type="checkbox"]').forEach(cb=>cb.checked=false);
+    const modManSel = document.getElementById('modManufacturerSelect'); if (modManSel) modManSel.value='';
+    const modMenu = document.getElementById('modWattageMenu'); if (modMenu) modMenu.querySelectorAll('input[type="checkbox"]').forEach(cb=>cb.checked=false);
+    const mods = document.getElementById('modulesSubfilters'); if (mods) mods.style.display = 'none';
     if (pods) pods.style.display = 'none';
     if (ships) ships.style.display = 'none';
     if (ctx) ctx.style.display = 'none';
@@ -2286,6 +2366,20 @@ async function loadDocuments() {
         if (invDueStart && invDueStart.value) filters.invoice_due_start = invDueStart.value;
         if (invDueEnd && invDueEnd.value) filters.invoice_due_end = invDueEnd.value;
         if (invMan && invMan.value) filters.invoice_manufacturer = invMan.value;
+
+        // Modules context filters (Flash Test Data, Spec Sheets)
+        const modChips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
+        const isModules = document.getElementById('documentTypeFilter').value === 'modules';
+        const modBasic = isModules && (modChips.includes('Flash Test Data') || modChips.includes('Spec Sheets'));
+        const modManSel = document.getElementById('modManufacturerSelect');
+        const modWattMenu = document.getElementById('modWattageMenu');
+        if (modBasic) {
+            if (modManSel && modManSel.value) filters.mod_supplier = modManSel.value;
+            if (modWattMenu) {
+                const watts = Array.from(modWattMenu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+                if (watts.length) filters.mod_wattages = watts;
+            }
+        }
         
         // Build query string
         const queryParams = new URLSearchParams();
@@ -2320,6 +2414,8 @@ async function loadDocuments() {
                 updateShipWattagesFromDocs(data.documents);
             } else if (filtersApplied && docType === 'warehousing') {
                 updateWhDynamicFiltersFromDocs(data.documents);
+            } else if (filtersApplied && docType === 'modules') {
+                updateModDynamicFiltersFromDocs(data.documents);
             }
             // Update subfilters visibility according to Apply state
             (function(){
@@ -2329,11 +2425,13 @@ async function loadDocuments() {
                 const invoices = document.getElementById('invoicesSubfilters');
                 const ships = document.getElementById('shipmentsSubfilters');
                 const wh = document.getElementById('warehousingSubfilters');
+                const mods = document.getElementById('modulesSubfilters');
                 if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; }
                 else if (filtersApplied && type === 'invoices') { ctx.style.display=''; pods.style.display='none'; invoices.style.display=''; ships.style.display='none'; if (wh) wh.style.display='none'; }
                 else if (filtersApplied && type === 'shipments') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display=''; if (wh) wh.style.display='none'; }
-                else if (filtersApplied && type === 'warehousing') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) { wh.style.display=''; toggleWarehousingSections(); } }
-                else { pods.style.display = 'none'; invoices.style.display='none'; if (ships) ships.style.display='none'; if (wh) wh.style.display='none'; ctx.style.display = 'none'; }
+                else if (filtersApplied && type === 'warehousing') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) { wh.style.display=''; toggleWarehousingSections(); } if (mods) mods.style.display='none'; }
+                else if (filtersApplied && type === 'modules') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) { mods.style.display=''; toggleModulesSections(); } }
+                else { pods.style.display = 'none'; invoices.style.display='none'; if (ships) ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; ctx.style.display = 'none'; }
             })();
             updatePagination(data.total_count, data.total_pages);
             updateStats();
@@ -2367,6 +2465,7 @@ function renderDocumentsTable(documents) {
     const showShipCols = (filtersApplied && docType === 'shipments');
     const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
     const showInvMan = showInvCols && chips.includes('Module Invoice');
+    const showModBasicCols = (filtersApplied && docType === 'modules' && (chips.includes('Flash Test Data') || chips.includes('Spec Sheets')));
     const showWhPodsCols = (filtersApplied && docType === 'warehousing' && chips.includes('Warehouse POD'));
     const showWhBasicCols = (filtersApplied && docType === 'warehousing' && (chips.includes('Inventory Report') || chips.includes('Photos')) && !chips.includes('Warehouse POD'));
     const tableHTML = `
@@ -2391,6 +2490,8 @@ function renderDocumentsTable(documents) {
                     ${showInvCols ? '<th class="sortable" data-sort="inv_amount">Invoice Total</th>' : ''}
                     ${showInvCols ? '<th class="sortable" data-sort="inv_date">Invoice Date</th>' : ''}
                     ${showInvCols ? '<th class="sortable" data-sort="inv_due">Due Date</th>' : ''}
+                    ${showModBasicCols ? '<th class="sortable" data-sort="manufacturer">Manufacturer</th>' : ''}
+                    ${showModBasicCols ? '<th class="sortable" data-sort="wattage">Wattage</th>' : ''}
                     ${showWhPodsCols ? '<th class="sortable" data-sort="bol">BOL</th>' : ''}
                     ${showWhPodsCols ? '<th class="sortable" data-sort="manufacturer">Manufacturer</th>' : ''}
                     ${showWhPodsCols ? '<th class="sortable" data-sort="wattage">Wattage</th>' : ''}
@@ -2404,7 +2505,7 @@ function renderDocumentsTable(documents) {
                 </tr>
             </thead>
             <tbody>
-                ${documents.map(doc => renderDocumentRow(doc, showPodsCols, showInvCols, showInvMan, showShipCols, showWhPodsCols, showWhBasicCols)).join('')}
+                ${documents.map(doc => renderDocumentRow(doc, showPodsCols, showInvCols, showInvMan, showShipCols, showWhPodsCols, showWhBasicCols, showModBasicCols)).join('')}
             </tbody>
         </table>
     `;
@@ -2522,7 +2623,7 @@ function sortDocuments() {
 }
 
 // Render individual document row
-function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showInvMan = false, showShipCols = false, showWhPodsCols = false, showWhBasicCols = false) {
+function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showInvMan = false, showShipCols = false, showWhPodsCols = false, showWhBasicCols = false, showModBasicCols = false) {
     const isSelected = selectedDocuments.has(doc.id);
     const iconStyle = `background: ${getDocumentTypeColor(doc.document_type)};`;
     
@@ -2578,6 +2679,8 @@ function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showI
             ${showWhBasicCols ? `<td>${doc.warehouse_name ? escapeHtml(doc.warehouse_name) : ''}</td>` : ''}
             ${showWhBasicCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
             ${showWhBasicCols ? `<td>${doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : ''}</td>` : ''}
+            ${showModBasicCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
+            ${showModBasicCols ? `<td>${doc.module_wattages_label ? escapeHtml(doc.module_wattages_label) : (doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : '')}</td>` : ''}
             <td>${doc.size}</td>
             <td>${formatDate(doc.uploaded_at)}</td>
              <td>
@@ -2880,7 +2983,7 @@ const documentConfig = {
         }
     },
     'modules': {
-        'sub_types': ['Module Invoice', 'Flash Test Data', 'Data/Spec Sheet'],
+        'sub_types': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
         'fields': {
             'Module Invoice': [
                 {type: 'select', name: 'manufacturer_id', label: 'Manufacturer', required: true, data_source: 'manufacturers'},
@@ -2888,10 +2991,10 @@ const documentConfig = {
                 {type: 'date', name: 'invoice_date', label: 'Invoice Date', required: false}
             ],
             'Flash Test Data': [
-                {type: 'select', name: 'manufacturer_id', label: 'Manufacturer', required: false, data_source: 'manufacturers'}
+                {type: 'select', name: 'module_id', label: 'Module Batch #', required: true, data_source: 'module_batches'}
             ],
-            'Data/Spec Sheet': [
-                {type: 'select', name: 'manufacturer_id', label: 'Manufacturer', required: false, data_source: 'manufacturers'}
+            'Spec Sheets': [
+                {type: 'select', name: 'module_id', label: 'Module Batch #', required: true, data_source: 'module_batches'}
             ]
         }
     },
