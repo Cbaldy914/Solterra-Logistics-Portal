@@ -347,6 +347,144 @@ $is_pods_context = ($pre_selected_folder === 'pods');
             transform: none;
         }
 
+        /* Table header action buttons */
+        .table-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-left: auto;
+        }
+
+        .table-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .table-header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .table-upload-btn, .table-download-btn, .table-delete-btn {
+            padding: 10px 16px;
+            border-radius: 10px;
+            font-size: 0.9em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .table-upload-btn {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+        }
+
+        .table-upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(34, 197, 94, 0.3);
+        }
+
+        .table-download-btn {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white;
+        }
+
+        .table-download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.3);
+        }
+
+        .table-download-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .table-delete-btn {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+        }
+
+        .table-delete-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.3);
+        }
+
+        .table-delete-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Dropdown positioning fix */
+        .checkbox-menu {
+            position: absolute !important;
+            top: 100% !important;
+            left: 0 !important;
+            right: 0 !important;
+            z-index: 10000;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 8px;
+            max-height: 240px;
+            overflow-y: auto;
+            min-width: 220px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+            transform: translateY(4px);
+        }
+
+        /* Ensure parent container has relative positioning */
+        .filter-group {
+            position: relative;
+        }
+
+        /* Fix subfilter alignment in context sections */
+        #contextSubfilters .filter-grid {
+            align-items: stretch;
+        }
+
+        #contextSubfilters .filter-group {
+            align-self: stretch;
+        }
+
+        #contextSubfilters .filter-label {
+            margin-bottom: 8px;
+            min-height: auto;
+        }
+
+        @media (max-width: 768px) {
+            .table-header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .table-actions {
+                justify-content: center;
+                margin-left: 0;
+            }
+
+            .table-upload-btn, .table-download-btn, .table-delete-btn {
+                font-size: 0.85em;
+                padding: 8px 12px;
+            }
+
+            .checkbox-menu {
+                min-width: 200px;
+                max-height: 180px;
+            }
+        }
+
                  .filter-grid {
              display: grid;
              grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -354,18 +492,67 @@ $is_pods_context = ($pre_selected_folder === 'pods');
              align-items: start; /* Align all filter groups to the top */
          }
 
+         /* Enhanced responsive grid to prevent overlap */
+         @media (max-width: 1600px) {
+             .filter-grid {
+                 grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+             }
+         }
+
+         @media (max-width: 1400px) {
+             .filter-grid {
+                 grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+             }
+         }
+
+         @media (max-width: 1200px) {
+             .filter-grid {
+                 grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+             }
+         }
+
+         @media (max-width: 1000px) {
+             .filter-grid {
+                 grid-template-columns: repeat(2, 1fr);
+                 gap: 20px;
+             }
+         }
+
+         @media (max-width: 850px) {
+             .filter-grid {
+                 grid-template-columns: 1fr 1fr;
+                 gap: 16px;
+             }
+         }
+
          .filter-group {
              position: relative;
              display: flex;
              flex-direction: column;
              height: fit-content;
+             align-items: stretch;
+             justify-content: flex-start;
+         }
+
+         /* Ensure consistent baseline alignment for all filter elements */
+         .filter-group .filter-label {
+             flex-shrink: 0;
+             margin-bottom: 8px;
+             line-height: 1.4;
+             min-height: 22px;
+             display: flex;
+             align-items: flex-end;
+         }
+
+         .filter-group .filter-select,
+         .filter-group .filter-input,
+         .filter-group .date-range-group {
+             flex-shrink: 0;
          }
 
         .filter-label {
             font-weight: 600;
             color: #293E4C;
-            margin-bottom: 8px;
-            display: block;
             font-size: 0.95em;
         }
 
@@ -388,6 +575,16 @@ $is_pods_context = ($pre_selected_folder === 'pods');
              box-shadow: 0 4px 15px rgba(72, 140, 154, 0.2);
          }
 
+         /* Fix cursor for readonly inputs (wattage dropdowns) */
+         .filter-input[readonly] {
+             cursor: pointer;
+         }
+
+         .filter-input[readonly]:hover {
+             border-color: #488C9A;
+             background-color: #f8f9fa;
+         }
+
         .sub-filter-group {
             margin-top: 12px;
             opacity: 0;
@@ -406,6 +603,19 @@ $is_pods_context = ($pre_selected_folder === 'pods');
             flex-wrap: wrap;
             gap: 8px;
             margin-top: 8px;
+            align-items: center;
+        }
+
+        @media (max-width: 768px) {
+            .sub-filter-options {
+                gap: 6px;
+            }
+
+            .sub-filter-option {
+                font-size: 0.8em;
+                padding: 4px 8px;
+                border-radius: 16px;
+            }
         }
 
         .sub-filter-option {
@@ -576,6 +786,8 @@ $is_pods_context = ($pre_selected_folder === 'pods');
          }
 
          .global-documents-page .btn-download, 
+         .global-documents-page .btn-details,
+         .global-documents-page .btn-ticket,
          .global-documents-page .btn-view {
              padding: 6px 12px !important;
              border-radius: 8px !important;
@@ -593,15 +805,73 @@ $is_pods_context = ($pre_selected_folder === 'pods');
              width: auto !important;
          }
 
-         .global-documents-page .btn-download {
-             background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%) !important;
+         .global-documents-page .btn-download,
+         .global-documents-page a.btn-download {
+             background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
              color: white !important;
+             border: none !important;
+             text-shadow: none !important;
+             box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3) !important;
          }
 
-         .global-documents-page .btn-download:hover {
-             background: linear-gradient(135deg, #16a34a 0%, #15803d 100%) !important;
+         .global-documents-page .btn-download:hover,
+         .global-documents-page a.btn-download:hover {
+             background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
              transform: translateY(-1px) !important;
              color: white !important;
+             text-decoration: none !important;
+             box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
+         }
+
+         /* Details button styling */
+         .global-documents-page .btn-details,
+         .global-documents-page a.btn-details {
+             background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%) !important;
+             color: white !important;
+             border: none !important;
+             text-shadow: none !important;
+             box-shadow: 0 2px 8px rgba(72, 140, 154, 0.3) !important;
+         }
+
+         .global-documents-page .btn-details:hover,
+         .global-documents-page a.btn-details:hover {
+             background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%) !important;
+             transform: translateY(-1px) !important;
+             color: white !important;
+             text-decoration: none !important;
+             box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4) !important;
+         }
+
+         /* Ticket button styling */
+         .global-documents-page .btn-ticket,
+         .global-documents-page a.btn-ticket {
+             background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+             color: white !important;
+             border: none !important;
+             text-shadow: none !important;
+             box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3) !important;
+         }
+
+         .global-documents-page .btn-ticket:hover,
+         .global-documents-page a.btn-ticket:hover {
+             background: linear-gradient(135deg, #d97706 0%, #b45309 100%) !important;
+             transform: translateY(-1px) !important;
+             color: white !important;
+             text-decoration: none !important;
+             box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4) !important;
+         }
+
+         /* Action buttons container styling */
+         .action-buttons {
+             display: flex !important;
+             gap: 8px !important;
+             flex-wrap: wrap !important;
+             align-items: center !important;
+             justify-content: flex-start !important;
+         }
+
+         .action-buttons a {
+             flex-shrink: 0 !important;
          }
 
          .global-documents-page .btn-view {
@@ -714,11 +984,35 @@ $is_pods_context = ($pre_selected_folder === 'pods');
             }
 
             .filter-grid {
-                grid-template-columns: 1fr;
+                grid-template-columns: 1fr !important;
+                gap: 16px;
             }
 
             .date-range-group {
                 grid-template-columns: 1fr;
+                gap: 8px;
+            }
+
+            .filter-actions {
+                flex-wrap: wrap;
+                gap: 8px;
+                justify-content: flex-start;
+                width: 100%;
+            }
+
+            .filter-actions button {
+                font-size: 0.85em;
+                padding: 8px 12px;
+                flex: 1;
+                min-width: 120px;
+            }
+
+            .filter-group {
+                width: 100%;
+            }
+
+            .filter-label {
+                margin-bottom: 6px;
             }
 
             .documents-table {
@@ -737,6 +1031,47 @@ $is_pods_context = ($pre_selected_folder === 'pods');
 
             .pagination-controls {
                 justify-content: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .filter-grid {
+                gap: 12px;
+            }
+
+            .date-range-group {
+                grid-template-columns: 1fr;
+            }
+
+            .filter-input, .filter-select {
+                font-size: 0.9em;
+            }
+
+            .table-actions {
+                flex-direction: column;
+                gap: 8px;
+                width: 100%;
+            }
+
+            .table-upload-btn, .table-download-btn, .table-delete-btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .action-buttons {
+                gap: 6px !important;
+            }
+
+            .action-buttons a {
+                font-size: 0.75em !important;
+                padding: 4px 8px !important;
+            }
+
+            .global-documents-page .btn-download,
+            .global-documents-page .btn-details,
+            .global-documents-page .btn-ticket {
+                font-size: 0.75em !important;
+                padding: 4px 8px !important;
             }
         }
 
@@ -1194,16 +1529,6 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                     <i class="fas fa-search"></i>
                     Apply Filters
                 </button>
-                <?php if ($can_upload): ?>
-                <button type="button" class="upload-documents" onclick="openUploadModal()">
-                    <i class="fas fa-upload"></i>
-                    Upload Documents
-                </button>
-                <?php endif; ?>
-                <button type="button" class="bulk-download" id="bulkDownload" onclick="downloadSelected()" disabled>
-                    <i class="fas fa-download"></i>
-                    Download Selected
-                </button>
             </div>
         </div>
 
@@ -1253,7 +1578,7 @@ $is_pods_context = ($pre_selected_folder === 'pods');
 
     <!-- Context subfilters: appear below advanced filters when Doc Type selected -->
     <div id="contextSubfilters" style="display: none; margin-bottom: 16px;">
-        <div class="filter-section" style="padding: 16px; margin-bottom: 0;">
+        <div class="filter-section" style="padding: 16px; margin-bottom: 0; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 16px; border: 1px solid rgba(72, 140, 154, 0.08);">
             <div id="podsSubfilters" style="display: none;">
                 <div class="filter-grid">
                     <div class="filter-group">
@@ -1277,7 +1602,7 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                         <label class="filter-label" for="podsWattageDisplay">Wattage</label>
                         <div>
                             <input type="text" id="podsWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleWattageMenu(event)">
-                            <div id="podsWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                            <div id="podsWattageMenu" class="checkbox-menu" style="display:none;"></div>
                         </div>
                     </div>
                 </div>
@@ -1336,7 +1661,7 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                         <label class="filter-label" for="shipWattageDisplay">Wattage</label>
                         <div>
                             <input type="text" id="shipWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleShipWattageMenu(event)">
-                            <div id="shipWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                            <div id="shipWattageMenu" class="checkbox-menu" style="display:none;"></div>
                         </div>
                     </div>
                 </div>
@@ -1365,7 +1690,7 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                         <label class="filter-label" for="whPodsWattageDisplay">Wattage</label>
                         <div>
                             <input type="text" id="whPodsWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleWhPodsWattageMenu(event)">
-                            <div id="whPodsWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                            <div id="whPodsWattageMenu" class="checkbox-menu" style="display:none;"></div>
                         </div>
                     </div>
 
@@ -1386,7 +1711,7 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                         <label class="filter-label" for="whWattageDisplay">Wattage</label>
                         <div>
                             <input type="text" id="whWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleWhWattageMenu(event)">
-                            <div id="whWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                            <div id="whWattageMenu" class="checkbox-menu" style="display:none;"></div>
                         </div>
                     </div>
                 </div>
@@ -1403,7 +1728,7 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                         <label class="filter-label" for="modWattageDisplay">Wattage</label>
                         <div>
                             <input type="text" id="modWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleModWattageMenu(event)">
-                            <div id="modWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                            <div id="modWattageMenu" class="checkbox-menu" style="display:none;"></div>
                         </div>
                     </div>
                 </div>
@@ -1439,7 +1764,7 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                         <label class="filter-label" for="incPodsWattageDisplay">Wattage</label>
                         <div>
                             <input type="text" id="incPodsWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleIncPodsWattageMenu(event)">
-                            <div id="incPodsWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                            <div id="incPodsWattageMenu" class="checkbox-menu" style="display:none;"></div>
                         </div>
                     </div>
                 </div>
@@ -1449,12 +1774,32 @@ $is_pods_context = ($pre_selected_folder === 'pods');
 
     <div class="documents-container">
         <div class="table-header">
-            <h3 class="table-title">
-                <i class="fas fa-table"></i>
-                Document Results
-            </h3>
-            <div class="results-info" id="resultsInfo">
-                Loading documents...
+            <div class="table-header-left">
+                <h3 class="table-title">
+                    <i class="fas fa-table"></i>
+                    Document Results
+                </h3>
+                <div class="results-info" id="resultsInfo">
+                    Loading documents...
+                </div>
+            </div>
+            <div class="table-actions">
+                <?php if ($can_upload): ?>
+                <button type="button" class="table-upload-btn" onclick="openUploadModal()">
+                    <i class="fas fa-upload"></i>
+                    Upload Documents
+                </button>
+                <?php endif; ?>
+                <button type="button" class="table-download-btn" id="tableDownload" onclick="downloadSelected()" disabled>
+                    <i class="fas fa-download"></i>
+                    Download Selected
+                </button>
+                <?php if ($can_upload): ?>
+                <button type="button" class="table-delete-btn" id="tableDelete" onclick="deleteSelected()" disabled>
+                    <i class="fas fa-trash"></i>
+                    Delete Selected
+                </button>
+                <?php endif; ?>
             </div>
         </div>
 
@@ -2772,11 +3117,11 @@ function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showI
                          <i class="fas fa-download"></i>
                          Download
                      </a>
-                     ${doc.delivery_id ? `<a href="view_project.php?project_id=${doc.project_id}&delivery_id=${doc.delivery_id}" class="btn-download" style="background: linear-gradient(135deg, #3b82f6, #2563eb);" title="View delivery details">
+                     ${doc.delivery_id ? `<a href="view_project.php?project_id=${doc.project_id}&delivery_id=${doc.delivery_id}" class="btn-details" title="View delivery details">
                          <i class=\"fas fa-eye\"></i>
                          Details
                      </a>` : ''}
-                     ${(doc.document_type === 'incident_reports' && (doc.entity_context||'').includes('incident_ticket_id:')) ? (()=>{ try { const m=(doc.entity_context||'').match(/incident_ticket_id:(\d+)/); return m?`<a href=\"warranty_detail.php?id=${m[1]}\" class=\"btn-download\" style=\"background: linear-gradient(135deg, #8b5cf6, #6366f1);\" title=\"View ticket\"><i class=\\"fas fa-ticket-alt\\"></i> Ticket</a>`:'';} catch(e){ return ''; } })() : ''}
+                     ${(doc.document_type === 'incident_reports' && (doc.entity_context||'').includes('incident_ticket_id:')) ? (()=>{ try { const m=(doc.entity_context||'').match(/incident_ticket_id:(\d+)/); return m?`<a href=\"warranty_detail.php?id=${m[1]}\" class=\"btn-ticket\" title=\"View ticket\"><i class=\"fas fa-eye\"></i> Ticket</a>`:'';} catch(e){ return ''; } })() : ''}
                  </div>
              </td>
          </tr>
@@ -2836,9 +3181,17 @@ function updateStats() {
     document.getElementById('totalDocuments').textContent = totalDocuments;
     document.getElementById('selectedDocuments').textContent = selectedDocuments.size;
     
-    // Enable/disable bulk download button
-    const bulkDownloadBtn = document.getElementById('bulkDownload');
-    bulkDownloadBtn.disabled = selectedDocuments.size === 0;
+    // Enable/disable bulk download and delete buttons
+    const bulkDownloadBtn = document.getElementById('tableDownload');
+    const bulkDeleteBtn = document.getElementById('tableDelete');
+    
+    if (bulkDownloadBtn) {
+        bulkDownloadBtn.disabled = selectedDocuments.size === 0;
+    }
+    
+    if (bulkDeleteBtn) {
+        bulkDeleteBtn.disabled = selectedDocuments.size === 0;
+    }
     
     // Update results info
     const resultsInfo = document.getElementById('resultsInfo');
@@ -2928,6 +3281,52 @@ async function downloadSelected() {
     } catch (error) {
         console.error('Error downloading documents:', error);
         alert('Network error occurred while downloading documents');
+    }
+}
+
+// Delete selected documents
+async function deleteSelected() {
+    if (selectedDocuments.size === 0) {
+        alert('Please select documents to delete');
+        return;
+    }
+    
+    const count = selectedDocuments.size;
+    const confirmMessage = count === 1 
+        ? 'Are you sure you want to delete this document? This action cannot be undone.'
+        : `Are you sure you want to delete ${count} documents? This action cannot be undone.`;
+        
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+    
+    try {
+        const documentIds = Array.from(selectedDocuments);
+        const response = await fetch('delete_project_documents.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ ids: documentIds })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // Clear selection
+            selectedDocuments.clear();
+            
+            // Show success message
+            alert(count === 1 ? 'Document deleted successfully' : `${count} documents deleted successfully`);
+            
+            // Reload documents to reflect changes
+            await loadDocuments();
+        } else {
+            alert(result.message || 'Failed to delete documents');
+        }
+    } catch (error) {
+        console.error('Error deleting documents:', error);
+        alert('Network error occurred while deleting documents');
     }
 }
 
