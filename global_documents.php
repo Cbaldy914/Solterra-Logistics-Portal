@@ -67,18 +67,6 @@ $document_types = [
         'color' => '#8b5cf6',
         'sub_filters' => ['Arrival Notice', 'Customs Document', 'Delivery SOP']
     ],
-    'flash_test_data' => [
-        'name' => 'Flash Test Data',
-        'icon' => 'fas fa-bolt',
-        'color' => '#f59e0b',
-        'sub_filters' => []
-    ],
-    'bills_of_lading' => [
-        'name' => 'Bills of Lading',
-        'icon' => 'fas fa-shipping-fast',
-        'color' => '#8b5cf6',
-        'sub_filters' => []
-    ],
     'warehousing' => [
         'name' => 'Warehousing',
         'icon' => 'fas fa-warehouse',
@@ -90,12 +78,6 @@ $document_types = [
         'icon' => 'fas fa-microchip',
         'color' => '#10b981',
         'sub_filters' => ['Module Invoice', 'Flash Test Data', 'Spec Sheets']
-    ],
-    'delivery_packet' => [
-        'name' => 'Delivery Packet',
-        'icon' => 'fas fa-box-open',
-        'color' => '#f97316',
-        'sub_filters' => []
     ],
     'incident_reports' => [
         'name' => 'Incident Reports',
@@ -1597,13 +1579,10 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
      'invoices': ['Solterra Invoice', 'Module Invoice'],
      'pods': ['Warehouse POD', 'Project POD'],
      'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
-     'bills_of_lading': ['Inbound BOL', 'Outbound BOL', 'Intercompany BOL'],
      'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos'],
      'modules': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
-     'delivery_packet': ['Complete Packets', 'Partial Packets'],
      'incident_reports': ['Damage Photo', 'Warranty Document', 'Project POD', 'Warehouse POD'],
-     'safe_harbor_evidence': ['Legal Documents', 'Compliance Certificates'],
-     'flash_test_data': ['Flash Test Results', 'Quality Reports']
+     'safe_harbor_evidence': []
  };
 
 // Initialize page
@@ -2625,7 +2604,7 @@ function sortDocuments() {
 // Render individual document row
 function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showInvMan = false, showShipCols = false, showWhPodsCols = false, showWhBasicCols = false, showModBasicCols = false) {
     const isSelected = selectedDocuments.has(doc.id);
-    const iconStyle = `background: ${getDocumentTypeColor(doc.document_type)};`;
+    const iconStyle = `background: ${getDocumentTypeColor(doc.document_type)}; position: relative;`;
     
     return `
                  <tr onclick="toggleDocumentSelection(${doc.id}, event)" data-doc-id="${doc.id}">
@@ -2638,6 +2617,7 @@ function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showI
                  <div class="document-info">
                      <div class="document-icon" style="${iconStyle}">
                          <i class="${getDocumentTypeIcon(doc.document_type)}"></i>
+                         ${doc.is_safe_harbor ? `<span title="Safe Harbor" style="position:absolute;bottom:-6px;right:-6px;background:#6366f1;color:#fff;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;border:2px solid #fff;font-size:10px;"><i class='fas fa-gavel'></i></span>` : ''}
                      </div>
                      <div class="document-details">
                          <div class="document-name">${escapeHtml(doc.filename)}</div>

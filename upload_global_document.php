@@ -173,9 +173,10 @@ try {
         }
 
         // Save to project_documents table
-        $document_id = saveDocumentToProjectDocuments($conn, $document_data);
+        $save_result = saveDocumentToProjectDocuments($conn, $document_data);
+        $document_id = is_array($save_result) && isset($save_result['document_id']) ? (int)$save_result['document_id'] : 0;
         
-        if (!$document_id) {
+        if ($document_id <= 0) {
             throw new Exception('Failed to save document: ' . $processed_file['original_name']);
         }
 
