@@ -10,6 +10,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 }
 
 require_once '../config.php';
+require_once 'document_helpers.php';
 
 // Check the action to determine what type of receiving we're doing
 $action = $_POST['action'] ?? '';
@@ -70,65 +71,60 @@ if ($action === 'receive_truckload') {
     $conn->begin_transaction();
     
     try {
-        // Handle POD file upload if provided
+        // Handle POD file upload using new document management system
         $pod_path = null;
         if (isset($_FILES['pod_file']) && $_FILES['pod_file']['error'] === UPLOAD_ERR_OK) {
-            // Get delivery info to determine storage path
-            $stmt_delivery = $conn->prepare("
-                SELECT d.project_id, c.name AS account_name
-                FROM deliveries d
-                LEFT JOIN projects p ON d.project_id = p.id
-                LEFT JOIN customer_accounts c ON p.account_id = c.id
-                WHERE d.id = ?
-            ");
-            if (!$stmt_delivery) {
-                throw new Exception("Failed to prepare delivery info query: " . $conn->error);
-            }
-            
-            $stmt_delivery->bind_param("i", $delivery_id);
-            $stmt_delivery->execute();
-            $stmt_delivery->bind_result($project_id, $account_name);
-            $stmt_delivery->fetch();
-            $stmt_delivery->close();
-            
-            $original_name = $_FILES['pod_file']['name'];
-            $file_extension = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
-            $allowed_extensions = ['pdf', 'jpg', 'jpeg', 'png'];
-            
-            if (!in_array($file_extension, $allowed_extensions)) {
-                throw new Exception("Invalid file type for POD. Only PDF, JPG, PNG allowed.");
-            }
-            
-            if ($_FILES['pod_file']['size'] > 5 * 1024 * 1024) { // 5MB limit to match existing code
-                throw new Exception("POD file exceeds 5MB limit.");
-            }
-            
-            // Use existing directory structure
-            if ($project_id && $account_name) {
-                // Project delivery - use project-based structure
-                $account_dir = preg_replace('/[^A-Za-z0-9_-]/', '_', $account_name);
-                $upload_dir = "customers/{$account_dir}/projects/{$project_id}/documents/pods/";
-            } else {
-                // Warehouse delivery - use warehouse-based structure
-                $upload_dir = "warehouse_documents/pods/";
-            }
-            
-            if (!is_dir($upload_dir)) {
-                if (!mkdir($upload_dir, 0755, true)) {
-                    throw new Exception("Failed to create upload directory.");
+            try {
+                // Get delivery info
+                $stmt_delivery = $conn->prepare("SELECT project_id FROM deliveries WHERE id = ?");
+                if (!$stmt_delivery) {
+                    throw new Exception("Failed to prepare delivery info query: " . $conn->error);
                 }
-            }
-            
-            // Create filename using existing pattern
-            $original_filename = pathinfo($original_name, PATHINFO_FILENAME);
-            $sanitized = preg_replace('/[^A-Za-z0-9_-]/', '_', $original_filename);
-            $sanitized = substr($sanitized, 0, 100);
-            
-            $final_filename = $delivery_id . '_' . $sanitized . '.' . $file_extension;
-            $pod_path = $upload_dir . $final_filename;
-            
-            if (!move_uploaded_file($_FILES['pod_file']['tmp_name'], $pod_path)) {
-                throw new Exception("Failed to upload POD file.");
+                
+                $stmt_delivery->bind_param("i", $delivery_id);
+                $stmt_delivery->execute();
+                $stmt_delivery->bind_result($project_id);
+                $stmt_delivery->fetch();
+                $stmt_delivery->close();
+                
+                if (!$project_id) {
+                    throw new Exception("Could not find project for delivery");
+                }
+                
+                // Prepare file data for upload
+                $file_data = [
+                    'name' => $_FILES['pod_file']['name'],
+                    'type' => $_FILES['pod_file']['type'],
+                    'tmp_name' => $_FILES['pod_file']['tmp_name'],
+                    'error' => $_FILES['pod_file']['error'],
+                    'size' => $_FILES['pod_file']['size']
+                ];
+                
+                // Upload using new document system
+                $processed_file = processDocumentUpload($file_data, 'pods');
+                
+                // Prepare document data
+                $document_data = [
+                    'project_id' => $project_id,
+                    'document_type' => 'pods',
+                    'document_sub_type' => 'Warehouse POD',
+                    'delivery_id' => $delivery_id,
+                    'warehouse_id' => $receiving_warehouse_id,
+                    'original_name' => $processed_file['original_name'],
+                    'file_size' => $processed_file['size'],
+                    'mime_type' => $processed_file['mime_type'],
+                    'uploaded_by' => $_SESSION['user_id'],
+                    'tmp_name' => $processed_file['tmp_name'],
+                    'entity_context' => "Warehouse POD uploaded during truckload receiving for delivery ID: $delivery_id"
+                ];
+                
+                // Save to project_documents table
+                $result = saveDocumentToProjectDocuments($conn, $document_data);
+                $pod_path = $result['file_path'];
+                
+            } catch (Exception $e) {
+                error_log("Failed to upload POD via new system: " . $e->getMessage());
+                throw new Exception("POD upload failed: " . $e->getMessage());
             }
         }
         
@@ -196,6 +192,18 @@ if ($action === 'receive_truckload') {
             throw new Exception("Failed to update delivery: " . $stmt_update_delivery->error);
         }
         $stmt_update_delivery->close();
+
+        // If receiving at a port, also stamp customs_cleared_date
+        if ($is_port) {
+            $stmt_update_customs = $conn->prepare("UPDATE deliveries SET customs_cleared_date = ? WHERE id = ?");
+            if ($stmt_update_customs) {
+                $stmt_update_customs->bind_param("si", $actual_arrival_date, $delivery_id);
+                if (!$stmt_update_customs->execute()) {
+                    throw new Exception("Failed to update customs cleared date: " . $stmt_update_customs->error);
+                }
+                $stmt_update_customs->close();
+            }
+        }
         
         $conn->commit();
         $_SESSION['move_pallet_message'] = "Successfully received truckload with $updated_count pallets. Delivery updated with arrival date: $actual_arrival_date.";
@@ -230,41 +238,49 @@ if ($action === 'receive_truckload') {
     $conn->begin_transaction();
     
     try {
-        // Handle POD file upload if provided
+        // Handle POD file upload using new document management system
         $pod_path = null;
+        $uploaded_pod_data = null;
         if (isset($_FILES['pod_file']) && $_FILES['pod_file']['error'] === UPLOAD_ERR_OK) {
-            $original_name = $_FILES['pod_file']['name'];
-            $file_extension = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
-            $allowed_extensions = ['pdf', 'jpg', 'jpeg', 'png'];
-            
-            if (!in_array($file_extension, $allowed_extensions)) {
-                throw new Exception("Invalid file type for POD. Only PDF, JPG, PNG allowed.");
-            }
-            
-            if ($_FILES['pod_file']['size'] > 5 * 1024 * 1024) { // 5MB limit
-                throw new Exception("POD file exceeds 5MB limit.");
-            }
-            
-            // Use warehouse-based structure for bulk receives
-            $upload_dir = "warehouse_documents/pods/";
-            
-            if (!is_dir($upload_dir)) {
-                if (!mkdir($upload_dir, 0755, true)) {
-                    throw new Exception("Failed to create upload directory.");
+            try {
+                // Get project_id from first delivery
+                $first_delivery_id = intval($delivery_ids[0]);
+                $stmt_delivery = $conn->prepare("SELECT project_id FROM deliveries WHERE id = ?");
+                if (!$stmt_delivery) {
+                    throw new Exception("Failed to prepare delivery info query: " . $conn->error);
                 }
-            }
-            
-            // Create filename using bulk delivery pattern
-            $original_filename = pathinfo($original_name, PATHINFO_FILENAME);
-            $sanitized = preg_replace('/[^A-Za-z0-9_-]/', '_', $original_filename);
-            $sanitized = substr($sanitized, 0, 100);
-            
-            $timestamp = date('YmdHis');
-            $final_filename = 'bulk_' . $timestamp . '_' . $sanitized . '.' . $file_extension;
-            $pod_path = $upload_dir . $final_filename;
-            
-            if (!move_uploaded_file($_FILES['pod_file']['tmp_name'], $pod_path)) {
-                throw new Exception("Failed to upload POD file.");
+                
+                $stmt_delivery->bind_param("i", $first_delivery_id);
+                $stmt_delivery->execute();
+                $stmt_delivery->bind_result($project_id);
+                $stmt_delivery->fetch();
+                $stmt_delivery->close();
+                
+                if (!$project_id) {
+                    throw new Exception("Could not find project for delivery");
+                }
+                
+                // Prepare file data for upload
+                $file_data = [
+                    'name' => $_FILES['pod_file']['name'],
+                    'type' => $_FILES['pod_file']['type'],
+                    'tmp_name' => $_FILES['pod_file']['tmp_name'],
+                    'error' => $_FILES['pod_file']['error'],
+                    'size' => $_FILES['pod_file']['size']
+                ];
+                
+                // Upload using new document system
+                $processed_file = processDocumentUpload($file_data, 'pods');
+                
+                // Store the processed file data for later use with each delivery
+                $uploaded_pod_data = [
+                    'project_id' => $project_id,
+                    'processed_file' => $processed_file
+                ];
+                
+            } catch (Exception $e) {
+                error_log("Failed to upload POD via new system: " . $e->getMessage());
+                throw new Exception("POD upload failed: " . $e->getMessage());
             }
         }
         
@@ -343,24 +359,56 @@ if ($action === 'receive_truckload') {
                     }
                 }
                 
-                // Update delivery record
+                // Update delivery record (without old POD field)
                 $stmt_update_delivery = $conn->prepare("
                     UPDATE deliveries 
                     SET status_of_delivery = ?, 
                         warehouse_arrival_date = ?,
-                        bol_number = ?,
-                        proof_of_delivery = ?
+                        bol_number = ?
                     WHERE id = ?
                 ");
                 if (!$stmt_update_delivery) {
                     throw new Exception("Failed to prepare delivery update for delivery $delivery_id: " . $conn->error);
                 }
                 
-                $stmt_update_delivery->bind_param("ssssi", $delivery_status, $actual_arrival_date, $bol_to_use, $pod_path, $delivery_id);
+                $stmt_update_delivery->bind_param("sssi", $delivery_status, $actual_arrival_date, $bol_to_use, $delivery_id);
                 if (!$stmt_update_delivery->execute()) {
                     throw new Exception("Failed to update delivery $delivery_id: " . $stmt_update_delivery->error);
                 }
                 $stmt_update_delivery->close();
+
+                // If receiving at a port, also stamp customs_cleared_date
+                if ($is_port) {
+                    $stmt_update_customs = $conn->prepare("UPDATE deliveries SET customs_cleared_date = ? WHERE id = ?");
+                    if ($stmt_update_customs) {
+                        $stmt_update_customs->bind_param("si", $actual_arrival_date, $delivery_id);
+                        if (!$stmt_update_customs->execute()) {
+                            throw new Exception("Failed to update customs cleared date for delivery $delivery_id: " . $stmt_update_customs->error);
+                        }
+                        $stmt_update_customs->close();
+                    }
+                }
+                
+                // Save POD to project_documents table if uploaded
+                if ($uploaded_pod_data) {
+                    $document_data = [
+                        'project_id' => $uploaded_pod_data['project_id'],
+                        'document_type' => 'pods',
+                        'document_sub_type' => 'Warehouse POD',
+                        'delivery_id' => $delivery_id,
+                        'warehouse_id' => $receiving_warehouse_id,
+                        'original_name' => $uploaded_pod_data['processed_file']['original_name'],
+                        'file_size' => $uploaded_pod_data['processed_file']['size'],
+                        'mime_type' => $uploaded_pod_data['processed_file']['mime_type'],
+                        'uploaded_by' => $_SESSION['user_id'],
+                        'tmp_name' => $uploaded_pod_data['processed_file']['tmp_name'],
+                        'entity_context' => "Warehouse POD uploaded during bulk truckload receiving for delivery ID: $delivery_id"
+                    ];
+                    
+                    // Save to project_documents table
+                    $result = saveDocumentToProjectDocuments($conn, $document_data);
+                    $pod_path = $result['file_path']; // For cleanup if needed
+                }
                 
                 $successful_deliveries[] = "Delivery $delivery_id ($delivery_pallet_count pallets)";
                 
@@ -409,6 +457,7 @@ if ($action === 'receive_truckload') {
     $successes = [];
     $errors = [];
     $current_timestamp = date('Y-m-d H:i:s');
+    $current_date = date('Y-m-d');
     $new_pallet_status = $received_pallet_status;
     $new_delivery_status = $delivery_status;
     
@@ -453,6 +502,18 @@ if ($action === 'receive_truckload') {
                     error_log("Warning: Failed to update delivery status for ID $delivery_id: " . $stmt_update_delivery->error);
                 }
                 $stmt_update_delivery->close();
+            }
+
+            // 2b. If receiving at a port, stamp customs_cleared_date (DATE)
+            if ($is_port) {
+                $stmt_update_customs = $conn->prepare("UPDATE deliveries SET customs_cleared_date = ? WHERE id = ?");
+                if ($stmt_update_customs) {
+                    $stmt_update_customs->bind_param("si", $current_date, $delivery_id);
+                    if (!$stmt_update_customs->execute()) {
+                        error_log("Warning: Failed to set customs cleared date for delivery ID $delivery_id: " . $stmt_update_customs->error);
+                    }
+                    $stmt_update_customs->close();
+                }
             }
             $successes[] = $pallet_id;
         }

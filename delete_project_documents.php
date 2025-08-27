@@ -65,13 +65,13 @@ foreach ($ids as $docId) {
         if (!$hasAccess) { $errors[] = [ 'id' => $docId, 'error' => 'No access to this project' ]; continue; }
     }
 
-    // Soft delete in DB
-    $upd = $conn->prepare("UPDATE project_documents SET is_active = 0 WHERE id = ?");
+    // Delete from DB (hard delete)
+    $upd = $conn->prepare("DELETE FROM project_documents WHERE id = ?");
     $upd->bind_param('i', $docId);
     $ok = $upd->execute();
     $upd->close();
 
-    if (!$ok) { $errors[] = [ 'id' => $docId, 'error' => 'Failed to update database' ]; continue; }
+    if (!$ok) { $errors[] = [ 'id' => $docId, 'error' => 'Failed to delete from database' ]; continue; }
 
     // Attempt to remove file from disk (best-effort)
     $path = $doc['file_path'];
