@@ -78,6 +78,12 @@ $wh_warehouse_id = isset($_GET['wh_warehouse_id']) ? intval($_GET['wh_warehouse_
 $wh_wattages = isset($_GET['wh_wattages']) ? (array)$_GET['wh_wattages'] : [];
 $mod_supplier = trim($_GET['mod_supplier'] ?? '');
 $mod_wattages = isset($_GET['mod_wattages']) ? (array)$_GET['mod_wattages'] : [];
+$inc_ticket_id = trim($_GET['inc_ticket_id'] ?? '');
+$inc_delivery_start = trim($_GET['inc_delivery_start'] ?? '');
+$inc_delivery_end = trim($_GET['inc_delivery_end'] ?? '');
+$inc_bol = trim($_GET['inc_bol'] ?? '');
+$inc_supplier = trim($_GET['inc_supplier'] ?? '');
+$inc_wattages = isset($_GET['inc_wattages']) ? (array)$_GET['inc_wattages'] : [];
 // Build the base query with proper permission checking
 $base_sql = "
     SELECT 
@@ -90,6 +96,7 @@ $base_sql = "
         pd.file_path,
         pd.document_type,
         pd.document_sub_type,
+        pd.entity_context,
         pd.delivery_id,
         pd.warehouse_id,
         pd.project_invoice_id,
@@ -278,6 +285,44 @@ if (!empty($ship_wattages)) {
         $placeholders = implode(',', array_fill(0, count($wlist), '?'));
         $where_conditions[] = "d.wattage IN ($placeholders)";
         foreach ($wlist as $w) { $params[] = $w; $param_types .= 'i'; }
+    }
+}
+
+// Incident Reports-specific filters
+if ($document_type === 'incident_reports') {
+    if (!empty($inc_ticket_id)) {
+        // Ticket is stored in entity_context as 'incident_ticket_id:<ID>'
+        $where_conditions[] = "pd.entity_context LIKE ?";
+        $params[] = '%incident_ticket_id:' . $inc_ticket_id . '%';
+        $param_types .= 's';
+    }
+    if (!empty($inc_bol)) {
+        $where_conditions[] = "d.bol_number LIKE ?";
+        $params[] = '%' . $inc_bol . '%';
+        $param_types .= 's';
+    }
+    if (!empty($inc_delivery_start)) {
+        $where_conditions[] = "DATE(d.actual_delivery_date) >= ?";
+        $params[] = $inc_delivery_start;
+        $param_types .= 's';
+    }
+    if (!empty($inc_delivery_end)) {
+        $where_conditions[] = "DATE(d.actual_delivery_date) <= ?";
+        $params[] = $inc_delivery_end;
+        $param_types .= 's';
+    }
+    if (!empty($inc_supplier)) {
+        $where_conditions[] = "(m.name LIKE ? OR d.supplier LIKE ?)";
+        $like = '%' . $inc_supplier . '%';
+        $params[] = $like; $params[] = $like; $param_types .= 'ss';
+    }
+    if (!empty($inc_wattages)) {
+        $wlist = array_values(array_filter(array_map('intval', $inc_wattages), function($v){ return $v !== 0 || $v === 0; }));
+        if (!empty($wlist)) {
+            $placeholders = implode(',', array_fill(0, count($wlist), '?'));
+            $where_conditions[] = "d.wattage IN ($placeholders)";
+            foreach ($wlist as $w) { $params[] = $w; $param_types .= 'i'; }
+        }
     }
 }
 
@@ -478,6 +523,7 @@ try {
             'description' => $row['description'],
             'document_type' => $row['document_type'],
             'document_sub_type' => $row['document_sub_type'],
+            'entity_context' => $row['entity_context'],
             'delivery_id' => $row['delivery_id'],
             'warehouse_id' => $row['warehouse_id'],
             'project_invoice_id' => $row['project_invoice_id'],
