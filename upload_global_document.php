@@ -146,6 +146,18 @@ try {
             $document_data['manufacturer_id'] = (int)$_POST['manufacturer_id'];
         }
 
+        // Link to module batch when provided
+        if (isset($_POST['module_id']) && !empty($_POST['module_id'])) {
+            $document_data['module_id'] = (int)$_POST['module_id'];
+        }
+
+        // Enforce module batch for Modules Flash Test Data and Spec Sheets
+        if ($document_type === 'modules' && in_array($document_sub_type, ['Flash Test Data', 'Spec Sheets'])) {
+            if (empty($document_data['module_id'])) {
+                throw new Exception('Module Batch # is required for this upload.');
+            }
+        }
+
         // Handle invoice documents - save to project_invoices if it's an invoice
         if ($document_type === 'invoices' && in_array($document_sub_type, ['Solterra Invoice', 'Module Invoice', 'Freight Invoice'])) {
             // Validate required invoice fields for Solterra/Module
