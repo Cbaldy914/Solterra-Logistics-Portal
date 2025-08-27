@@ -152,9 +152,14 @@ if ($project_id > 0) {
 }
 
 if (!empty($document_type)) {
-    $where_conditions[] = "pd.document_type = ?";
-    $params[] = $document_type;
-    $param_types .= "s";
+    if ($document_type === 'safe_harbor_evidence') {
+        // Show all Safe Harbor docs: either stored in Safe Harbor folder or flagged as safe harbor
+        $where_conditions[] = "(pd.document_type = 'safe_harbor_evidence' OR pd.is_safe_harbor = 1)";
+    } else {
+        $where_conditions[] = "pd.document_type = ?";
+        $params[] = $document_type;
+        $param_types .= "s";
+    }
 }
 
 if (!empty($start_date)) {
