@@ -69,6 +69,13 @@ $invoice_due_end = trim($_GET['invoice_due_end'] ?? '');
 $invoice_bol = trim($_GET['invoice_bol'] ?? '');
 $invoice_manufacturer = trim($_GET['invoice_manufacturer'] ?? '');
 
+// Warehousing-specific filters
+$wh_delivery_start = trim($_GET['wh_delivery_start'] ?? '');
+$wh_delivery_end = trim($_GET['wh_delivery_end'] ?? '');
+$wh_bol = trim($_GET['wh_bol'] ?? '');
+$wh_supplier = trim($_GET['wh_supplier'] ?? '');
+$wh_warehouse_id = isset($_GET['wh_warehouse_id']) ? intval($_GET['wh_warehouse_id']) : 0;
+$wh_wattages = isset($_GET['wh_wattages']) ? (array)$_GET['wh_wattages'] : [];
 // Build the base query with proper permission checking
 $base_sql = "
     SELECT 
@@ -297,6 +304,71 @@ if (!empty($invoice_manufacturer)) {
     $params[] = $invoice_manufacturer;
     $params[] = $invoice_manufacturer;
     $param_types .= 'ss';
+}
+
+// Warehousing-specific filter conditions
+if ($document_type === 'warehousing') {
+    // Determine selected warehousing subtypes
+    $selected_wh_pod = false; $selected_wh_basic = false;
+    if (!empty($sub_filters) && is_array($sub_filters)) {
+        foreach ($sub_filters as $sf) {
+            if (trim($sf) === 'Warehouse POD') $selected_wh_pod = true;
+            if (trim($sf) === 'Inventory Report' || trim($sf) === 'Photos') $selected_wh_basic = true;
+        }
+    }
+    if ($selected_wh_pod) {
+        if (!empty($wh_bol)) {
+            $where_conditions[] = "d.bol_number LIKE ?";
+            $params[] = '%' . $wh_bol . '%';
+            $param_types .= 's';
+        }
+        if (!empty($wh_delivery_start)) {
+            $where_conditions[] = "DATE(d.actual_delivery_date) >= ?";
+            $params[] = $wh_delivery_start;
+            $param_types .= 's';
+        }
+        if (!empty($wh_delivery_end)) {
+            $where_conditions[] = "DATE(d.actual_delivery_date) <= ?";
+            $params[] = $wh_delivery_end;
+            $param_types .= 's';
+        }
+        if (!empty($wh_supplier)) {
+            $where_conditions[] = "(m.name LIKE ? OR d.supplier LIKE ?)";
+            $like = '%' . $wh_supplier . '%';
+            $params[] = $like; $params[] = $like; $param_types .= 'ss';
+        }
+        if (!empty($wh_wattages)) {
+            $wlist = array_values(array_filter(array_map('intval', $wh_wattages), function($v){ return $v !== 0 || $v === 0; }));
+            if (!empty($wlist)) {
+                $placeholders = implode(',', array_fill(0, count($wlist), '?'));
+                $where_conditions[] = "d.wattage IN ($placeholders)";
+                foreach ($wlist as $w) { $params[] = $w; $param_types .= 'i'; }
+            }
+        }
+    }
+    if ($selected_wh_basic) {
+        if ($wh_warehouse_id > 0) {
+            $where_conditions[] = "pd.warehouse_id = ?";
+            $params[] = $wh_warehouse_id;
+            $param_types .= 'i';
+        }
+        if (!empty($wh_supplier)) {
+            // If doc linked to delivery, use d.supplier/m.name; otherwise, check any delivery at same warehouse+project
+            $where_conditions[] = "(m.name = ? OR d.supplier = ? OR EXISTS (SELECT 1 FROM deliveries dx WHERE dx.project_id = pd.project_id AND dx.warehouse_id = pd.warehouse_id AND dx.supplier = ?))";
+            $params[] = $wh_supplier; $params[] = $wh_supplier; $params[] = $wh_supplier;
+            $param_types .= 'sss';
+        }
+        if (!empty($wh_wattages)) {
+            $wlist = array_values(array_filter(array_map('intval', $wh_wattages), function($v){ return $v !== 0 || $v === 0; }));
+            if (!empty($wlist)) {
+                // Match if doc delivery has wattage OR any delivery at same warehouse+project has wattage
+                $placeholders = implode(',', array_fill(0, count($wlist), '?'));
+                $where_conditions[] = "(d.wattage IN ($placeholders) OR EXISTS (SELECT 1 FROM deliveries dx WHERE dx.project_id = pd.project_id AND dx.warehouse_id = pd.warehouse_id AND dx.wattage IN ($placeholders)))";
+                foreach ($wlist as $w) { $params[] = $w; $param_types .= 'i'; }
+                foreach ($wlist as $w) { $params[] = $w; $param_types .= 'i'; }
+            }
+        }
+    }
 }
 
 // Invoice due date filters
