@@ -3402,7 +3402,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                     </button>
                     <div class="dropdown-content" id="adminDocumentsDropdown">
                         <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 Project Documents</a>
-                        <a href="global_documents.php">🌐 Global Documents</a>
+                        <a href="global_documents.php?project_id=<?php echo $project_id; ?>&from=project_overview">🌐 Global Documents</a>
                     </div>
                 </div>
                 <button onclick="handleAdminWarehousing()">Warehousing</button>
@@ -3436,7 +3436,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                     </button>
                     <div class="dropdown-content" id="customerDocumentsDropdown">
                         <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 Project Documents</a>
-                        <a href="global_documents.php">🌐 Global Documents</a>
+                        <a href="global_documents.php?project_id=<?php echo $project_id; ?>&from=project_overview">🌐 Global Documents</a>
                     </div>
                 </div>
                 <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Exceptions</button>

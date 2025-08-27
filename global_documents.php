@@ -90,6 +90,12 @@ $document_types = [
         'icon' => 'fas fa-gavel',
         'color' => '#6366f1',
         'sub_filters' => []
+    ],
+    'other' => [
+        'name' => 'Other',
+        'icon' => 'fas fa-file-alt',
+        'color' => '#6b7280',
+        'sub_filters' => []
     ]
 ];
 
@@ -101,6 +107,7 @@ $auto_open_upload = isset($_GET['upload']) && $_GET['upload'] === '1';
 $pre_selected_project = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
 $pre_selected_folder = isset($_GET['folder']) ? trim($_GET['folder']) : '';
 $pre_selected_subfolder = isset($_GET['subfolder']) ? trim($_GET['subfolder']) : '';
+$from_page = isset($_GET['from']) ? trim($_GET['from']) : '';
 
 // Map folder keys to document types and sub-types
 $folder_mapping = [
@@ -110,7 +117,8 @@ $folder_mapping = [
     'warehousing' => ['document_type' => 'warehousing', 'subfolders' => ['warehouse_pod' => 'Warehouse POD', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Photos']],
     'modules' => ['document_type' => 'modules', 'subfolders' => ['module_invoice' => 'Module Invoice', 'flash_test_data' => 'Flash Test Data', 'spec_sheet' => 'Spec Sheets']],
     'incident_reports' => ['document_type' => 'incident_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
-    'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']]
+    'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']],
+    'other' => ['document_type' => 'other', 'subfolders' => ['general' => 'General']]
 ];
 
 $pre_selected_document_type = '';
@@ -124,6 +132,19 @@ if (!empty($pre_selected_folder) && isset($folder_mapping[$pre_selected_folder])
     }
 }
 $is_pods_context = ($pre_selected_folder === 'pods');
+
+// Get project name for breadcrumb if coming from project overview
+$project_name = '';
+if ($from_page === 'project_overview' && $pre_selected_project > 0) {
+    $stmt = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
+    $stmt->bind_param("i", $pre_selected_project);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $project_name = $row['project_name'];
+    }
+    $stmt->close();
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1481,7 +1502,11 @@ $is_pods_context = ($pre_selected_folder === 'pods');
     <div class="breadcrumb">
         <a href="dashboard.php">Dashboard</a>
         <span class="separator">&raquo;</span>
-        <a href="documents.php">Documents</a>
+        <?php if ($from_page === 'project_overview' && !empty($project_name)): ?>
+            <a href="project_overview.php?project_id=<?php echo $pre_selected_project; ?>">Project Overview (<?php echo htmlspecialchars($project_name); ?>)</a>
+        <?php else: ?>
+            <a href="documents.php">Documents</a>
+        <?php endif; ?>
         <span class="separator">&raquo;</span>
         <span>Global Documents</span>
     </div>
@@ -1963,14 +1988,42 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
      'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos'],
      'modules': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
      'incident_reports': ['Damage Photo', 'Warranty Document', 'Project POD', 'Warehouse POD'],
-     'safe_harbor_evidence': []
+     'safe_harbor_evidence': [],
+     'other': []
  };
 
 // Initialize page
 document.addEventListener('DOMContentLoaded', function() {
     // Preselect filters from query params (project, folder, subfolder)
     <?php if ($pre_selected_project > 0): ?>
-      document.getElementById('projectFilter').value = '<?php echo $pre_selected_project; ?>';
+      // Verify the project is in the accessible projects list
+      const projectId = '<?php echo $pre_selected_project; ?>';
+      const projectFilter = document.getElementById('projectFilter');
+      
+      // Check if the project option exists in the dropdown
+      const projectOption = Array.from(projectFilter.options).find(option => option.value === projectId);
+      if (projectOption) {
+        projectFilter.value = projectId;
+        console.log('Pre-selected project:', projectId, '- <?php echo addslashes($project_name); ?>');
+        
+        // Auto-apply filters when coming from project overview
+        setTimeout(() => {
+          console.log('Auto-applying filters for project ID:', projectId);
+          applyFilters();
+        }, 500);
+        
+        // Fallback: also trigger on window load if needed
+        window.addEventListener('load', () => {
+          setTimeout(() => {
+            if (!filtersApplied) {
+              console.log('Fallback: Auto-applying filters for project ID:', projectId);
+              applyFilters();
+            }
+          }, 100);
+        });
+      } else {
+        console.log('Project ID', projectId, 'not accessible to current user');
+      }
     <?php endif; ?>
     <?php if (!empty($pre_selected_document_type)): ?>
       document.getElementById('documentTypeFilter').value = '<?php echo $pre_selected_document_type; ?>';
@@ -3446,7 +3499,7 @@ const documentConfig = {
                 {type: 'container_autocomplete', name: 'container_number', label: 'Container Number', required: true}
             ],
             'Delivery SOP': [
-                {type: 'container_autocomplete', name: 'container_number', label: 'Container Number', required: true}
+                // No additional fields required for Delivery SOP - only description
             ]
         }
     },
