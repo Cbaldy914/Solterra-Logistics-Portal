@@ -76,6 +76,8 @@ $wh_bol = trim($_GET['wh_bol'] ?? '');
 $wh_supplier = trim($_GET['wh_supplier'] ?? '');
 $wh_warehouse_id = isset($_GET['wh_warehouse_id']) ? intval($_GET['wh_warehouse_id']) : 0;
 $wh_wattages = isset($_GET['wh_wattages']) ? (array)$_GET['wh_wattages'] : [];
+$mod_supplier = trim($_GET['mod_supplier'] ?? '');
+$mod_wattages = isset($_GET['mod_wattages']) ? (array)$_GET['mod_wattages'] : [];
 // Build the base query with proper permission checking
 $base_sql = "
     SELECT 
@@ -107,13 +109,20 @@ $base_sql = "
         pi.amount as invoice_amount,
         pi.issued_date as invoice_issued_date,
         pi.due_date as invoice_due_date,
-        m.name as manufacturer_name
+        m.name as manufacturer_name,
+        um.vendor_name as module_vendor_name,
+        (
+            SELECT GROUP_CONCAT(DISTINCT umi.wattage ORDER BY umi.wattage SEPARATOR ', ')
+            FROM unassigned_module_items umi
+            WHERE umi.unassigned_module_id = pd.module_id
+        ) as module_wattages
     FROM project_documents pd
     LEFT JOIN users u ON pd.uploaded_by = u.id
     LEFT JOIN deliveries d ON pd.delivery_id = d.id
     LEFT JOIN warehouses w ON pd.warehouse_id = w.id
     LEFT JOIN project_invoices pi ON pd.project_invoice_id = pi.id
     LEFT JOIN manufacturers m ON pd.manufacturer_id = m.id
+    LEFT JOIN modules um ON pd.module_id = um.id
     JOIN projects p ON pd.project_id = p.id
 ";
 
@@ -267,6 +276,23 @@ if (!empty($ship_wattages)) {
     }
 }
 
+// Modules-specific filters (Flash Test Data, Spec Sheets)
+if ($document_type === 'modules') {
+    if (!empty($mod_supplier)) {
+        $where_conditions[] = "(um.vendor_name LIKE ?)";
+        $params[] = '%' . $mod_supplier . '%';
+        $param_types .= 's';
+    }
+    if (!empty($mod_wattages)) {
+        $wlist = array_values(array_filter(array_map('intval', $mod_wattages), function($v){ return $v !== 0 || $v === 0; }));
+        if (!empty($wlist)) {
+            $placeholders = implode(',', array_fill(0, count($wlist), '?'));
+            $where_conditions[] = "EXISTS (SELECT 1 FROM unassigned_module_items umi WHERE umi.unassigned_module_id = pd.module_id AND umi.wattage IN ($placeholders))";
+            foreach ($wlist as $w) { $params[] = $w; $param_types .= 'i'; }
+        }
+    }
+}
+
 // Combine WHERE conditions
 $where_clause = "";
 if (!empty($where_conditions)) {
@@ -392,6 +418,7 @@ $count_sql = "
     LEFT JOIN warehouses w ON pd.warehouse_id = w.id
     LEFT JOIN project_invoices pi ON pd.project_invoice_id = pi.id
     LEFT JOIN manufacturers m ON pd.manufacturer_id = m.id
+    LEFT JOIN modules um ON pd.module_id = um.id
     " . $where_clause;
 
 try {
@@ -461,9 +488,10 @@ try {
             'invoice_amount' => $row['invoice_amount'],
             'invoice_issued_date' => $row['invoice_issued_date'],
             'invoice_due_date' => $row['invoice_due_date'],
-            'manufacturer_name' => ($row['manufacturer_name'] ?: $row['supplier_name']),
+            'manufacturer_name' => ($row['manufacturer_name'] ?: $row['supplier_name'] ?: $row['module_vendor_name']),
             'container_number' => $row['container_number'],
-            'customs_cleared_date' => $row['customs_cleared_date']
+            'customs_cleared_date' => $row['customs_cleared_date'],
+            'module_wattages_label' => $row['module_wattages']
         ];
     }
     $data_stmt->close();
