@@ -158,6 +158,27 @@ try {
             }
         }
 
+        // Incident Reports: require valid ticket_id (warranty_claims.id) and persist in entity_context
+        if ($document_type === 'incident_reports') {
+            $ticket_id = isset($_POST['ticket_id']) ? trim($_POST['ticket_id']) : '';
+            if ($ticket_id === '' || !ctype_digit($ticket_id)) {
+                throw new Exception('Valid Ticket Number is required for incident reports.');
+            }
+            // Validate ticket belongs to selected project
+            $tid = (int)$ticket_id;
+            $stmtT = $conn->prepare("SELECT w.id FROM warranty_claims w JOIN site_scheduling ss ON ss.id = w.scheduling_id WHERE w.id = ? AND ss.project_id = ? LIMIT 1");
+            $stmtT->bind_param("ii", $tid, $project_id);
+            $stmtT->execute();
+            $resT = $stmtT->get_result();
+            if (!$resT || $resT->num_rows === 0) {
+                throw new Exception('Ticket Number not found for the selected project.');
+            }
+            $stmtT->close();
+
+            // Append to entity_context for filtering and traceability
+            $document_data['entity_context'] = trim(($document_data['entity_context'] ?? '') . " | incident_ticket_id:" . $tid);
+        }
+
         // Handle invoice documents - save to project_invoices if it's an invoice
         if ($document_type === 'invoices' && in_array($document_sub_type, ['Solterra Invoice', 'Module Invoice', 'Freight Invoice'])) {
             // Validate required invoice fields for Solterra/Module

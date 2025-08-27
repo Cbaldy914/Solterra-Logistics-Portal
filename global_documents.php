@@ -1408,6 +1408,40 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                     </div>
                 </div>
             </div>
+            <div id="incidentSubfilters" style="display:none;">
+                <div class="filter-grid">
+                    <!-- Ticket number for all incident report tags -->
+                    <div class="filter-group" data-inc-common>
+                        <label class="filter-label" for="incTicketNumber">Ticket Number</label>
+                        <input type="text" id="incTicketNumber" class="filter-input" placeholder="e.g., 123 (warranty_claims.id)">
+                    </div>
+                    <!-- POD-like filters when Project/ Warehouse POD tag selected -->
+                    <div class="filter-group" data-inc-pods>
+                        <label class="filter-label">Delivery Date (Actual)</label>
+                        <div class="date-range-group">
+                            <input type="date" id="incPodsDeliveryStart" class="filter-input" placeholder="Start Date">
+                            <input type="date" id="incPodsDeliveryEnd" class="filter-input" placeholder="End Date">
+                        </div>
+                    </div>
+                    <div class="filter-group" data-inc-pods>
+                        <label class="filter-label" for="incPodsBolNumber">BOL Number</label>
+                        <input type="text" id="incPodsBolNumber" class="filter-input" placeholder="e.g., 8086343">
+                    </div>
+                    <div class="filter-group" data-inc-pods>
+                        <label class="filter-label" for="incPodsManufacturerSelect">Manufacturer</label>
+                        <select id="incPodsManufacturerSelect" class="filter-select">
+                            <option value="">All Manufacturers</option>
+                        </select>
+                    </div>
+                    <div class="filter-group" data-inc-pods style="position: relative;">
+                        <label class="filter-label" for="incPodsWattageDisplay">Wattage</label>
+                        <div>
+                            <input type="text" id="incPodsWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleIncPodsWattageMenu(event)">
+                            <div id="incPodsWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1903,7 +1937,12 @@ function attachSubfilterListeners() {
     const whWhSel = document.getElementById('whWarehouseSelect');
     const whManSel = document.getElementById('whManufacturerSelect');
     const modManSel = document.getElementById('modManufacturerSelect');
-    [podsStart, podsEnd, podsBol, podsMan, invMin, invMax, invStart, invEnd, invBol, invMan, shipStart, shipEnd, shipCont, shipMan, whPodsStart, whPodsEnd, whPodsBol, whPodsMan, whWhSel, whManSel, modManSel].forEach(el => {
+    const incTicket = document.getElementById('incTicketNumber');
+    const incPodsStart = document.getElementById('incPodsDeliveryStart');
+    const incPodsEnd = document.getElementById('incPodsDeliveryEnd');
+    const incPodsBol = document.getElementById('incPodsBolNumber');
+    const incPodsMan = document.getElementById('incPodsManufacturerSelect');
+    [podsStart, podsEnd, podsBol, podsMan, invMin, invMax, invStart, invEnd, invBol, invMan, shipStart, shipEnd, shipCont, shipMan, whPodsStart, whPodsEnd, whPodsBol, whPodsMan, whWhSel, whManSel, modManSel, incTicket, incPodsStart, incPodsEnd, incPodsBol, incPodsMan].forEach(el => {
         if (!el) return;
         const evt = (el.tagName === 'SELECT') ? 'change' : 'input';
         el.addEventListener(evt, () => { if (filtersApplied) { currentPage = 1; loadDocuments(); } });
@@ -1985,6 +2024,12 @@ function toggleModulesSections() {
     const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
     const basic = (chips.includes('Flash Test Data') || chips.includes('Spec Sheets'));
     document.querySelectorAll('#modulesSubfilters [data-modbasic]')?.forEach(el => el.style.display = basic ? '' : 'none');
+}
+
+function toggleIncidentSections() {
+    const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
+    const isPods = chips.includes('Project POD') || chips.includes('Warehouse POD');
+    document.querySelectorAll('#incidentSubfilters [data-inc-pods]')?.forEach(el => el.style.display = isPods ? '' : 'none');
 }
 
 function updateModDynamicFiltersFromDocs(documents) {
@@ -2346,6 +2391,29 @@ async function loadDocuments() {
         if (invDueEnd && invDueEnd.value) filters.invoice_due_end = invDueEnd.value;
         if (invMan && invMan.value) filters.invoice_manufacturer = invMan.value;
 
+        // Incident Reports context filters
+        const incChips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
+        const isInc = document.getElementById('documentTypeFilter').value === 'incident_reports';
+        if (isInc) {
+            const t = document.getElementById('incTicketNumber');
+            if (t && t.value) filters.inc_ticket_id = t.value.trim();
+            if (incChips.includes('Project POD') || incChips.includes('Warehouse POD')) {
+                const s = document.getElementById('incPodsDeliveryStart');
+                const e = document.getElementById('incPodsDeliveryEnd');
+                const b = document.getElementById('incPodsBolNumber');
+                const m = document.getElementById('incPodsManufacturerSelect');
+                const wmenu = document.getElementById('incPodsWattageMenu');
+                if (s && s.value) filters.inc_delivery_start = s.value;
+                if (e && e.value) filters.inc_delivery_end = e.value;
+                if (b && b.value) filters.inc_bol = b.value;
+                if (m && m.value) filters.inc_supplier = m.value;
+                if (wmenu) {
+                    const watts = Array.from(wmenu.querySelectorAll('input[type=\"checkbox\"]:checked')).map(cb => cb.value);
+                    if (watts.length) filters.inc_wattages = watts;
+                }
+            }
+        }
+
         // Modules context filters (Flash Test Data, Spec Sheets)
         const modChips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
         const isModules = document.getElementById('documentTypeFilter').value === 'modules';
@@ -2405,12 +2473,14 @@ async function loadDocuments() {
                 const ships = document.getElementById('shipmentsSubfilters');
                 const wh = document.getElementById('warehousingSubfilters');
                 const mods = document.getElementById('modulesSubfilters');
-                if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; }
-                else if (filtersApplied && type === 'invoices') { ctx.style.display=''; pods.style.display='none'; invoices.style.display=''; ships.style.display='none'; if (wh) wh.style.display='none'; }
-                else if (filtersApplied && type === 'shipments') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display=''; if (wh) wh.style.display='none'; }
-                else if (filtersApplied && type === 'warehousing') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) { wh.style.display=''; toggleWarehousingSections(); } if (mods) mods.style.display='none'; }
-                else if (filtersApplied && type === 'modules') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) { mods.style.display=''; toggleModulesSections(); } }
-                else { pods.style.display = 'none'; invoices.style.display='none'; if (ships) ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; ctx.style.display = 'none'; }
+                const inc = document.getElementById('incidentSubfilters');
+                if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
+                else if (filtersApplied && type === 'invoices') { ctx.style.display=''; pods.style.display='none'; invoices.style.display=''; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
+                else if (filtersApplied && type === 'shipments') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display=''; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
+                else if (filtersApplied && type === 'warehousing') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) { wh.style.display=''; toggleWarehousingSections(); } if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
+                else if (filtersApplied && type === 'modules') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) { mods.style.display=''; toggleModulesSections(); } if (inc) inc.style.display='none'; }
+                else if (filtersApplied && type === 'incident_reports') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) { inc.style.display=''; toggleIncidentSections(); } }
+                else { pods.style.display = 'none'; invoices.style.display='none'; if (ships) ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; ctx.style.display = 'none'; }
             })();
             updatePagination(data.total_count, data.total_pages);
             updateStats();
@@ -2445,6 +2515,7 @@ function renderDocumentsTable(documents) {
     const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
     const showInvMan = showInvCols && chips.includes('Module Invoice');
     const showModBasicCols = (filtersApplied && docType === 'modules' && (chips.includes('Flash Test Data') || chips.includes('Spec Sheets')));
+    const showIncTicket = (filtersApplied && docType === 'incident_reports');
     const showWhPodsCols = (filtersApplied && docType === 'warehousing' && chips.includes('Warehouse POD'));
     const showWhBasicCols = (filtersApplied && docType === 'warehousing' && (chips.includes('Inventory Report') || chips.includes('Photos')) && !chips.includes('Warehouse POD'));
     const tableHTML = `
@@ -2478,13 +2549,14 @@ function renderDocumentsTable(documents) {
                     ${showWhBasicCols ? '<th class="sortable" data-sort="warehouse">Warehouse</th>' : ''}
                     ${showWhBasicCols ? '<th class="sortable" data-sort="manufacturer">Manufacturer</th>' : ''}
                     ${showWhBasicCols ? '<th class="sortable" data-sort="wattage">Wattage</th>' : ''}
+                    ${showIncTicket ? '<th class="sortable" data-sort="ticket">Ticket</th>' : ''}
                     <th class="sortable" data-sort="size">Size</th>
                     <th class="sortable" data-sort="uploaded">Uploaded</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                ${documents.map(doc => renderDocumentRow(doc, showPodsCols, showInvCols, showInvMan, showShipCols, showWhPodsCols, showWhBasicCols, showModBasicCols)).join('')}
+                ${documents.map(doc => renderDocumentRow(doc, showPodsCols, showInvCols, showInvMan, showShipCols, showWhPodsCols, showWhBasicCols, showModBasicCols, undefined, showIncTicket)).join('')}
             </tbody>
         </table>
     `;
@@ -2602,9 +2674,11 @@ function sortDocuments() {
 }
 
 // Render individual document row
-function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showInvMan = false, showShipCols = false, showWhPodsCols = false, showWhBasicCols = false, showModBasicCols = false) {
+function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showInvMan = false, showShipCols = false, showWhPodsCols = false, showWhBasicCols = false, showModBasicCols = false, showIncPodsCols = false, showIncTicket = false) {
     const isSelected = selectedDocuments.has(doc.id);
     const iconStyle = `background: ${getDocumentTypeColor(doc.document_type)}; position: relative;`;
+    const ticketMatch = doc.entity_context ? /incident_ticket_id:(\d+)/.exec(doc.entity_context) : null;
+    const incidentTicket = ticketMatch ? ticketMatch[1] : '';
     
     return `
                  <tr onclick="toggleDocumentSelection(${doc.id}, event)" data-doc-id="${doc.id}">
@@ -2659,6 +2733,11 @@ function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showI
             ${showWhBasicCols ? `<td>${doc.warehouse_name ? escapeHtml(doc.warehouse_name) : ''}</td>` : ''}
             ${showWhBasicCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
             ${showWhBasicCols ? `<td>${doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : ''}</td>` : ''}
+            ${showIncPodsCols ? `<td>${doc.bol_number ? escapeHtml(doc.bol_number) : ''}</td>` : ''}
+            ${showIncPodsCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
+            ${showIncPodsCols ? `<td>${doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : ''}</td>` : ''}
+            ${showIncPodsCols ? `<td>${doc.actual_delivery_date ? formatDate(doc.actual_delivery_date) : ''}</td>` : ''}
+            ${showIncTicket ? `<td>${incidentTicket}</td>` : ''}
             ${showModBasicCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
             ${showModBasicCols ? `<td>${doc.module_wattages_label ? escapeHtml(doc.module_wattages_label) : (doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : '')}</td>` : ''}
             <td>${doc.size}</td>
@@ -2982,13 +3061,17 @@ const documentConfig = {
         'sub_types': ['Damage Photo', 'Warranty Document', 'Project POD', 'Warehouse POD'],
         'fields': {
             'Damage Photo': [
-                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: false}
+                {type: 'select', name: 'ticket_id', label: 'Ticket Number', required: true, data_source: 'tickets'}
             ],
-            'Warranty Document': [],
+            'Warranty Document': [
+                {type: 'select', name: 'ticket_id', label: 'Ticket Number', required: true, data_source: 'tickets'}
+            ],
             'Project POD': [
+                {type: 'select', name: 'ticket_id', label: 'Ticket Number', required: true, data_source: 'tickets'},
                 {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true}
             ],
             'Warehouse POD': [
+                {type: 'select', name: 'ticket_id', label: 'Ticket Number', required: true, data_source: 'tickets'},
                 {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true},
                 {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
             ]
