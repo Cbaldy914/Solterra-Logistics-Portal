@@ -1412,8 +1412,10 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                 <div class="filter-grid">
                     <!-- Ticket number for all incident report tags -->
                     <div class="filter-group" data-inc-common>
-                        <label class="filter-label" for="incTicketNumber">Ticket Number</label>
-                        <input type="text" id="incTicketNumber" class="filter-input" placeholder="e.g., 123 (warranty_claims.id)">
+                        <label class="filter-label" for="incTicketSelect">Ticket Number</label>
+                        <select id="incTicketSelect" class="filter-select">
+                            <option value="">All Tickets</option>
+                        </select>
                     </div>
                     <!-- POD-like filters when Project/ Warehouse POD tag selected -->
                     <div class="filter-group" data-inc-pods>
@@ -1937,7 +1939,7 @@ function attachSubfilterListeners() {
     const whWhSel = document.getElementById('whWarehouseSelect');
     const whManSel = document.getElementById('whManufacturerSelect');
     const modManSel = document.getElementById('modManufacturerSelect');
-    const incTicket = document.getElementById('incTicketNumber');
+    const incTicket = document.getElementById('incTicketSelect');
     const incPodsStart = document.getElementById('incPodsDeliveryStart');
     const incPodsEnd = document.getElementById('incPodsDeliveryEnd');
     const incPodsBol = document.getElementById('incPodsBolNumber');
@@ -2030,6 +2032,28 @@ function toggleIncidentSections() {
     const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
     const isPods = chips.includes('Project POD') || chips.includes('Warehouse POD');
     document.querySelectorAll('#incidentSubfilters [data-inc-pods]')?.forEach(el => el.style.display = isPods ? '' : 'none');
+}
+
+async function loadIncidentFilterOptions() {
+    const projectId = document.getElementById('projectFilter').value || '';
+    try {
+        const tRes = await fetch(`get_tickets.php${projectId ? `?project_id=${projectId}` : ''}`);
+        const tData = await tRes.json();
+        const sel = document.getElementById('incTicketSelect');
+        if (sel && tData.success) {
+            const current = sel.value;
+            sel.innerHTML = '<option value="">All Tickets</option>';
+            tData.data.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.id;
+                opt.textContent = item.name;
+                sel.appendChild(opt);
+            });
+            if (current) sel.value = current;
+        }
+    } catch (e) {
+        console.warn('Failed to load tickets for Incident Reports', e);
+    }
 }
 
 function updateModDynamicFiltersFromDocs(documents) {
@@ -2395,8 +2419,8 @@ async function loadDocuments() {
         const incChips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
         const isInc = document.getElementById('documentTypeFilter').value === 'incident_reports';
         if (isInc) {
-            const t = document.getElementById('incTicketNumber');
-            if (t && t.value) filters.inc_ticket_id = t.value.trim();
+            const t = document.getElementById('incTicketSelect');
+            if (t && t.value) filters.inc_ticket_id = t.value;
             if (incChips.includes('Project POD') || incChips.includes('Warehouse POD')) {
                 const s = document.getElementById('incPodsDeliveryStart');
                 const e = document.getElementById('incPodsDeliveryEnd');
@@ -2479,7 +2503,7 @@ async function loadDocuments() {
                 else if (filtersApplied && type === 'shipments') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display=''; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
                 else if (filtersApplied && type === 'warehousing') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) { wh.style.display=''; toggleWarehousingSections(); } if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
                 else if (filtersApplied && type === 'modules') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) { mods.style.display=''; toggleModulesSections(); } if (inc) inc.style.display='none'; }
-                else if (filtersApplied && type === 'incident_reports') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) { inc.style.display=''; toggleIncidentSections(); } }
+                else if (filtersApplied && type === 'incident_reports') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) { inc.style.display=''; toggleIncidentSections(); loadIncidentFilterOptions(); } }
                 else { pods.style.display = 'none'; invoices.style.display='none'; if (ships) ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; ctx.style.display = 'none'; }
             })();
             updatePagination(data.total_count, data.total_pages);
@@ -2752,6 +2776,7 @@ function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showI
                          <i class=\"fas fa-eye\"></i>
                          Details
                      </a>` : ''}
+                     ${(doc.document_type === 'incident_reports' && (doc.entity_context||'').includes('incident_ticket_id:')) ? (()=>{ try { const m=(doc.entity_context||'').match(/incident_ticket_id:(\d+)/); return m?`<a href=\"warranty_detail.php?id=${m[1]}\" class=\"btn-download\" style=\"background: linear-gradient(135deg, #8b5cf6, #6366f1);\" title=\"View ticket\"><i class=\\"fas fa-ticket-alt\\"></i> Ticket</a>`:'';} catch(e){ return ''; } })() : ''}
                  </div>
              </td>
          </tr>
