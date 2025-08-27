@@ -83,7 +83,7 @@ $document_types = [
         'name' => 'Warehousing',
         'icon' => 'fas fa-warehouse',
         'color' => '#06b6d4',
-        'sub_filters' => []
+        'sub_filters' => ['Warehouse POD', 'Inventory Report', 'Photos']
     ],
     'modules' => [
         'name' => 'Modules',
@@ -125,7 +125,7 @@ $folder_mapping = [
     'invoices' => ['document_type' => 'invoices', 'subfolders' => ['freight_invoice' => 'Freight Invoice', 'solterra_invoice' => 'Solterra Invoice', 'module_invoice' => 'Module Invoice']],
     'pods' => ['document_type' => 'pods', 'subfolders' => ['project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
     'shipments' => ['document_type' => 'shipments', 'subfolders' => ['arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'delivery_sop' => 'Delivery SOP']],
-    'warehousing' => ['document_type' => 'warehousing', 'subfolders' => ['warehouse_pod' => 'Warehouse POD', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo']],
+    'warehousing' => ['document_type' => 'warehousing', 'subfolders' => ['warehouse_pod' => 'Warehouse POD', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Photos']],
     'modules' => ['document_type' => 'modules', 'subfolders' => ['module_invoice' => 'Module Invoice', 'flash_test_data' => 'Flash Test Data', 'spec_sheet' => 'Spec Sheet']],
     'incident_reports' => ['document_type' => 'incident_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
     'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']]
@@ -1359,6 +1359,56 @@ $is_pods_context = ($pre_selected_folder === 'pods');
                     </div>
                 </div>
             </div>
+            <div id="warehousingSubfilters" style="display: none;">
+                <div class="filter-grid">
+                    <!-- For Warehouse POD: mirrors PODs filters -->
+                    <div class="filter-group" data-whpod>
+                        <label class="filter-label">Delivery Date (Actual)</label>
+                        <div class="date-range-group">
+                            <input type="date" id="whPodsDeliveryStart" class="filter-input" placeholder="Start Date">
+                            <input type="date" id="whPodsDeliveryEnd" class="filter-input" placeholder="End Date">
+                        </div>
+                    </div>
+                    <div class="filter-group" data-whpod>
+                        <label class="filter-label" for="whPodsBolNumber">BOL Number</label>
+                        <input type="text" id="whPodsBolNumber" class="filter-input" placeholder="e.g., 8086343">
+                    </div>
+                    <div class="filter-group" data-whpod>
+                        <label class="filter-label" for="whPodsManufacturerSelect">Manufacturer</label>
+                        <select id="whPodsManufacturerSelect" class="filter-select">
+                            <option value="">All Manufacturers</option>
+                        </select>
+                    </div>
+                    <div class="filter-group" data-whpod style="position: relative;">
+                        <label class="filter-label" for="whPodsWattageDisplay">Wattage</label>
+                        <div>
+                            <input type="text" id="whPodsWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleWhPodsWattageMenu(event)">
+                            <div id="whPodsWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                        </div>
+                    </div>
+
+                    <!-- For Inventory Report / Photos: Warehouse, Manufacturer, Wattage -->
+                    <div class="filter-group" data-whbasic>
+                        <label class="filter-label" for="whWarehouseSelect">Warehouse</label>
+                        <select id="whWarehouseSelect" class="filter-select">
+                            <option value="">All Warehouses</option>
+                        </select>
+                    </div>
+                    <div class="filter-group" data-whbasic>
+                        <label class="filter-label" for="whManufacturerSelect">Manufacturer</label>
+                        <select id="whManufacturerSelect" class="filter-select">
+                            <option value="">All Manufacturers</option>
+                        </select>
+                    </div>
+                    <div class="filter-group" data-whbasic style="position: relative;">
+                        <label class="filter-label" for="whWattageDisplay">Wattage</label>
+                        <div>
+                            <input type="text" id="whWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleWhWattageMenu(event)">
+                            <div id="whWattageMenu" class="checkbox-menu" style="display:none; position: fixed; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; z-index: 10000; max-height: 240px; overflow-y: auto; min-width: 220px; box-shadow: 0 10px 30px rgba(0,0,0,0.12);"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1531,7 +1581,7 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
      'pods': ['Warehouse POD', 'Project POD'],
      'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
      'bills_of_lading': ['Inbound BOL', 'Outbound BOL', 'Intercompany BOL'],
-     'warehousing': ['Warehouse POD', 'Inventory Report', 'Warehouse Photo'],
+     'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos'],
      'modules': ['Module Invoice', 'Flash Test Data', 'Data/Spec Sheet'],
      'delivery_packet': ['Complete Packets', 'Partial Packets'],
      'incident_reports': ['Damage Photo', 'Warranty Document', 'Project POD', 'Warehouse POD'],
@@ -1850,7 +1900,13 @@ function attachSubfilterListeners() {
     const shipEnd = document.getElementById('shipClearedEnd');
     const shipCont = document.getElementById('shipContainerNumber');
     const shipMan = document.getElementById('shipManufacturerSelect');
-    [podsStart, podsEnd, podsBol, podsMan, invMin, invMax, invStart, invEnd, invBol, invMan, shipStart, shipEnd, shipCont, shipMan].forEach(el => {
+    const whPodsStart = document.getElementById('whPodsDeliveryStart');
+    const whPodsEnd = document.getElementById('whPodsDeliveryEnd');
+    const whPodsBol = document.getElementById('whPodsBolNumber');
+    const whPodsMan = document.getElementById('whPodsManufacturerSelect');
+    const whWhSel = document.getElementById('whWarehouseSelect');
+    const whManSel = document.getElementById('whManufacturerSelect');
+    [podsStart, podsEnd, podsBol, podsMan, invMin, invMax, invStart, invEnd, invBol, invMan, shipStart, shipEnd, shipCont, shipMan, whPodsStart, whPodsEnd, whPodsBol, whPodsMan, whWhSel, whManSel].forEach(el => {
         if (!el) return;
         const evt = (el.tagName === 'SELECT') ? 'change' : 'input';
         el.addEventListener(evt, () => { if (filtersApplied) { currentPage = 1; loadDocuments(); } });
@@ -1920,6 +1976,152 @@ function toggleSubFilter(element) {
     }
 }
 
+function toggleWarehousingSections() {
+    const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
+    const isPods = chips.includes('Warehouse POD');
+    const basic = (chips.includes('Inventory Report') || chips.includes('Photos')) && !isPods;
+    document.querySelectorAll('#warehousingSubfilters [data-whpod]')?.forEach(el => el.style.display = isPods ? '' : 'none');
+    document.querySelectorAll('#warehousingSubfilters [data-whbasic]')?.forEach(el => el.style.display = basic ? '' : 'none');
+}
+
+function updateWhDynamicFiltersFromDocs(documents) {
+    // Populate warehouse select from docs
+    const whSel = document.getElementById('whWarehouseSelect');
+    if (whSel) {
+        const cur = whSel.value;
+        const items = [];
+        const seen = new Set();
+        documents.forEach(d => {
+            if (d.warehouse_id && d.warehouse_name && !seen.has(d.warehouse_id)) {
+                seen.add(d.warehouse_id);
+                items.push({id: d.warehouse_id, name: d.warehouse_name});
+            }
+        });
+        whSel.innerHTML = '<option value="">All Warehouses</option>';
+        items.sort((a,b)=>a.name.localeCompare(b.name)).forEach(it => {
+            const opt = document.createElement('option');
+            opt.value = it.id;
+            opt.textContent = it.name;
+            whSel.appendChild(opt);
+        });
+        if (cur) whSel.value = cur;
+    }
+    // Manufacturers from docs or suppliers via deliveries
+    const manSel = document.getElementById('whManufacturerSelect');
+    if (manSel) {
+        const cur = manSel.value;
+        const names = new Set();
+        documents.forEach(d => { if (d.manufacturer_name) names.add(String(d.manufacturer_name)); });
+        manSel.innerHTML = '<option value="">All Manufacturers</option>';
+        Array.from(names).sort((a,b)=>a.localeCompare(b)).forEach(name => {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            manSel.appendChild(opt);
+        });
+        if (cur && Array.from(names).includes(cur)) manSel.value = cur;
+    }
+    // Wattage menu from docs
+    const menu = document.getElementById('whWattageMenu');
+    const display = document.getElementById('whWattageDisplay');
+    if (menu && display) {
+        const prev = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+        const set = new Set();
+        documents.forEach(d => { if (d.delivery_wattage) set.add(String(d.delivery_wattage)); });
+        const sorted = Array.from(set).map(v=>parseInt(v,10)).sort((a,b)=>a-b).map(n=>String(n));
+        menu.innerHTML='';
+        sorted.forEach(val => {
+            const wrap = document.createElement('label');
+            wrap.style.display='flex';wrap.style.alignItems='center';wrap.style.gap='8px';wrap.style.padding='4px 2px';
+            const cb = document.createElement('input');
+            cb.type='checkbox'; cb.value=val; if (prev.includes(val)) cb.checked=true;
+            cb.addEventListener('change', ()=>{ updateWhWattageDisplay(); if (filtersApplied) loadDocuments(); });
+            const span = document.createElement('span'); span.textContent=val;
+            wrap.appendChild(cb); wrap.appendChild(span); menu.appendChild(wrap);
+        });
+        updateWhWattageDisplay();
+    }
+    // Warehouse POD variant menus
+    const pmenu = document.getElementById('whPodsWattageMenu');
+    const pdisplay = document.getElementById('whPodsWattageDisplay');
+    if (pmenu && pdisplay) {
+        const prev = Array.from(pmenu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+        const set = new Set();
+        documents.forEach(d => { if (d.delivery_wattage) set.add(String(d.delivery_wattage)); });
+        const sorted = Array.from(set).map(v=>parseInt(v,10)).sort((a,b)=>a-b).map(n=>String(n));
+        pmenu.innerHTML='';
+        sorted.forEach(val => {
+            const wrap = document.createElement('label');
+            wrap.style.display='flex';wrap.style.alignItems='center';wrap.style.gap='8px';wrap.style.padding='4px 2px';
+            const cb = document.createElement('input');
+            cb.type='checkbox'; cb.value=val; if (prev.includes(val)) cb.checked=true;
+            cb.addEventListener('change', ()=>{ updateWhPodsWattageDisplay(); if (filtersApplied) loadDocuments(); });
+            const span = document.createElement('span'); span.textContent=val;
+            wrap.appendChild(cb); wrap.appendChild(span); pmenu.appendChild(wrap);
+        });
+        updateWhPodsWattageDisplay();
+    }
+}
+
+function updateWhWattageDisplay() {
+    const input = document.getElementById('whWattageDisplay');
+    const menu = document.getElementById('whWattageMenu');
+    if (!input || !menu) return;
+    const selected = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    input.value = selected.join(', ');
+}
+function updateWhPodsWattageDisplay() {
+    const input = document.getElementById('whPodsWattageDisplay');
+    const menu = document.getElementById('whPodsWattageMenu');
+    if (!input || !menu) return;
+    const selected = Array.from(menu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    input.value = selected.join(', ');
+}
+function toggleWhWattageMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('whWattageMenu');
+    if (!menu) return;
+    const input = document.getElementById('whWattageDisplay');
+    const rect = input.getBoundingClientRect();
+    const menuWidth = 260;
+    const left = Math.min(rect.left, window.innerWidth - menuWidth - 12);
+    menu.style.left = left + 'px';
+    menu.style.top = (rect.bottom + window.scrollY) + 'px';
+    menu.style.display = (menu.style.display==='block') ? 'none' : 'block';
+    if (menu.style.display==='block') document.addEventListener('click', closeWhWattMenuOnOutside);
+}
+function closeWhWattMenuOnOutside(e) {
+    const menu = document.getElementById('whWattageMenu');
+    const input = document.getElementById('whWattageDisplay');
+    if (!menu || !input) return;
+    if (!menu.contains(e.target) && e.target !== input) {
+        menu.style.display='none';
+        document.removeEventListener('click', closeWhWattMenuOnOutside);
+    }
+}
+function toggleWhPodsWattageMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('whPodsWattageMenu');
+    if (!menu) return;
+    const input = document.getElementById('whPodsWattageDisplay');
+    const rect = input.getBoundingClientRect();
+    const menuWidth = 260;
+    const left = Math.min(rect.left, window.innerWidth - menuWidth - 12);
+    menu.style.left = left + 'px';
+    menu.style.top = (rect.bottom + window.scrollY) + 'px';
+    menu.style.display = (menu.style.display==='block') ? 'none' : 'block';
+    if (menu.style.display==='block') document.addEventListener('click', closeWhPodsWattMenuOnOutside);
+}
+function closeWhPodsWattMenuOnOutside(e) {
+    const menu = document.getElementById('whPodsWattageMenu');
+    const input = document.getElementById('whPodsWattageDisplay');
+    if (!menu || !input) return;
+    if (!menu.contains(e.target) && e.target !== input) {
+        menu.style.display='none';
+        document.removeEventListener('click', closeWhPodsWattMenuOnOutside);
+    }
+}
+
 // Clear all filters
 function clearAllFilters() {
     document.getElementById('projectFilter').value = '';
@@ -1950,6 +2152,14 @@ function clearAllFilters() {
     if (shipManSel) shipManSel.value = '';
     const shipWattMenu = document.getElementById('shipWattageMenu');
     if (shipWattMenu) shipWattMenu.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    if (document.getElementById('whPodsDeliveryStart')) document.getElementById('whPodsDeliveryStart').value = '';
+    if (document.getElementById('whPodsDeliveryEnd')) document.getElementById('whPodsDeliveryEnd').value = '';
+    if (document.getElementById('whPodsBolNumber')) document.getElementById('whPodsBolNumber').value = '';
+    const whPodsMan = document.getElementById('whPodsManufacturerSelect'); if (whPodsMan) whPodsMan.value='';
+    const whPodsMenu = document.getElementById('whPodsWattageMenu'); if (whPodsMenu) whPodsMenu.querySelectorAll('input[type="checkbox"]').forEach(cb=>cb.checked=false);
+    const whWhSel = document.getElementById('whWarehouseSelect'); if (whWhSel) whWhSel.value='';
+    const whManSel2 = document.getElementById('whManufacturerSelect'); if (whManSel2) whManSel2.value='';
+    const whMenu = document.getElementById('whWattageMenu'); if (whMenu) whMenu.querySelectorAll('input[type="checkbox"]').forEach(cb=>cb.checked=false);
     if (pods) pods.style.display = 'none';
     if (ships) ships.style.display = 'none';
     if (ctx) ctx.style.display = 'none';
@@ -2029,6 +2239,38 @@ async function loadDocuments() {
             if (watts.length) filters.ship_wattages = watts;
         }
 
+        // Warehousing context filters
+        const selectedChips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
+        const docTypeVal = document.getElementById('documentTypeFilter').value;
+        const whIsPods = (docTypeVal === 'warehousing' && selectedChips.includes('Warehouse POD'));
+        const whIsBasic = (docTypeVal === 'warehousing' && (selectedChips.includes('Inventory Report') || selectedChips.includes('Photos')));
+        if (whIsPods) {
+            const s = document.getElementById('whPodsDeliveryStart');
+            const e = document.getElementById('whPodsDeliveryEnd');
+            const b = document.getElementById('whPodsBolNumber');
+            const m = document.getElementById('whPodsManufacturerSelect');
+            const wmenu = document.getElementById('whPodsWattageMenu');
+            if (s && s.value) filters.wh_delivery_start = s.value;
+            if (e && e.value) filters.wh_delivery_end = e.value;
+            if (b && b.value) filters.wh_bol = b.value;
+            if (m && m.value) filters.wh_supplier = m.value;
+            if (wmenu) {
+                const watts = Array.from(wmenu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+                if (watts.length) filters.wh_wattages = watts;
+            }
+        }
+        if (whIsBasic) {
+            const whSel = document.getElementById('whWarehouseSelect');
+            const manSel = document.getElementById('whManufacturerSelect');
+            const wmenu = document.getElementById('whWattageMenu');
+            if (whSel && whSel.value) filters.wh_warehouse_id = whSel.value;
+            if (manSel && manSel.value) filters.wh_supplier = manSel.value;
+            if (wmenu) {
+                const watts = Array.from(wmenu.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+                if (watts.length) filters.wh_wattages = watts;
+            }
+        }
+
         // Invoices context filters
         const invMin = document.getElementById('invTotalMin');
         const invMax = document.getElementById('invTotalMax');
@@ -2076,6 +2318,8 @@ async function loadDocuments() {
             } else if (filtersApplied && docType === 'shipments') {
                 updateShipManufacturersFromDocs(data.documents);
                 updateShipWattagesFromDocs(data.documents);
+            } else if (filtersApplied && docType === 'warehousing') {
+                updateWhDynamicFiltersFromDocs(data.documents);
             }
             // Update subfilters visibility according to Apply state
             (function(){
@@ -2084,10 +2328,12 @@ async function loadDocuments() {
                 const pods = document.getElementById('podsSubfilters');
                 const invoices = document.getElementById('invoicesSubfilters');
                 const ships = document.getElementById('shipmentsSubfilters');
-                if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; invoices.style.display='none'; ships.style.display='none'; }
-                else if (filtersApplied && type === 'invoices') { ctx.style.display=''; pods.style.display='none'; invoices.style.display=''; ships.style.display='none'; }
-                else if (filtersApplied && type === 'shipments') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display=''; }
-                else { pods.style.display = 'none'; invoices.style.display='none'; if (ships) ships.style.display='none'; ctx.style.display = 'none'; }
+                const wh = document.getElementById('warehousingSubfilters');
+                if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; }
+                else if (filtersApplied && type === 'invoices') { ctx.style.display=''; pods.style.display='none'; invoices.style.display=''; ships.style.display='none'; if (wh) wh.style.display='none'; }
+                else if (filtersApplied && type === 'shipments') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display=''; if (wh) wh.style.display='none'; }
+                else if (filtersApplied && type === 'warehousing') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) { wh.style.display=''; toggleWarehousingSections(); } }
+                else { pods.style.display = 'none'; invoices.style.display='none'; if (ships) ships.style.display='none'; if (wh) wh.style.display='none'; ctx.style.display = 'none'; }
             })();
             updatePagination(data.total_count, data.total_pages);
             updateStats();
@@ -2121,6 +2367,8 @@ function renderDocumentsTable(documents) {
     const showShipCols = (filtersApplied && docType === 'shipments');
     const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
     const showInvMan = showInvCols && chips.includes('Module Invoice');
+    const showWhPodsCols = (filtersApplied && docType === 'warehousing' && chips.includes('Warehouse POD'));
+    const showWhBasicCols = (filtersApplied && docType === 'warehousing' && (chips.includes('Inventory Report') || chips.includes('Photos')) && !chips.includes('Warehouse POD'));
     const tableHTML = `
         <table class="documents-table">
             <thead>
@@ -2143,13 +2391,20 @@ function renderDocumentsTable(documents) {
                     ${showInvCols ? '<th class="sortable" data-sort="inv_amount">Invoice Total</th>' : ''}
                     ${showInvCols ? '<th class="sortable" data-sort="inv_date">Invoice Date</th>' : ''}
                     ${showInvCols ? '<th class="sortable" data-sort="inv_due">Due Date</th>' : ''}
+                    ${showWhPodsCols ? '<th class="sortable" data-sort="bol">BOL</th>' : ''}
+                    ${showWhPodsCols ? '<th class="sortable" data-sort="manufacturer">Manufacturer</th>' : ''}
+                    ${showWhPodsCols ? '<th class="sortable" data-sort="wattage">Wattage</th>' : ''}
+                    ${showWhPodsCols ? '<th class="sortable" data-sort="delivered">Delivered</th>' : ''}
+                    ${showWhBasicCols ? '<th class="sortable" data-sort="warehouse">Warehouse</th>' : ''}
+                    ${showWhBasicCols ? '<th class="sortable" data-sort="manufacturer">Manufacturer</th>' : ''}
+                    ${showWhBasicCols ? '<th class="sortable" data-sort="wattage">Wattage</th>' : ''}
                     <th class="sortable" data-sort="size">Size</th>
                     <th class="sortable" data-sort="uploaded">Uploaded</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                ${documents.map(doc => renderDocumentRow(doc, showPodsCols, showInvCols, showInvMan, showShipCols)).join('')}
+                ${documents.map(doc => renderDocumentRow(doc, showPodsCols, showInvCols, showInvMan, showShipCols, showWhPodsCols, showWhBasicCols)).join('')}
             </tbody>
         </table>
     `;
@@ -2250,6 +2505,11 @@ function sortDocuments() {
                 const B = new Date(b.invoice_issued_date || 0).getTime();
                 return (A - B) * dir;
             }
+            case 'warehouse': {
+                const A = (a.warehouse_name || '').toLowerCase();
+                const B = (b.warehouse_name || '').toLowerCase();
+                return A > B ? dir : A < B ? -dir : 0;
+            }
             default:
                 return 0;
         }
@@ -2262,7 +2522,7 @@ function sortDocuments() {
 }
 
 // Render individual document row
-function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showInvMan = false, showShipCols = false) {
+function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showInvMan = false, showShipCols = false, showWhPodsCols = false, showWhBasicCols = false) {
     const isSelected = selectedDocuments.has(doc.id);
     const iconStyle = `background: ${getDocumentTypeColor(doc.document_type)};`;
     
@@ -2311,6 +2571,13 @@ function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showI
             ${showShipCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
             ${showShipCols ? `<td>${doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : ''}</td>` : ''}
             ${showShipCols ? `<td>${doc.customs_cleared_date ? formatDate(doc.customs_cleared_date) : ''}</td>` : ''}
+            ${showWhPodsCols ? `<td>${doc.bol_number ? escapeHtml(doc.bol_number) : ''}</td>` : ''}
+            ${showWhPodsCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
+            ${showWhPodsCols ? `<td>${doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : ''}</td>` : ''}
+            ${showWhPodsCols ? `<td>${doc.actual_delivery_date ? formatDate(doc.actual_delivery_date) : ''}</td>` : ''}
+            ${showWhBasicCols ? `<td>${doc.warehouse_name ? escapeHtml(doc.warehouse_name) : ''}</td>` : ''}
+            ${showWhBasicCols ? `<td>${doc.manufacturer_name ? escapeHtml(doc.manufacturer_name) : ''}</td>` : ''}
+            ${showWhBasicCols ? `<td>${doc.delivery_wattage ? escapeHtml(String(doc.delivery_wattage)) : ''}</td>` : ''}
             <td>${doc.size}</td>
             <td>${formatDate(doc.uploaded_at)}</td>
              <td>
@@ -2598,7 +2865,7 @@ const documentConfig = {
         }
     },
     'warehousing': {
-        'sub_types': ['Warehouse POD', 'Inventory Report', 'Warehouse Photo'],
+        'sub_types': ['Warehouse POD', 'Inventory Report', 'Photos'],
         'fields': {
             'Warehouse POD': [
                 {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true},
@@ -2607,7 +2874,7 @@ const documentConfig = {
             'Inventory Report': [
                 {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
             ],
-            'Warehouse Photo': [
+            'Photos': [
                 {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
             ]
         }
@@ -2729,23 +2996,6 @@ async function updateDynamicFields() {
             html += `<select id="${field.name}" name="${field.name}" class="form-select" ${field.required ? 'required' : ''} onchange="validateForm()">
                 <option value="">Choose ${field.label.toLowerCase()}...</option>
             </select>`;
-            
-            // Load data for select fields
-            try {
-                const response = await fetch(`get_${field.data_source}.php?project_id=${document.getElementById('uploadProjectSelect').value}`);
-                const data = await response.json();
-                if (data.success) {
-                    const selectElement = document.getElementById(field.name);
-                    data.data.forEach(item => {
-                        const option = document.createElement('option');
-                        option.value = item.id;
-                        option.textContent = item.name || item.bol_number || item.location_name;
-                        selectElement.appendChild(option);
-                    });
-                }
-            } catch (error) {
-                console.warn(`Failed to load ${field.data_source}:`, error);
-            }
         } else if (field.type === 'number') {
             html += `<input type="number" id="${field.name}" name="${field.name}" class="form-input" 
                 ${field.required ? 'required' : ''} ${field.step ? `step="${field.step}"` : ''} 
@@ -2764,6 +3014,29 @@ async function updateDynamicFields() {
     
     dynamicFields.innerHTML = html;
     dynamicFields.style.display = 'block';
+
+    // Populate select data sources after DOM insertion
+    for (const field of fields) {
+        if (field.type === 'select' && field.data_source) {
+            try {
+                const response = await fetch(`get_${field.data_source}.php?project_id=${document.getElementById('uploadProjectSelect').value}`);
+                const data = await response.json();
+                if (data.success) {
+                    const selectElement = document.getElementById(field.name);
+                    if (!selectElement) continue;
+                    data.data.forEach(item => {
+                        const option = document.createElement('option');
+                        option.value = item.id;
+                        option.textContent = item.name || item.bol_number || item.location_name;
+                        selectElement.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.warn(`Failed to load ${field.data_source}:`, error);
+            }
+        }
+    }
+
     validateForm();
 }
 
