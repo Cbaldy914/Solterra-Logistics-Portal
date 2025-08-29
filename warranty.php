@@ -342,8 +342,8 @@ document.addEventListener('DOMContentLoaded', function() {
       { data: 3 },
       { data: 4, render: data => statusBadge(data) },
       { data: 5, render: function(data, type, row) {
-          // Replacement Details column
-          if (row[4].includes('Approved') && row[11]) { // row[11] = resolution_type
+          // Replacement Details column - show for approved/closed tickets with resolution
+          if ((row[4].includes('Approved') || row[4] === 'Closed') && row[11]) { // row[11] = resolution_type
             if (row[11] === 'Credit' && row[12] && parseFloat(row[12]) > 0) { // row[12] = credit_amount
               return resolutionBadge('Credit', parseFloat(row[12]).toFixed(2));
             } else if (row[11] === 'Replacement' && row[13]) { // row[13] = replacement_status
@@ -356,21 +356,44 @@ document.addEventListener('DOMContentLoaded', function() {
           return '-';
         }},
       { data: 6, render: function(data, type, row) {
-          // Estimated Delivery column
-          if (row[4].includes('Approved') && row[11] === 'Replacement' && data) {
-            return new Date(data).toLocaleDateString();
+          // Estimated Delivery column - show for approved/closed replacement tickets
+          if ((row[4].includes('Approved') || row[4] === 'Closed') && row[11] === 'Replacement' && data) {
+            // For date-only fields (YYYY-MM-DD), parse as local date to avoid UTC conversion
+            const parts = data.split('-');
+            if (parts.length === 3) {
+              const date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+              return date.toLocaleDateString();
+            }
           }
           return '-';
         }},
       { data: 14, render: function(data, type, row) {
-          // Actual Delivery column - show when replacement is delivered to project
-          if (row[4].includes('Approved') && row[11] === 'Replacement' && row[13] === 'Delivered to Project' && data) {
-            return new Date(data).toLocaleDateString();
+          // Actual Delivery column - show for approved/closed replacement tickets that were delivered
+          if ((row[4].includes('Approved') || row[4] === 'Closed') && row[11] === 'Replacement' && row[13] === 'Delivered to Project' && data) {
+            const parts = data.split('-');
+            if (parts.length === 3) {
+              const date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+              return date.toLocaleDateString();
+            }
           }
           return '-';
         }},
-      { data: 7, render: data => new Date(data).toLocaleString() },
-      { data: 8, render: data => new Date(data).toLocaleString() },
+      { data: 7, render: function(data, type, row) {
+          // Opened column (created_at) - handle datetime properly
+          if (data) {
+            const date = new Date(data);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+          }
+          return '-';
+        }},
+      { data: 8, render: function(data, type, row) {
+          // Last Update column - handle datetime properly  
+          if (data) {
+            const date = new Date(data);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+          }
+          return '-';
+        }},
       { data: null, orderable:false, searchable:false, render: (row)=> `<button class=\"icon-btn\" title=\"Open\" onclick=\"event.stopPropagation(); window.location='warranty_detail.php?id=${row[0]}'\">▶</button>` }
     ]
   });
