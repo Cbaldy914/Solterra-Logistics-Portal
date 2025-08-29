@@ -74,7 +74,7 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Incident Reports - <?php echo htmlspecialchars($project_name); ?></title>
+    <title>Exception Reports - <?php echo htmlspecialchars($project_name); ?></title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/png">
     <link rel="shortcut icon" href="pictures/favicon.png" type="image/png">
@@ -616,11 +616,11 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
         <span class="separator">&raquo;</span>
         <a href="project_documents.php?project_id=<?php echo $project_id; ?>">Project Documents</a>
         <span class="separator">&raquo;</span>
-        <span>Incident Reports</span>
+        <span>Exception Reports</span>
     </div>
     
     <div class="page-header">
-        <h1>Incident Reports</h1>
+        <h1>Exception Reports</h1>
         <?php if ($can_upload): ?>
             <button class="upload-button" onclick="openUploadModal()">
                 <i class="fas fa-plus"></i>
@@ -656,7 +656,7 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
         <div id="documents-list">
         <div class="empty-state">
             <div class="empty-state-icon">⚠️</div>
-                <h3>Loading Incident Reports...</h3>
+                <h3>Loading Exception Reports...</h3>
                 <p><i class="fas fa-spinner fa-spin"></i> Please wait while we load your documents.</p>
             </div>
         </div>
@@ -691,7 +691,7 @@ $can_upload = in_array($user_role, ['admin', 'global_admin']);
     </div>
 
                     <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-                    <input type="hidden" name="document_type" value="incident_reports">
+                    <input type="hidden" name="document_type" value="exception_reports">
 
                     <div class="progress-bar" id="progressBar">
                         <div class="progress-fill" id="progressFill"></div>
@@ -734,7 +734,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     function loadDocuments() {
-        fetch(`get_project_documents.php?project_id=${projectId}&document_type=incident_reports`)
+        fetch(`get_project_documents.php?project_id=${projectId}&document_type=exception_reports`)
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
@@ -756,8 +756,8 @@ document.addEventListener('DOMContentLoaded', function() {
             documentsList.innerHTML = `
         <div class="empty-state">
             <div class="empty-state-icon">⚠️</div>
-            <h3>No Incident Reports Found</h3>
-            <p>Incident reports will appear here once uploaded for this project.</p>
+            <h3>No Exception Reports Found</h3>
+            <p>Exception reports will appear here once uploaded for this project.</p>
                     ${canUpload ? '<p><button class="upload-button" onclick="openUploadModal()"><i class="fas fa-plus"></i> Upload First Document</button></p>' : ''}
                 </div>
             `;
@@ -1048,7 +1048,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 formData.append('document', file);
                 formData.append('description', description);
                 formData.append('project_id', projectId);
-                formData.append('document_type', 'incident_reports');
+                formData.append('document_type', 'exception_reports');
 
                 await new Promise((resolve, reject) => {
                     const xhr = new XMLHttpRequest();
