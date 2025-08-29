@@ -116,7 +116,7 @@ $folder_mapping = [
     'shipments' => ['document_type' => 'shipments', 'subfolders' => ['arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'delivery_sop' => 'Delivery SOP']],
     'warehousing' => ['document_type' => 'warehousing', 'subfolders' => ['warehouse_pod' => 'Warehouse POD', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Photos']],
     'modules' => ['document_type' => 'modules', 'subfolders' => ['module_invoice' => 'Module Invoice', 'flash_test_data' => 'Flash Test Data', 'spec_sheet' => 'Spec Sheets']],
-    'exception_reports' => ['document_type' => 'exception_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'proof_of_completion' => 'Proof of Completion', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
+    'exception_reports' => ['document_type' => 'exception_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'proof_of_completion' => 'Proof of Completion', 'safety_incident' => 'Safety Incident', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
     'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']],
     'other' => ['document_type' => 'other', 'subfolders' => ['general' => 'General']]
 ];
@@ -1986,7 +1986,7 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
      'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
      'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos'],
      'modules': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
-     'exception_reports': ['Damage Photo', 'Warranty Document', 'Proof of Completion', 'Project POD', 'Warehouse POD'],
+     'exception_reports': ['Damage Photo', 'Warranty Document', 'Proof of Completion', 'Safety Incident', 'Project POD', 'Warehouse POD'],
      'safe_harbor_evidence': [],
      'other': []
  };
