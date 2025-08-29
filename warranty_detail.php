@@ -338,7 +338,25 @@ $conn->close();
                     $galleryId = 'all_pics_' . (int)$claimId;
                     $viewAllId = 'view_all_' . (int)$claimId;
                 ?>
-                <?php if (empty($pictures)): ?>
+                <?php
+                    // Load incident report documents tied to this ticket from project_documents
+                    $incidentDocs = [];
+                    try {
+                        $connDocs = getDBConnection();
+                        if ($connDocs) {
+                            $like = '%incident_ticket_id:' . (int)$claimId . '%';
+                            $stmtD = $connDocs->prepare("SELECT id, document_sub_type, original_file_name, file_path, mime_type, uploaded_at, description FROM project_documents WHERE project_id = ? AND document_type = 'incident_reports' AND is_active = 1 AND entity_context LIKE ? ORDER BY uploaded_at DESC");
+                            $pidDocs = (int)$claim['project_id'];
+                            $stmtD->bind_param('is', $pidDocs, $like);
+                            $stmtD->execute();
+                            $rd = $stmtD->get_result();
+                            while ($r = $rd->fetch_assoc()) { $incidentDocs[] = $r; }
+                            $stmtD->close();
+                            $connDocs->close();
+                        }
+                    } catch (Exception $e) { /* ignore and fall back */ }
+                ?>
+                <?php if (empty($pictures) && empty($incidentDocs)): ?>
                     <div class="help-text">No attachments uploaded yet.</div>
                 <?php else: ?>
                     <div class="gallery">
@@ -356,13 +374,26 @@ $conn->close();
                                 <?php endif; ?>
                             </div>
                         <?php endforeach; ?>
-                        <?php if ($isAdmin): ?>
-                        <label for="upload_docs" class="upload-card" style="min-width:140px;">
-                            <div class="icon">＋</div>
-                            <div style="font-weight:600;">Add Documents</div>
-                            <div style="font-size:12px; color:#6c757d;">PDF, PNG, JPG, WEBP</div>
-                        </label>
-                        <?php endif; ?>
+                        <?php foreach ($incidentDocs as $doc): $isImg = preg_match('/^image\//i', (string)$doc['mime_type']); ?>
+                            <div>
+                                <a href="<?php echo htmlspecialchars($doc['file_path']); ?>" target="_blank" title="<?php echo htmlspecialchars($doc['document_sub_type'] . ' • ' . ($doc['original_file_name'] ?? '')); ?>">
+                                    <?php if ($isImg): ?>
+                                        <img src="<?php echo htmlspecialchars($doc['file_path']); ?>" alt="<?php echo htmlspecialchars($doc['original_file_name'] ?? 'Document'); ?>">
+                                    <?php else: ?>
+                                        <div style="padding:16px; text-align:center;">
+                                            📄 <?php echo htmlspecialchars($doc['document_sub_type'] ?: 'Document'); ?><br>
+                                            <span style="font-size:12px;color:#6c757d;"><?php echo htmlspecialchars($doc['original_file_name'] ?? ''); ?></span>
+                                        </div>
+                                    <?php endif; ?>
+                                </a>
+                                <?php if ($isAdmin): ?>
+                                    <div class="mt-1">
+                                        <label class="form-check-label small"><input type="checkbox" class="form-check-input delete-project-doc" value="<?php echo (int)$doc['id']; ?>"> Delete</label>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        <?php endforeach; ?>
+                        <?php if ($isAdmin): ?><?php endif; ?>
                     </div>
                     <?php if ($hasMorePics): ?>
                         <div class="mt-2">
@@ -387,19 +418,232 @@ $conn->close();
                     <?php endif; ?>
                 <?php endif; ?>
                 <?php if ($isAdmin): ?>
-                    <div class="mt-3">
-                        <!-- Hidden input bound to the Add Documents tile above -->
-                        <input id="upload_docs" type="file" name="proof_files[]" multiple accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none;">
-                        <div id="upload_docs_preview" class="file-pills" style="display:none;"></div>
-                        <div class="d-flex justify-content-end mt-2">
-                            <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Update Attachments</button>
-                        </div>
+                    <div class="mt-3 d-flex justify-content-end" style="gap:10px;">
+                        <!-- Open new Incident Report upload modal -->
+                        <button type="button" class="btn btn-primary" onclick="openIncidentUploadModal()">
+                            <i class="fas fa-upload me-2"></i>Upload Attachments
+                        </button>
+                        <script>
+                        // Ensure the click handler exists even if main script is deferred/gated
+                        if (typeof window.openIncidentUploadModal !== 'function') {
+                            window.openIncidentUploadModal = function(){
+                                var m = document.getElementById('incidentUploadModal');
+                                if (m) { m.style.display = 'block'; }
+                            };
+                        }
+                        </script>
+                        <!-- Delete selected attachments (pictures + ticket docs) -->
+                        <button type="button" onclick="deleteSelectedAttachments()" style="background: linear-gradient(135deg, #ef4444, #dc2626); color:#fff; border:none; border-radius:12px; padding:10px 16px; font-weight:700; display:inline-flex; align-items:center; gap:8px; cursor:pointer;">
+                            <i class="fas fa-trash"></i>Delete
+                        </button>
                     </div>
                 </form>
                 <?php endif; ?>
             </div>
         </div>
     </div>
+
+    <?php if ($isAdmin): ?>
+    <!-- Incident Report Upload Modal -->
+    <div id="incidentUploadModal" class="modal" style="display:none; z-index:10000;">
+        <div class="modal-content" style="max-width:720px;width:90%;">
+            <span class="close" onclick="closeIncidentUploadModal()" title="Close">&times;</span>
+            <h2 style="margin-top:0;">Upload Incident Report Documents</h2>
+            <p style="margin-top:4px;color:#6c757d;">Project: <strong><?php echo htmlspecialchars($claim['project_name']); ?></strong> • Ticket #: <strong><?php echo (int)$claimId; ?></strong></p>
+            <div class="hr" style="height:1px;background:#eef2f6;margin:12px 0 16px;"></div>
+
+            <div class="admin-form-row full">
+                <div class="admin-form-group">
+                    <label class="form-label">Document Sub-Type</label>
+                    <select id="irDocSubType" class="form-select" required>
+                        <option value="">Choose sub-type...</option>
+                        <option value="Damage Photo">Damage Photo</option>
+                        <option value="Warranty Document">Warranty Document</option>
+                        <option value="Project POD">Project POD</option>
+                        <option value="Warehouse POD">Warehouse POD</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="admin-form-row full">
+                <div class="admin-form-group">
+                    <label class="form-label">Description (Optional)</label>
+                    <textarea id="irDescription" class="form-control" rows="3" placeholder="Enter a description..."></textarea>
+                </div>
+            </div>
+
+            <div class="admin-form-row full">
+                <div class="admin-form-group">
+                    <div id="irUploadArea" class="upload-card" style="height:auto;min-height:110px;align-items:center;" onclick="document.getElementById('irFiles').click()">
+                        <div class="icon">＋</div>
+                        <div style="font-weight:600;">Drop photos here or click to browse</div>
+                        <div style="font-size:12px; color:#6c757d;">Supports: JPG, JPEG, PNG, WEBP, GIF (Max 50MB each)</div>
+                    </div>
+                    <input id="irFiles" type="file" accept=".jpg,.jpeg,.png,.webp,.gif" multiple style="display:none;" onchange="irHandleFiles(event)">
+                    <div id="irFileList" class="file-pills" style="margin-top:10px;"></div>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-end" style="gap:10px; margin-top:10px;">
+                <button type="button" class="btn-secondary" onclick="closeIncidentUploadModal()">Cancel</button>
+                <button type="button" id="irUploadBtn" class="btn btn-primary" onclick="irUpload()" disabled>
+                    <i class="fas fa-upload me-2"></i>Upload
+                </button>
+            </div>
+            <div id="irProgress" style="display:none;margin-top:10px;color:#6c757d;">Uploading...</div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <?php if ($isAdmin): ?>
+    <script>
+    // Guards to ensure handlers exist even if main block hasn't executed yet
+    (function(){
+        if (typeof window.selectedIrFiles === 'undefined') window.selectedIrFiles = [];
+        if (typeof window.irRenderFiles !== 'function') {
+            window.irRenderFiles = function(){
+                var list = document.getElementById('irFileList');
+                if (!list) return;
+                if (!window.selectedIrFiles.length){ list.innerHTML=''; return; }
+                list.innerHTML = window.selectedIrFiles.map(function(f,i){
+                    var size=(f.size/1024/1024).toFixed(2)+' MB';
+                    return '<div class="file-pill" style="display:inline-flex;align-items:center;gap:8px;border:1px solid #e1e6ea;border-radius:20px;padding:6px 10px;margin:4px 6px;background:#fff;">'
+                        + '<span style="font-weight:600;">'+ (f.name||'file') +'</span>'
+                        + '<span style="color:#6c757d;font-size:12px;">'+size+'</span>'
+                        + '<button type="button" onclick="irRemoveFile('+i+')" style="border:none;background:#f1f3f5;color:#7a7f85;border-radius:12px;padding:2px 8px;cursor:pointer;">Remove</button>'
+                        + '</div>';
+                }).join('');
+            };
+        }
+        if (typeof window.irValidate !== 'function') {
+            window.irValidate = function(){
+                var sub = document.getElementById('irDocSubType');
+                var btn = document.getElementById('irUploadBtn');
+                if (!sub || !btn) return;
+                var ok = !!sub.value && window.selectedIrFiles.length>0;
+                btn.disabled = !ok;
+            };
+        }
+        if (typeof window.irHandleFiles !== 'function') {
+            window.irHandleFiles = function(e){
+                var files = Array.from((e && e.target && e.target.files) ? e.target.files : []);
+                window.selectedIrFiles = window.selectedIrFiles.concat(files);
+                window.irRenderFiles();
+                window.irValidate();
+            };
+        }
+        if (typeof window.irRemoveFile !== 'function') {
+            window.irRemoveFile = function(idx){
+                window.selectedIrFiles.splice(idx,1);
+                window.irRenderFiles();
+                window.irValidate();
+            };
+        }
+        if (typeof window.closeIncidentUploadModal !== 'function') {
+            window.closeIncidentUploadModal = function(){
+                var m = document.getElementById('incidentUploadModal');
+                if (m) m.style.display='none';
+                var sel = document.getElementById('irDocSubType'); if (sel) sel.value='';
+                var d = document.getElementById('irDescription'); if (d) d.value='';
+                window.selectedIrFiles = [];
+                window.irRenderFiles();
+                window.irValidate();
+            };
+        }
+        if (typeof window.irUpload !== 'function') {
+            window.irUpload = async function(){
+                if (!window.selectedIrFiles.length) return;
+                var subEl = document.getElementById('irDocSubType');
+                var descEl = document.getElementById('irDescription');
+                if (!subEl || !subEl.value) { alert('Please choose a document sub-type.'); return; }
+                var form = new FormData();
+                form.append('project_id', '<?php echo (int)$claim['project_id']; ?>');
+                form.append('document_type', 'incident_reports');
+                form.append('document_sub_type', subEl.value);
+                form.append('ticket_id', '<?php echo (int)$claimId; ?>');
+                form.append('description', descEl && descEl.value ? descEl.value : '');
+                window.selectedIrFiles.forEach(function(f){ form.append('files[]', f); });
+                var prog = document.getElementById('irProgress');
+                var btn = document.getElementById('irUploadBtn');
+                if (prog) prog.style.display='block';
+                if (btn) btn.disabled = true;
+                try {
+                    var resp = await fetch('upload_global_document.php', { method:'POST', body: form });
+                    var data = await resp.json();
+                    if (data && data.success) {
+                        alert('Documents uploaded successfully');
+                        window.closeIncidentUploadModal();
+                        // optional: trigger page reload or refresh section
+                    } else {
+                        alert('Upload failed: ' + (data && data.message ? data.message : 'Unknown error'));
+                    }
+                } catch (err) {
+                    alert('Upload failed: ' + err.message);
+                } finally {
+                    if (prog) prog.style.display='none';
+                    if (btn) btn.disabled = false;
+                }
+            };
+        }
+        // Delete selected attachments: project documents via AJAX, legacy pictures via form submit
+        if (typeof window.deleteSelectedAttachments !== 'function') {
+            window.deleteSelectedAttachments = async function(){
+                var docChecks = Array.from(document.querySelectorAll('.delete-project-doc:checked'));
+                var picChecks = Array.from(document.querySelectorAll('input[name="delete_pictures[]"]:checked'));
+                if (docChecks.length === 0 && picChecks.length === 0) { alert('Select at least one attachment to delete.'); return; }
+                if (!confirm('Delete selected attachment(s)? This action cannot be undone.')) return;
+
+                // Delete project documents first via API
+                if (docChecks.length > 0) {
+                    try {
+                        var ids = docChecks.map(function(cb){ return parseInt(cb.value, 10); }).filter(function(v){return v>0;});
+                        var resp = await fetch('delete_project_documents.php', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ ids: ids })
+                        });
+                        var data = await resp.json();
+                        if (!data || (!data.success && (!data.deleted_ids || data.deleted_ids.length===0))) {
+                            alert('Failed to delete some project documents.');
+                        }
+                    } catch (e) {
+                        alert('Error deleting documents: ' + e.message);
+                    }
+                }
+
+                // If any legacy pictures selected, submit the form to process deletions
+                if (picChecks.length > 0) {
+                    // Find the nearest form (attachments form wraps this area)
+                    var btn = document.activeElement;
+                    // Fallback: find the form by traversing
+                    var form = btn && btn.closest ? btn.closest('form') : null;
+                    if (!form) {
+                        form = document.querySelector('form[action="process_warranty_update.php"]');
+                    }
+                    if (form) {
+                        form.submit();
+                        return;
+                    }
+                }
+                // Otherwise reload to reflect changes
+                window.location.reload();
+            };
+        }
+        // Basic drag-over styling safe-guard
+        var area = document.getElementById('irUploadArea');
+        if (area && !area.__dragBound) {
+            area.addEventListener('dragover', function(e){ e.preventDefault(); area.style.borderColor='#488C9A'; });
+            area.addEventListener('dragleave', function(e){ e.preventDefault(); area.style.borderColor='#d0d0d0'; });
+            area.addEventListener('drop', function(e){
+                e.preventDefault(); area.style.borderColor='#d0d0d0';
+                var files = Array.from(e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files : []);
+                if (files.length){ window.selectedIrFiles = window.selectedIrFiles.concat(files); window.irRenderFiles(); window.irValidate(); }
+            });
+            area.__dragBound = true;
+        }
+    })();
+    </script>
+    <?php endif; ?>
 
     <?php if ($isAdmin): ?>
     <form method="post" action="process_warranty_update.php" enctype="multipart/form-data">
@@ -455,7 +699,104 @@ $conn->close();
                                             <label class="form-label req">Credit Amount</label>
                                             <input type="number" step="0.01" class="form-control" name="credit_amount" value="<?php echo htmlspecialchars((string)$claim['credit_amount']); ?>" placeholder="0.00">
                                         </div>
-                                    </div>
+</div>
+
+<?php if ($isAdmin): ?>
+<script>
+// Modal controls
+function openIncidentUploadModal(){
+    document.getElementById('incidentUploadModal').style.display='block';
+}
+function closeIncidentUploadModal(){
+    document.getElementById('incidentUploadModal').style.display='none';
+    // reset fields
+    document.getElementById('irDocSubType').value='';
+    document.getElementById('irDescription').value='';
+    selectedIrFiles = [];
+    irRenderFiles();
+    irValidate();
+}
+
+// File selection
+let selectedIrFiles = [];
+function irHandleFiles(e){
+    const files = Array.from(e.target.files||[]);
+    selectedIrFiles = selectedIrFiles.concat(files);
+    irRenderFiles();
+    irValidate();
+}
+function irRemoveFile(idx){
+    selectedIrFiles.splice(idx,1);
+    irRenderFiles();
+    irValidate();
+}
+function irRenderFiles(){
+    const list = document.getElementById('irFileList');
+    if (!list) return;
+    if (!selectedIrFiles.length){ list.innerHTML=''; return; }
+    list.innerHTML = selectedIrFiles.map((f,i)=>{
+        const size=(f.size/1024/1024).toFixed(2)+' MB';
+        return `<div class="file-pill" style="display:inline-flex;align-items:center;gap:8px;border:1px solid #e1e6ea;border-radius:20px;padding:6px 10px;margin:4px 6px;background:#fff;">
+            <span style="font-weight:600;">${f.name}</span>
+            <span style="color:#6c757d;font-size:12px;">${size}</span>
+            <button type="button" onclick="irRemoveFile(${i})" style="border:none;background:#f1f3f5;color:#7a7f85;border-radius:12px;padding:2px 8px;cursor:pointer;">Remove</button>
+        </div>`
+    }).join('');
+}
+
+function irValidate(){
+    const sub = document.getElementById('irDocSubType').value;
+    const ok = !!sub && selectedIrFiles.length>0;
+    document.getElementById('irUploadBtn').disabled = !ok;
+}
+document.getElementById('irDocSubType').addEventListener('change', irValidate);
+
+// Upload
+async function irUpload(){
+    if (selectedIrFiles.length===0) return;
+    const form = new FormData();
+    form.append('project_id', '<?php echo (int)$claim['project_id']; ?>');
+    form.append('document_type', 'incident_reports');
+    form.append('document_sub_type', document.getElementById('irDocSubType').value);
+    form.append('ticket_id', '<?php echo (int)$claimId; ?>');
+    form.append('description', document.getElementById('irDescription').value||'');
+    selectedIrFiles.forEach(f=>form.append('files[]', f));
+
+    const prog = document.getElementById('irProgress');
+    const btn = document.getElementById('irUploadBtn');
+    prog.style.display='block';
+    btn.disabled = true;
+    try{
+        const resp = await fetch('upload_global_document.php', { method:'POST', body: form });
+        const data = await resp.json();
+        if (data && data.success){
+            alert('Documents uploaded successfully');
+            closeIncidentUploadModal();
+        } else {
+            alert('Upload failed: ' + (data?.message||'Unknown error'));
+        }
+    }catch(err){
+        alert('Upload failed: ' + err.message);
+    }finally{
+        prog.style.display='none';
+        btn.disabled = false;
+    }
+}
+
+// Drag-drop on card
+(function(){
+    const area = document.getElementById('irUploadArea');
+    if (!area) return;
+    area.addEventListener('dragover', e=>{ e.preventDefault(); area.style.borderColor='#488C9A'; });
+    area.addEventListener('dragleave', e=>{ e.preventDefault(); area.style.borderColor='#d0d0d0'; });
+    area.addEventListener('drop', e=>{
+        e.preventDefault(); area.style.borderColor='#d0d0d0';
+        const files = Array.from(e.dataTransfer.files||[]);
+        if (files.length){ selectedIrFiles = selectedIrFiles.concat(files); irRenderFiles(); irValidate(); }
+    });
+})();
+</script>
+<?php endif; ?>
 
                                     
 
