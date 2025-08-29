@@ -184,7 +184,7 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
                         $document_data = [
                             'project_id' => $project_id,
                             'document_type' => 'exception_reports',
-                            'document_sub_type' => 'Damage Reports',
+                            'document_sub_type' => 'Damage Photo',
                             'delivery_id' => $delivery_id,
                             'original_name' => $processed_file['original_name'],
                             'file_size' => $processed_file['size'],
@@ -385,7 +385,7 @@ function processSafetyIncident($conn, $appointment_id, $bol_number) {
                         $document_data = [
                             'project_id' => $project_id,
                             'document_type' => 'exception_reports',
-                            'document_sub_type' => 'Safety Reports',
+                            'document_sub_type' => 'Safety Incident',
                             'delivery_id' => $delivery_id,
                             'original_name' => $processed_file['original_name'],
                             'file_size' => $processed_file['size'],

@@ -107,7 +107,9 @@ function getDocumentTypeConfig() {
             'color' => '#ef4444',
             'sub_types' => [
                 'Safety Reports' => ['description' => 'Safety incident documentation'],
+                'Safety Incident' => ['description' => 'Safety incident photos and documentation'],
                 'Damage Reports' => ['description' => 'Equipment or product damage reports'],
+                'Damage Photo' => ['description' => 'Photos of damaged modules or equipment'],
                 'Proof of Completion' => ['description' => 'Proof of completion for warranty claims'],
                 'Delay Reports' => ['description' => 'Schedule delay documentation']
             ],
