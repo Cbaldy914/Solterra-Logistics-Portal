@@ -246,20 +246,20 @@ $conn->close();
                         <?php echo htmlspecialchars($label); ?>
                     </div>
                 <?php endforeach; ?>
-                                        </div>
+            </div>
                             
 
                             
-                            <?php if ((string)$claim['status'] === 'Rejected'): ?>
-                                <?php 
-                                    // Try to find the most recent rejection reason from events
-                                    $rejReason = '';
-                                    foreach ($eventsAll as $ev) { if (stripos($ev['event_text'] ?? '', 'Rejected:') === 0) { $rejReason = trim(substr($ev['event_text'], 9)); break; } }
-                                ?>
-                                <?php if ($rejReason !== ''): ?>
-                                    <div style="margin-top:8px; text-align:center; color:#842029; font-weight:600;">Reason: <?php echo htmlspecialchars($rejReason); ?></div>
-                                <?php endif; ?>
-                            <?php endif; ?>
+            <?php if ((string)$claim['status'] === 'Rejected'): ?>
+                <?php 
+                    // Try to find the most recent rejection reason from events
+                    $rejReason = '';
+                    foreach ($eventsAll as $ev) { if (stripos($ev['event_text'] ?? '', 'Rejected:') === 0) { $rejReason = trim(substr($ev['event_text'], 9)); break; } }
+                ?>
+                <?php if ($rejReason !== ''): ?>
+                    <div style="margin-top:8px; text-align:center; color:#842029; font-weight:600;">Reason: <?php echo htmlspecialchars($rejReason); ?></div>
+                <?php endif; ?>
+            <?php endif; ?>
         </div>
     </div>
 

@@ -1024,25 +1024,42 @@ $stmt_palletized->close();
 // Calculate total expected pallets (modules / 30)
 $expected_pallets = ceil($total_raw_modules / 30);
 
-// Get delivered modules breakdown for JavaScript
+// Get delivered modules breakdown for JavaScript (using inventory_pallets for accuracy)
 $delivered_by_wattage = [];
+$delivered_damaged_by_wattage = [];
 $stmt_delivered = $conn->prepare("
-    SELECT d.wattage, SUM(d.quantity) AS total_quantity
-    FROM deliveries d
-    LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id
-    LEFT JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
-    WHERE d.project_id=? AND d.status_of_delivery = 'Delivered to Project'
-      AND (ip.id IS NULL OR ip.status != 'Damaged')
-    GROUP BY d.wattage
+    SELECT ip.wattage, 
+           COUNT(*) as pallet_count, 
+           SUM(ip.quantity) as total_modules,
+           SUM(CASE WHEN ip.status = 'Damaged' THEN 1 ELSE 0 END) as damaged_pallets,
+           SUM(CASE WHEN ip.status = 'Damaged' THEN ip.quantity ELSE 0 END) as damaged_modules
+    FROM inventory_pallets ip
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
+      AND (ip.status = 'Delivered to Project' OR ip.status = 'Damaged')
+    GROUP BY ip.wattage
 ");
-$stmt_delivered->bind_param("i", $project_id);
+$stmt_delivered->bind_param("iii", $project_id, $project_id, $project_id);
 $stmt_delivered->execute();
 $delivered_result = $stmt_delivered->get_result();
 while ($row = $delivered_result->fetch_assoc()) {
-    $delivered_by_wattage[] = [
-        'wattage' => (float)$row['wattage'],
-        'modules' => (int)$row['total_quantity']
-    ];
+    $wattage = (float)$row['wattage'];
+    $total_pallets = (int)$row['pallet_count'];
+    $total_modules = (int)$row['total_modules'];
+    $damaged_pallets = (int)$row['damaged_pallets'];
+    $damaged_modules = (int)$row['damaged_modules'];
+    
+    // Only include if there are delivered (non-damaged) modules
+    if ($total_pallets > $damaged_pallets) {
+        $delivered_by_wattage[] = [
+            'wattage' => $wattage,
+            'pallets' => $total_pallets - $damaged_pallets,
+            'modules' => $total_modules - $damaged_modules,
+            'damaged_pallets' => $damaged_pallets,
+            'damaged_modules' => $damaged_modules
+        ];
+    }
 }
 $stmt_delivered->close();
 
@@ -3455,7 +3472,17 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 
             <div class="admin-content-wrapper">
                 <!-- Project Progress -->
-                <div id="progress-info">        
+                <div id="progress-info">
+                    <!-- Unit Filters - Top Left -->
+                    <div class="unit-filters-container">
+                        <div class="unit-filters">
+                            <button type="button" class="unit-filter-btn active" data-unit="mws">MWs</button>
+                            <button type="button" class="unit-filter-btn" data-unit="modules">Modules</button>
+                            <button type="button" class="unit-filter-btn" data-unit="pallets">Pallets</button>
+                            <button type="button" class="unit-filter-btn" data-unit="truckloads">Truckloads</button>
+                        </div>
+                    </div>
+                    
                     <div class="timeline-container">
                         
                         
@@ -3497,16 +3524,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                             
                             <?php if ($current_step == 4): ?>
                             <!-- Shipping Filters for Admin/Global Admin -->
-                            <?php if ($role === 'admin' || $role === 'global_admin'): ?>
-                            <div class="shipping-filters" style="margin: 20px auto 15px; text-align: center; max-width: 800px;">
-                                <div class="filter-buttons" style="display: inline-flex; background: #f8f9fa; border-radius: 8px; padding: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                                    <button type="button" class="filter-btn active" data-filter="pallets" style="background: #488C9A; color: white; border: none; padding: 8px 16px; border-radius: 6px; margin: 0 2px; cursor: pointer; font-weight: 600; transition: all 0.3s ease;">Pallets</button>
-                                    <button type="button" class="filter-btn" data-filter="modules" style="background: transparent; color: #293E4C; border: none; padding: 8px 16px; border-radius: 6px; margin: 0 2px; cursor: pointer; font-weight: 600; transition: all 0.3s ease;">Modules</button>
-                                    <button type="button" class="filter-btn" data-filter="truckloads" style="background: transparent; color: #293E4C; border: none; padding: 8px 16px; border-radius: 6px; margin: 0 2px; cursor: pointer; font-weight: 600; transition: all 0.3s ease;">Truckloads</button>
-                                    <button type="button" class="filter-btn" data-filter="mws" style="background: transparent; color: #293E4C; border: none; padding: 8px 16px; border-radius: 6px; margin: 0 2px; cursor: pointer; font-weight: 600; transition: all 0.3s ease;">MWs</button>
-                                </div>
-                            </div>
-                            <?php endif; ?>
+
                             <div class="shipping-statuses">
                                 <?php if(($status_totals['At Manufacturer']['pallets'] ?? 0) > 0): 
                                     $pallets = $status_totals['At Manufacturer']['pallets'];
@@ -4093,10 +4111,10 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
             <!-- Unit Filters - Top Left -->
             <div class="unit-filters-container">
                 <div class="unit-filters">
-                                                <button type="button" class="unit-filter-btn active" data-unit="mws">MWs</button>
-                            <button type="button" class="unit-filter-btn" data-unit="modules">Modules</button>
-                            <button type="button" class="unit-filter-btn" data-unit="pallets">Pallets</button>
-                            <button type="button" class="unit-filter-btn" data-unit="truckloads">Truckloads</button>
+                    <button type="button" class="unit-filter-btn active" data-unit="mws">MWs</button>
+                    <button type="button" class="unit-filter-btn" data-unit="modules">Modules</button>
+                    <button type="button" class="unit-filter-btn" data-unit="pallets">Pallets</button>
+                    <button type="button" class="unit-filter-btn" data-unit="truckloads">Truckloads</button>
                 </div>
             </div>
 
@@ -4816,24 +4834,44 @@ function generateShippingContent(filter){
             `${totalDeliveredRaw.toLocaleString()} modules (${deliveredDamagedTotal} damaged)` : 
             `${totalDeliveredRaw.toLocaleString()} modules`;
         
-        html += `<div style="margin-bottom:20px;padding:15px;background:#e8f5e8;border-radius:8px;border-left:4px solid #28a745;">` +
-               `<h4 style="margin-top:0;color:#28a745;">Delivered to Project</h4>` +
-               `<p><strong>Total:</strong> ${deliveredPalletsText}, ${deliveredModulesText}` +
-               `<?php if($view_mode == 'mw'): ?> (${totalDeliveredMW.toFixed(2)} MW)<?php endif; ?></p>`;
+        const palletDisplay = deliveredDamagedTotal > 0 ? 
+            `${totalPallets}<br><small style="color:#e65100;">(${Math.ceil(deliveredDamagedTotal / 30)} damaged)</small>` : 
+            totalPallets;
+        const moduleDisplay = deliveredDamagedTotal > 0 ? 
+            `${totalDeliveredRaw.toLocaleString()}<br><small style="color:#e65100;">(${deliveredDamagedTotal} damaged)</small>` : 
+            totalDeliveredRaw.toLocaleString();
+        
+        html += `<div style="margin-bottom:20px;padding:20px;background:#e8f5e8;border-radius:12px;border-left:4px solid #28a745;">` +
+               `<h4 style="margin-top:0;color:#28a745;">🎉 Delivered to Project</h4>` +
+               `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin:15px 0;">` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${palletDisplay}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">Pallets</div></div>` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${moduleDisplay}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">Modules</div></div>` +
+               `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalDeliveredMW.toFixed(2)}</div>` +
+               `<div style="font-size:0.9rem;color:#666;">MWs</div></div>` +
+               `</div>`;
         
         // Show wattage breakdown for delivered modules        
         const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage); ?>;
         if(deliveredBreakdown.length > 0) {
-            html += '<p><strong>Wattage Breakdown:</strong></p><ul>';
+            html += '<div style="margin-top:20px;"><h5 style="color:#28a745;">Wattage Breakdown:</h5><ul style="list-style:none;padding:0;">';
             deliveredBreakdown.forEach(function(item) {
-                const pallets = Math.round(item.modules / 30);
-                html += `<li>${item.wattage}W: ${pallets} pallets (${item.modules.toLocaleString()} modules)</li>`;
+                const mws = ((item.modules * item.wattage) / 1000000).toFixed(2);
+                let breakdownText = `${item.wattage}W: ${item.pallets} pallets • ${item.modules.toLocaleString()} modules • ${mws} MWs`;
+                if(item.damaged_pallets > 0) {
+                    breakdownText += ` (${item.damaged_pallets} damaged pallets, ${item.damaged_modules.toLocaleString()} damaged modules)`;
+                }
+                html += `<li style="padding:8px 0;border-bottom:1px solid #eee;">${breakdownText}</li>`;
             });
-            html += '</ul>';
+            html += '</ul></div>';
         }
         
-        html += `<div style="text-align:center;margin-top:15px;">` +
-               `<a href="manage_deliveries?project_id=<?php echo $project_id; ?>" class="modal-action" style="background:#28a745;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">View Delivery Details</a>` +
+        html += `<div style="text-align:center;margin-top:20px;">` +
+               `<a href="manage_deliveries?project_id=<?php echo $project_id; ?>" class="customer-modal-btn">View Deliveries</a>` +
                `</div>`;
         html += '</div>';
     } else if (filter === 'Exceptions') {
@@ -5111,11 +5149,11 @@ function updateTimelineRemainingText(filterType) {
             break;
             
         case 'pallets':
-            // Estimate pallets based on modules (using average modules per pallet if available)
-            const avgModulesPerPallet = <?php echo !empty($weighted_avg_modules_per_pallet) ? $weighted_avg_modules_per_pallet : 20; ?>;
-            const totalPallets = Math.ceil(totalModules / avgModulesPerPallet);
-            const deliveredPallets = Math.floor(deliveredModules / avgModulesPerPallet);
-            remaining = totalPallets - deliveredPallets;
+            // Use actual pallet counts from the database
+            const actualPalletData = <?php echo json_encode($pallets_status_main); ?>;
+            const totalActualPallets = actualPalletData.total_order;
+            const deliveredActualPallets = actualPalletData.delivered;
+            remaining = totalActualPallets - deliveredActualPallets;
             unit = 'pallets';
             break;
             
@@ -5806,9 +5844,12 @@ function generateCustomerShippingContent(status) {
         if(deliveredBreakdown.length > 0) {
             html += '<div style="margin-top:20px;"><h5 style="color:#28a745;">Wattage Breakdown:</h5><ul style="list-style:none;padding:0;">';
             deliveredBreakdown.forEach(function(item) {
-                const pallets = Math.round(item.modules / 30);
                 const mws = ((item.modules * item.wattage) / 1000000).toFixed(2);
-                html += `<li style="padding:8px 0;border-bottom:1px solid #eee;">${item.wattage}W: ${pallets} pallets • ${item.modules.toLocaleString()} modules • ${mws} MWs</li>`;
+                let breakdownText = `${item.wattage}W: ${item.pallets} pallets • ${item.modules.toLocaleString()} modules • ${mws} MWs`;
+                if(item.damaged_pallets > 0) {
+                    breakdownText += ` (${item.damaged_pallets} damaged pallets, ${item.damaged_modules.toLocaleString()} damaged modules)`;
+                }
+                html += `<li style="padding:8px 0;border-bottom:1px solid #eee;">${breakdownText}</li>`;
             });
             html += '</ul></div>';
         }
@@ -5825,8 +5866,8 @@ function generateCustomerShippingContent(status) {
             damaged_modules: <?php echo ($status_totals['Damaged']['modules'] ?? 0); ?>
         };
         
-        const totalExceptionPallets = exceptionsData.damaged_total_loss + exceptionsData.partially_damaged;
-        const totalExceptionModules = exceptionsData.damaged_total_loss_modules + exceptionsData.partially_damaged_modules;
+        const totalExceptionPallets = exceptionsData.damaged;
+        const totalExceptionModules = exceptionsData.damaged_modules;
         
         // Calculate MWs
         const wattages = <?php echo json_encode($wattages); ?>;
@@ -5851,19 +5892,10 @@ function generateCustomerShippingContent(status) {
                `</div>`;
         
         // Show exception type breakdown
-        if (exceptionsData.damaged_total_loss > 0 || exceptionsData.partially_damaged > 0) {
+        if (exceptionsData.damaged > 0) {
             html += '<div style="margin-top:20px;"><h5 style="color:#e65100;">Exception Breakdown:</h5><ul style="list-style:none;padding:0;">';
-            
-            if (exceptionsData.damaged_total_loss > 0) {
-                html += `<li style="padding:12px;margin-bottom:8px;background:#ffebee;border-radius:8px;border-left:3px solid #d32f2f;">` +
-                       `<strong>Damaged - Total Loss:</strong> ${exceptionsData.damaged_total_loss} pallets • ${exceptionsData.damaged_total_loss_modules.toLocaleString()} modules</li>`;
-            }
-            
-            if (exceptionsData.partially_damaged > 0) {
-                html += `<li style="padding:12px;margin-bottom:8px;background:#fff8e1;border-radius:8px;border-left:3px solid #ff8f00;">` +
-                       `<strong>Partially Damaged:</strong> ${exceptionsData.partially_damaged} pallets • ${exceptionsData.partially_damaged_modules.toLocaleString()} modules</li>`;
-            }
-            
+            html += `<li style="padding:12px;margin-bottom:8px;background:#ffebee;border-radius:8px;border-left:3px solid #d32f2f;">` +
+                   `<strong>Damaged:</strong> ${exceptionsData.damaged} pallets • ${exceptionsData.damaged_modules.toLocaleString()} modules</li>`;
             html += '</ul></div>';
         }
         
@@ -6146,11 +6178,52 @@ document.addEventListener('DOMContentLoaded', function() {
         initializeShippingFilters();
     }
     
-    // Initialize timeline remaining text for admin view (always uses modules)
+    // Initialize admin unit filters and timeline remaining text
+    initializeAdminUnitFilters();
     updateTimelineRemainingTextAdmin();
+    
+    // Initialize shipping boxes with default filter (MWs)
+    updateShippingBoxes('mws');
 });
 
-// Admin version of timeline remaining text update (no filters)
+// Global filter state for admin
+let currentAdminFilter = 'mws';
+
+// Initialize admin unit filters functionality
+function initializeAdminUnitFilters() {
+    const filterSections = document.querySelectorAll('.unit-filters');
+    
+    filterSections.forEach(section => {
+        const filterButtons = section.querySelectorAll('.unit-filter-btn');
+        
+        filterButtons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const filterType = this.getAttribute('data-unit');
+                
+                // Update global filter state
+                currentAdminFilter = filterType;
+                
+                // Update active button states in all filter sections
+                filterSections.forEach(fs => {
+                    fs.querySelectorAll('.unit-filter-btn').forEach(b => {
+                        b.classList.remove('active');
+                        if (b.getAttribute('data-unit') === filterType) {
+                            b.classList.add('active');
+                        }
+                    });
+                });
+                
+                // Update timeline remaining text
+                updateTimelineRemainingTextAdmin();
+                
+                // Update admin shipping boxes
+                updateShippingBoxes(filterType);
+            });
+        });
+    });
+}
+
+// Admin version of timeline remaining text update (with filters)
 function updateTimelineRemainingTextAdmin() {
     const timelineTexts = document.querySelectorAll('.timeline-remaining-text');
     if (!timelineTexts.length) return;
@@ -6162,10 +6235,49 @@ function updateTimelineRemainingTextAdmin() {
     // Get project data for calculations  
     const totalModules = <?php echo $total_raw_modules; ?>;
     const deliveredModules = <?php echo $delivered_raw_total; ?>;
+    const projectSizeMW = <?php echo number_format($project_size_mw, 2); ?>;
     
-    // Admin view always shows modules remaining
-    const remaining = totalModules - deliveredModules;
-    const unit = 'modules';
+    // Calculate delivered MW (approximate based on delivered/total ratio)
+    const deliveryRatio = totalModules > 0 ? (deliveredModules / totalModules) : 0;
+    const deliveredMW = projectSizeMW * deliveryRatio;
+    
+    // Calculate totals and remaining for each filter type
+    let remaining, unit;
+    
+    switch(currentAdminFilter) {
+        case 'modules':
+            remaining = totalModules - deliveredModules;
+            unit = 'modules';
+            break;
+            
+        case 'mws':
+            remaining = projectSizeMW - deliveredMW;
+            unit = 'MWs';
+            remaining = Math.max(0, parseFloat(remaining.toFixed(2)));
+            break;
+            
+        case 'pallets':
+            // Use actual pallet counts from the database
+            const actualPalletData = <?php echo json_encode($pallets_status_main); ?>;
+            const totalActualPallets = actualPalletData.total_order;
+            const deliveredActualPallets = actualPalletData.delivered;
+            remaining = totalActualPallets - deliveredActualPallets;
+            unit = 'pallets';
+            break;
+            
+        case 'truckloads':
+            // Estimate truckloads based on modules (using average modules per truck if available)  
+            const avgModulesPerTruck = <?php echo !empty($weighted_avg_modules_per_truck) ? $weighted_avg_modules_per_truck : 500; ?>;
+            const totalTrucks = Math.ceil(totalModules / avgModulesPerTruck);
+            const deliveredTrucks = Math.floor(deliveredModules / avgModulesPerTruck);
+            remaining = totalTrucks - deliveredTrucks;
+            unit = 'truckloads';
+            break;
+            
+        default:
+            remaining = totalModules - deliveredModules;
+            unit = 'modules';
+    }
     
     // Update all timeline remaining text elements
     timelineTexts.forEach(element => {
