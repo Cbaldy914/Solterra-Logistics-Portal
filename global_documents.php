@@ -1167,7 +1167,6 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
             border-radius: 24px 24px 0 0;
             display: flex;
             justify-content: space-between;
-            align-items: center;
         }
 
         .modal-title {
