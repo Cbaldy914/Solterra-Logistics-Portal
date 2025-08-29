@@ -101,13 +101,14 @@ function getDocumentTypeConfig() {
                 'allowed_extensions' => ['pdf', 'zip', 'doc', 'docx', 'xlsx']
             ]
         ],
-        'incident_reports' => [
-            'name' => 'Incident Reports',
+        'exception_reports' => [
+            'name' => 'Exception Reports',
             'icon' => 'fas fa-exclamation-triangle',
             'color' => '#ef4444',
             'sub_types' => [
                 'Safety Reports' => ['description' => 'Safety incident documentation'],
                 'Damage Reports' => ['description' => 'Equipment or product damage reports'],
+                'Proof of Completion' => ['description' => 'Proof of completion for warranty claims'],
                 'Delay Reports' => ['description' => 'Schedule delay documentation']
             ],
             'required_context' => [],

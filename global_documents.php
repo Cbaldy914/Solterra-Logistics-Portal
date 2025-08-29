@@ -79,8 +79,8 @@ $document_types = [
         'color' => '#10b981',
         'sub_filters' => ['Module Invoice', 'Flash Test Data', 'Spec Sheets']
     ],
-    'incident_reports' => [
-        'name' => 'Incident Reports',
+    'exception_reports' => [
+        'name' => 'Exception Reports',
         'icon' => 'fas fa-exclamation-triangle',
         'color' => '#ef4444',
         'sub_filters' => []
@@ -116,7 +116,7 @@ $folder_mapping = [
     'shipments' => ['document_type' => 'shipments', 'subfolders' => ['arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'delivery_sop' => 'Delivery SOP']],
     'warehousing' => ['document_type' => 'warehousing', 'subfolders' => ['warehouse_pod' => 'Warehouse POD', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Photos']],
     'modules' => ['document_type' => 'modules', 'subfolders' => ['module_invoice' => 'Module Invoice', 'flash_test_data' => 'Flash Test Data', 'spec_sheet' => 'Spec Sheets']],
-    'incident_reports' => ['document_type' => 'incident_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
+    'exception_reports' => ['document_type' => 'exception_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'proof_of_completion' => 'Proof of Completion', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
     'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']],
     'other' => ['document_type' => 'other', 'subfolders' => ['general' => 'General']]
 ];
@@ -1903,7 +1903,7 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
                                 <option value="shipments">Shipments</option>
                                 <option value="warehousing">Warehousing</option>
                                 <option value="modules">Modules</option>
-                                <option value="incident_reports">Incident Reports</option>
+                                <option value="exception_reports">Exception Reports</option>
                                 <option value="other">Other</option>
                             </select>
                         </div>
@@ -1986,7 +1986,7 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
      'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
      'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos'],
      'modules': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
-     'incident_reports': ['Damage Photo', 'Warranty Document', 'Project POD', 'Warehouse POD'],
+     'exception_reports': ['Damage Photo', 'Warranty Document', 'Proof of Completion', 'Project POD', 'Warehouse POD'],
      'safe_harbor_evidence': [],
      'other': []
  };
@@ -2449,7 +2449,7 @@ async function loadIncidentFilterOptions() {
             if (current) sel.value = current;
         }
     } catch (e) {
-        console.warn('Failed to load tickets for Incident Reports', e);
+        console.warn('Failed to load tickets for Exception Reports', e);
     }
 }
 
@@ -2812,9 +2812,9 @@ async function loadDocuments() {
         if (invDueEnd && invDueEnd.value) filters.invoice_due_end = invDueEnd.value;
         if (invMan && invMan.value) filters.invoice_manufacturer = invMan.value;
 
-        // Incident Reports context filters
+        // Exception Reports context filters
         const incChips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
-        const isInc = document.getElementById('documentTypeFilter').value === 'incident_reports';
+        const isInc = document.getElementById('documentTypeFilter').value === 'exception_reports';
         if (isInc) {
             const t = document.getElementById('incTicketSelect');
             if (t && t.value) filters.inc_ticket_id = t.value;
@@ -2900,7 +2900,7 @@ async function loadDocuments() {
                 else if (filtersApplied && type === 'shipments') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display=''; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
                 else if (filtersApplied && type === 'warehousing') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) { wh.style.display=''; toggleWarehousingSections(); } if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
                 else if (filtersApplied && type === 'modules') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) { mods.style.display=''; toggleModulesSections(); } if (inc) inc.style.display='none'; }
-                else if (filtersApplied && type === 'incident_reports') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) { inc.style.display=''; toggleIncidentSections(); loadIncidentFilterOptions(); } }
+                else if (filtersApplied && type === 'exception_reports') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) { inc.style.display=''; toggleIncidentSections(); loadIncidentFilterOptions(); } }
                 else { pods.style.display = 'none'; invoices.style.display='none'; if (ships) ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; ctx.style.display = 'none'; }
             })();
             updatePagination(data.total_count, data.total_pages);
@@ -2936,7 +2936,7 @@ function renderDocumentsTable(documents) {
     const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
     const showInvMan = showInvCols && chips.includes('Module Invoice');
     const showModBasicCols = (filtersApplied && docType === 'modules' && (chips.includes('Flash Test Data') || chips.includes('Spec Sheets')));
-    const showIncTicket = (filtersApplied && docType === 'incident_reports');
+    const showIncTicket = (filtersApplied && docType === 'exception_reports');
     const showWhPodsCols = (filtersApplied && docType === 'warehousing' && chips.includes('Warehouse POD'));
     const showWhBasicCols = (filtersApplied && docType === 'warehousing' && (chips.includes('Inventory Report') || chips.includes('Photos')) && !chips.includes('Warehouse POD'));
     const tableHTML = `
@@ -3173,7 +3173,7 @@ function renderDocumentRow(doc, showPodsCols = false, showInvCols = false, showI
                          <i class=\"fas fa-eye\"></i>
                          Details
                      </a>` : ''}
-                     ${(doc.document_type === 'incident_reports' && (doc.entity_context||'').includes('incident_ticket_id:')) ? (()=>{ try { const m=(doc.entity_context||'').match(/incident_ticket_id:(\d+)/); return m?`<a href=\"warranty_detail.php?id=${m[1]}\" class=\"btn-ticket\" title=\"View ticket\"><i class=\"fas fa-eye\"></i> Ticket</a>`:'';} catch(e){ return ''; } })() : ''}
+                     ${(doc.document_type === 'exception_reports' && (doc.entity_context||'').includes('incident_ticket_id:')) ? (()=>{ try { const m=(doc.entity_context||'').match(/incident_ticket_id:(\d+)/); return m?`<a href=\"warranty_detail.php?id=${m[1]}\" class=\"btn-ticket\" title=\"View ticket\"><i class=\"fas fa-eye\"></i> Ticket</a>`:'';} catch(e){ return ''; } })() : ''}
                  </div>
              </td>
          </tr>
@@ -3533,7 +3533,7 @@ const documentConfig = {
             ]
         }
     },
-    'incident_reports': {
+    'exception_reports': {
         'sub_types': ['Damage Photo', 'Warranty Document', 'Project POD', 'Warehouse POD'],
         'fields': {
             'Damage Photo': [
