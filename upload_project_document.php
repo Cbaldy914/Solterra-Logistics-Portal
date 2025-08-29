@@ -27,11 +27,12 @@ if (!$conn) {
 // Sanitize and validate inputs
 $project_id = intval($_POST['project_id'] ?? 0);
 $document_type = trim($_POST['document_type'] ?? '');
+$document_sub_type = isset($_POST['document_sub_type']) && $_POST['document_sub_type'] !== '' ? trim($_POST['document_sub_type']) : null;
 $description = trim($_POST['description'] ?? '');
 $user_id = $_SESSION['user_id'];
 
 // Validate document type - supporting all document types now
-$allowed_types = ['invoices', 'pods', 'flash_test_data', 'bills_of_lading', 'warehousing', 'modules', 'delivery_packet', 'incident_reports', 'safe_harbor_evidence'];
+$allowed_types = ['invoices', 'pods', 'flash_test_data', 'bills_of_lading', 'warehousing', 'modules', 'delivery_packet', 'exception_reports', 'safe_harbor_evidence', 'shipments'];
 if (!in_array($document_type, $allowed_types)) {
     http_response_code(400);
     echo json_encode(['success' => false, 'message' => 'Invalid document type']);
@@ -179,14 +180,15 @@ if (!move_uploaded_file($file['tmp_name'], $file_path)) {
 // Save to database
 $stmt = $conn->prepare("
     INSERT INTO project_documents 
-    (project_id, document_type, file_name, original_file_name, file_path, file_size, mime_type, uploaded_by, description) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (project_id, document_type, document_sub_type, file_name, original_file_name, file_path, file_size, mime_type, uploaded_by, description) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ");
 
 $stmt->bind_param(
-    "issssisis",
+    "isssssisis",
     $project_id,
     $document_type,
+    $document_sub_type,
     $unique_filename,
     $original_filename,
     $file_path,

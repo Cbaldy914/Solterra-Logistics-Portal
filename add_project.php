@@ -12,6 +12,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
 
 // Database connection
 require_once '../config.php';
+require_once 'document_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -106,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $reference_numbers         = trim($_POST['reference_numbers'] ?? '');
         $instructions              = trim($_POST['instructions'] ?? '');
         $additional_notes          = trim($_POST['additional_notes'] ?? '');
-        $driver_handout_url        = null; // Will be set if file is uploaded
+        $driver_handout_url        = null; // Legacy column (now stored in project_documents)
         
         // Module information fields (optional) - use 0 as default for integer fields to avoid NULL binding issues
         $modules_per_pallet        = isset($_POST['modules_per_pallet']) && $_POST['modules_per_pallet'] !== '' ? (int)$_POST['modules_per_pallet'] : 0;
@@ -123,7 +124,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pallet_jack_long_side_mm  = isset($_POST['pallet_jack_long_side_mm']) && $_POST['pallet_jack_long_side_mm'] !== '' ? (int)$_POST['pallet_jack_long_side_mm'] : 0;
         $pallet_jack_short_side_mm = isset($_POST['pallet_jack_short_side_mm']) && $_POST['pallet_jack_short_side_mm'] !== '' ? (int)$_POST['pallet_jack_short_side_mm'] : 0;
         $module_notes              = trim($_POST['module_notes'] ?? '');
-        $module_docs_url           = null; // Will be set if file is uploaded
+        $module_docs_sub_type      = trim($_POST['module_docs_sub_type'] ?? '');
+        $module_docs_description   = trim($_POST['module_docs_description'] ?? '');
+        $module_docs_url           = null; // Legacy column (now stored in project_documents)
 
         if ($project_name === '') {
             throw new Exception("Project Name is required.");
@@ -171,63 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Handle driver handout upload
-        if (isset($_FILES['driver_handout']) && $_FILES['driver_handout']['error'] !== UPLOAD_ERR_NO_FILE) {
-            if ($_FILES['driver_handout']['error'] === UPLOAD_ERR_OK) {
-                $allowed_ext = ['pdf','doc','docx','jpg','jpeg','png'];
-                $handout_name = $_FILES['driver_handout']['name'];
-                $handout_tmp = $_FILES['driver_handout']['tmp_name'];
-                $handout_size = $_FILES['driver_handout']['size'];
-                $handout_ext = strtolower(pathinfo($handout_name, PATHINFO_EXTENSION));
-
-                if (!in_array($handout_ext, $allowed_ext)) {
-                    throw new Exception("Invalid driver handout file type. Only PDF, DOC, DOCX, JPG, JPEG, PNG allowed.");
-                }
-                if ($handout_size > 5*1024*1024) {
-                    throw new Exception("Driver handout file exceeds 5MB limit.");
-                }
-                $handout_unique = uniqid('driver_handout_', true).'.'.$handout_ext;
-                $handout_dir = 'uploads/driver_handouts/';
-                if (!is_dir($handout_dir)) {
-                    mkdir($handout_dir, 0755, true);
-                }
-                if (!move_uploaded_file($handout_tmp, $handout_dir.$handout_unique)) {
-                    throw new Exception("Error uploading the driver handout file.");
-                }
-                $driver_handout_url = $handout_dir.$handout_unique;
-            } else {
-                throw new Exception("Driver handout upload error code: " . $_FILES['driver_handout']['error']);
-            }
-        }
-
-        // Handle module docs upload
-        if (isset($_FILES['module_docs']) && $_FILES['module_docs']['error'] !== UPLOAD_ERR_NO_FILE) {
-            if ($_FILES['module_docs']['error'] === UPLOAD_ERR_OK) {
-                $allowed_ext = ['pdf','doc','docx','jpg','jpeg','png'];
-                $module_docs_name = $_FILES['module_docs']['name'];
-                $module_docs_tmp = $_FILES['module_docs']['tmp_name'];
-                $module_docs_size = $_FILES['module_docs']['size'];
-                $module_docs_ext = strtolower(pathinfo($module_docs_name, PATHINFO_EXTENSION));
-
-                if (!in_array($module_docs_ext, $allowed_ext)) {
-                    throw new Exception("Invalid module docs file type. Only PDF, DOC, DOCX, JPG, JPEG, PNG allowed.");
-                }
-                if ($module_docs_size > 5*1024*1024) {
-                    throw new Exception("Module docs file exceeds 5MB limit.");
-                }
-                $module_docs_unique = uniqid('module_docs_', true).'.'.$module_docs_ext;
-                $module_docs_dir = 'uploads/module_docs/';
-                if (!is_dir($module_docs_dir)) {
-                    mkdir($module_docs_dir, 0755, true);
-                }
-                if (!move_uploaded_file($module_docs_tmp, $module_docs_dir.$module_docs_unique)) {
-                    throw new Exception("Error uploading the module docs file.");
-                }
-                $module_docs_url = $module_docs_dir.$module_docs_unique;
-            } else {
-                throw new Exception("Module docs upload error code: " . $_FILES['module_docs']['error']);
-            }
-        }
+        // Note: Driver Handout and Module Documentation now save to project_documents
 
         // Insert into projects with separate address fields and new site information
         $stmt = $conn->prepare("
@@ -277,6 +224,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $project_id = $stmt->insert_id;
         $stmt->close();
+
+        // Save Driver Handout to project_documents as Shipments -> Delivery SOP (new format)
+        if (isset($_FILES['driver_handout']) && $_FILES['driver_handout']['error'] !== UPLOAD_ERR_NO_FILE) {
+            if ($_FILES['driver_handout']['error'] === UPLOAD_ERR_OK) {
+                // Build document data and save via helper
+                $doc_data = [
+                    'project_id' => $project_id,
+                    'document_type' => 'shipments',
+                    'document_sub_type' => 'Delivery SOP',
+                    'original_name' => $_FILES['driver_handout']['name'],
+                    'file_size' => $_FILES['driver_handout']['size'],
+                    'mime_type' => mime_content_type($_FILES['driver_handout']['tmp_name']),
+                    'uploaded_by' => $user_id,
+                    'tmp_name' => $_FILES['driver_handout']['tmp_name'],
+                    'description' => 'Driver Handout'
+                ];
+                // Validate extension and size similar to global uploads
+                $allowed_ext = ['pdf','doc','docx','jpg','jpeg','png'];
+                $ext = strtolower(pathinfo($doc_data['original_name'], PATHINFO_EXTENSION));
+                if (!in_array($ext, $allowed_ext)) {
+                    throw new Exception('Invalid driver handout file type.');
+                }
+                saveDocumentToProjectDocuments($conn, $doc_data);
+            } else {
+                throw new Exception('Driver handout upload error code: ' . $_FILES['driver_handout']['error']);
+            }
+        }
+
+        // Save Module Documentation (uploaded before creation) into project_documents under Modules with provided sub-type
+        if (isset($_FILES['module_docs'])) {
+            // If any file selected, require a sub-type
+            $hasFile = false;
+            if (is_array($_FILES['module_docs']['name'])) {
+                foreach ($_FILES['module_docs']['error'] as $err) {
+                    if ($err !== UPLOAD_ERR_NO_FILE) { $hasFile = true; break; }
+                }
+            } else {
+                $hasFile = $_FILES['module_docs']['error'] !== UPLOAD_ERR_NO_FILE;
+            }
+
+            if ($hasFile) {
+                if ($module_docs_sub_type === '') {
+                    throw new Exception('Please enter a Module Documentation Sub-Type when uploading files.');
+                }
+
+                // Normalize to arrays for iteration
+                $names = (array)$_FILES['module_docs']['name'];
+                $types = (array)$_FILES['module_docs']['type'];
+                $tmps  = (array)$_FILES['module_docs']['tmp_name'];
+                $errs  = (array)$_FILES['module_docs']['error'];
+                $sizes = (array)$_FILES['module_docs']['size'];
+
+                foreach ($names as $i => $orig) {
+                    if (!isset($errs[$i]) || $errs[$i] === UPLOAD_ERR_NO_FILE) continue;
+                    if ($errs[$i] !== UPLOAD_ERR_OK) {
+                        throw new Exception('Module document upload error for file: ' . $orig);
+                    }
+
+                    $tmpName = $tmps[$i];
+                    $mime    = mime_content_type($tmpName);
+                    $doc = [
+                        'project_id' => $project_id,
+                        'document_type' => 'modules',
+                        'document_sub_type' => $module_docs_sub_type,
+                        'original_name' => $orig,
+                        'file_size' => $sizes[$i],
+                        'mime_type' => $mime,
+                        'uploaded_by' => $user_id,
+                        'tmp_name' => $tmpName,
+                        'description' => ($module_docs_description !== '' ? $module_docs_description : 'Module Documentation')
+                    ];
+                    saveDocumentToProjectDocuments($conn, $doc);
+                }
+            }
+        }
 
         // Default values are now set in the main INSERT statement
 
@@ -874,6 +896,308 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* Upload Modal Styles - Matching global_documents.php design */
+        .upload-modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(8px);
+        }
+
+        .modal-content {
+            background: #fff;
+            width: 620px;
+            max-width: 90%;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            animation: modalSlideIn 0.3s ease-out;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-30px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .modal-header {
+            padding: 24px 32px 20px 32px;
+            border-bottom: 1px solid rgba(72, 140, 154, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+        }
+
+        .modal-title {
+            font-weight: 600;
+            font-size: 1.25rem;
+            color: #293E4C;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .close-modal {
+            border: none;
+            background: rgba(72, 140, 154, 0.1);
+            color: #488C9A;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            font-size: 18px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .close-modal:hover {
+            background: rgba(72, 140, 154, 0.2);
+            transform: rotate(90deg);
+        }
+
+        .modal-body {
+            padding: 32px;
+        }
+
+        .modal-body .input-group {
+            margin-bottom: 24px;
+        }
+
+        .modal-body .input-group label {
+            font-weight: 600;
+            color: #293E4C;
+            margin-bottom: 8px;
+            display: block;
+            font-size: 0.95rem;
+        }
+
+        .modal-body .input-group select,
+        .modal-body .input-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid rgba(72, 140, 154, 0.15);
+            border-radius: 12px;
+            background: white;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            font-family: 'Poppins', sans-serif;
+            box-sizing: border-box;
+        }
+
+        .modal-body .input-group select:focus,
+        .modal-body .input-group input:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 4px 15px rgba(72, 140, 154, 0.2);
+        }
+
+        /* File Upload Area */
+        .file-upload-area {
+            border: 2px dashed rgba(72, 140, 154, 0.3);
+            border-radius: 16px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .file-upload-area:hover {
+            border-color: #488C9A;
+            background: linear-gradient(135deg, #f0f8ff 0%, #f8f9fa 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(72, 140, 154, 0.15);
+        }
+
+        .file-upload-area::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(72, 140, 154, 0.1), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .file-upload-area:hover::before {
+            left: 100%;
+        }
+
+        .file-upload-area.drag-over {
+            border-color: #488C9A !important;
+            background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%) !important;
+            transform: translateY(-2px) scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            color: #488C9A;
+            margin-bottom: 16px;
+            display: block;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .upload-text {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #293E4C;
+            margin-bottom: 8px;
+        }
+
+        .upload-subtext {
+            font-size: 0.85rem;
+            color: #6c757d;
+            line-height: 1.4;
+        }
+
+        /* File List */
+        .file-list {
+            margin-top: 16px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 12px;
+            margin-bottom: 8px;
+            border: 1px solid rgba(72, 140, 154, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .file-item:hover {
+            transform: translateX(4px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.1);
+        }
+
+        .file-name {
+            font-weight: 500;
+            color: #293E4C;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-size {
+            color: #6c757d;
+            font-size: 0.85rem;
+            margin-left: 12px;
+        }
+
+        /* Modal Footer */
+        .modal-footer {
+            padding: 20px 32px 32px 32px;
+            border-top: 1px solid rgba(72, 140, 154, 0.1);
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+        }
+
+        /* Button Styles */
+        .btn-cancel, .btn-upload {
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'Poppins', sans-serif;
+            min-width: 120px;
+            justify-content: center;
+        }
+
+        .btn-cancel {
+            background: linear-gradient(135deg, rgba(108, 117, 125, 0.1) 0%, rgba(108, 117, 125, 0.05) 100%);
+            color: #6c757d;
+            border: 2px solid rgba(108, 117, 125, 0.2);
+        }
+
+        .btn-cancel:hover {
+            background: linear-gradient(135deg, rgba(108, 117, 125, 0.15) 0%, rgba(108, 117, 125, 0.1) 100%);
+            color: #5a6268;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(108, 117, 125, 0.2);
+        }
+
+        .btn-upload {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.3);
+        }
+
+        .btn-upload:hover {
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(34, 197, 94, 0.4);
+        }
+
+        .btn-upload:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .modal-content {
+                width: 95%;
+                margin: 20px;
+            }
+
+            .modal-header,
+            .modal-body,
+            .modal-footer {
+                padding: 20px;
+            }
+
+            .file-upload-area {
+                padding: 30px 15px;
+            }
+
+            .upload-icon {
+                font-size: 36px;
+            }
+
+            .modal-footer {
+                flex-direction: column;
+            }
+
+            .btn-cancel, .btn-upload {
+                width: 100%;
+            }
+        }
     </style>
     <script>
         function addWattageField() {
@@ -1187,10 +1511,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
 
                             <div class="input-group">
-                                <label for="module_docs">Module Documentation</label>
-                                <input type="file" id="module_docs" name="module_docs" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
-                                <small style="color: #666; font-size: 0.85em;">Module specifications, datasheets, or other documentation (PDF, DOC, JPG, PNG - max 5MB)</small>
+                                <label>Module Documentation</label>
+                                <button type="button" class="add-wattage-btn" onclick="openPreModuleUploadModal()">Attach Module Documentation</button>
+                                <div id="preModuleDocsSummary" style="margin-top:8px; color:#666; font-size:0.85em; display:none;"></div>
                             </div>
+
+                            <!-- Pre-creation Module Documentation Modal (fields submit with main form) -->
+                            <div id="preModuleUploadModal" class="upload-modal">
+                              <div class="modal-content">
+                                <div class="modal-header">
+                                  <h2 class="modal-title">
+                                    <i class="fas fa-file-alt"></i>
+                                    Attach Module Documentation
+                                  </h2>
+                                  <button type="button" class="close-modal" onclick="closePreModuleUploadModal()">×</button>
+                                </div>
+                                <div class="modal-body">
+                                  <div class="input-group">
+                                    <label for="module_docs_sub_type">Document Sub-Type</label>
+                                    <select id="module_docs_sub_type" name="module_docs_sub_type" required>
+                                        <option value="">Choose sub-type...</option>
+                                        <option value="Module Invoice">Module Invoice</option>
+                                        <option value="Flash Test Data">Flash Test Data</option>
+                                        <option value="Spec Sheets">Spec Sheets</option>
+                                    </select>
+                                  </div>
+                                  <div class="input-group">
+                                    <label for="module_docs_description">Description (Optional)</label>
+                                    <input type="text" id="module_docs_description" name="module_docs_description" placeholder="Short description">
+                                  </div>
+                                  <div class="input-group">
+                                    <label>Select File(s)</label>
+                                    <div class="file-upload-area" onclick="document.getElementById('preFileInput').click()">
+                                        <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                                        <div class="upload-text">Drop files here or click to browse</div>
+                                        <div class="upload-subtext">Supports: PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, TXT, CSV (Max: 50MB each)</div>
+                                    </div>
+                                    <input type="file" id="preFileInput" name="module_docs[]" multiple style="display:none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv">
+                                    <div id="preFileList" class="file-list"></div>
+                                  </div>
+                                </div>
+                                <div class="modal-footer">
+                                  <button type="button" class="btn-cancel" onclick="closePreModuleUploadModal()">Cancel</button>
+                                  <button type="button" class="btn-upload" onclick="confirmPreModuleDocs()">
+                                    <i class="fas fa-upload"></i> 
+                                    Upload Documents
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                            <?php if (!empty($successMessage) && !empty($project_id)): ?>
+                              <div class="input-group">
+                                  <button type="button" class="add-wattage-btn" onclick="openModuleUploadModal()">Upload More Module Documentation</button>
+                                  <small style="color:#666; display:block;">Use this to upload additional docs after creation.</small>
+                              </div>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </div>
@@ -1212,6 +1587,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <p>Please wait while we create your project. This may take a few moments.</p>
     </div>
 </div>
+
+<?php if (!empty($successMessage) && !empty($project_id)): ?>
+<!-- Module Documentation Upload Modal -->
+<div id="moduleUploadModal" class="upload-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 class="modal-title">
+        <i class="fas fa-file-alt"></i>
+        Upload Module Documentation
+      </h2>
+      <button type="button" class="close-modal" onclick="closeModuleUploadModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="input-group">
+        <label for="moduleDocSubType">Document Sub-Type</label>
+        <select id="moduleDocSubType">
+            <option value="">Choose sub-type...</option>
+            <option value="Module Invoice">Module Invoice</option>
+            <option value="Flash Test Data">Flash Test Data</option>
+            <option value="Spec Sheets">Spec Sheets</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label for="moduleDocDescription">Description (Optional)</label>
+        <input type="text" id="moduleDocDescription" placeholder="Short description">
+      </div>
+      <div class="input-group">
+        <label>Select File(s)</label>
+        <div class="file-upload-area" onclick="document.getElementById('moduleDocFiles').click()">
+            <i class="fas fa-cloud-upload-alt upload-icon"></i>
+            <div class="upload-text">Drop files here or click to browse</div>
+            <div class="upload-subtext">Supports: PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, TXT, CSV (Max: 50MB each)</div>
+        </div>
+        <input type="file" id="moduleDocFiles" multiple style="display:none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv">
+        <div id="moduleDocFileList" class="file-list"></div>
+      </div>
+      <div id="moduleDocProgress" style="display:none; margin-top:16px;">
+        <div style="height:8px; background:#e9ecef; border-radius:8px; overflow:hidden; margin-bottom:8px;">
+          <div id="moduleDocProgressFill" style="height:8px; width:0; background:linear-gradient(90deg, #22c55e, #16a34a); border-radius:8px; transition:width 0.3s ease;"></div>
+        </div>
+        <div id="moduleDocProgressText" style="font-size:0.85rem; color:#6c757d; text-align:center;">Uploading...</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-cancel" onclick="closeModuleUploadModal()">Cancel</button>
+      <button type="button" class="btn-upload" onclick="uploadModuleDocuments()">
+        <i class="fas fa-upload"></i> 
+        Upload Documents
+      </button>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- Load the Google Maps JavaScript API with Places library -->
 <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
@@ -1435,7 +1863,220 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Add event listener to prevent Enter key submission on form fields
             document.addEventListener('keydown', preventEnterSubmission);
+
+            // Hook file inputs for pre/post creation modals to show lists
+            const preInput = document.getElementById('preFileInput');
+            if (preInput) preInput.addEventListener('change', handlePreFileSelection);
+            const postInput = document.getElementById('moduleDocFiles');
+            if (postInput) postInput.addEventListener('change', handleModuleDocFileSelection);
+
+            // Add drag and drop functionality
+            addDragDropSupport('preModuleUploadModal', 'preFileInput');
+            if (document.getElementById('moduleUploadModal')) {
+                addDragDropSupport('moduleUploadModal', 'moduleDocFiles');
+            }
         });
+
+        function bytesToSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024, sizes = ['B','KB','MB','GB'];
+            const i = Math.floor(Math.log(bytes)/Math.log(k));
+            return parseFloat((bytes/Math.pow(k,i)).toFixed(1)) + ' ' + sizes[i];
+        }
+        function renderFileList(listEl, files) {
+            listEl.innerHTML = '';
+            Array.from(files).forEach(f => {
+                const row = document.createElement('div');
+                row.className = 'file-item';
+                const name = document.createElement('div');
+                name.className = 'file-name';
+                name.textContent = f.name;
+                const size = document.createElement('div');
+                size.className = 'file-size';
+                size.textContent = bytesToSize(f.size);
+                row.appendChild(name); row.appendChild(size);
+                listEl.appendChild(row);
+            });
+        }
+        function handlePreFileSelection(e) {
+            const list = document.getElementById('preFileList');
+            if (list) renderFileList(list, e.target.files);
+        }
+        function handleModuleDocFileSelection(e) {
+            const list = document.getElementById('moduleDocFileList');
+            if (list) renderFileList(list, e.target.files);
+        }
+
+        // Pre-creation module docs modal
+        function openPreModuleUploadModal() {
+            const m = document.getElementById('preModuleUploadModal');
+            if (m) {
+                m.style.display = 'flex';
+                document.body.style.overflow = 'hidden'; // Prevent background scroll
+            }
+        }
+        function closePreModuleUploadModal() {
+            const m = document.getElementById('preModuleUploadModal');
+            if (m) {
+                m.style.display = 'none';
+                document.body.style.overflow = ''; // Restore background scroll
+            }
+        }
+        function confirmPreModuleDocs() {
+            const select = document.getElementById('module_docs_sub_type');
+            const files = document.getElementById('preFileInput');
+            if (!select || !files) { closePreModuleUploadModal(); return; }
+            if (files.files && files.files.length > 0 && !select.value) {
+                alert('Please choose a Module Documentation Sub-Type.');
+                return;
+            }
+            // Update summary
+            const summary = document.getElementById('preModuleDocsSummary');
+            if (summary) {
+                const n = files.files ? files.files.length : 0;
+                if (n > 0) {
+                    summary.style.display = '';
+                    summary.textContent = n + ' file' + (n>1?'s':'') + ' attached (' + select.value + ')';
+                } else {
+                    summary.style.display = 'none';
+                    summary.textContent = '';
+                }
+            }
+            closePreModuleUploadModal();
+        }
+
+        // Module Documentation Upload Modal controls
+        function openModuleUploadModal() {
+            const m = document.getElementById('moduleUploadModal');
+            if (m) {
+                m.style.display = 'flex';
+                document.body.style.overflow = 'hidden'; // Prevent background scroll
+            }
+        }
+        function closeModuleUploadModal() {
+            const m = document.getElementById('moduleUploadModal');
+            if (m) {
+                m.style.display = 'none';
+                document.body.style.overflow = ''; // Restore background scroll
+            }
+        }
+
+        async function uploadModuleDocuments() {
+            const filesInput = document.getElementById('moduleDocFiles');
+            const subTypeEl = document.getElementById('moduleDocSubType');
+            const descEl = document.getElementById('moduleDocDescription');
+            const progress = document.getElementById('moduleDocProgress');
+            const fill = document.getElementById('moduleDocProgressFill');
+            const text = document.getElementById('moduleDocProgressText');
+            const files = filesInput ? filesInput.files : null;
+            const subType = subTypeEl ? (subTypeEl.value || '').trim() : '';
+            const description = descEl ? (descEl.value || '').trim() : '';
+            const projectId = <?php echo isset($project_id) ? (int)$project_id : 0; ?>;
+
+            if (!projectId) { alert('Project not found. Save the project first.'); return; }
+            if (!files || files.length === 0) { alert('Please select at least one file.'); return; }
+            if (!subType) { alert('Please enter a document sub-type.'); return; }
+
+            progress.style.display = '';
+            fill.style.width = '0%';
+            text.textContent = 'Uploading...';
+
+            try {
+                for (let i = 0; i < files.length; i++) {
+                    const fd = new FormData();
+                    fd.append('document', files[i]);
+                    fd.append('project_id', projectId);
+                    fd.append('document_type', 'modules');
+                    fd.append('document_sub_type', subType);
+                    if (description) fd.append('description', description);
+
+                    await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+                        xhr.upload.onprogress = function(e){
+                            if (e.lengthComputable) {
+                                const pct = ((i + e.loaded / e.total) / files.length) * 100;
+                                fill.style.width = pct + '%';
+                                text.textContent = 'Uploading ' + (i+1) + '/' + files.length + '...';
+                            }
+                        };
+                        xhr.onload = function(){
+                            if (xhr.status === 200) {
+                                const resp = JSON.parse(xhr.responseText || '{}');
+                                if (resp.success) resolve(); else reject(new Error(resp.message || 'Upload failed'));
+                            } else {
+                                reject(new Error('Upload failed'));
+                            }
+                        };
+                        xhr.onerror = () => reject(new Error('Network error'));
+                        xhr.open('POST', 'upload_project_document.php');
+                        xhr.send(fd);
+                    });
+                }
+                text.textContent = 'Upload complete';
+                setTimeout(()=>{ closeModuleUploadModal(); }, 600);
+                alert('Module documentation uploaded successfully.');
+            } catch (err) {
+                alert('Upload failed: ' + err.message);
+            } finally {
+                fill.style.width = '100%';
+            }
+        }
+
+        // Drag and drop support for file upload areas
+        function addDragDropSupport(modalId, inputId) {
+            const modal = document.getElementById(modalId);
+            if (!modal) return;
+
+            const uploadArea = modal.querySelector('.file-upload-area');
+            const fileInput = document.getElementById(inputId);
+            if (!uploadArea || !fileInput) return;
+
+            // Prevent default drag behaviors
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                uploadArea.addEventListener(eventName, preventDefaults, false);
+                document.body.addEventListener(eventName, preventDefaults, false);
+            });
+
+            // Highlight drop area when item is dragged over it
+            ['dragenter', 'dragover'].forEach(eventName => {
+                uploadArea.addEventListener(eventName, highlight, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                uploadArea.addEventListener(eventName, unhighlight, false);
+            });
+
+            // Handle dropped files
+            uploadArea.addEventListener('drop', handleDrop, false);
+
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            function highlight(e) {
+                uploadArea.classList.add('drag-over');
+                uploadArea.style.borderColor = '#488C9A';
+                uploadArea.style.backgroundColor = '#f0f8ff';
+            }
+
+            function unhighlight(e) {
+                uploadArea.classList.remove('drag-over');
+                uploadArea.style.borderColor = '';
+                uploadArea.style.backgroundColor = '';
+            }
+
+            function handleDrop(e) {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+
+                fileInput.files = files;
+                
+                // Trigger change event to update file list
+                const event = new Event('change', { bubbles: true });
+                fileInput.dispatchEvent(event);
+            }
+        }
 </script>
 
 </body>

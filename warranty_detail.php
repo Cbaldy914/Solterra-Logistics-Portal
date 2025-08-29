@@ -232,8 +232,8 @@ $conn->close();
     <div class="card" style="margin: 0 20px 20px;">
         <div class="card-body">
             <?php 
-                $uiPath = warrantyUiPathAdvanced((string)($claim['responsible_party'] ?? 'Manufacturer'), (string)$claim['status'], (string)($claim['resolution_type'] ?? ''));
-                $activeIdx = uiIndexForStatus((string)$claim['status'], (string)($claim['responsible_party'] ?? ''), (string)($claim['resolution_type'] ?? ''));
+                $uiPath = warrantyUiPathAdvanced((string)($claim['responsible_party'] ?? 'Manufacturer'), (string)$claim['status'], (string)($claim['resolution_type'] ?? ''), $replacementStatusTotals);
+                $activeIdx = uiIndexForStatus((string)$claim['status'], (string)($claim['responsible_party'] ?? ''), (string)($claim['resolution_type'] ?? ''), $replacementStatusTotals);
             ?>
             <div class="progress">
                 <?php foreach ($uiPath as $i=>$label): ?>
@@ -247,6 +247,9 @@ $conn->close();
                     </div>
                 <?php endforeach; ?>
             </div>
+                            
+
+                            
             <?php if ((string)$claim['status'] === 'Rejected'): ?>
                 <?php 
                     // Try to find the most recent rejection reason from events
@@ -275,28 +278,82 @@ $conn->close();
                         <div><?php echo htmlspecialchars($latest['event_text']); ?></div>
                     </div>
                     
-                    <!-- Show replacement shipping status if we have linked pallets -->
+                    <!-- Enhanced Replacement Module Status -->
                     <?php if (!empty($linkedIds) && !empty($replacementStatusTotals)): ?>
-                        <div style="margin-top:15px; padding:15px; background:#f8fafc; border:1px solid #e6edf1; border-radius:10px;">
-                            <h6 style="margin:0 0 10px 0; color:#293E4C; font-weight:600; font-size:0.9em;">Replacement Module Status:</h6>
-                            <div class="replacement-shipping-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;">
+                        <div class="replacement-status-container" style="margin-top:20px; padding:20px; background:linear-gradient(135deg, #f8fafc 0%, #ffffff 100%); border:1px solid #e6edf1; border-radius:16px; box-shadow:0 8px 24px rgba(0,0,0,0.04);">
+                            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+                                <h6 style="margin:0; color:#293E4C; font-weight:700; font-size:1.1em; display:flex; align-items:center; gap:8px;">
+                                    <span style="width:12px; height:12px; background:linear-gradient(135deg, #488C9A, #3A6E7F); border-radius:50%; display:inline-block;"></span>
+                                    Replacement Module Status
+                                </h6>
+                                <div style="background:#e8f4f6; color:#2c3e50; padding:4px 12px; border-radius:20px; font-size:0.85em; font-weight:600;">
+                                    <?php echo count($linkedIds); ?> Pallet<?php echo count($linkedIds) !== 1 ? 's' : ''; ?> Linked
+                                </div>
+                            </div>
+                            <div class="replacement-shipping-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px;">
                                 <?php 
                                     $shipping_statuses = ['At Manufacturer','On Water','Cleared Customs','In Transit to Warehouse','In Warehouse','In Transit to Project','Delivered to Project'];
+                                    $status_colors = [
+                                        'At Manufacturer' => ['bg' => '#fff3cd', 'border' => '#ffeaa7', 'text' => '#856404', 'accent' => '#f39c12'],
+                                        'On Water' => ['bg' => '#d1ecf1', 'border' => '#bee5eb', 'text' => '#0c5460', 'accent' => '#17a2b8'],
+                                        'Cleared Customs' => ['bg' => '#d4edda', 'border' => '#c3e6cb', 'text' => '#155724', 'accent' => '#28a745'],
+                                        'In Transit to Warehouse' => ['bg' => '#e2e3e5', 'border' => '#d6d8db', 'text' => '#383d41', 'accent' => '#6c757d'],
+                                        'In Warehouse' => ['bg' => '#f8d7da', 'border' => '#f1b0b7', 'text' => '#721c24', 'accent' => '#dc3545'],
+                                        'In Transit to Project' => ['bg' => '#d1ecf1', 'border' => '#bee5eb', 'text' => '#0c5460', 'accent' => '#17a2b8'],
+                                        'Delivered to Project' => ['bg' => '#d4edda', 'border' => '#c3e6cb', 'text' => '#155724', 'accent' => '#28a745']
+                                    ];
                                     foreach ($shipping_statuses as $status):
                                         $count = $replacementStatusTotals[$status]['pallets'] ?? 0;
                                         $modules = $replacementStatusTotals[$status]['modules'] ?? 0;
                                         if ($count <= 0) continue;
+                                        $colors = $status_colors[$status] ?? ['bg' => '#f8f9fa', 'border' => '#e9ecef', 'text' => '#495057', 'accent' => '#6c757d'];
                                 ?>
-                                    <div class="replacement-status-box" style="background:#fff; border:1px solid #e8edf2; border-radius:8px; padding:8px; text-align:center; font-size:0.85em;">
-                                        <div style="font-weight:600; color:#293E4C; margin-bottom:3px;"><?php echo htmlspecialchars($status); ?></div>
-                                        <div style="font-size:1.1em; font-weight:700; color:#488C9A;"><?php echo $count; ?></div>
-                                        <div style="color:#6c757d; font-size:0.8em;">pallet<?php echo $count !== 1 ? 's' : ''; ?></div>
+                                    <div class="replacement-status-card" style="background:<?php echo $colors['bg']; ?>; border:2px solid <?php echo $colors['border']; ?>; border-radius:12px; padding:16px; text-align:center; position:relative; transition:all 0.2s ease; cursor:default;">
+                                        <div style="position:absolute; top:8px; right:8px; width:8px; height:8px; background:<?php echo $colors['accent']; ?>; border-radius:50%;"></div>
+                                        <div style="font-weight:700; color:<?php echo $colors['text']; ?>; margin-bottom:8px; font-size:0.9em; line-height:1.2;"><?php echo htmlspecialchars($status); ?></div>
+                                        <div style="font-size:2em; font-weight:800; color:<?php echo $colors['accent']; ?>; margin-bottom:4px;"><?php echo $count; ?></div>
+                                        <div style="color:<?php echo $colors['text']; ?>; font-size:0.85em; font-weight:600; margin-bottom:2px;">pallet<?php echo $count !== 1 ? 's' : ''; ?></div>
                                         <?php if ($modules > 0): ?>
-                                            <div style="color:#6c757d; font-size:0.75em; margin-top:2px;"><?php echo $modules; ?> modules</div>
+                                            <div style="color:<?php echo $colors['text']; ?>; font-size:0.75em; opacity:0.8;"><?php echo number_format($modules); ?> modules</div>
                                         <?php endif; ?>
                                     </div>
                                 <?php endforeach; ?>
                             </div>
+                            <?php if (empty($replacementStatusTotals)): ?>
+                                <div style="text-align:center; padding:24px; color:#6c757d; font-style:italic;">
+                                    No replacement pallets have been created yet
+                                </div>
+                            <?php endif; ?>
+                            
+                            <!-- Estimated Delivery Date for Replacement (Admin/Global Admin Only) -->
+                            <?php if ($isAdmin && (string)($claim['resolution_type'] ?? '') === 'Replacement' && !empty($linkedIds)): ?>
+                                <div style="margin-top:16px; padding-top:16px; border-top:1px solid #e6edf1;">
+                                    <div style="display:flex; align-items:center; justify-content:center; gap:12px; font-size:0.9em;">
+                                        <span style="color:#293E4C; font-weight:600; display:flex; align-items:center; gap:6px;">
+                                            <span style="width:10px; height:10px; background:linear-gradient(135deg, #488C9A, #3A6E7F); border-radius:50%; display:inline-block;"></span>
+                                            Estimated Delivery:
+                                        </span>
+                                        <input type="date" 
+                                               id="estimated_delivery_date" 
+                                               value="<?php echo htmlspecialchars($claim['estimated_delivery_date'] ?? ''); ?>" 
+                                               style="border:1px solid #e2e9ef; border-radius:8px; padding:6px 10px; font-size:0.85em; background:#fff;">
+                                        <button type="button" 
+                                                onclick="saveEstimatedDeliveryDate()" 
+                                                id="save_delivery_btn"
+                                                style="background:linear-gradient(135deg, #488C9A, #3A6E7F); border:none; border-radius:6px; padding:6px 12px; font-size:0.8em; color:#fff; cursor:pointer; transition:all 0.2s ease; font-weight:600;"
+                                                onmouseover="this.style.filter='brightness(1.05)'"
+                                                onmouseout="this.style.filter='brightness(1)'"
+                                                title="Save estimated delivery date">Save</button>
+                                        <button type="button" 
+                                                onclick="document.getElementById('estimated_delivery_date').value=''; saveEstimatedDeliveryDate()" 
+                                                style="background:#f8f9fa; border:1px solid #e9ecef; border-radius:6px; padding:6px 10px; font-size:0.8em; color:#6c757d; cursor:pointer; transition:all 0.2s ease;"
+                                                onmouseover="this.style.background='#e9ecef'"
+                                                onmouseout="this.style.background='#f8f9fa'"
+                                                title="Clear date">Clear</button>
+                                        <div id="delivery_date_status" style="font-size:0.8em; margin-top:4px; min-height:16px;"></div>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
                         </div>
                     <?php endif; ?>
                     
@@ -338,7 +395,25 @@ $conn->close();
                     $galleryId = 'all_pics_' . (int)$claimId;
                     $viewAllId = 'view_all_' . (int)$claimId;
                 ?>
-                <?php if (empty($pictures)): ?>
+                <?php
+                    // Load incident report documents tied to this ticket from project_documents
+                    $incidentDocs = [];
+                    try {
+                        $connDocs = getDBConnection();
+                        if ($connDocs) {
+                            $like = '%incident_ticket_id:' . (int)$claimId . '%';
+                            $stmtD = $connDocs->prepare("SELECT id, document_sub_type, original_file_name, file_path, mime_type, uploaded_at, description FROM project_documents WHERE project_id = ? AND document_type = 'exception_reports' AND is_active = 1 AND entity_context LIKE ? ORDER BY uploaded_at DESC");
+                            $pidDocs = (int)$claim['project_id'];
+                            $stmtD->bind_param('is', $pidDocs, $like);
+                            $stmtD->execute();
+                            $rd = $stmtD->get_result();
+                            while ($r = $rd->fetch_assoc()) { $incidentDocs[] = $r; }
+                            $stmtD->close();
+                            $connDocs->close();
+                        }
+                    } catch (Exception $e) { /* ignore and fall back */ }
+                ?>
+                <?php if (empty($pictures) && empty($incidentDocs)): ?>
                     <div class="help-text">No attachments uploaded yet.</div>
                 <?php else: ?>
                     <div class="gallery">
@@ -356,13 +431,26 @@ $conn->close();
                                 <?php endif; ?>
                             </div>
                         <?php endforeach; ?>
-                        <?php if ($isAdmin): ?>
-                        <label for="upload_docs" class="upload-card" style="min-width:140px;">
-                            <div class="icon">＋</div>
-                            <div style="font-weight:600;">Add Documents</div>
-                            <div style="font-size:12px; color:#6c757d;">PDF, PNG, JPG, WEBP</div>
-                        </label>
-                        <?php endif; ?>
+                        <?php foreach ($incidentDocs as $doc): $isImg = preg_match('/^image\//i', (string)$doc['mime_type']); ?>
+                            <div>
+                                <a href="<?php echo htmlspecialchars($doc['file_path']); ?>" target="_blank" title="<?php echo htmlspecialchars($doc['document_sub_type'] . ' • ' . ($doc['original_file_name'] ?? '')); ?>">
+                                    <?php if ($isImg): ?>
+                                        <img src="<?php echo htmlspecialchars($doc['file_path']); ?>" alt="<?php echo htmlspecialchars($doc['original_file_name'] ?? 'Document'); ?>">
+                                    <?php else: ?>
+                                        <div style="padding:16px; text-align:center;">
+                                            📄 <?php echo htmlspecialchars($doc['document_sub_type'] ?: 'Document'); ?><br>
+                                            <span style="font-size:12px;color:#6c757d;"><?php echo htmlspecialchars($doc['original_file_name'] ?? ''); ?></span>
+                                        </div>
+                                    <?php endif; ?>
+                                </a>
+                                <?php if ($isAdmin): ?>
+                                    <div class="mt-1">
+                                        <label class="form-check-label small"><input type="checkbox" class="form-check-input delete-project-doc" value="<?php echo (int)$doc['id']; ?>"> Delete</label>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        <?php endforeach; ?>
+                        <?php if ($isAdmin): ?><?php endif; ?>
                     </div>
                     <?php if ($hasMorePics): ?>
                         <div class="mt-2">
@@ -387,19 +475,232 @@ $conn->close();
                     <?php endif; ?>
                 <?php endif; ?>
                 <?php if ($isAdmin): ?>
-                    <div class="mt-3">
-                        <!-- Hidden input bound to the Add Documents tile above -->
-                        <input id="upload_docs" type="file" name="proof_files[]" multiple accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none;">
-                        <div id="upload_docs_preview" class="file-pills" style="display:none;"></div>
-                        <div class="d-flex justify-content-end mt-2">
-                            <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Update Attachments</button>
-                        </div>
+                    <div class="mt-3 d-flex justify-content-end" style="gap:10px;">
+                        <!-- Open new Incident Report upload modal -->
+                        <button type="button" class="btn btn-primary" onclick="openIncidentUploadModal()">
+                            <i class="fas fa-upload me-2"></i>Upload Attachments
+                        </button>
+                        <script>
+                        // Ensure the click handler exists even if main script is deferred/gated
+                        if (typeof window.openIncidentUploadModal !== 'function') {
+                            window.openIncidentUploadModal = function(){
+                                var m = document.getElementById('incidentUploadModal');
+                                if (m) { m.style.display = 'block'; }
+                            };
+                        }
+                        </script>
+                        <!-- Delete selected attachments (pictures + ticket docs) -->
+                        <button type="button" onclick="deleteSelectedAttachments()" style="background: linear-gradient(135deg, #ef4444, #dc2626); color:#fff; border:none; border-radius:12px; padding:10px 16px; font-weight:700; display:inline-flex; align-items:center; gap:8px; cursor:pointer;">
+                            <i class="fas fa-trash"></i>Delete
+                        </button>
                     </div>
                 </form>
                 <?php endif; ?>
             </div>
         </div>
     </div>
+
+    <?php if ($isAdmin): ?>
+    <!-- Incident Report Upload Modal -->
+    <div id="incidentUploadModal" class="modal" style="display:none; z-index:10000;">
+        <div class="modal-content" style="max-width:720px;width:90%;">
+            <span class="close" onclick="closeIncidentUploadModal()" title="Close">&times;</span>
+            <h2 style="margin-top:0;">Upload Incident Report Documents</h2>
+            <p style="margin-top:4px;color:#6c757d;">Project: <strong><?php echo htmlspecialchars($claim['project_name']); ?></strong> • Ticket #: <strong><?php echo (int)$claimId; ?></strong></p>
+            <div class="hr" style="height:1px;background:#eef2f6;margin:12px 0 16px;"></div>
+
+            <div class="admin-form-row full">
+                <div class="admin-form-group">
+                    <label class="form-label">Document Sub-Type</label>
+                    <select id="irDocSubType" class="form-select" required>
+                        <option value="">Choose sub-type...</option>
+                        <option value="Damage Photo">Damage Photo</option>
+                        <option value="Warranty Document">Warranty Document</option>
+                        <option value="Project POD">Project POD</option>
+                        <option value="Warehouse POD">Warehouse POD</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="admin-form-row full">
+                <div class="admin-form-group">
+                    <label class="form-label">Description (Optional)</label>
+                    <textarea id="irDescription" class="form-control" rows="3" placeholder="Enter a description..."></textarea>
+                </div>
+            </div>
+
+            <div class="admin-form-row full">
+                <div class="admin-form-group">
+                    <div id="irUploadArea" class="upload-card" style="height:auto;min-height:110px;align-items:center;" onclick="document.getElementById('irFiles').click()">
+                        <div class="icon">＋</div>
+                        <div style="font-weight:600;">Drop photos here or click to browse</div>
+                        <div style="font-size:12px; color:#6c757d;">Supports: JPG, JPEG, PNG, WEBP, GIF (Max 50MB each)</div>
+                    </div>
+                    <input id="irFiles" type="file" accept=".jpg,.jpeg,.png,.webp,.gif" multiple style="display:none;" onchange="irHandleFiles(event)">
+                    <div id="irFileList" class="file-pills" style="margin-top:10px;"></div>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-end" style="gap:10px; margin-top:10px;">
+                <button type="button" class="btn-secondary" onclick="closeIncidentUploadModal()">Cancel</button>
+                <button type="button" id="irUploadBtn" class="btn btn-primary" onclick="irUpload()" disabled>
+                    <i class="fas fa-upload me-2"></i>Upload
+                </button>
+            </div>
+            <div id="irProgress" style="display:none;margin-top:10px;color:#6c757d;">Uploading...</div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <?php if ($isAdmin): ?>
+    <script>
+    // Guards to ensure handlers exist even if main block hasn't executed yet
+    (function(){
+        if (typeof window.selectedIrFiles === 'undefined') window.selectedIrFiles = [];
+        if (typeof window.irRenderFiles !== 'function') {
+            window.irRenderFiles = function(){
+                var list = document.getElementById('irFileList');
+                if (!list) return;
+                if (!window.selectedIrFiles.length){ list.innerHTML=''; return; }
+                list.innerHTML = window.selectedIrFiles.map(function(f,i){
+                    var size=(f.size/1024/1024).toFixed(2)+' MB';
+                    return '<div class="file-pill" style="display:inline-flex;align-items:center;gap:8px;border:1px solid #e1e6ea;border-radius:20px;padding:6px 10px;margin:4px 6px;background:#fff;">'
+                        + '<span style="font-weight:600;">'+ (f.name||'file') +'</span>'
+                        + '<span style="color:#6c757d;font-size:12px;">'+size+'</span>'
+                        + '<button type="button" onclick="irRemoveFile('+i+')" style="border:none;background:#f1f3f5;color:#7a7f85;border-radius:12px;padding:2px 8px;cursor:pointer;">Remove</button>'
+                        + '</div>';
+                }).join('');
+            };
+        }
+        if (typeof window.irValidate !== 'function') {
+            window.irValidate = function(){
+                var sub = document.getElementById('irDocSubType');
+                var btn = document.getElementById('irUploadBtn');
+                if (!sub || !btn) return;
+                var ok = !!sub.value && window.selectedIrFiles.length>0;
+                btn.disabled = !ok;
+            };
+        }
+        if (typeof window.irHandleFiles !== 'function') {
+            window.irHandleFiles = function(e){
+                var files = Array.from((e && e.target && e.target.files) ? e.target.files : []);
+                window.selectedIrFiles = window.selectedIrFiles.concat(files);
+                window.irRenderFiles();
+                window.irValidate();
+            };
+        }
+        if (typeof window.irRemoveFile !== 'function') {
+            window.irRemoveFile = function(idx){
+                window.selectedIrFiles.splice(idx,1);
+                window.irRenderFiles();
+                window.irValidate();
+            };
+        }
+        if (typeof window.closeIncidentUploadModal !== 'function') {
+            window.closeIncidentUploadModal = function(){
+                var m = document.getElementById('incidentUploadModal');
+                if (m) m.style.display='none';
+                var sel = document.getElementById('irDocSubType'); if (sel) sel.value='';
+                var d = document.getElementById('irDescription'); if (d) d.value='';
+                window.selectedIrFiles = [];
+                window.irRenderFiles();
+                window.irValidate();
+            };
+        }
+        if (typeof window.irUpload !== 'function') {
+            window.irUpload = async function(){
+                if (!window.selectedIrFiles.length) return;
+                var subEl = document.getElementById('irDocSubType');
+                var descEl = document.getElementById('irDescription');
+                if (!subEl || !subEl.value) { alert('Please choose a document sub-type.'); return; }
+                var form = new FormData();
+                form.append('project_id', '<?php echo (int)$claim['project_id']; ?>');
+                form.append('document_type', 'exception_reports');
+                form.append('document_sub_type', 'Proof of Completion');
+                form.append('ticket_id', '<?php echo (int)$claimId; ?>');
+                form.append('description', descEl && descEl.value ? descEl.value : '');
+                window.selectedIrFiles.forEach(function(f){ form.append('files[]', f); });
+                var prog = document.getElementById('irProgress');
+                var btn = document.getElementById('irUploadBtn');
+                if (prog) prog.style.display='block';
+                if (btn) btn.disabled = true;
+                try {
+                    var resp = await fetch('upload_global_document.php', { method:'POST', body: form });
+                    var data = await resp.json();
+                    if (data && data.success) {
+                        alert('Documents uploaded successfully');
+                        window.closeIncidentUploadModal();
+                        // optional: trigger page reload or refresh section
+                    } else {
+                        alert('Upload failed: ' + (data && data.message ? data.message : 'Unknown error'));
+                    }
+                } catch (err) {
+                    alert('Upload failed: ' + err.message);
+                } finally {
+                    if (prog) prog.style.display='none';
+                    if (btn) btn.disabled = false;
+                }
+            };
+        }
+        // Delete selected attachments: project documents via AJAX, legacy pictures via form submit
+        if (typeof window.deleteSelectedAttachments !== 'function') {
+            window.deleteSelectedAttachments = async function(){
+                var docChecks = Array.from(document.querySelectorAll('.delete-project-doc:checked'));
+                var picChecks = Array.from(document.querySelectorAll('input[name="delete_pictures[]"]:checked'));
+                if (docChecks.length === 0 && picChecks.length === 0) { alert('Select at least one attachment to delete.'); return; }
+                if (!confirm('Delete selected attachment(s)? This action cannot be undone.')) return;
+
+                // Delete project documents first via API
+                if (docChecks.length > 0) {
+                    try {
+                        var ids = docChecks.map(function(cb){ return parseInt(cb.value, 10); }).filter(function(v){return v>0;});
+                        var resp = await fetch('delete_project_documents.php', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ ids: ids })
+                        });
+                        var data = await resp.json();
+                        if (!data || (!data.success && (!data.deleted_ids || data.deleted_ids.length===0))) {
+                            alert('Failed to delete some project documents.');
+                        }
+                    } catch (e) {
+                        alert('Error deleting documents: ' + e.message);
+                    }
+                }
+
+                // If any legacy pictures selected, submit the form to process deletions
+                if (picChecks.length > 0) {
+                    // Find the nearest form (attachments form wraps this area)
+                    var btn = document.activeElement;
+                    // Fallback: find the form by traversing
+                    var form = btn && btn.closest ? btn.closest('form') : null;
+                    if (!form) {
+                        form = document.querySelector('form[action="process_warranty_update.php"]');
+                    }
+                    if (form) {
+                        form.submit();
+                        return;
+                    }
+                }
+                // Otherwise reload to reflect changes
+                window.location.reload();
+            };
+        }
+        // Basic drag-over styling safe-guard
+        var area = document.getElementById('irUploadArea');
+        if (area && !area.__dragBound) {
+            area.addEventListener('dragover', function(e){ e.preventDefault(); area.style.borderColor='#488C9A'; });
+            area.addEventListener('dragleave', function(e){ e.preventDefault(); area.style.borderColor='#d0d0d0'; });
+            area.addEventListener('drop', function(e){
+                e.preventDefault(); area.style.borderColor='#d0d0d0';
+                var files = Array.from(e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files : []);
+                if (files.length){ window.selectedIrFiles = window.selectedIrFiles.concat(files); window.irRenderFiles(); window.irValidate(); }
+            });
+            area.__dragBound = true;
+        }
+    })();
+    </script>
+    <?php endif; ?>
 
     <?php if ($isAdmin): ?>
     <form method="post" action="process_warranty_update.php" enctype="multipart/form-data">
@@ -455,7 +756,104 @@ $conn->close();
                                             <label class="form-label req">Credit Amount</label>
                                             <input type="number" step="0.01" class="form-control" name="credit_amount" value="<?php echo htmlspecialchars((string)$claim['credit_amount']); ?>" placeholder="0.00">
                                         </div>
-                                    </div>
+</div>
+
+<?php if ($isAdmin): ?>
+<script>
+// Modal controls
+function openIncidentUploadModal(){
+    document.getElementById('incidentUploadModal').style.display='block';
+}
+function closeIncidentUploadModal(){
+    document.getElementById('incidentUploadModal').style.display='none';
+    // reset fields
+    document.getElementById('irDocSubType').value='';
+    document.getElementById('irDescription').value='';
+    selectedIrFiles = [];
+    irRenderFiles();
+    irValidate();
+}
+
+// File selection
+let selectedIrFiles = [];
+function irHandleFiles(e){
+    const files = Array.from(e.target.files||[]);
+    selectedIrFiles = selectedIrFiles.concat(files);
+    irRenderFiles();
+    irValidate();
+}
+function irRemoveFile(idx){
+    selectedIrFiles.splice(idx,1);
+    irRenderFiles();
+    irValidate();
+}
+function irRenderFiles(){
+    const list = document.getElementById('irFileList');
+    if (!list) return;
+    if (!selectedIrFiles.length){ list.innerHTML=''; return; }
+    list.innerHTML = selectedIrFiles.map((f,i)=>{
+        const size=(f.size/1024/1024).toFixed(2)+' MB';
+        return `<div class="file-pill" style="display:inline-flex;align-items:center;gap:8px;border:1px solid #e1e6ea;border-radius:20px;padding:6px 10px;margin:4px 6px;background:#fff;">
+            <span style="font-weight:600;">${f.name}</span>
+            <span style="color:#6c757d;font-size:12px;">${size}</span>
+            <button type="button" onclick="irRemoveFile(${i})" style="border:none;background:#f1f3f5;color:#7a7f85;border-radius:12px;padding:2px 8px;cursor:pointer;">Remove</button>
+        </div>`
+    }).join('');
+}
+
+function irValidate(){
+    const sub = document.getElementById('irDocSubType').value;
+    const ok = !!sub && selectedIrFiles.length>0;
+    document.getElementById('irUploadBtn').disabled = !ok;
+}
+document.getElementById('irDocSubType').addEventListener('change', irValidate);
+
+// Upload
+async function irUpload(){
+    if (selectedIrFiles.length===0) return;
+    const form = new FormData();
+    form.append('project_id', '<?php echo (int)$claim['project_id']; ?>');
+    form.append('document_type', 'exception_reports');
+    form.append('document_sub_type', 'Proof of Completion');
+    form.append('ticket_id', '<?php echo (int)$claimId; ?>');
+    form.append('description', document.getElementById('irDescription').value||'');
+    selectedIrFiles.forEach(f=>form.append('files[]', f));
+
+    const prog = document.getElementById('irProgress');
+    const btn = document.getElementById('irUploadBtn');
+    prog.style.display='block';
+    btn.disabled = true;
+    try{
+        const resp = await fetch('upload_global_document.php', { method:'POST', body: form });
+        const data = await resp.json();
+        if (data && data.success){
+            alert('Documents uploaded successfully');
+            closeIncidentUploadModal();
+        } else {
+            alert('Upload failed: ' + (data?.message||'Unknown error'));
+        }
+    }catch(err){
+        alert('Upload failed: ' + err.message);
+    }finally{
+        prog.style.display='none';
+        btn.disabled = false;
+    }
+}
+
+// Drag-drop on card
+(function(){
+    const area = document.getElementById('irUploadArea');
+    if (!area) return;
+    area.addEventListener('dragover', e=>{ e.preventDefault(); area.style.borderColor='#488C9A'; });
+    area.addEventListener('dragleave', e=>{ e.preventDefault(); area.style.borderColor='#d0d0d0'; });
+    area.addEventListener('drop', e=>{
+        e.preventDefault(); area.style.borderColor='#d0d0d0';
+        const files = Array.from(e.dataTransfer.files||[]);
+        if (files.length){ selectedIrFiles = selectedIrFiles.concat(files); irRenderFiles(); irValidate(); }
+    });
+})();
+</script>
+<?php endif; ?>
 
                                     
 
@@ -531,7 +929,119 @@ $conn->close();
                                 </div>
                                 <button type="button" class="btn-primary" id="btn_apply_decision"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Apply Decision</span></button>
                             <?php elseif ($from === 'Approved - Replacement'): ?>
-                                <button type="button" class="btn-primary" id="btn_to_shipped"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Mark Replacement Shipped</span></button>
+                                <?php 
+                                    // Check current replacement status to determine next action
+                                    $currentReplacementStatus = getPredominantReplacementStatus($replacementStatusTotals);
+                                    $hasLinkedPallets = !empty($linkedIds);
+                                ?>
+                                
+                                <?php if (!$hasLinkedPallets): ?>
+                                    <div class="alert" style="background:#fff3cd; border:1px solid #ffeaa7; border-radius:10px; padding:12px; color:#856404; margin-bottom:12px;">
+                                        <strong>No Replacement Pallets Linked</strong><br>
+                                        <span style="font-size:0.9em;">Create replacement pallets first to proceed with delivery workflow.</span>
+                                    </div>
+                                    <a href="create_replacements.php?claim_id=<?php echo (int)$claimId; ?>" class="btn-primary">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Create Replacement Pallets</span>
+                                    </a>
+                                <?php elseif ($currentReplacementStatus === 'At Manufacturer'): ?>
+                                    <div class="replacement-workflow-info" style="background:#e8f4f6; border:1px solid #d1ecf1; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#f39c12; border-radius:50%;"></span>
+                                            <strong style="color:#2c3e50;">Replacement Status: At Manufacturer</strong>
+                                        </div>
+                                        <div style="color:#0c5460; font-size:0.9em;">Ready to create shipment for replacement pallets</div>
+                                    </div>
+                                    <a href="create_shipment.php?project_id=<?php echo (int)$claim['project_id']; ?>&status_filter=At%20Manufacturer&replacement_claim_id=<?php echo (int)$claimId; ?>" class="btn-primary">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Create Shipment</span>
+                                    </a>
+                                <?php elseif ($currentReplacementStatus === 'On Water'): ?>
+                                    <div class="replacement-workflow-info" style="background:#d1ecf1; border:1px solid #bee5eb; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#17a2b8; border-radius:50%;"></span>
+                                            <strong style="color:#0c5460;">Replacement Status: On Water</strong>
+                                        </div>
+                                        <div style="color:#0c5460; font-size:0.9em;">Shipment is in transit overseas</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" onclick="updateReplacementStatus('Cleared Customs')">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Mark Cleared Customs</span>
+                                    </button>
+                                <?php elseif ($currentReplacementStatus === 'Cleared Customs'): ?>
+                                    <div class="replacement-workflow-info" style="background:#d4edda; border:1px solid #c3e6cb; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#28a745; border-radius:50%;"></span>
+                                            <strong style="color:#155724;">Replacement Status: Cleared Customs</strong>
+                                        </div>
+                                        <div style="color:#155724; font-size:0.9em;">Ready for domestic transport</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" onclick="updateReplacementStatus('In Transit to Warehouse')">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Start Warehouse Transport</span>
+                                    </button>
+                                <?php elseif ($currentReplacementStatus === 'In Transit to Warehouse'): ?>
+                                    <div class="replacement-workflow-info" style="background:#e2e3e5; border:1px solid #d6d8db; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#6c757d; border-radius:50%;"></span>
+                                            <strong style="color:#383d41;">Replacement Status: In Transit to Warehouse</strong>
+                                        </div>
+                                        <div style="color:#383d41; font-size:0.9em;">En route to warehouse facility</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" onclick="updateReplacementStatus('In Warehouse')">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Mark Delivered to Warehouse</span>
+                                    </button>
+                                <?php elseif ($currentReplacementStatus === 'In Warehouse'): ?>
+                                    <div class="replacement-workflow-info" style="background:#f8d7da; border:1px solid #f1b0b7; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#dc3545; border-radius:50%;"></span>
+                                            <strong style="color:#721c24;">Replacement Status: In Warehouse</strong>
+                                        </div>
+                                        <div style="color:#721c24; font-size:0.9em;">Ready for final delivery to project site</div>
+                                    </div>
+                                    <a href="create_shipment.php?project_id=<?php echo (int)$claim['project_id']; ?>&status_filter=In%20Warehouse&replacement_claim_id=<?php echo (int)$claimId; ?>" class="btn-primary">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Create Final Delivery</span>
+                                    </a>
+                                <?php elseif ($currentReplacementStatus === 'In Transit to Project'): ?>
+                                    <div class="replacement-workflow-info" style="background:#d1ecf1; border:1px solid #bee5eb; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#17a2b8; border-radius:50%;"></span>
+                                            <strong style="color:#0c5460;">Replacement Status: In Transit to Project</strong>
+                                        </div>
+                                        <div style="color:#0c5460; font-size:0.9em;">Final delivery to project site in progress</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" onclick="updateReplacementStatus('Delivered to Project')">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Mark Delivered to Project</span>
+                                    </button>
+                                <?php elseif ($currentReplacementStatus === 'Delivered to Project'): ?>
+                                    <div class="replacement-workflow-info" style="background:#d4edda; border:1px solid #c3e6cb; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#28a745; border-radius:50%;"></span>
+                                            <strong style="color:#155724;">Replacement Status: Delivered to Project</strong>
+                                        </div>
+                                        <div style="color:#155724; font-size:0.9em;">All replacement modules have been delivered successfully - ready to close ticket</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" id="btn_to_closed">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Close Ticket</span>
+                                    </button>
+                                <?php else: ?>
+                                    <!-- Fallback for mixed or unknown statuses -->
+                                    <div class="replacement-workflow-info" style="background:#f8f9fa; border:1px solid #e9ecef; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#6c757d; border-radius:50%;"></span>
+                                            <strong style="color:#495057;">Mixed Replacement Status</strong>
+                                        </div>
+                                        <div style="color:#6c757d; font-size:0.9em;">Multiple pallets at different delivery stages</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" id="btn_to_closed">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Close Ticket</span>
+                                    </button>
+                                <?php endif; ?>
                             <?php elseif ($from === 'Replacement Shipped' || $from === 'Approved - Credit' || $from === 'Rejected'): ?>
                                 <button type="button" class="btn-primary" id="btn_to_closed"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Close</span></button>
                             <?php else: ?>
@@ -861,6 +1371,92 @@ document.addEventListener('DOMContentLoaded', () => {
       if (g) { g.style.display = (g.style.display === 'none' || g.style.display === '') ? 'grid' : 'none'; }
     });
   }
+
+  // Update replacement status for intermediate workflow steps
+  async function updateReplacementStatus(newStatus) {
+    if (!confirm(`Update replacement status to "${newStatus}"? This will affect all linked replacement pallets.`)) {
+      return;
+    }
+    
+    try {
+      const response = await fetch('update_replacement_status.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          claim_id: <?php echo (int)$claimId; ?>,
+          new_status: newStatus,
+          csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>'
+        })
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        location.reload(); // Refresh to show updated status
+      } else {
+        alert('Failed to update status: ' + (data.message || 'Unknown error'));
+      }
+    } catch (error) {
+      alert('Error updating status: ' + error.message);
+    }
+  }
+
+  // Save estimated delivery date
+  window.saveEstimatedDeliveryDate = async function() {
+    const newDate = document.getElementById('estimated_delivery_date').value;
+    const statusDiv = document.getElementById('delivery_date_status');
+    const saveBtn = document.getElementById('save_delivery_btn');
+    
+    if (statusDiv) statusDiv.innerHTML = '<span style="color:#488C9A;">Saving...</span>';
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = 'Saving...';
+    }
+    
+    try {
+      const response = await fetch('update_warranty_estimated_delivery.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          claim_id: <?php echo (int)$claimId; ?>,
+          estimated_delivery_date: newDate,
+          csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>'
+        })
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        if (statusDiv) {
+          statusDiv.innerHTML = '<span style="color:#28a745;">✓ Saved successfully</span>';
+          setTimeout(() => {
+            if (statusDiv) statusDiv.innerHTML = '';
+          }, 3000);
+        }
+        if (saveBtn) {
+          saveBtn.innerHTML = '✓ Saved';
+          setTimeout(() => {
+            if (saveBtn) saveBtn.innerHTML = 'Save';
+          }, 2000);
+        }
+      } else {
+        if (statusDiv) statusDiv.innerHTML = '<span style="color:#dc3545;">Failed to save</span>';
+        alert('Failed to update estimated delivery date: ' + (data.message || 'Unknown error'));
+      }
+    } catch (error) {
+      if (statusDiv) statusDiv.innerHTML = '<span style="color:#dc3545;">Error</span>';
+      alert('Error updating estimated delivery date: ' + error.message);
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        if (saveBtn.innerHTML === 'Saving...') {
+          saveBtn.innerHTML = 'Save';
+        }
+      }
+    }
+  };
 
   // File input previews for user feedback
   function renderSelectedFiles(inputEl, previewEl){
