@@ -158,11 +158,11 @@ try {
             }
         }
 
-        // Incident Reports: require valid ticket_id (warranty_claims.id) and persist in entity_context
-        if ($document_type === 'incident_reports') {
+        // Exception Reports: require valid ticket_id (warranty_claims.id) and persist in entity_context
+        if ($document_type === 'exception_reports') {
             $ticket_id = isset($_POST['ticket_id']) ? trim($_POST['ticket_id']) : '';
             if ($ticket_id === '' || !ctype_digit($ticket_id)) {
-                throw new Exception('Valid Ticket Number is required for incident reports.');
+                throw new Exception('Valid Ticket Number is required for exception reports.');
             }
             // Validate ticket belongs to selected project
             $tid = (int)$ticket_id;

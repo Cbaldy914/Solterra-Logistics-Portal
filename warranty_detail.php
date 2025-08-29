@@ -402,7 +402,7 @@ $conn->close();
                         $connDocs = getDBConnection();
                         if ($connDocs) {
                             $like = '%incident_ticket_id:' . (int)$claimId . '%';
-                            $stmtD = $connDocs->prepare("SELECT id, document_sub_type, original_file_name, file_path, mime_type, uploaded_at, description FROM project_documents WHERE project_id = ? AND document_type = 'incident_reports' AND is_active = 1 AND entity_context LIKE ? ORDER BY uploaded_at DESC");
+                            $stmtD = $connDocs->prepare("SELECT id, document_sub_type, original_file_name, file_path, mime_type, uploaded_at, description FROM project_documents WHERE project_id = ? AND document_type = 'exception_reports' AND is_active = 1 AND entity_context LIKE ? ORDER BY uploaded_at DESC");
                             $pidDocs = (int)$claim['project_id'];
                             $stmtD->bind_param('is', $pidDocs, $like);
                             $stmtD->execute();
@@ -615,8 +615,8 @@ $conn->close();
                 if (!subEl || !subEl.value) { alert('Please choose a document sub-type.'); return; }
                 var form = new FormData();
                 form.append('project_id', '<?php echo (int)$claim['project_id']; ?>');
-                form.append('document_type', 'incident_reports');
-                form.append('document_sub_type', subEl.value);
+                form.append('document_type', 'exception_reports');
+                form.append('document_sub_type', 'Proof of Completion');
                 form.append('ticket_id', '<?php echo (int)$claimId; ?>');
                 form.append('description', descEl && descEl.value ? descEl.value : '');
                 window.selectedIrFiles.forEach(function(f){ form.append('files[]', f); });
@@ -813,8 +813,8 @@ async function irUpload(){
     if (selectedIrFiles.length===0) return;
     const form = new FormData();
     form.append('project_id', '<?php echo (int)$claim['project_id']; ?>');
-    form.append('document_type', 'incident_reports');
-    form.append('document_sub_type', document.getElementById('irDocSubType').value);
+    form.append('document_type', 'exception_reports');
+    form.append('document_sub_type', 'Proof of Completion');
     form.append('ticket_id', '<?php echo (int)$claimId; ?>');
     form.append('description', document.getElementById('irDescription').value||'');
     selectedIrFiles.forEach(f=>form.append('files[]', f));
