@@ -118,6 +118,7 @@ $folders_structure = [
             'damage_photo' => ['label' => 'Damage Photos', 'icon' => 'fas fa-image'],
             'warranty_document' => ['label' => 'Warranty Document', 'icon' => 'fas fa-shield-alt'],
             'proof_of_completion' => ['label' => 'Proof of Completion', 'icon' => 'fas fa-check-circle'],
+            'safety_incident' => ['label' => 'Safety Incident', 'icon' => 'fas fa-hard-hat'],
             'project_pod' => ['label' => 'Project POD', 'icon' => 'fas fa-clipboard'],
             'warehouse_pod' => ['label' => 'Warehouse POD', 'icon' => 'fas fa-warehouse']
         ]
