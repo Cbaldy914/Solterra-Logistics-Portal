@@ -117,7 +117,7 @@ function warrantyValidTransitions(): array {
         'Pending EPC' => ['Approved - Credit', 'Approved - Replacement', 'Rejected'],
         'Pending Carrier' => ['Approved - Credit', 'Approved - Replacement', 'Rejected'],
         'Approved - Credit' => ['Closed'],
-        'Approved - Replacement' => ['Replacement Shipped'],
+        'Approved - Replacement' => ['Replacement Shipped', 'Closed'], // Allow direct closure when replacement delivered
         'Replacement Shipped' => ['Closed'],
         'Closed' => [],
         'Rejected' => [],
