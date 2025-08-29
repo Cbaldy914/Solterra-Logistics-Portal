@@ -232,8 +232,8 @@ $conn->close();
     <div class="card" style="margin: 0 20px 20px;">
         <div class="card-body">
             <?php 
-                $uiPath = warrantyUiPathAdvanced((string)($claim['responsible_party'] ?? 'Manufacturer'), (string)$claim['status'], (string)($claim['resolution_type'] ?? ''));
-                $activeIdx = uiIndexForStatus((string)$claim['status'], (string)($claim['responsible_party'] ?? ''), (string)($claim['resolution_type'] ?? ''));
+                $uiPath = warrantyUiPathAdvanced((string)($claim['responsible_party'] ?? 'Manufacturer'), (string)$claim['status'], (string)($claim['resolution_type'] ?? ''), $replacementStatusTotals);
+                $activeIdx = uiIndexForStatus((string)$claim['status'], (string)($claim['responsible_party'] ?? ''), (string)($claim['resolution_type'] ?? ''), $replacementStatusTotals);
             ?>
             <div class="progress">
                 <?php foreach ($uiPath as $i=>$label): ?>
@@ -246,17 +246,20 @@ $conn->close();
                         <?php echo htmlspecialchars($label); ?>
                     </div>
                 <?php endforeach; ?>
-            </div>
-            <?php if ((string)$claim['status'] === 'Rejected'): ?>
-                <?php 
-                    // Try to find the most recent rejection reason from events
-                    $rejReason = '';
-                    foreach ($eventsAll as $ev) { if (stripos($ev['event_text'] ?? '', 'Rejected:') === 0) { $rejReason = trim(substr($ev['event_text'], 9)); break; } }
-                ?>
-                <?php if ($rejReason !== ''): ?>
-                    <div style="margin-top:8px; text-align:center; color:#842029; font-weight:600;">Reason: <?php echo htmlspecialchars($rejReason); ?></div>
-                <?php endif; ?>
-            <?php endif; ?>
+                                        </div>
+                            
+
+                            
+                            <?php if ((string)$claim['status'] === 'Rejected'): ?>
+                                <?php 
+                                    // Try to find the most recent rejection reason from events
+                                    $rejReason = '';
+                                    foreach ($eventsAll as $ev) { if (stripos($ev['event_text'] ?? '', 'Rejected:') === 0) { $rejReason = trim(substr($ev['event_text'], 9)); break; } }
+                                ?>
+                                <?php if ($rejReason !== ''): ?>
+                                    <div style="margin-top:8px; text-align:center; color:#842029; font-weight:600;">Reason: <?php echo htmlspecialchars($rejReason); ?></div>
+                                <?php endif; ?>
+                            <?php endif; ?>
         </div>
     </div>
 
@@ -275,28 +278,82 @@ $conn->close();
                         <div><?php echo htmlspecialchars($latest['event_text']); ?></div>
                     </div>
                     
-                    <!-- Show replacement shipping status if we have linked pallets -->
+                    <!-- Enhanced Replacement Module Status -->
                     <?php if (!empty($linkedIds) && !empty($replacementStatusTotals)): ?>
-                        <div style="margin-top:15px; padding:15px; background:#f8fafc; border:1px solid #e6edf1; border-radius:10px;">
-                            <h6 style="margin:0 0 10px 0; color:#293E4C; font-weight:600; font-size:0.9em;">Replacement Module Status:</h6>
-                            <div class="replacement-shipping-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;">
+                        <div class="replacement-status-container" style="margin-top:20px; padding:20px; background:linear-gradient(135deg, #f8fafc 0%, #ffffff 100%); border:1px solid #e6edf1; border-radius:16px; box-shadow:0 8px 24px rgba(0,0,0,0.04);">
+                            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+                                <h6 style="margin:0; color:#293E4C; font-weight:700; font-size:1.1em; display:flex; align-items:center; gap:8px;">
+                                    <span style="width:12px; height:12px; background:linear-gradient(135deg, #488C9A, #3A6E7F); border-radius:50%; display:inline-block;"></span>
+                                    Replacement Module Status
+                                </h6>
+                                <div style="background:#e8f4f6; color:#2c3e50; padding:4px 12px; border-radius:20px; font-size:0.85em; font-weight:600;">
+                                    <?php echo count($linkedIds); ?> Pallet<?php echo count($linkedIds) !== 1 ? 's' : ''; ?> Linked
+                                </div>
+                            </div>
+                            <div class="replacement-shipping-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px;">
                                 <?php 
                                     $shipping_statuses = ['At Manufacturer','On Water','Cleared Customs','In Transit to Warehouse','In Warehouse','In Transit to Project','Delivered to Project'];
+                                    $status_colors = [
+                                        'At Manufacturer' => ['bg' => '#fff3cd', 'border' => '#ffeaa7', 'text' => '#856404', 'accent' => '#f39c12'],
+                                        'On Water' => ['bg' => '#d1ecf1', 'border' => '#bee5eb', 'text' => '#0c5460', 'accent' => '#17a2b8'],
+                                        'Cleared Customs' => ['bg' => '#d4edda', 'border' => '#c3e6cb', 'text' => '#155724', 'accent' => '#28a745'],
+                                        'In Transit to Warehouse' => ['bg' => '#e2e3e5', 'border' => '#d6d8db', 'text' => '#383d41', 'accent' => '#6c757d'],
+                                        'In Warehouse' => ['bg' => '#f8d7da', 'border' => '#f1b0b7', 'text' => '#721c24', 'accent' => '#dc3545'],
+                                        'In Transit to Project' => ['bg' => '#d1ecf1', 'border' => '#bee5eb', 'text' => '#0c5460', 'accent' => '#17a2b8'],
+                                        'Delivered to Project' => ['bg' => '#d4edda', 'border' => '#c3e6cb', 'text' => '#155724', 'accent' => '#28a745']
+                                    ];
                                     foreach ($shipping_statuses as $status):
                                         $count = $replacementStatusTotals[$status]['pallets'] ?? 0;
                                         $modules = $replacementStatusTotals[$status]['modules'] ?? 0;
                                         if ($count <= 0) continue;
+                                        $colors = $status_colors[$status] ?? ['bg' => '#f8f9fa', 'border' => '#e9ecef', 'text' => '#495057', 'accent' => '#6c757d'];
                                 ?>
-                                    <div class="replacement-status-box" style="background:#fff; border:1px solid #e8edf2; border-radius:8px; padding:8px; text-align:center; font-size:0.85em;">
-                                        <div style="font-weight:600; color:#293E4C; margin-bottom:3px;"><?php echo htmlspecialchars($status); ?></div>
-                                        <div style="font-size:1.1em; font-weight:700; color:#488C9A;"><?php echo $count; ?></div>
-                                        <div style="color:#6c757d; font-size:0.8em;">pallet<?php echo $count !== 1 ? 's' : ''; ?></div>
+                                    <div class="replacement-status-card" style="background:<?php echo $colors['bg']; ?>; border:2px solid <?php echo $colors['border']; ?>; border-radius:12px; padding:16px; text-align:center; position:relative; transition:all 0.2s ease; cursor:default;">
+                                        <div style="position:absolute; top:8px; right:8px; width:8px; height:8px; background:<?php echo $colors['accent']; ?>; border-radius:50%;"></div>
+                                        <div style="font-weight:700; color:<?php echo $colors['text']; ?>; margin-bottom:8px; font-size:0.9em; line-height:1.2;"><?php echo htmlspecialchars($status); ?></div>
+                                        <div style="font-size:2em; font-weight:800; color:<?php echo $colors['accent']; ?>; margin-bottom:4px;"><?php echo $count; ?></div>
+                                        <div style="color:<?php echo $colors['text']; ?>; font-size:0.85em; font-weight:600; margin-bottom:2px;">pallet<?php echo $count !== 1 ? 's' : ''; ?></div>
                                         <?php if ($modules > 0): ?>
-                                            <div style="color:#6c757d; font-size:0.75em; margin-top:2px;"><?php echo $modules; ?> modules</div>
+                                            <div style="color:<?php echo $colors['text']; ?>; font-size:0.75em; opacity:0.8;"><?php echo number_format($modules); ?> modules</div>
                                         <?php endif; ?>
                                     </div>
                                 <?php endforeach; ?>
                             </div>
+                            <?php if (empty($replacementStatusTotals)): ?>
+                                <div style="text-align:center; padding:24px; color:#6c757d; font-style:italic;">
+                                    No replacement pallets have been created yet
+                                </div>
+                            <?php endif; ?>
+                            
+                            <!-- Estimated Delivery Date for Replacement (Admin/Global Admin Only) -->
+                            <?php if ($isAdmin && (string)($claim['resolution_type'] ?? '') === 'Replacement' && !empty($linkedIds)): ?>
+                                <div style="margin-top:16px; padding-top:16px; border-top:1px solid #e6edf1;">
+                                    <div style="display:flex; align-items:center; justify-content:center; gap:12px; font-size:0.9em;">
+                                        <span style="color:#293E4C; font-weight:600; display:flex; align-items:center; gap:6px;">
+                                            <span style="width:10px; height:10px; background:linear-gradient(135deg, #488C9A, #3A6E7F); border-radius:50%; display:inline-block;"></span>
+                                            Estimated Delivery:
+                                        </span>
+                                        <input type="date" 
+                                               id="estimated_delivery_date" 
+                                               value="<?php echo htmlspecialchars($claim['estimated_delivery_date'] ?? ''); ?>" 
+                                               style="border:1px solid #e2e9ef; border-radius:8px; padding:6px 10px; font-size:0.85em; background:#fff;">
+                                        <button type="button" 
+                                                onclick="saveEstimatedDeliveryDate()" 
+                                                id="save_delivery_btn"
+                                                style="background:linear-gradient(135deg, #488C9A, #3A6E7F); border:none; border-radius:6px; padding:6px 12px; font-size:0.8em; color:#fff; cursor:pointer; transition:all 0.2s ease; font-weight:600;"
+                                                onmouseover="this.style.filter='brightness(1.05)'"
+                                                onmouseout="this.style.filter='brightness(1)'"
+                                                title="Save estimated delivery date">Save</button>
+                                        <button type="button" 
+                                                onclick="document.getElementById('estimated_delivery_date').value=''; saveEstimatedDeliveryDate()" 
+                                                style="background:#f8f9fa; border:1px solid #e9ecef; border-radius:6px; padding:6px 10px; font-size:0.8em; color:#6c757d; cursor:pointer; transition:all 0.2s ease;"
+                                                onmouseover="this.style.background='#e9ecef'"
+                                                onmouseout="this.style.background='#f8f9fa'"
+                                                title="Clear date">Clear</button>
+                                        <div id="delivery_date_status" style="font-size:0.8em; margin-top:4px; min-height:16px;"></div>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
                         </div>
                     <?php endif; ?>
                     
@@ -872,7 +929,119 @@ async function irUpload(){
                                 </div>
                                 <button type="button" class="btn-primary" id="btn_apply_decision"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Apply Decision</span></button>
                             <?php elseif ($from === 'Approved - Replacement'): ?>
-                                <button type="button" class="btn-primary" id="btn_to_shipped"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Mark Replacement Shipped</span></button>
+                                <?php 
+                                    // Check current replacement status to determine next action
+                                    $currentReplacementStatus = getPredominantReplacementStatus($replacementStatusTotals);
+                                    $hasLinkedPallets = !empty($linkedIds);
+                                ?>
+                                
+                                <?php if (!$hasLinkedPallets): ?>
+                                    <div class="alert" style="background:#fff3cd; border:1px solid #ffeaa7; border-radius:10px; padding:12px; color:#856404; margin-bottom:12px;">
+                                        <strong>No Replacement Pallets Linked</strong><br>
+                                        <span style="font-size:0.9em;">Create replacement pallets first to proceed with delivery workflow.</span>
+                                    </div>
+                                    <a href="create_replacements.php?claim_id=<?php echo (int)$claimId; ?>" class="btn-primary">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Create Replacement Pallets</span>
+                                    </a>
+                                <?php elseif ($currentReplacementStatus === 'At Manufacturer'): ?>
+                                    <div class="replacement-workflow-info" style="background:#e8f4f6; border:1px solid #d1ecf1; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#f39c12; border-radius:50%;"></span>
+                                            <strong style="color:#2c3e50;">Replacement Status: At Manufacturer</strong>
+                                        </div>
+                                        <div style="color:#0c5460; font-size:0.9em;">Ready to create shipment for replacement pallets</div>
+                                    </div>
+                                    <a href="create_shipment.php?project_id=<?php echo (int)$claim['project_id']; ?>&status_filter=At%20Manufacturer&replacement_claim_id=<?php echo (int)$claimId; ?>" class="btn-primary">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Create Shipment</span>
+                                    </a>
+                                <?php elseif ($currentReplacementStatus === 'On Water'): ?>
+                                    <div class="replacement-workflow-info" style="background:#d1ecf1; border:1px solid #bee5eb; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#17a2b8; border-radius:50%;"></span>
+                                            <strong style="color:#0c5460;">Replacement Status: On Water</strong>
+                                        </div>
+                                        <div style="color:#0c5460; font-size:0.9em;">Shipment is in transit overseas</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" onclick="updateReplacementStatus('Cleared Customs')">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Mark Cleared Customs</span>
+                                    </button>
+                                <?php elseif ($currentReplacementStatus === 'Cleared Customs'): ?>
+                                    <div class="replacement-workflow-info" style="background:#d4edda; border:1px solid #c3e6cb; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#28a745; border-radius:50%;"></span>
+                                            <strong style="color:#155724;">Replacement Status: Cleared Customs</strong>
+                                        </div>
+                                        <div style="color:#155724; font-size:0.9em;">Ready for domestic transport</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" onclick="updateReplacementStatus('In Transit to Warehouse')">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Start Warehouse Transport</span>
+                                    </button>
+                                <?php elseif ($currentReplacementStatus === 'In Transit to Warehouse'): ?>
+                                    <div class="replacement-workflow-info" style="background:#e2e3e5; border:1px solid #d6d8db; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#6c757d; border-radius:50%;"></span>
+                                            <strong style="color:#383d41;">Replacement Status: In Transit to Warehouse</strong>
+                                        </div>
+                                        <div style="color:#383d41; font-size:0.9em;">En route to warehouse facility</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" onclick="updateReplacementStatus('In Warehouse')">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Mark Delivered to Warehouse</span>
+                                    </button>
+                                <?php elseif ($currentReplacementStatus === 'In Warehouse'): ?>
+                                    <div class="replacement-workflow-info" style="background:#f8d7da; border:1px solid #f1b0b7; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#dc3545; border-radius:50%;"></span>
+                                            <strong style="color:#721c24;">Replacement Status: In Warehouse</strong>
+                                        </div>
+                                        <div style="color:#721c24; font-size:0.9em;">Ready for final delivery to project site</div>
+                                    </div>
+                                    <a href="create_shipment.php?project_id=<?php echo (int)$claim['project_id']; ?>&status_filter=In%20Warehouse&replacement_claim_id=<?php echo (int)$claimId; ?>" class="btn-primary">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Create Final Delivery</span>
+                                    </a>
+                                <?php elseif ($currentReplacementStatus === 'In Transit to Project'): ?>
+                                    <div class="replacement-workflow-info" style="background:#d1ecf1; border:1px solid #bee5eb; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#17a2b8; border-radius:50%;"></span>
+                                            <strong style="color:#0c5460;">Replacement Status: In Transit to Project</strong>
+                                        </div>
+                                        <div style="color:#0c5460; font-size:0.9em;">Final delivery to project site in progress</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" onclick="updateReplacementStatus('Delivered to Project')">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Mark Delivered to Project</span>
+                                    </button>
+                                <?php elseif ($currentReplacementStatus === 'Delivered to Project'): ?>
+                                    <div class="replacement-workflow-info" style="background:#d4edda; border:1px solid #c3e6cb; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#28a745; border-radius:50%;"></span>
+                                            <strong style="color:#155724;">Replacement Status: Delivered to Project</strong>
+                                        </div>
+                                        <div style="color:#155724; font-size:0.9em;">All replacement modules have been delivered successfully - ready to close ticket</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" id="btn_to_closed">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Close Ticket</span>
+                                    </button>
+                                <?php else: ?>
+                                    <!-- Fallback for mixed or unknown statuses -->
+                                    <div class="replacement-workflow-info" style="background:#f8f9fa; border:1px solid #e9ecef; border-radius:10px; padding:12px; margin-bottom:12px;">
+                                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                            <span style="width:8px; height:8px; background:#6c757d; border-radius:50%;"></span>
+                                            <strong style="color:#495057;">Mixed Replacement Status</strong>
+                                        </div>
+                                        <div style="color:#6c757d; font-size:0.9em;">Multiple pallets at different delivery stages</div>
+                                    </div>
+                                    <button type="button" class="btn-primary" id="btn_to_closed">
+                                        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4l8 8-8 8V4z"/></svg>
+                                        <span>Close Ticket</span>
+                                    </button>
+                                <?php endif; ?>
                             <?php elseif ($from === 'Replacement Shipped' || $from === 'Approved - Credit' || $from === 'Rejected'): ?>
                                 <button type="button" class="btn-primary" id="btn_to_closed"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 12h12l-4-4 1.4-1.4L21.8 12l-7.4 5.4L13 16l4-4H5z"/></svg><span>Close</span></button>
                             <?php else: ?>
@@ -1202,6 +1371,92 @@ document.addEventListener('DOMContentLoaded', () => {
       if (g) { g.style.display = (g.style.display === 'none' || g.style.display === '') ? 'grid' : 'none'; }
     });
   }
+
+  // Update replacement status for intermediate workflow steps
+  async function updateReplacementStatus(newStatus) {
+    if (!confirm(`Update replacement status to "${newStatus}"? This will affect all linked replacement pallets.`)) {
+      return;
+    }
+    
+    try {
+      const response = await fetch('update_replacement_status.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          claim_id: <?php echo (int)$claimId; ?>,
+          new_status: newStatus,
+          csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>'
+        })
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        location.reload(); // Refresh to show updated status
+      } else {
+        alert('Failed to update status: ' + (data.message || 'Unknown error'));
+      }
+    } catch (error) {
+      alert('Error updating status: ' + error.message);
+    }
+  }
+
+  // Save estimated delivery date
+  window.saveEstimatedDeliveryDate = async function() {
+    const newDate = document.getElementById('estimated_delivery_date').value;
+    const statusDiv = document.getElementById('delivery_date_status');
+    const saveBtn = document.getElementById('save_delivery_btn');
+    
+    if (statusDiv) statusDiv.innerHTML = '<span style="color:#488C9A;">Saving...</span>';
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = 'Saving...';
+    }
+    
+    try {
+      const response = await fetch('update_warranty_estimated_delivery.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          claim_id: <?php echo (int)$claimId; ?>,
+          estimated_delivery_date: newDate,
+          csrf_token: '<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>'
+        })
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        if (statusDiv) {
+          statusDiv.innerHTML = '<span style="color:#28a745;">✓ Saved successfully</span>';
+          setTimeout(() => {
+            if (statusDiv) statusDiv.innerHTML = '';
+          }, 3000);
+        }
+        if (saveBtn) {
+          saveBtn.innerHTML = '✓ Saved';
+          setTimeout(() => {
+            if (saveBtn) saveBtn.innerHTML = 'Save';
+          }, 2000);
+        }
+      } else {
+        if (statusDiv) statusDiv.innerHTML = '<span style="color:#dc3545;">Failed to save</span>';
+        alert('Failed to update estimated delivery date: ' + (data.message || 'Unknown error'));
+      }
+    } catch (error) {
+      if (statusDiv) statusDiv.innerHTML = '<span style="color:#dc3545;">Error</span>';
+      alert('Error updating estimated delivery date: ' + error.message);
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        if (saveBtn.innerHTML === 'Saving...') {
+          saveBtn.innerHTML = 'Save';
+        }
+      }
+    }
+  };
 
   // File input previews for user feedback
   function renderSelectedFiles(inputEl, previewEl){

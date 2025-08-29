@@ -16,8 +16,8 @@ $draw = isset($_GET['draw']) ? (int)$_GET['draw'] : 0;
 $start = isset($_GET['start']) ? (int)$_GET['start'] : 0;
 $length = isset($_GET['length']) ? (int)$_GET['length'] : 25;
 
-// Default order by last_public_update_at DESC
-$orderColIdx = isset($_GET['order'][0]['column']) ? (int)$_GET['order'][0]['column'] : 6;
+// Default order by last_public_update_at DESC  
+$orderColIdx = isset($_GET['order'][0]['column']) ? (int)$_GET['order'][0]['column'] : 8;
 $orderDir = isset($_GET['order'][0]['dir']) && strtolower($_GET['order'][0]['dir']) === 'asc' ? 'ASC' : 'DESC';
 
 // Map columns from DataTables to SQL columns
@@ -27,10 +27,13 @@ $columns = [
     'w.issue_type',                               // 2 Issue Type
     'w.responsible_party',                        // 3 Responsible Party
     'w.status',                                   // 4 Status
-    'w.created_at',                               // 5 Opened
-    'COALESCE(w.last_public_update_at, w.created_at)', // 6 Last Update
+    'w.resolution_type',                          // 5 Replacement Details
+    'w.created_at',                               // 6 Estimated Delivery (fallback to created_at for sorting)
+    'w.created_at',                               // 7 Actual Delivery (fallback)
+    'w.created_at',                               // 8 Opened
+    'COALESCE(w.last_public_update_at, w.created_at)', // 9 Last Update
 ];
-$orderBy = $columns[$orderColIdx] ?? $columns[6];
+$orderBy = $columns[$orderColIdx] ?? $columns[9];
 
 // Filters
 $filters = loadPersistedWarrantyFilters();
@@ -173,9 +176,58 @@ $resCount = $stmtCount->get_result();
 $recordsFiltered = (int)($resCount->fetch_assoc()['c'] ?? 0);
 $stmtCount->close();
 
-// Data query
+// Helper function to get replacement status and delivery date for approved replacement claims
+function getReplacementStatus($conn, $claimId) {
+    // Use listLinkedReplacementPalletIds function and then get status totals
+    require_once __DIR__ . '/warranty_helpers.php';
+    $linkedIds = listLinkedReplacementPalletIds($conn, $claimId);
+    if (empty($linkedIds)) {
+        return ['status' => null, 'delivery_date' => null];
+    }
+    
+    $placeholders = implode(',', array_fill(0, count($linkedIds), '?'));
+    $types = str_repeat('i', count($linkedIds));
+    $stmt = $conn->prepare("SELECT status, COUNT(*) AS count, MAX(arrival_date) as max_arrival FROM inventory_pallets WHERE id IN ($placeholders) GROUP BY status ORDER BY FIELD(status, 'Delivered to Project', 'In Transit to Project', 'In Warehouse', 'In Transit to Warehouse', 'Cleared Customs', 'On Water', 'At Manufacturer') LIMIT 1");
+    if ($stmt) {
+        $stmt->bind_param($types, ...$linkedIds);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        if ($row = $result->fetch_assoc()) {
+            $status = $row['status'];
+            $deliveryDate = null;
+            
+            // If delivered to project, get the actual delivery date
+            if ($status === 'Delivered to Project') {
+                $deliveryStmt = $conn->prepare("SELECT MAX(arrival_date) as delivery_date FROM inventory_pallets WHERE id IN ($placeholders) AND status = 'Delivered to Project'");
+                $deliveryStmt->bind_param($types, ...$linkedIds);
+                $deliveryStmt->execute();
+                $deliveryResult = $deliveryStmt->get_result();
+                if ($deliveryRow = $deliveryResult->fetch_assoc()) {
+                    $deliveryDate = $deliveryRow['delivery_date'];
+                }
+                $deliveryStmt->close();
+            }
+            
+            $stmt->close();
+            return ['status' => $status, 'delivery_date' => $deliveryDate];
+        }
+        $stmt->close();
+    }
+    return ['status' => null, 'delivery_date' => null];
+}
+
+// Check if estimated_delivery_date column exists
+$columnExists = false;
+$checkColumn = $conn->query("SHOW COLUMNS FROM warranty_claims LIKE 'estimated_delivery_date'");
+if ($checkColumn && $checkColumn->num_rows > 0) {
+    $columnExists = true;
+}
+
+// Data query - including resolution details, with conditional estimated_delivery_date
+$estimatedDeliveryField = $columnExists ? 'w.estimated_delivery_date' : 'NULL as estimated_delivery_date';
 $sqlData = "SELECT w.id, p.project_name, w.issue_type, w.responsible_party, w.status, w.created_at,
-                   COALESCE(w.last_public_update_at, w.created_at) AS last_update
+                   COALESCE(w.last_public_update_at, w.created_at) AS last_update,
+                   w.resolution_type, w.credit_amount, $estimatedDeliveryField
             $sqlBase
             $whereSql
             ORDER BY $orderBy $orderDir
@@ -199,15 +251,28 @@ $resData = $stmtData->get_result();
 
 $data = [];
 while ($row = $resData->fetch_assoc()) {
+    // Get replacement status and delivery date if this is an approved replacement
+    $replacementInfo = ['status' => null, 'delivery_date' => null];
+    if ($row['status'] === 'Approved - Replacement' || strpos($row['status'], 'Replacement') !== false) {
+        $replacementInfo = getReplacementStatus($conn, (int)$row['id']);
+    }
+    
     $data[] = [
-        (int)$row['id'],
-        (string)$row['project_name'],
-        (string)$row['issue_type'],
-        (string)$row['responsible_party'],
-        (string)$row['status'],
-        (string)$row['created_at'],
-        (string)$row['last_update'],
-        '' // Action column rendered client-side
+        (int)$row['id'],                           // 0
+        (string)$row['project_name'],              // 1  
+        (string)$row['issue_type'],                // 2
+        (string)$row['responsible_party'],         // 3
+        (string)$row['status'],                    // 4
+        (string)($row['resolution_type'] ?? ''),   // 5 - for replacement details column logic
+        (string)($row['estimated_delivery_date'] ?? ''), // 6 - estimated delivery
+        (string)($replacementInfo['delivery_date'] ?? ''), // 7 - actual delivery
+        (string)$row['created_at'],                // 8 - opened
+        (string)$row['last_update'],               // 9 - last update
+        '',                                        // 10 - Action column rendered client-side
+        (string)($row['resolution_type'] ?? ''),   // 11 - resolution_type for JS
+        (float)($row['credit_amount'] ?? 0),       // 12 - credit_amount for JS
+        (string)($replacementInfo['status'] ?? ''), // 13 - replacement_status for JS
+        (string)($replacementInfo['delivery_date'] ?? '') // 14 - actual delivery date for JS
     ];
 }
 $stmtData->close();

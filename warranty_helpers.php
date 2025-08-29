@@ -35,7 +35,7 @@ function warrantyUiPath(string $responsibleParty): array {
     return ['Submitted','In Review',$pending,'Approved/Rejected','Closed'];
 }
 
-function warrantyUiPathAdvanced(string $responsibleParty, string $status, ?string $resolutionType): array {
+function warrantyUiPathAdvanced(string $responsibleParty, string $status, ?string $resolutionType, array $replacementStatusTotals = []): array {
     $pending = 'Pending ' . ($responsibleParty ?: 'Manufacturer');
 
     // Before decision
@@ -51,8 +51,24 @@ function warrantyUiPathAdvanced(string $responsibleParty, string $status, ?strin
     // Approved path -> include resolution step
     if ($status === 'Approved - Credit' || $status === 'Approved - Replacement' || $status === 'Replacement Shipped' || $status === 'Closed') {
         $resLabel = $resolutionType ?: 'Resolution';
-        // Specialize for replacement shipped
-        if ($status === 'Replacement Shipped') { $resLabel = 'Replacement Shipped'; }
+        
+        // For replacement path, show current replacement status
+        if ($resolutionType === 'Replacement' && !empty($replacementStatusTotals)) {
+            $currentReplacementStatus = getPredominantReplacementStatus($replacementStatusTotals);
+            if ($currentReplacementStatus) {
+                $resLabel = 'Replacement - ' . $currentReplacementStatus;
+                
+                // If replacement is delivered to project, show "Closed" as final step for better UX
+                if ($currentReplacementStatus === 'Delivered to Project') {
+                    return ['Submitted','In Review',$pending,'Approved',$resLabel,'Closed'];
+                }
+            } else {
+                $resLabel = 'Replacement';
+            }
+        } elseif ($status === 'Replacement Shipped') { 
+            $resLabel = 'Replacement Shipped'; 
+        }
+        
         return ['Submitted','In Review',$pending,'Approved',$resLabel,'Closed'];
     }
 
@@ -60,10 +76,18 @@ function warrantyUiPathAdvanced(string $responsibleParty, string $status, ?strin
     return ['Submitted','In Review',$pending,'Approved/Rejected','Closed'];
 }
 
-function uiIndexForStatus(string $status, string $responsibleParty, ?string $resolutionType): int {
-    $path = warrantyUiPathAdvanced($responsibleParty, $status, $resolutionType);
+function uiIndexForStatus(string $status, string $responsibleParty, ?string $resolutionType, array $replacementStatusTotals = []): int {
+    $path = warrantyUiPathAdvanced($responsibleParty, $status, $resolutionType, $replacementStatusTotals);
     // Map known statuses to index in advanced path
     $pending = 'Pending ' . ($responsibleParty ?: 'Manufacturer');
+    
+    // Special case: if replacement is delivered to project, mark replacement step as complete
+    $replacementDelivered = false;
+    if ($resolutionType === 'Replacement' && !empty($replacementStatusTotals)) {
+        $currentReplacementStatus = getPredominantReplacementStatus($replacementStatusTotals);
+        $replacementDelivered = ($currentReplacementStatus === 'Delivered to Project');
+    }
+    
     $map = [
         'Submitted' => 0,
         'In Review' => 1,
@@ -71,7 +95,7 @@ function uiIndexForStatus(string $status, string $responsibleParty, ?string $res
         'Pending EPC' => 2,
         'Pending Carrier' => 2,
         'Approved - Credit' => 3,
-        'Approved - Replacement' => 3,
+        'Approved - Replacement' => $replacementDelivered ? 4 : 3, // If delivered, show as completed step
         'Replacement Shipped' => 4,
         'Rejected' => 3, // in rejected path, index 3 maps to 'Rejected'
         'Closed' => array_key_exists(5, $path) ? 5 : 4,
@@ -133,6 +157,35 @@ function getAllowedProjectIds(mysqli $conn, int $userId, string $role): ?array {
     }
     $stmt->close();
     return $ids;
+}
+
+/**
+ * Get the predominant status of replacement pallets for timeline display
+ */
+function getPredominantReplacementStatus(array $replacementStatusTotals): ?string {
+    if (empty($replacementStatusTotals)) {
+        return null;
+    }
+    
+    // Priority order for status display (most important first)
+    $statusPriority = [
+        'Delivered to Project',
+        'In Transit to Project', 
+        'In Warehouse',
+        'In Transit to Warehouse',
+        'Cleared Customs',
+        'On Water',
+        'At Manufacturer'
+    ];
+    
+    // Find the most significant status with pallets
+    foreach ($statusPriority as $status) {
+        if (isset($replacementStatusTotals[$status]) && ($replacementStatusTotals[$status]['pallets'] ?? 0) > 0) {
+            return $status;
+        }
+    }
+    
+    return null;
 }
 
 function getClaimProjectId(mysqli $conn, int $claimId): ?int {
