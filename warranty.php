@@ -258,6 +258,9 @@ persistWarrantyFilters($filters);
                     <th>Issue Type</th>
                     <th>Responsible Party</th>
                     <th>Status</th>
+                    <th>Replacement Details</th>
+                    <th>Estimated Delivery</th>
+                    <th>Actual Delivery</th>
                     <th>Opened</th>
                     <th>Last Update</th>
                     <th>Action</th>
@@ -304,11 +307,30 @@ function statusBadge(status) {
   return `<span class="status-badge status-${status.replace(/ /g,'\\ ').replace(/-/g,'\\ - ')}">${status}</span>`;
 }
 
+function resolutionBadge(type, value) {
+  if (type === 'Credit') {
+    return `<span class="resolution-badge credit" style="background: linear-gradient(135deg, #d4edda, #c3e6cb); color: #155724; padding: 4px 8px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">Credit: $${value}</span>`;
+  } else if (type === 'Replacement') {
+    const colors = {
+      'At Manufacturer': '#f39c12',
+      'On Water': '#17a2b8', 
+      'Cleared Customs': '#28a745',
+      'In Transit to Warehouse': '#6c757d',
+      'In Warehouse': '#dc3545',
+      'In Transit to Project': '#17a2b8',
+      'Delivered to Project': '#28a745'
+    };
+    const color = colors[value] || '#6c757d';
+    return `<span class="resolution-badge replacement" style="background: ${color}20; color: ${color}; border: 1px solid ${color}40; padding: 4px 8px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">${value}</span>`;
+  }
+  return '-';
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   claimsTable = $('#claimsTable').DataTable({
     processing: true,
     serverSide: true,
-    order: [[6, 'desc']],
+    order: [[9, 'desc']],
     ajax: { url: 'get_warranty_claims.php', data: function(d){ buildAjaxData(d); } },
     pageLength: 25,
     // Custom DOM to force info and pagination into a single inline row
@@ -319,8 +341,59 @@ document.addEventListener('DOMContentLoaded', function() {
       { data: 2, render: data => `<span class=\"filter-chip\">${(data||'').replace('_',' ')}</span>` },
       { data: 3 },
       { data: 4, render: data => statusBadge(data) },
-      { data: 5, render: data => new Date(data).toLocaleString() },
-      { data: 6, render: data => new Date(data).toLocaleString() },
+      { data: 5, render: function(data, type, row) {
+          // Replacement Details column - show for approved/closed tickets with resolution
+          if ((row[4].includes('Approved') || row[4] === 'Closed') && row[11]) { // row[11] = resolution_type
+            if (row[11] === 'Credit' && row[12] && parseFloat(row[12]) > 0) { // row[12] = credit_amount
+              return resolutionBadge('Credit', parseFloat(row[12]).toFixed(2));
+            } else if (row[11] === 'Replacement' && row[13]) { // row[13] = replacement_status
+              return resolutionBadge('Replacement', row[13]);
+            } else if (row[11] === 'Replacement') {
+              // Show "Replacement" if no specific status available
+              return `<span class="resolution-badge replacement" style="background: #6c757d20; color: #6c757d; border: 1px solid #6c757d40; padding: 4px 8px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">Replacement</span>`;
+            }
+          }
+          return '-';
+        }},
+      { data: 6, render: function(data, type, row) {
+          // Estimated Delivery column - show for approved/closed replacement tickets
+          if ((row[4].includes('Approved') || row[4] === 'Closed') && row[11] === 'Replacement' && data) {
+            // For date-only fields (YYYY-MM-DD), parse as local date to avoid UTC conversion
+            const parts = data.split('-');
+            if (parts.length === 3) {
+              const date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+              return date.toLocaleDateString();
+            }
+          }
+          return '-';
+        }},
+      { data: 14, render: function(data, type, row) {
+          // Actual Delivery column - show for approved/closed replacement tickets that were delivered
+          if ((row[4].includes('Approved') || row[4] === 'Closed') && row[11] === 'Replacement' && row[13] === 'Delivered to Project' && data) {
+            const parts = data.split('-');
+            if (parts.length === 3) {
+              const date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+              return date.toLocaleDateString();
+            }
+          }
+          return '-';
+        }},
+      { data: 7, render: function(data, type, row) {
+          // Opened column (created_at) - handle datetime properly
+          if (data) {
+            const date = new Date(data);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+          }
+          return '-';
+        }},
+      { data: 8, render: function(data, type, row) {
+          // Last Update column - handle datetime properly  
+          if (data) {
+            const date = new Date(data);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+          }
+          return '-';
+        }},
       { data: null, orderable:false, searchable:false, render: (row)=> `<button class=\"icon-btn\" title=\"Open\" onclick=\"event.stopPropagation(); window.location='warranty_detail.php?id=${row[0]}'\">▶</button>` }
     ]
   });

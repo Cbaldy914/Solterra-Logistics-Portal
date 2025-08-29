@@ -288,8 +288,8 @@ if (!empty($ship_wattages)) {
     }
 }
 
-// Incident Reports-specific filters
-if ($document_type === 'incident_reports') {
+// Exception Reports-specific filters
+if ($document_type === 'exception_reports') {
     if (!empty($inc_ticket_id)) {
         // Ticket is stored in entity_context as 'incident_ticket_id:<ID>'
         $where_conditions[] = "pd.entity_context LIKE ?";

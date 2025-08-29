@@ -141,7 +141,32 @@ if ($resolution === 'Replacement') {
         $conn->close();
         die('Replacement requires at least one linked pallet');
     }
-    if (in_array($status, ['Replacement Shipped', 'Closed'], true) && (empty($finalLinked) || $replacementTracking === '')) {
+    
+    // For closing replacement claims, check if we're coming from delivered status or need tracking
+    if ($status === 'Closed' && $fromStatus === 'Approved - Replacement') {
+        // If closing directly from Approved - Replacement, check if replacement is delivered to project
+        if (!empty($finalLinked)) {
+            $placeholders = implode(',', array_fill(0, count($finalLinked), '?'));
+            $types = str_repeat('i', count($finalLinked));
+            $statusCheck = $conn->prepare("SELECT COUNT(*) as delivered_count FROM inventory_pallets WHERE id IN ($placeholders) AND status = 'Delivered to Project'");
+            $statusCheck->bind_param($types, ...$finalLinked);
+            $statusCheck->execute();
+            $statusResult = $statusCheck->get_result();
+            $deliveredCount = (int)($statusResult->fetch_assoc()['delivered_count'] ?? 0);
+            $statusCheck->close();
+            
+            // Allow closure if at least one pallet is delivered to project, or if tracking number is provided
+            if ($deliveredCount === 0 && $replacementTracking === '') {
+                $conn->rollback();
+                $conn->close();
+                die('Cannot close ticket: Replacement must be delivered to project or tracking number must be provided');
+            }
+        } else {
+            $conn->rollback();
+            $conn->close();
+            die('Replacement requires at least one linked pallet to close');
+        }
+    } elseif ($status === 'Replacement Shipped' && (empty($finalLinked) || $replacementTracking === '')) {
         $conn->rollback();
         $conn->close();
         die('Replacement shipment requires linked pallet(s) and tracking number');

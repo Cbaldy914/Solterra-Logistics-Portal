@@ -178,13 +178,13 @@ function processDamageReport($conn, $appointment_id, $bol_number, $delivery_date
                         ];
                         
                         // Upload using new document system
-                        $processed_file = processDocumentUpload($file_data, 'incident_reports');
+                        $processed_file = processDocumentUpload($file_data, 'exception_reports');
                         
                         // Prepare document data
                         $document_data = [
                             'project_id' => $project_id,
-                            'document_type' => 'incident_reports',
-                            'document_sub_type' => 'Damage Reports',
+                            'document_type' => 'exception_reports',
+                            'document_sub_type' => 'Damage Photo',
                             'delivery_id' => $delivery_id,
                             'original_name' => $processed_file['original_name'],
                             'file_size' => $processed_file['size'],
@@ -379,13 +379,13 @@ function processSafetyIncident($conn, $appointment_id, $bol_number) {
                         ];
                         
                         // Upload using new document system
-                        $processed_file = processDocumentUpload($file_data, 'incident_reports');
+                        $processed_file = processDocumentUpload($file_data, 'exception_reports');
                         
                         // Prepare document data
                         $document_data = [
                             'project_id' => $project_id,
-                            'document_type' => 'incident_reports',
-                            'document_sub_type' => 'Safety Reports',
+                            'document_type' => 'exception_reports',
+                            'document_sub_type' => 'Safety Incident',
                             'delivery_id' => $delivery_id,
                             'original_name' => $processed_file['original_name'],
                             'file_size' => $processed_file['size'],
