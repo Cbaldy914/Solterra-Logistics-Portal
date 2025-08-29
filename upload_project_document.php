@@ -32,7 +32,7 @@ $description = trim($_POST['description'] ?? '');
 $user_id = $_SESSION['user_id'];
 
 // Validate document type - supporting all document types now
-$allowed_types = ['invoices', 'pods', 'flash_test_data', 'bills_of_lading', 'warehousing', 'modules', 'delivery_packet', 'incident_reports', 'safe_harbor_evidence', 'shipments'];
+$allowed_types = ['invoices', 'pods', 'flash_test_data', 'bills_of_lading', 'warehousing', 'modules', 'delivery_packet', 'exception_reports', 'safe_harbor_evidence', 'shipments'];
 if (!in_array($document_type, $allowed_types)) {
     http_response_code(400);
     echo json_encode(['success' => false, 'message' => 'Invalid document type']);

@@ -109,14 +109,15 @@ $folders_structure = [
             'spec_sheet' => ['label' => 'Spec Sheet', 'icon' => 'fas fa-file']
         ]
     ],
-    'incident_reports' => [
-        'label' => 'Incident Reports',
+    'exception_reports' => [
+        'label' => 'Exception Reports',
         'icon' => 'fas fa-exclamation-triangle',
         'class' => 'doc-incident',
         'description' => 'Safety and incident documentation',
         'subfolders' => [
             'damage_photo' => ['label' => 'Damage Photos', 'icon' => 'fas fa-image'],
             'warranty_document' => ['label' => 'Warranty Document', 'icon' => 'fas fa-shield-alt'],
+            'proof_of_completion' => ['label' => 'Proof of Completion', 'icon' => 'fas fa-check-circle'],
             'project_pod' => ['label' => 'Project POD', 'icon' => 'fas fa-clipboard'],
             'warehouse_pod' => ['label' => 'Warehouse POD', 'icon' => 'fas fa-warehouse']
         ]
@@ -1122,7 +1123,7 @@ foreach ($folders_structure as $key => $meta) {
                  'warehousing': 'warehousing_docs',
                  'modules': 'modules_docs',
                  'delivery_packet': 'delivery_packet',
-                 'incident_reports': 'incident_reports',
+                 'exception_reports': 'exception_reports',
                  'safe_harbor_evidence': 'safe_harbor_evidence'
              };
              const page = typeMap[documentType] || documentType;
