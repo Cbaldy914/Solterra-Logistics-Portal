@@ -43,7 +43,7 @@ if ($role === null) {
   background: var(--slp-bg);
   border-bottom: 1px solid var(--slp-border);
   box-shadow: 0 6px 18px rgba(0,0,0,0.06);
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, "Poppins", sans-serif;
+  font-family: "Poppins", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 }
 
 .slp-header__inner {
