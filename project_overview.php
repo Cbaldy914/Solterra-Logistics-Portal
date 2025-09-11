@@ -1551,7 +1551,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         inset 0 -1px 0 rgba(0, 0, 0, 0.03);
     border: 2px solid rgba(255, 255, 255, 0.8);
     position: relative;
-    overflow: hidden;
+    overflow: visible;
     backdrop-filter: blur(10px);
 }
 
@@ -1733,12 +1733,21 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 /* Enhanced Shipping Statuses */
 .shipping-statuses {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 15px;
     margin-top: 25px;
-    max-width: 800px;
-    margin-left: auto;
-    margin-right: auto;
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+    max-width: 700px;
+}
+
+/* Responsive wrapping for shipping statuses (admin + customer) */
+@media (max-width: 1200px) {
+    .shipping-statuses { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); max-width: 500px;}
+}
+@media (max-width: 992px) {
+    .shipping-statuses { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); max-width: 400px;}
 }
 
 .shipping-box {
@@ -2054,35 +2063,63 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     
     .timeline::before {
         width: 6px;
-        height: 80%;
-        top: 10%;
-        left: 50%;
+        height: 100%;
+        top: 0;
+        left: 24px;
         right: auto;
-        transform: translateX(-50%);
+        transform: none;
+        z-index: 0;
     }
     
     .timeline::after {
         width: 6px !important;
         max-width: none !important;
-        height: calc(var(--progress-width, 0%) * 0.8);
-        top: 10%;
-        left: 50%;
+        height: var(--progress-width, 0%);
+        top: 0;
+        left: 24px;
         right: auto;
-        transform: translateX(-50%);
+        transform: none;
+        z-index: 1;
     }
     
     .timeline-item {
         width: 100%;
-        max-width: 400px;
+        max-width: 480px;
         margin-bottom: 40px;
-        padding: 0;
+        padding: 0 0 0 64px;
+        text-align: left;
+        position: relative;
     }
     
     .timeline-item .circle {
         width: 60px;
         height: 60px;
         font-size: 20px;
-        margin-bottom: 15px;
+        margin-bottom: 12px;
+        position: absolute;
+        left: 0;
+        top: 0;
+        transform: none;
+        z-index: 2;
+    }
+
+    /* Align progress circle like other circles on mobile */
+    .timeline-progress-step .timeline-progress-container {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 60px;
+        height: 60px;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2;
+    }
+    .timeline-progress-step .timeline-circular-progress {
+        width: 60px;
+        height: 60px;
+        transform: rotate(-160deg); /* keep start point */
     }
     
     .timeline-item .label,
@@ -2147,6 +2184,34 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         max-width: 100% !important;
         height: auto !important;
     }
+}
+
+/* Deterministic columns for shipping statuses across breakpoints */
+.shipping-statuses {
+    max-width: 700px; /* ~4 cards per row */
+    margin-left: auto;
+    margin-right: auto;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 1290px) {
+    .shipping-statuses { grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 500px; }
+}
+@media (max-width: 1030px) {
+    .shipping-statuses { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 400px; }
+}
+@media (max-width: 600px) {
+    .shipping-statuses { grid-template-columns: 1fr; max-width: 360px; }
+}
+
+/* Tablet/laptop optimizations to avoid clipping before mobile layout kicks in */
+@media (max-width: 1200px) and (min-width: 769px) {
+    .timeline-container { padding: 30px 20px; overflow: visible; }
+    .timeline-item { padding: 0 8px; }
+    .timeline-item .circle { width: 60px; height: 60px; font-size: 20px; }
+    .timeline-item .label, .timeline-content h3 { font-size: 14px; }
+    .timeline-item .description, .timeline-content p { font-size: 11px; }
+    .timeline::before { top: 30px; }
+    .timeline::after { top: 30px; }
 }
 
 @media (max-width: 580px) {
@@ -2505,6 +2570,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     transition: background-color 0.3s ease;
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
     min-width: 140px;
     margin: 5px;
@@ -2578,6 +2644,24 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         font-size: 0.9em;
     }
 }
+/* Make plain buttons in button groups match dropdown buttons and center text */
+.button-group > button {
+    background: #488C9A;
+    color: #fff;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 1em;
+    transition: background-color 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 140px;
+    margin: 5px;
+}
+.button-group > button:hover { background: #293E4C; }
 
 /* Info Container Styles */
 .info-container {
@@ -3182,12 +3266,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 
 .shipping-statuses {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 15px;
     margin-top: 25px;
-    max-width: 800px;
-    margin-left: auto;
-    margin-right: auto;
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
     position: relative;
 }
 
@@ -3338,18 +3422,34 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .unit-filters {
-        flex-wrap: wrap;
-        gap: 8px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        width: 100%;
     }
-    
     .unit-filter-btn {
-        padding: 10px 16px;
-        font-size: 0.9rem;
+        padding: 10px 8px;
+        font-size: 0.85rem;
+        text-align: center;
     }
 }
 </style>
 </head>
 <body>
+<script>
+// Keep unit filter buttons on one line on mobile by shortening Truckloads to Trucks
+document.addEventListener('DOMContentLoaded', function() {
+  function updateTruckloadsLabel() {
+    const isMobile = window.innerWidth <= 768;
+    document.querySelectorAll('.unit-filter-btn[data-unit="truckloads"]').forEach(btn => {
+      const desired = isMobile ? 'Trucks' : 'Truckloads';
+      if (btn.textContent.trim() !== desired) btn.textContent = desired;
+    });
+  }
+  updateTruckloadsLabel();
+  window.addEventListener('resize', updateTruckloadsLabel);
+});
+</script>
 <?php include 'header.php'; ?>
 <main>
     <?php
@@ -3427,7 +3527,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
             </div>
             
             <!-- Customer View Buttons -->
-            <div id="customer-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: none;"' : 'style="display: block;"'; ?>>
+            <div id="customer-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: none;"' : 'style="display: flex;"';?> >
                 <div class="dropdown">
                     <button class="dropdown-btn" onclick="toggleCustomerDeliveriesDropdown()">
                         Deliveries <span class="dropdown-arrow">▼</span>
