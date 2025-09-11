@@ -13,339 +13,440 @@ if (session_status() == PHP_SESSION_NONE) {
 
 // Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
-    // User is not logged in
     header("Location: login");
     exit();
 }
 
 // Get the user's role from the session
-if (isset($_SESSION['role'])) {
-    $role = $_SESSION['role'];
-} else {
-    // Handle the case where the role is not set in the session
+$role = isset($_SESSION['role']) ? $_SESSION['role'] : null;
+if ($role === null) {
     header("Location: login");
     exit();
 }
-
-// Now output the header HTML with the appropriate menu
 ?>
-<header>
-    <div class="header_logo">
+
+<!-- Scoped, self-contained header styles (independent from portal.css) -->
+<style>
+/* --- CSS scope: .slp-header --- */
+.slp-header * { box-sizing: border-box; }
+.slp-header {
+  --slp-bg: #ffffff;
+  --slp-text: #1e2a32;
+  --slp-muted: #5a6b75;
+  --slp-accent: #488C9A;
+  --slp-accent-dark: #3A6E7F;
+  --slp-border: rgba(30, 42, 50, 0.08);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  width: 100%;
+  background: var(--slp-bg);
+  border-bottom: 1px solid var(--slp-border);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.06);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, "Poppins", sans-serif;
+}
+
+.slp-header__inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px clamp(16px, 4vw, 28px);
+  margin: 0 auto;
+}
+
+.slp-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.slp-brand img {
+  height: clamp(60px, 10vw, 85px);
+  width: auto;
+  display: block;
+}
+
+/* Nav toggle (hamburger) */
+.slp-nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px; height: 42px;
+  border-radius: 10px;
+  border: 1px solid var(--slp-border);
+  background: linear-gradient(180deg, #fff, #fafafa);
+  color: var(--slp-accent);
+  font-size: 22px;
+  cursor: pointer;
+  transition: transform .2s ease, box-shadow .2s ease, background .2s ease;
+}
+.slp-nav-toggle { /* aligned per breakpoint */ }
+.slp-nav-toggle:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,0.08); }
+.slp-nav-toggle:active { transform: translateY(0); }
+
+/* Desktop nav */
+.slp-nav { position: relative; margin-left: auto; }
+.slp-menu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0; padding: 0; list-style: none;
+}
+.slp-item { position: relative; }
+.slp-link {
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--slp-text);
+  text-decoration: none;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-weight: 500; font-size: 15px;
+  transition: color .2s ease, background .2s ease, transform .2s ease;
+}
+.slp-link:hover { color: var(--slp-accent); background: rgba(72,140,154,0.08); }
+
+/* Primary action (Sign out visual) */
+.slp-link--primary { background: var(--slp-accent); color: #fff; }
+.slp-link--primary:hover { background: var(--slp-accent-dark); color: #fff; }
+
+/* Profile pill */
+.slp-profile {
+  width: 40px; height: 40px; border-radius: 999px;
+  background: linear-gradient(135deg, var(--slp-accent), var(--slp-accent-dark));
+  color: #fff; display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+  box-shadow: 0 2px 10px rgba(72,140,154,0.28);
+}
+
+/* Dropdown panel */
+.slp-has-dropdown > .slp-submenu {
+  position: absolute; inset: auto auto auto 0; top: calc(100% + 6px);
+  min-width: 220px; padding: 10px;
+  border-radius: 12px; border: 1px solid var(--slp-border);
+  background: #fff;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.12);
+  display: none;
+  max-width: min(90vw, 320px);
+}
+.slp-align-right > .slp-submenu { left: auto; right: 0; }
+.slp-nav .slp-item.slp-has-dropdown:last-child > .slp-submenu { left: auto; right: 0; }
+.slp-has-dropdown::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 100%;
+  height: 10px; /* hover bridge to prevent flicker */
+}
+.slp-submenu a {
+  display: block; padding: 10px 12px; border-radius: 8px;
+  color: var(--slp-text); text-decoration: none; font-size: 14px; font-weight: 500;
+}
+.slp-submenu a:hover { background: rgba(72,140,154,0.08); color: var(--slp-accent); }
+
+/* Hover/focus open on desktop */
+@media (pointer:fine) {
+  .slp-has-dropdown:hover > .slp-submenu { display: block; }
+  .slp-has-dropdown:focus-within > .slp-submenu { display: block; }
+}
+
+/* Mobile layout */
+@media (max-width: 1024px) {
+  .slp-nav-toggle { display: inline-flex; margin-left: auto; }
+  .slp-nav { margin-left: 0; }
+  .slp-menu {
+    position: fixed; left: 0; right: 0; top: calc(64px + 16px);
+    background: #fff; border-top: 1px solid var(--slp-border);
+    box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+    display: none; flex-direction: column; align-items: stretch;
+    gap: 4px; padding: 10px 14px; max-height: 70vh; overflow-y: auto;
+  }
+  .slp-menu.is-open { display: flex; }
+  .slp-item { width: 100%; }
+  .slp-link { width: 100%; justify-content: space-between; padding: 12px 14px; }
+  .slp-has-dropdown > .slp-submenu { position: static; display: none; box-shadow: none; border: none; padding: 6px 8px; }
+  .slp-has-dropdown.is-open > .slp-submenu { display: block; }
+}
+
+/* Hide toggle on large screens */
+@media (min-width: 1025px) { .slp-nav-toggle { display: none; } }
+</style>
+
+<div class="slp-header" role="banner">
+  <div class="slp-header__inner">
+    <a class="slp-brand" href="dashboard" aria-label="Solterra Solutions Home">
+      <img src="pictures/header_logo.png" alt="Solterra Solutions" />
+    </a>
+
+    <div class="slp-nav">
+      <ul id="slp-menu" class="slp-menu" role="menubar">
         <?php if ($role === 'global_admin'): ?>
-            <a href="dashboard">
-                <img src="pictures/header_logo.png" alt="Solterra Solutions Logo">
-            </a>
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Projects</a>
+            <div class="slp-submenu" role="menu">
+              <a href="dashboard" role="menuitem">Dashboard</a>
+              <a href="add_project" role="menuitem">Add Project</a>
+              <a href="manage_projects" role="menuitem">Manage Projects</a>
+              <a href="module_cost_analysis" role="menuitem">Module Cost Analysis</a>
+              <a href="admin_project_forecast" role="menuitem">Forecast Costs</a>
+              <a href="project_site" role="menuitem">Link Project to Site</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Modules</a>
+            <div class="slp-submenu" role="menu">
+              <a href="modules" role="menuitem">Manage Modules</a>
+              <a href="module_movements" role="menuitem">Module Movements</a>
+              <a href="manage_pallets" role="menuitem">Manage Pallets</a>
+              <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
+              <a href="link_pallet_deliveries" role="menuitem">Link Pallets to Deliveries</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Warehouses</a>
+            <div class="slp-submenu" role="menu">
+              <a href="add_warehouse" role="menuitem">Add Warehouse</a>
+              <a href="manage_warehouses" role="menuitem">Manage Warehouses</a>
+              <a href="admin_warehouse_estimate" role="menuitem">Admin Warehouse Quote</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Manufacturers</a>
+            <div class="slp-submenu" role="menu">
+              <a href="add_manufacturer" role="menuitem">Add Manufacturer</a>
+              <a href="manufacturers" role="menuitem">Manage Manufacturers</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Freight</a>
+            <div class="slp-submenu" role="menu">
+              <a href="admin_freight_estimates" role="menuitem">Freight Estimator</a>
+              <a href="generate_bol" role="menuitem">Generate BOL</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Users</a>
+            <div class="slp-submenu" role="menu">
+              <a href="add_user" role="menuitem">Add User</a>
+              <a href="manage_users" role="menuitem">Manage Users</a>
+              <a href="add_account" role="menuitem">Add Account</a>
+              <a href="manage_accounts" role="menuitem">Manage Accounts</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Accounting</a>
+            <div class="slp-submenu" role="menu">
+              <a href="accounting" role="menuitem">Accounting Overview</a>
+              <a href="add_invoice" role="menuitem">Invoices</a>
+              <a href="generate_invoice" role="menuitem">Generate Invoice</a>
+              <a href="accounts_payable" role="menuitem">Generate Payables</a>
+              <a href="total_payables" role="menuitem">Total Payables</a>
+            </div>
+          </li>
+
+          <li class="slp-item" role="none"><a class="slp-link slp-link--primary" href="logout" role="menuitem">Sign Out</a></li>
 
         <?php elseif ($role === 'admin'): ?>
-            <!-- Local admin dashboard link -->
-            <a href="dashboard">
-                <img src="pictures/header_logo.png" alt="Solterra Solutions Logo">
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Projects</a>
+            <div class="slp-submenu" role="menu">
+              <a href="dashboard" role="menuitem">Dashboard</a>
+              <a href="add_project" role="menuitem">Add Project</a>
+              <a href="manage_projects" role="menuitem">Manage Projects</a>
+              <a href="module_cost_analysis" role="menuitem">Cost Analysis</a>
+              <a href="sustainability_overview" role="menuitem">Sustainability</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Modules</a>
+            <div class="slp-submenu" role="menu">
+              <a href="modules" role="menuitem">Manage Modules</a>
+              <a href="module_movements" role="menuitem">Module Movements</a>
+              <a href="manage_pallets" role="menuitem">Manage Pallets</a>
+              <a href="link_pallet_deliveries" role="menuitem">Link Pallets to Deliveries</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Warehousing</a>
+            <div class="slp-submenu" role="menu">
+              <a href="add_warehouse" role="menuitem">Add Warehouse</a>
+              <a href="manage_warehouses" role="menuitem">Manage Warehouses</a>
+              <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
+              <a href="cost_estimate_calculator" role="menuitem">Cost Estimate Calculator</a>
+              <a href="warehouse_optimization" role="menuitem">Warehouse Optimization (Beta)</a>
+              <a href="warehouse_estimate" role="menuitem">Warehouse Quotes</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Manufacturers</a>
+            <div class="slp-submenu" role="menu">
+              <a href="add_manufacturer" role="menuitem">Add Manufacturer</a>
+              <a href="manufacturers" role="menuitem">Manage Manufacturers</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Shipments</a>
+            <div class="slp-submenu" role="menu">
+              <a href="create_shipment" role="menuitem">Create Shipment</a>
+              <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
+              <a href="freight_estimate" role="menuitem">Freight Estimate</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Documents</a>
+            <div class="slp-submenu" role="menu">
+              <a href="documents" role="menuitem">Project Documents</a>
+              <a href="global_documents" role="menuitem">Global Documents</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown slp-align-right" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">
+              <span class="slp-profile"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></span>
             </a>
+            <div class="slp-submenu" role="menu">
+              <a href="account_settings" role="menuitem">Account Settings</a>
+              <a href="questions" role="menuitem">Questions & Support</a>
+              <a href="invoices_all" role="menuitem">Invoices</a>
+              <a class="slp-link slp-link--primary" href="logout" role="menuitem" style="display:block;text-align:center;">Sign Out</a>
+            </div>
+          </li>
+
+        <?php elseif ($role === 'DDPm'): ?>
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Projects</a>
+            <div class="slp-submenu" role="menu">
+              <a href="dashboard" role="menuitem">Dashboard</a>
+              <a href="sustainability_overview" role="menuitem">Sustainability</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Warehousing</a>
+            <div class="slp-submenu" role="menu">
+              <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
+              <a href="cost_estimate_calculator" role="menuitem">Cost Estimate Calculator</a>
+              <a href="warehouse_optimization" role="menuitem">Warehouse Optimization (Beta)</a>
+              <a href="warehouse_estimate" role="menuitem">Warehouse Quotes</a>
+            </div>
+          </li>
+
+          <li class="slp-item" role="none"><a class="slp-link" href="freight_estimate" role="menuitem">Freight</a></li>
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Documents</a>
+            <div class="slp-submenu" role="menu">
+              <a href="documents" role="menuitem">Project Documents</a>
+              <a href="global_documents" role="menuitem">Global Documents</a>
+            </div>
+          </li>
+          <li class="slp-item" role="none"><a class="slp-link" href="questions" role="menuitem">Questions</a></li>
+          <li class="slp-item" role="none"><a class="slp-link slp-link--primary" href="logout" role="menuitem">Sign Out</a></li>
 
         <?php else: ?>
-            <!-- Regular user dashboard -->
-            <a href="dashboard">
-                <img src="pictures/header_logo.png" alt="Solterra Solutions Logo">
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Projects</a>
+            <div class="slp-submenu" role="menu">
+              <a href="dashboard" role="menuitem">Dashboard</a>
+              <a href="module_cost_analysis" role="menuitem">Cost Analysis</a>
+              <a href="sustainability_overview" role="menuitem">Sustainability</a>
+            </div>
+          </li>
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Modules</a>
+            <div class="slp-submenu" role="menu">
+              <a href="modules" role="menuitem">Module Batches</a>
+              <a href="module_movements" role="menuitem">Module Movements</a>
+              <a href="manage_pallets" role="menuitem">View Pallets</a>
+            </div>
+          </li>
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Warehousing</a>
+            <div class="slp-submenu" role="menu">
+              <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
+              <a href="cost_estimate_calculator" role="menuitem">Cost Estimate Calculator</a>
+              <a href="warehouse_optimization" role="menuitem">Warehouse Optimization (Beta)</a>
+              <a href="warehouse_estimate" role="menuitem">Warehouse Quotes</a>
+            </div>
+          </li>
+
+          <li class="slp-item" role="none"><a class="slp-link" href="freight_estimate" role="menuitem">Freight</a></li>
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Documents</a>
+            <div class="slp-submenu" role="menu">
+              <a href="documents" role="menuitem">Project Documents</a>
+              <a href="global_documents" role="menuitem">Global Documents</a>
+            </div>
+          </li>
+          <li class="slp-item slp-has-dropdown slp-align-right" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">
+              <span class="slp-profile"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></span>
             </a>
+            <div class="slp-submenu" role="menu">
+              <a href="account_settings" role="menuitem">Account Settings</a>
+              <a href="questions" role="menuitem">Questions & Support</a>
+              <a href="invoices_all" role="menuitem">Invoices</a>
+              <a class="slp-link slp-link--primary" href="logout" role="menuitem" style="display:block;text-align:center;">Sign Out</a>
+            </div>
+          </li>
         <?php endif; ?>
+      </ul>
     </div>
 
-    <nav>
-        <button class="menu-toggle" aria-label="Toggle navigation">&#9776;</button>
-        <ul class="menu">
-
-            <?php if ($role === 'global_admin'): ?>
-                <!-- =================================== -->
-                <!-- GLOBAL ADMIN Navigation Menu       -->
-                <!-- Full privileges across all accounts-->
-                <!-- =================================== -->
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Projects</a>
-                    <div class="dropdown-content">
-                        <a href="dashboard">Dashboard</a>
-                        <a href="add_project">Add Project</a>
-                        <a href="manage_projects">Manage Projects</a>
-                        <a href="module_cost_analysis">Module Cost Analysis</a>
-                        <a href="admin_project_forecast">Forecast Costs</a>
-                        <a href="project_site">Link Project to Site</a>
-                    </div>
-                </li>
-
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Modules</a>
-                    <div class="dropdown-content">
-                        <a href="modules">Manage Modules</a>
-                        <a href="module_movements">Module Movements</a>
-                        <a href="manage_pallets">Manage Pallets</a>
-                        <a href="manage_deliveries">Manage Deliveries</a>
-                        <a href="link_pallet_deliveries">Link Pallets to Deliveries</a>
-
-                    </div>
-                </li>
-
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Warehouses</a>
-                    <div class="dropdown-content">
-                        <a href="add_warehouse">Add Warehouse</a>
-                        <a href="manage_warehouses">Manage Warehouses</a>
-                        <a href="admin_warehouse_estimate">Admin Warehouse Quote</a>
-                    </div>
-                </li>
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Manufacturers</a>
-                    <div class="dropdown-content">
-                        <a href="add_manufacturer">Add Manufacturer</a>
-                        <a href="manufacturers">Manage Manufacturers</a>
-                    </div>
-                </li>
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Freight</a>
-                    <div class="dropdown-content">
-                        <a href="admin_freight_estimates">Freight Estimator</a>
-                        <a href="generate_bol">Generate BOL</a>
-                    </div>
-                </li>
-
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Users</a>
-                    <div class="dropdown-content">
-                        <a href="add_user">Add User</a>
-                        <a href="manage_users">Manage Users</a>
-                        <a href="add_account">Add Account</a>
-                        <a href="manage_accounts">Manage Accounts</a>
-                    </div>
-                </li>
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Accounting</a>
-                    <div class="dropdown-content">
-                        <a href="accounting">Accounting Overview</a>
-                        <a href="add_invoice">Invoices</a>
-                        <a href="generate_invoice">Generate Invoice</a>
-                        <a href="accounts_payable">Generate Payables</a>
-                        <a href="total_payables">Total Payables</a>
-                    </div>
-                </li>
-                <li><a href="logout" class="logout">Sign Out</a></li>
-
-            <?php elseif ($role === 'admin'): ?>
-                <!-- ============================= -->
-                <!-- LOCAL ADMIN Navigation Menu  -->
-                <!-- Manage only own account(s)   -->
-                <!-- ============================= -->
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Projects</a>
-                    <div class="dropdown-content">
-                        <a href="dashboard">Dashboard</a>
-                        <a href="add_project">Add Project</a>
-                        <a href="manage_projects">Manage Projects</a>
-                        <a href="module_cost_analysis">Cost Analysis</a>
-                        <a href="sustainability_overview">Sustainability</a>
-                    </div>
-                </li>
-
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Modules</a>
-                    <div class="dropdown-content">
-                        <a href="modules">Manage Modules</a>
-                        <a href="module_movements">Module Movements</a>
-                        <a href="manage_pallets">Manage Pallets</a>
-                        <a href="link_pallet_deliveries">Link Pallets to Deliveries</a>
-
-                    </div>
-                </li>
-
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Warehousing</a>
-                    <div class="dropdown-content">
-                        <a href="add_warehouse">Add Warehouse</a>
-                        <a href="manage_warehouses">Manage Warehouses</a>
-                        <a href="warehousing_overview">Warehousing Overview</a>
-                        <a href="cost_estimate_calculator">Cost Estimate Calculator</a>
-                        <a href="warehouse_optimization">Warehouse Optimization (Beta)</a>
-                        <a href="warehouse_estimate">Warehouse Quotes</a>
-
-                    </div>
-                </li>
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Manufacturers</a>
-                    <div class="dropdown-content">
-                        <a href="add_manufacturer">Add Manufacturer</a>
-                        <a href="manufacturers">Manage Manufacturers</a>
-                    </div>
-                </li>
-
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Shipments</a>
-                    <div class="dropdown-content">
-                        <a href="create_shipment">Create Shipment</a>
-                        <a href="manage_deliveries">Manage Deliveries</a>
-                        <a href= "freight_estimate">Freight Estimate</a>
-                    </div>
-                </li>
-
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Documents</a>
-                    <div class="dropdown-content">
-                        <a href="documents">Project Documents</a>
-                        <a href="global_documents">Global Documents</a>
-                    </div>
-                </li>
-                <li class="dropdown profile-dropdown">
-                <!-- Avatar or icon that opens the dropdown -->
-                    <a href="#" class="dropbtn profile-avatar"><span class="profile-initials"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></span></a>
-                    <div class="dropdown-content">
-                        <a href="account_settings">Account Settings</a>
-                        <a href="questions">Questions & Support</a>
-                        <a href="invoices_all">Invoices</a>
-                        <a href="logout" class="logout">Sign Out</a>
-                    </div>
-                </li>
-
-
-            
-            <?php elseif ($role === 'DDPm'): ?>
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Projects</a>
-                    <div class="dropdown-content">
-                        <a href="dashboard">Dashboard</a>
-                        <a href="sustainability_overview">Sustainability</a>
-                    </div>
-                </li>
-
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Warehousing</a>
-                    <div class="dropdown-content">
-                        <a href="warehousing_overview">Warehousing Overview</a>
-                        <a href="cost_estimate_calculator">Cost Estimate Calculator</a>
-                        <a href="warehouse_optimization">Warehouse Optimization (Beta)</a>
-                        <a href="warehouse_estimate">Warehouse Quotes</a>
-                    </div>
-                </li>
-
-                <li><a href="freight_estimate">Freight</a></li>
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Documents</a>
-                    <div class="dropdown-content">
-                        <a href="documents">Project Documents</a>
-                        <a href="global_documents">Global Documents</a>
-                    </div>
-                </li>
-                <li><a href="questions">Questions</a></li>
-                <li><a href="logout" class="logout">Sign Out</a></li>           
-            <?php else: ?>
-                <!-- ======================= -->
-                <!-- REGULAR USER Navigation -->
-                <!-- ======================= -->
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Projects</a>
-                    <div class="dropdown-content">
-                        <a href="dashboard">Dashboard</a>
-                        <a href="module_cost_analysis">Cost Analysis</a>
-                        <a href="sustainability_overview">Sustainability</a>
-                    </div>
-                </li>
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Modules</a>
-                    <div class="dropdown-content">
-                        <a href="modules">Module Batches</a>
-                        <a href="module_movements">Module Movements</a>
-                        <a href="manage_pallets">View Pallets</a>
-                    </div>
-                </li>
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Warehousing</a>
-                    <div class="dropdown-content">
-                        <a href="warehousing_overview">Warehousing Overview</a>
-                        <a href="cost_estimate_calculator">Cost Estimate Calculator</a>
-                        <a href="warehouse_optimization">Warehouse Optimization (Beta)</a>
-                        <a href="warehouse_estimate">Warehouse Quotes</a>
-                    </div>
-                </li>
-
-                <li><a href="freight_estimate">Freight</a></li>
-                <li class="dropdown">
-                    <a href="#" class="dropbtn">Documents</a>
-                    <div class="dropdown-content">
-                        <a href="documents">Project Documents</a>
-                        <a href="global_documents">Global Documents</a>
-                    </div>
-                </li>
-                <li class="dropdown profile-dropdown">
-                <!-- Avatar or icon that opens the dropdown -->
-                    <a href="#" class="dropbtn profile-avatar"><span class="profile-initials"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></span></a>
-                    <div class="dropdown-content">
-                        <a href="account_settings">Account Settings</a>
-                        <a href="questions">Questions & Support</a>
-                        <a href="invoices_all">Invoices</a>
-                        <a href="logout" class="logout">Sign Out</a>
-                    </div>
-                </li>
-
-            <?php endif; ?>
-
-        </ul>
-    </nav>
-</header>
+    <button class="slp-nav-toggle" aria-expanded="false" aria-controls="slp-menu" aria-label="Toggle navigation">&#9776;</button>
+  </div>
+</div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const menuToggle = document.querySelector('.menu-toggle');
-    const menu = document.querySelector('.menu');
-    const dropdownLinks = document.querySelectorAll('.menu li.dropdown > a.dropbtn');
+document.addEventListener('DOMContentLoaded', function () {
+  const toggle = document.querySelector('.slp-nav-toggle');
+  const menu = document.getElementById('slp-menu');
+  const dropdownParents = Array.from(document.querySelectorAll('.slp-has-dropdown'));
 
-    menuToggle.addEventListener('click', function() {
-        menu.classList.toggle('show');
+  if (toggle && menu) {
+    toggle.addEventListener('click', () => {
+      const open = menu.classList.toggle('is-open');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
+  }
 
-    // Handle dropdown interactions
-    dropdownLinks.forEach(link => {
-        const parentLi = link.parentElement;
-        let hoverTimeout;
+  // Mobile: turn dropdowns into accordions; Desktop: click toggles as fallback
+  dropdownParents.forEach(parent => {
+    const link = parent.querySelector('.slp-link');
+    const submenu = parent.querySelector('.slp-submenu');
+    if (!link || !submenu) return;
 
-        // Mouse enter - show dropdown immediately
-        parentLi.addEventListener('mouseenter', function() {
-            clearTimeout(hoverTimeout);
-            // Close other dropdowns first
-            document.querySelectorAll('.menu li.dropdown.open').forEach(openDropdown => {
-                if (openDropdown !== parentLi) {
-                    openDropdown.classList.remove('open');
-                }
-            });
-            parentLi.classList.add('open');
-        });
+    link.addEventListener('click', (e) => {
+      // Only intercept when link is a menu trigger
+      if (link.getAttribute('href') === '#') e.preventDefault();
 
-        // Mouse leave - hide dropdown with small delay
-        parentLi.addEventListener('mouseleave', function() {
-            hoverTimeout = setTimeout(() => {
-                parentLi.classList.remove('open');
-            }, 150); // Small delay to allow cursor movement to dropdown
-        });
+      // Close other open dropdowns on mobile
+      const isMobile = window.matchMedia('(max-width: 1024px)').matches;
+      if (isMobile) {
+        dropdownParents.forEach(p => { if (p !== parent) p.classList.remove('is-open'); });
+      }
 
-        // Click handler as fallback (especially useful on mobile)
-        link.addEventListener('click', function(e) {
-            e.preventDefault();
-            const isOpen = parentLi.classList.contains('open');
-            
-            // Close all dropdowns first
-            document.querySelectorAll('.menu li.dropdown.open').forEach(openDropdown => {
-                openDropdown.classList.remove('open');
-            });
-            
-            // Toggle this dropdown if it wasn't open
-            if (!isOpen) {
-                parentLi.classList.add('open');
-            }
-        });
+      const willOpen = !parent.classList.contains('is-open');
+      parent.classList.toggle('is-open', willOpen);
+      link.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
     });
+  });
 
-    // Close dropdowns when clicking outside
-document.addEventListener('click', function(e) {
-        if (!e.target.closest('.dropdown')) {
-            document.querySelectorAll('.menu li.dropdown.open').forEach(openDropdown => {
-                openDropdown.classList.remove('open');
-            });
-        }
-    });
+  // Click outside to close
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.slp-header')) {
+      menu && menu.classList.remove('is-open');
+      dropdownParents.forEach(p => p.classList.remove('is-open'));
+      if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    }
+  });
 });
 </script>
 
@@ -353,4 +454,3 @@ document.addEventListener('click', function(e) {
 // Include Sunny Chat Assistant Component
 include_once __DIR__ . '/ai-assistant/components/sunny-chat.php';
 ?>
-
