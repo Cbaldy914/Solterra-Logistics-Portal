@@ -3493,7 +3493,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
             
             <!-- Admin View Buttons -->
-            <div id="admin-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: block;"' : 'style="display: none;"'; ?>>
+            <div id="admin-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: flex;"' : 'style="display: none;"'; ?>>
                 <div class="dropdown">
                     <button class="dropdown-btn" onclick="toggleModulesDropdown()">
                         Modules <span class="dropdown-arrow">▼</span>
@@ -4319,7 +4319,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                                 $mws = round(($modules * $avg_wattage) / 1000000, 2);
                                             }
                                     ?>
-                                    <div class="shipping-box-customer" onclick="showCustomerShippingModal('<?php echo $status_key; ?>')" 
+                                    <div class="shipping-box-customer" onclick="showCustomerShippingModal('<?php echo htmlspecialchars($status_key, ENT_QUOTES); ?>')" 
                                          data-pallets="<?php echo $pallets; ?>" 
                                          data-modules="<?php echo $modules; ?>" 
                                          data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
@@ -4759,8 +4759,8 @@ var lineChart = new Chart(ctxLine, {
 }
 
 // Delivery Overview pie (for regular users)
-var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages));?>;
-var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages));?>;
+var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages ?? []), JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
+var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages ?? []), JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
 
 // Create dynamic color mapping based on actual labels
 var colorMap = {
@@ -4803,7 +4803,7 @@ var pieChart = new Chart(ctxPie,{
                         
                         // Add damaged count for Delivered to Project
                         if (lab === 'Delivered to Project') {
-                            const deliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+                            const deliveredDamagedTotal = <?php echo (int)($delivered_damaged_total ?? 0); ?>;
                             if (deliveredDamagedTotal > 0) {
                                 tooltipText += ` (${deliveredDamagedTotal} modules damaged)`;
                             }
@@ -4902,7 +4902,7 @@ function loadModuleInfo() {
 }
 
 // Shipping Breakdown modal
-const shippingBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
+const shippingBreakdown = <?php echo json_encode($detailed_breakdown ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
 function showShippingBreakdown(type){
     const modal = document.getElementById('shippingModal');
     const title = document.getElementById('shippingModalTitle');
@@ -4922,7 +4922,7 @@ function generateShippingContent(filter){
     // Handle special case for "Delivered" status
     if(filter === 'Delivered') {
         has = true;
-        const totalDeliveredRaw = <?php echo $delivered_raw_total; ?>;
+        const totalDeliveredRaw = <?php echo (int)($delivered_raw_total ?? 0); ?>;
         const totalDeliveredMW = <?php echo $delivered_combined; ?>;
         const totalPallets = Math.round(totalDeliveredRaw / 30);
         
@@ -4956,7 +4956,7 @@ function generateShippingContent(filter){
                `</div>`;
         
         // Show wattage breakdown for delivered modules        
-        const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage); ?>;
+        const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
         if(deliveredBreakdown.length > 0) {
             html += '<div style="margin-top:20px;"><h5 style="color:#28a745;">Wattage Breakdown:</h5><ul style="list-style:none;padding:0;">';
             deliveredBreakdown.forEach(function(item) {
@@ -5065,7 +5065,7 @@ function generateShippingContent(filter){
 }
 
 // Admin warehousing functionality
-const warehousesWithInventory = <?php echo json_encode($warehouses_with_inventory); ?>;
+const warehousesWithInventory = <?php echo json_encode($warehouses_with_inventory ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
 function handleAdminWarehousing() {
     const projectId = <?php echo $project_id; ?>;
     
@@ -5149,8 +5149,8 @@ window.conversionAvailability = {
 // Actual pallets by status for Module Delivery Status table
 window.actualStatusData = {
     pallets: {
-        main: <?php echo json_encode($pallets_status_main); ?>,
-        sub: <?php echo json_encode($pallets_sub_rows_status); ?>
+        main: <?php echo json_encode($pallets_status_main ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>,
+        sub: <?php echo json_encode($pallets_sub_rows_status ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>
     }
 };
 
@@ -5225,9 +5225,9 @@ function updateTimelineRemainingText(filterType) {
     if (isCompleted) return; // Don't update if project is already completed
     
     // Get project data for calculations  
-    const totalModules = <?php echo $total_raw_modules; ?>;
-    const deliveredModules = <?php echo $delivered_raw_total; ?>;
-    const projectSizeMW = <?php echo number_format($project_size_mw, 2); ?>;
+    const totalModules = <?php echo (int)($total_raw_modules ?? 0); ?>;
+    const deliveredModules = <?php echo (int)($delivered_raw_total ?? 0); ?>;
+    const projectSizeMW = <?php echo is_numeric($project_size_mw) ? round($project_size_mw, 2) : 0; ?>;
     
     // Calculate delivered MW (approximate based on delivered/total ratio)
     const deliveryRatio = totalModules > 0 ? (deliveredModules / totalModules) : 0;
@@ -5250,7 +5250,7 @@ function updateTimelineRemainingText(filterType) {
             
         case 'pallets':
             // Use actual pallet counts from the database
-            const actualPalletData = <?php echo json_encode($pallets_status_main); ?>;
+            const actualPalletData = <?php echo json_encode($pallets_status_main ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
             const totalActualPallets = actualPalletData.total_order;
             const deliveredActualPallets = actualPalletData.delivered;
             remaining = totalActualPallets - deliveredActualPallets;
@@ -5899,25 +5899,25 @@ function closeCustomerShippingModal() {
 }
 
 function generateCustomerShippingContent(status) {
-    const shippingBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
+    const shippingBreakdown = <?php echo json_encode($detailed_breakdown ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
     let html = '<div style="height:250px;overflow-y:auto;">';
     let has = false;
     
     // Handle special case for "Delivered" status
     if(status === 'Delivered') {
         has = true;
-        const totalDeliveredRaw = <?php echo $delivered_raw_total; ?>;
+        const totalDeliveredRaw = <?php echo (int)($delivered_raw_total ?? 0); ?>;
         const totalPallets = Math.round(totalDeliveredRaw / 30);
         
         // Calculate MWs
-        const wattages = <?php echo json_encode($wattages); ?>;
+        const wattages = <?php echo json_encode($wattages ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
         let totalMWs = 0;
         if (wattages.length > 0 && totalDeliveredRaw > 0) {
             const avgWattage = wattages.reduce((a, b) => a + b) / wattages.length;
             totalMWs = ((totalDeliveredRaw * avgWattage) / 1000000).toFixed(2);
         }
         
-        const customerDeliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+        const customerDeliveredDamagedTotal = <?php echo (int)($delivered_damaged_total ?? 0); ?>;
         const palletDisplay = customerDeliveredDamagedTotal > 0 ? 
             `${totalPallets}<br><small style="color:#e65100;">(${Math.ceil(customerDeliveredDamagedTotal / 30)} damaged)</small>` : 
             totalPallets;
@@ -5940,7 +5940,7 @@ function generateCustomerShippingContent(status) {
                `</div>`;
         
         // Show wattage breakdown
-        const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage); ?>;
+        const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
         if(deliveredBreakdown.length > 0) {
             html += '<div style="margin-top:20px;"><h5 style="color:#28a745;">Wattage Breakdown:</h5><ul style="list-style:none;padding:0;">';
             deliveredBreakdown.forEach(function(item) {
@@ -5970,7 +5970,7 @@ function generateCustomerShippingContent(status) {
         const totalExceptionModules = exceptionsData.damaged_modules;
         
         // Calculate MWs
-        const wattages = <?php echo json_encode($wattages); ?>;
+        const wattages = <?php echo json_encode($wattages ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
         let totalMWs = 0;
         if (wattages.length > 0 && totalExceptionModules > 0) {
             const avgWattage = wattages.reduce((a, b) => a + b) / wattages.length;
@@ -6011,13 +6011,14 @@ function generateCustomerShippingContent(status) {
                 const data = shippingBreakdown[key];
                 
                 // Calculate MWs and truckloads
-                const wattages = <?php echo json_encode($wattages); ?>;
+                const wattages = <?php echo json_encode($wattages ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
                 let totalMWs = 0;
                 if (wattages.length > 0 && data.total_modules > 0) {
                     const avgWattage = wattages.reduce((a, b) => a + b) / wattages.length;
                     totalMWs = ((data.total_modules * avgWattage) / 1000000).toFixed(2);
                 }
-                const truckloads = (data.pallet_count / <?php echo $average_pallets_per_truck; ?>).toFixed(1);
+                const avgPPT = <?php echo ($average_pallets_per_truck !== null && $average_pallets_per_truck > 0) ? (float)$average_pallets_per_truck : 'null'; ?>;
+                const truckloads = avgPPT ? (data.pallet_count / avgPPT).toFixed(1) : 'N/A';
                 
                 html += `<div style="margin-bottom:20px;padding:20px;background:#f8f9fa;border-radius:12px;border-left:4px solid #488C9A;">`+
                        `<h4 style="margin-top:0;color:#488C9A;">${key}</h4>`+
@@ -6087,9 +6088,9 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // Prepare costPie + budgetLineChart (for regular users)
-var pieChartDataFinancial = <?php echo json_encode($pieChartDataFinancial);?>;
-var dateLabelsForBudget   = <?php echo $dateLabelsForBudget;?>;
-var budgetLineData        = <?php echo $budgetLineChartDataJSON;?>;
+var pieChartDataFinancial = <?php echo json_encode($pieChartDataFinancial ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
+var dateLabelsForBudget   = <?php echo $dateLabelsForBudget ?: '[]';?>;
+var budgetLineData        = <?php echo $budgetLineChartDataJSON ?: '[]';?>;
 
 function initializeFinancialCharts(){
     // Cost Breakdown Pie
@@ -6358,7 +6359,7 @@ function updateTimelineRemainingTextAdmin() {
             
         case 'pallets':
             // Use actual pallet counts from the database
-            const actualPalletData = <?php echo json_encode($pallets_status_main); ?>;
+            const actualPalletData = <?php echo json_encode($pallets_status_main ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
             const totalActualPallets = actualPalletData.total_order;
             const deliveredActualPallets = actualPalletData.delivered;
             remaining = totalActualPallets - deliveredActualPallets;
