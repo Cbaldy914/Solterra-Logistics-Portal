@@ -83,7 +83,13 @@ $ref_date     = $_GET['ref_date']     ?? date('Y-m-d');
 $baseWhere = [];  $paramTypes = '';  $params = [];
 
 /* context filters */
-$selectClause = "SELECT d.*, ss.id as appointment_id FROM deliveries d";
+$selectClause = "SELECT d.*, ss.id as appointment_id,
+       (SELECT COUNT(*) FROM project_documents pd 
+        WHERE pd.delivery_id = d.id 
+        AND pd.document_type = 'pods' 
+        AND (pd.document_sub_type = 'Project POD' OR pd.document_sub_type = 'Warehouse POD')
+       ) AS has_pod_in_documents
+FROM deliveries d";
 $joinClause   = " LEFT JOIN site_scheduling ss ON d.id = ss.delivery_id";
 if ($project_id) {
     $baseWhere[] = "d.project_id = ?";
@@ -433,11 +439,15 @@ $stmt->close();
                                 <?php endif; ?>
                             </td>
                             <td class="pod-column">
-                                <?php if($delivery['proof_of_delivery']): ?>
-                                    <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">View POD</a>
-                                <?php elseif($role==='global_admin'): ?>
-                                    <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>">Upload POD</a>
-                                <?php else: ?>N/A<?php endif; ?>
+                                <?php if (!empty($delivery['proof_of_delivery']) || !empty($delivery['has_pod_in_documents'])): ?>
+                                    <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank" class="pod-link">View POD</a>
+                                <?php else: ?>
+                                    <?php if (in_array($_SESSION['role'], ['global_admin', 'admin'])): ?>
+                                        <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>" class="upload-pod-btn">Upload POD</a>
+                                    <?php else: ?>
+                                        N/A
+                                    <?php endif; ?>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
