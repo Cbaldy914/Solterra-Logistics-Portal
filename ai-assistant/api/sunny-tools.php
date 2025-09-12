@@ -45,6 +45,9 @@ class SunnyTools {
             
             $params = [];
             if ($projectName) {
+                // Normalize and sanitize common quoting/punctuation around names
+                $projectName = str_replace(["“","”","‘","’"], ['"','"','\'','\''], $projectName);
+                $projectName = trim($projectName, " \t\n\r\0\x0B\"'");
                 $sql .= " WHERE p.project_name LIKE ?";
                 $params[] = "%{$projectName}%";
             }
@@ -841,43 +844,73 @@ class SunnyTools {
     
     // Helper methods for extracting information from messages
     private function extractSearchTerm($message) {
-        $message = strtolower($message);
-        if (preg_match('/(?:search|find|lookup)\s+(?:for\s+)?(.+)/', $message, $matches)) {
-            return trim($matches[1]);
+        // Normalize quotes and whitespace, keep original case for IDs, but trim punctuation
+        $normalized = str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message);
+        if (preg_match('/(?:search|find|lookup)\s+(?:for\s+)?["\']?(.+?)["\']?$/i', $normalized, $matches)) {
+            $term = trim($matches[1]);
+            return rtrim($term, ",.!? ");
         }
-        return $message;
+        return rtrim(trim($normalized), ",.!? ");
     }
     
     private function extractProjectName($message) {
-        if (preg_match('/project[:\s]+([^\s,]+)/i', $message, $matches)) {
-            return trim($matches[1]);
+        $original = $message;
+        // Normalize fancy quotes to straight quotes
+        $message = str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message);
+
+        // 1) Try explicit quoted name after the word project (named/called optional)
+        if (preg_match('/project\s*(?:named|called|=)?\s*["\']([^"\']+)["\']/i', $message, $m)) {
+            $name = trim($m[1]);
+            return $name !== '' ? $name : null;
         }
+
+        // 2) Try label-style: project: <name>
+        if (preg_match('/project\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .&_()\-]{0,100})/i', $message, $m)) {
+            $name = trim($m[1]);
+            $name = rtrim($name, ".,!?\s");
+            return $name !== '' ? $name : null;
+        }
+
+        // 3) Try simple: about the project <name>
+        if (preg_match('/project\s+([A-Za-z0-9][A-Za-z0-9 .&_()\-]{0,100})/i', $message, $m)) {
+            $name = trim($m[1]);
+            // Stop at sentence-ending punctuation
+            $name = preg_split('/[.!?,]/', $name)[0];
+            $name = trim($name);
+            return $name !== '' ? $name : null;
+        }
+
         return null;
     }
     
     private function extractProjectId($message) {
-        if (preg_match('/project\s+id[:\s]*(\d+)/i', $message, $matches)) {
+        $normalized = str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message);
+        if (preg_match('/project\s+id[:\s]*["\']?(\d+)["\']?/i', $normalized, $matches)) {
             return intval($matches[1]);
         }
         return null;
     }
     
     private function extractWarehouseId($message) {
-        if (preg_match('/warehouse\s+(?:id[:\s]*)?(\d+)/i', $message, $matches)) {
+        $normalized = str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message);
+        if (preg_match('/warehouse\s+(?:id[:\s]*)?["\']?(\d+)["\']?/i', $normalized, $matches)) {
             return intval($matches[1]);
         }
         return null;
     }
     
     private function extractBOLNumber($message) {
-        if (preg_match('/bol[:\s#]*([a-z0-9\-]+)/i', $message, $matches)) {
-            return trim($matches[1]);
+        $normalized = str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message);
+        // Allow optional quotes and common separators after BOL label
+        if (preg_match('/\bbol\b\s*[:#-]?\s*["\']?([a-z0-9\-]+)["\']?/i', $normalized, $matches)) {
+            return rtrim(trim($matches[1]), ",.!? ");
         }
         return null;
     }
     
     private function extractWeeks($message) {
-        if (preg_match('/(\d+)\s*weeks?/i', $message, $matches)) {
+        $normalized = str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message);
+        if (preg_match('/["\']?(\d+)["\']?\s*weeks?/i', $normalized, $matches)) {
             return intval($matches[1]);
         }
         return null;
