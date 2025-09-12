@@ -1754,7 +1754,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     background: linear-gradient(135deg, #fafbfc 0%, #f1f3f4 100%);
     border: 2px solid rgba(255, 255, 255, 0.8);
     border-radius: 12px;
-    padding: 20px 15px;
+    padding: 15px 12px;
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
@@ -1793,15 +1793,21 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     font-weight: 600;
     color: #293E4C;
     font-size: 14px;
-    margin-bottom: 8px;
+    margin-bottom: 25px;
     line-height: 1.3;
 }
 
 .shipping-box .status-count {
-    font-size: 24px;
+    font-size: clamp(18px, 4.5vw, 28px);
     font-weight: 700;
     color: #488C9A;
     margin-bottom: 2px;
+    margin-top: 0px;
+    word-break: break-all;
+    line-height: 1.1;
+    max-width: 100%;
+    overflow: hidden;
+    text-align: center;
 }
 
 .shipping-box .status-unit {
@@ -1809,6 +1815,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     color: #6c757d;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    margin-top: 1px;
 }
 
 /* Shipping Status Connection Line */
@@ -2143,7 +2150,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .shipping-box {
-        padding: 15px 10px;
+        padding: 12px 8px;
     }
     
     .shipping-box .status-label {
@@ -2151,7 +2158,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .shipping-box .status-count {
-        font-size: 20px;
+        font-size: clamp(16px, 3.8vw, 22px);
+        word-break: break-all;
     }
     <?php endif; ?>
     
@@ -2319,7 +2327,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .shipping-box {
-        padding: 12px 8px;
+        padding: 10px 6px;
     }
     
     .shipping-box .status-label {
@@ -2327,7 +2335,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .shipping-box .status-count {
-        font-size: 18px;
+        font-size: clamp(14px, 3.2vw, 20px);
+        word-break: break-all;
     }
     <?php endif; ?>
     
@@ -3291,7 +3300,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
     border: 2px solid rgba(72, 140, 154, 0.1);
     border-radius: 12px;
-    padding: 20px 15px;
+    padding: 15px 12px;
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
@@ -3331,18 +3340,24 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     color: #293E4C;
     font-size: 0.9rem;
     line-height: 1.3;
-    min-height: 40px;
+    min-height: 38px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: auto;
+    margin-bottom: 25px;
 }
 
 .shipping-box-customer .status-count {
-    font-size: 2rem;
+    font-size: clamp(1.4rem, 4.5vw, 2.2rem);
     font-weight: 700;
     color: #488C9A;
     margin: auto 0 2px 0;
+    margin-top: -1px;
+    word-break: break-all;
+    line-height: 1;
+    max-width: 100%;
+    overflow: hidden;
+    text-align: center;
 }
 
 .shipping-box-customer .status-unit {
@@ -3351,6 +3366,24 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     text-transform: uppercase;
     letter-spacing: 0.5px;
     font-weight: 500;
+    margin-top: 1px;
+}
+
+/* Handle very large numbers by scaling even smaller */
+.shipping-box .status-count:has-text-length-gt-6,
+.shipping-box-customer .status-count:has-text-length-gt-6 {
+    font-size: clamp(0.9rem, 2.5vw, 1.4rem) !important;
+    line-height: 1;
+    letter-spacing: -0.5px;
+}
+
+/* Alternative approach using CSS for text that's too long */
+.shipping-box .status-count[data-large-number="true"],
+.shipping-box-customer .status-count[data-large-number="true"] {
+    font-size: clamp(1rem, 2.8vw, 1.6rem) !important;
+    line-height: 0.9;
+    letter-spacing: -0.5px;
+    word-spacing: -1px;
 }
 
 /* ===== PULSE ANIMATION ===== */
@@ -3414,11 +3447,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .shipping-box-customer {
-        padding: 15px 10px;
+        padding: 12px 8px;
     }
     
     .shipping-box-customer .status-count {
-        font-size: 1.5rem;
+        font-size: clamp(1.1rem, 3.8vw, 1.7rem);
+        word-break: break-all;
     }
     
     .unit-filters {
@@ -5211,6 +5245,9 @@ function syncFiltersToState() {
     updateCustomerShippingBoxes(currentFilter, document.getElementById('project-progress'));
     updateCustomerShippingBoxes(currentFilter, document.getElementById('delivery-info'));
     
+    // Handle large numbers after updating
+    setTimeout(handleLargeNumbers, 100);
+    
     // Update timeline remaining text
     updateTimelineRemainingText(currentFilter);
 }
@@ -6085,7 +6122,31 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize timeline remaining text with current filter
     updateTimelineRemainingText(currentFilter);
+    
+    // Handle large numbers in shipping boxes
+    handleLargeNumbers();
 });
+
+// Function to detect and handle large numbers in shipping boxes
+function handleLargeNumbers() {
+    const shippingBoxes = document.querySelectorAll('.shipping-box .status-count, .shipping-box-customer .status-count');
+    
+    shippingBoxes.forEach(function(countElement) {
+        const text = countElement.textContent || countElement.innerText;
+        const numericText = text.replace(/[^\d]/g, ''); // Remove non-numeric characters
+        
+        // If number has 6+ digits (like 204540), mark it as large
+        if (numericText.length >= 6) {
+            countElement.setAttribute('data-large-number', 'true');
+            
+            // Also reduce padding on parent container for very large numbers
+            const parentBox = countElement.closest('.shipping-box, .shipping-box-customer');
+            if (parentBox && numericText.length >= 7) {
+                parentBox.style.padding = '15px 8px';
+            }
+        }
+    });
+}
 
 // Prepare costPie + budgetLineChart (for regular users)
 var pieChartDataFinancial = <?php echo json_encode($pieChartDataFinancial ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
@@ -6225,6 +6286,9 @@ function initializeShippingFilters() {
             
             // Update all shipping boxes
             updateShippingBoxes(filterType);
+            
+            // Handle large numbers after updating
+            setTimeout(handleLargeNumbers, 100);
         });
     });
 }
@@ -6319,6 +6383,9 @@ function initializeAdminUnitFilters() {
                 
                 // Update admin shipping boxes
                 updateShippingBoxes(filterType);
+                
+                // Handle large numbers after updating
+                setTimeout(handleLargeNumbers, 100);
             });
         });
     });
