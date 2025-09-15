@@ -97,6 +97,7 @@ try {
 
     // Load tools if needed (carefully)
     $toolResults = [];
+    $lastToolResults = $_SESSION['sunny_last_tool_results'] ?? [];
     $memoryResults = [];
     $needsTools = needsLogisticsTools($message);
     
@@ -161,6 +162,11 @@ try {
         }
     }
 
+    // If no tools executed this turn, but we have prior tool results, reuse them to let the model present them
+    if (empty($toolResults) && !empty($lastToolResults)) {
+        $toolResults = $lastToolResults;
+    }
+
     // Build system message starting with the canonical Sunny system prompt (markdown file)
     $promptPath = dirname(__DIR__) . '/sunny_system_prompt.md';
     if (file_exists($promptPath)) {
@@ -182,8 +188,10 @@ try {
                 $systemMessage .= "{$tool}: (error: " . ($data['error'] ?? 'unknown') . ")\n";
             }
         }
+        // Persist for follow-up turns like "please present them"
+        $_SESSION['sunny_last_tool_results'] = $toolResults;
     } else {
-        $systemMessage .= "\n\n(If the user requests specific logistics data that isn't provided above, gently let them know data isn't available and offer general guidance.)";
+        $systemMessage .= "\n\n(If the user requests specific logistics data that isn't provided above, say clearly that no results were found for their request and ask for a different filter or timeframe. Do not invent placeholders.)";
     }
 
     // Add memory context to system message
@@ -193,6 +201,9 @@ try {
             $systemMessage .= "- {$memory['title']}: {$memory['content']}\n";
         }
     }
+
+    // Add concise style and no filler guidance
+    $systemMessage .= "\n\nStyle: Be concise, present concrete results immediately. Do not write filler like 'just a moment' or 'let me check'. If data exists above, present it directly. If no data, say 'No results found' with 1 actionable next step.";
 
     // Construct message array: system prompt + trimmed chat history + current user msg
     $messagesForOpenAI = [];
@@ -290,11 +301,11 @@ function needsLogisticsTools($message) {
         }
     }
     
-    // Use tools for logistics questions
+    // Use tools for logistics questions (extended with docs)
     $logisticsPatterns = [
-        '/\b(project|projects|delivery|deliveries|shipment|tracking|carrier|inventory|warehouse|storage|stock|module|modules)\b/',
-        '/\b(recent|latest|new|status|summary|overview|performance)\b/',
-        '/\b(show|get|tell|what|how|when|where|list)\b/'
+        '/\b(project|projects|delivery|deliveries|shipment|tracking|carrier|inventory|warehouse|storage|stock|module|modules|document|documents|doc|pods?|invoices?|bol|proof of delivery|spec\s*sheet|safe\s*harbor)\b/i',
+        '/\b(recent|latest|new|status|summary|overview|performance|download|find|open|show)\b/i',
+        '/\b(show|get|tell|what|how|when|where|list)\b/i'
     ];
     
     foreach ($logisticsPatterns as $pattern) {
@@ -314,15 +325,29 @@ function detectToolsFromMessage($message) {
     if (preg_match('/\b(project|projects|status)\b/', $message)) {
         $tools[] = 'getProjectSummary';
     }
-    
+
     // Delivery related
     if (preg_match('/\b(delivery|deliveries|shipment|tracking|carrier)\b/', $message)) {
         $tools[] = 'getDeliveryStatus';
     }
-    
+
     // Inventory/warehouse related
     if (preg_match('/\b(inventory|warehouse|storage|stock)\b/', $message)) {
         $tools[] = 'getWarehouseInventory';
+    }
+
+    // Document-related
+    if (preg_match('/\b(document|documents|doc|pods?|invoices?|bol|proof of delivery|spec\s*sheet|safe\s*harbor)\b/i', $message)) {
+        // If message mentions a project, prefer project documents, else global
+        if (preg_match('/\bproject\b/i', $message)) {
+            $tools[] = 'getProjectDocuments';
+        } else {
+            $tools[] = 'getGlobalDocuments';
+        }
+        // Also fetch POD status if asking about PODs
+        if (preg_match('/\b(pods?|proof of delivery)\b/i', $message)) {
+            $tools[] = 'getPODStatus';
+        }
     }
     
     // Default for general logistics questions
