@@ -32,20 +32,20 @@ class SunnyQueryExecutor {
                 'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
                 'manufacturers', 'accounts', 'customer_accounts', 'users', 'inventory_pallets',
                 'freight_estimates', 'warehouse_estimates', 'sites', 'project_invoices',
-                'project_wattage_orders', 'sunny_memory'
+                'project_wattage_orders', 'project_documents', 'sunny_memory'
             ],
             'admin' => [
                 'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
                 'manufacturers', 'inventory_pallets', 'freight_estimates', 'warehouse_estimates',
-                'project_invoices', 'project_wattage_orders', 'sunny_memory'
+                'project_invoices', 'project_wattage_orders', 'project_documents', 'sunny_memory'
             ],
             'user' => [
                 'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
-                'inventory_pallets', 'project_invoices', 'project_wattage_orders', 'sunny_memory'
+                'inventory_pallets', 'project_invoices', 'project_wattage_orders', 'project_documents', 'sunny_memory'
             ],
             'DDPm' => [
                 'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
-                'inventory_pallets', 'project_wattage_orders', 'sunny_memory'
+                'inventory_pallets', 'project_wattage_orders', 'project_documents', 'sunny_memory'
             ]
         ];
     }

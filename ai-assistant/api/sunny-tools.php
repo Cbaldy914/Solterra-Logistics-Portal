@@ -732,7 +732,7 @@ class SunnyTools {
         try {
             // Normalize tool name for comparison
             $normalizedToolName = strtolower(trim($toolName));
-            
+
             switch ($normalizedToolName) {
                 // Core tools - project and delivery info
                 case 'project status':
@@ -774,6 +774,15 @@ class SunnyTools {
                 case 'pod_status':
                 case 'podstatus':
                     $projectId = $this->extractProjectId($message);
+                    if (!$projectId) {
+                        $pname = $this->extractProjectName($message);
+                        if ($pname) {
+                            $res = $this->queryExecutor->executeQuery("SELECT id FROM projects WHERE project_name LIKE ? ORDER BY created_at DESC LIMIT 1", ["%{$pname}%"]);
+                            if ($res['success'] && !empty($res['data'])) {
+                                $projectId = intval($res['data'][0]['id']);
+                            }
+                        }
+                    }
                     return $this->getPODStatus($projectId);
                     
                 // Movement and BOL tools
@@ -799,6 +808,28 @@ class SunnyTools {
                 case 'search_logistics':
                     $searchTerm = $this->extractSearchTerm($message);
                     return $this->searchLogistics($searchTerm);
+
+                // Documents
+                case 'getprojectdocuments':
+                case 'project_documents':
+                case 'projectdocuments':
+                case 'get_project_documents':
+                    $projId = $this->extractProjectId($message);
+                    $projName = $projId ? null : $this->extractProjectName($message);
+                    $filters = $this->extractDocumentFilters($message);
+                    return $this->getProjectDocuments($projId ?: $projName, $filters);
+
+                case 'getglobaldocuments':
+                case 'global_documents':
+                case 'globaldocuments':
+                case 'get_global_documents':
+                    $filters = $this->extractDocumentFilters($message);
+                    // Allow project name in global context too
+                    if (!$filters['project_id'] && !$filters['project_name']) {
+                        $pname = $this->extractProjectName($message);
+                        if ($pname) $filters['project_name'] = $pname;
+                    }
+                    return $this->getGlobalDocuments($filters);
                     
                 // Memory management tools
                 case 'storememory':
@@ -852,6 +883,209 @@ class SunnyTools {
         }
         return rtrim(trim($normalized), ",.!? ");
     }
+
+    /**
+     * Get documents for a specific project or across account (global)
+     * Supports simple filters inferred from message.
+     */
+    public function getProjectDocuments($projectSpecifier = null, $filters = []) {
+        // Resolve project ID by name or number
+        $projectId = null;
+        if (is_numeric($projectSpecifier)) {
+            $projectId = intval($projectSpecifier);
+        } elseif (is_string($projectSpecifier) && $projectSpecifier !== '') {
+            $sql = "SELECT id FROM projects WHERE project_name LIKE ? ORDER BY created_at DESC LIMIT 1";
+            $res = $this->queryExecutor->executeQuery($sql, ["%{$projectSpecifier}%"]);
+            if ($res['success'] && !empty($res['data'])) {
+                $projectId = intval($res['data'][0]['id']);
+            }
+        }
+        if (!$projectId) {
+            // Best-effort: if not specified, return empty success to let model ask for clarification
+            return ['success' => true, 'data' => [], 'error' => null, 'note' => 'No project specified'];
+        }
+
+        // Build query (subset of get_global_documents.php logic)
+        $sql = "
+            SELECT 
+                pd.id,
+                pd.original_file_name as filename,
+                pd.file_size,
+                pd.mime_type,
+                pd.uploaded_at,
+                pd.description,
+                pd.file_path,
+                pd.document_type,
+                pd.document_sub_type,
+                pd.delivery_id,
+                d.bol_number,
+                d.supplier as supplier_name,
+                p.project_name
+            FROM project_documents pd
+            JOIN projects p ON pd.project_id = p.id
+            LEFT JOIN deliveries d ON pd.delivery_id = d.id
+            WHERE pd.project_id = ? AND pd.is_active = 1
+        ";
+        $params = [$projectId];
+
+        // Apply lightweight filters
+        if (!empty($filters['document_type'])) {
+            $sql .= " AND pd.document_type = ?";
+            $params[] = $filters['document_type'];
+        }
+        if (!empty($filters['search'])) {
+            $sql .= " AND (pd.original_file_name LIKE ? OR pd.description LIKE ?)";
+            $like = '%' . $filters['search'] . '%';
+            $params[] = $like; $params[] = $like;
+        }
+        if (!empty($filters['bol'])) {
+            $sql .= " AND d.bol_number LIKE ?";
+            $params[] = '%' . $filters['bol'] . '%';
+        }
+        if (!empty($filters['start_date'])) {
+            $sql .= " AND DATE(pd.uploaded_at) >= ?";
+            $params[] = $filters['start_date'];
+        }
+        if (!empty($filters['end_date'])) {
+            $sql .= " AND DATE(pd.uploaded_at) <= ?";
+            $params[] = $filters['end_date'];
+        }
+
+        $sql .= " ORDER BY pd.uploaded_at DESC LIMIT 100";
+
+        $result = $this->queryExecutor->executeQuery($sql, $params);
+        if (!$result['success']) return $result;
+
+        // Normalize with download/deep links
+        $docs = array_map(function($row) use ($projectId, $filters) {
+            $downloadUrl = 'download_document.php?id=' . $row['id'];
+            $projectPageUrl = 'project_documents.php?project_id=' . $projectId;
+            $globalPageUrl = 'global_documents.php?project_id=' . $projectId;
+            if (!empty($filters['document_type'])) {
+                $projectPageUrl .= '&document_type=' . urlencode($filters['document_type']);
+                $globalPageUrl  .= '&document_type=' . urlencode($filters['document_type']);
+            }
+            if (!empty($filters['search'])) {
+                $projectPageUrl .= '&search=' . urlencode($filters['search']);
+                $globalPageUrl  .= '&search=' . urlencode($filters['search']);
+            }
+            if (!empty($filters['start_date'])) {
+                $projectPageUrl .= '&start_date=' . urlencode($filters['start_date']);
+                $globalPageUrl  .= '&start_date=' . urlencode($filters['start_date']);
+            }
+            if (!empty($filters['end_date'])) {
+                $projectPageUrl .= '&end_date=' . urlencode($filters['end_date']);
+                $globalPageUrl  .= '&end_date=' . urlencode($filters['end_date']);
+            }
+            return [
+                'id' => intval($row['id']),
+                'filename' => $row['filename'],
+                'uploaded_at' => $row['uploaded_at'],
+                'document_type' => $row['document_type'],
+                'document_sub_type' => $row['document_sub_type'],
+                'project_name' => $row['project_name'],
+                'bol_number' => $row['bol_number'],
+                'supplier' => $row['supplier_name'],
+                'mime_type' => $row['mime_type'],
+                'size_bytes' => intval($row['file_size'] ?? 0),
+                'url_download' => $downloadUrl,
+                'link_project_page' => $projectPageUrl,
+                'link_global_page' => $globalPageUrl
+            ];
+        }, $result['data']);
+
+        return ['success' => true, 'data' => $docs];
+    }
+
+    public function getGlobalDocuments($filters = []) {
+        // Base query across account projects (role-based filter is injected by QueryExecutor)
+        $sql = "
+            SELECT 
+                pd.id,
+                pd.original_file_name as filename,
+                pd.file_size,
+                pd.mime_type,
+                pd.uploaded_at,
+                pd.description,
+                pd.file_path,
+                pd.document_type,
+                pd.document_sub_type,
+                pd.project_id,
+                p.project_name,
+                d.bol_number,
+                d.supplier as supplier_name
+            FROM project_documents pd
+            JOIN projects p ON pd.project_id = p.id
+            LEFT JOIN deliveries d ON pd.delivery_id = d.id
+            WHERE pd.is_active = 1
+        ";
+        $params = [];
+
+        if (!empty($filters['project_id'])) {
+            $sql .= " AND pd.project_id = ?";
+            $params[] = intval($filters['project_id']);
+        }
+        if (!empty($filters['project_name'])) {
+            $sql .= " AND p.project_name LIKE ?";
+            $params[] = '%' . $filters['project_name'] . '%';
+        }
+        if (!empty($filters['document_type'])) {
+            $sql .= " AND pd.document_type = ?";
+            $params[] = $filters['document_type'];
+        }
+        if (!empty($filters['search'])) {
+            $sql .= " AND (pd.original_file_name LIKE ? OR pd.description LIKE ?)";
+            $like = '%' . $filters['search'] . '%';
+            $params[] = $like; $params[] = $like;
+        }
+        if (!empty($filters['bol'])) {
+            $sql .= " AND d.bol_number LIKE ?";
+            $params[] = '%' . $filters['bol'] . '%';
+        }
+        if (!empty($filters['start_date'])) {
+            $sql .= " AND DATE(pd.uploaded_at) >= ?";
+            $params[] = $filters['start_date'];
+        }
+        if (!empty($filters['end_date'])) {
+            $sql .= " AND DATE(pd.uploaded_at) <= ?";
+            $params[] = $filters['end_date'];
+        }
+
+        $sql .= " ORDER BY pd.uploaded_at DESC LIMIT 100";
+
+        $result = $this->queryExecutor->executeQuery($sql, $params);
+        if (!$result['success']) return $result;
+
+        $docs = array_map(function($row) use ($filters) {
+            $downloadUrl = 'download_document.php?id=' . $row['id'];
+            $globalPageUrl = 'global_documents.php';
+            $pp = [];
+            foreach (['project_id','document_type','search','start_date','end_date'] as $k) {
+                if (!empty($filters[$k])) $pp[$k] = $filters[$k];
+            }
+            if (!empty($pp)) {
+                $globalPageUrl .= '?' . http_build_query($pp);
+            }
+
+            return [
+                'id' => intval($row['id']),
+                'filename' => $row['filename'],
+                'uploaded_at' => $row['uploaded_at'],
+                'document_type' => $row['document_type'],
+                'document_sub_type' => $row['document_sub_type'],
+                'project_id' => intval($row['project_id'] ?? 0),
+                'project_name' => $row['project_name'],
+                'bol_number' => $row['bol_number'],
+                'supplier' => $row['supplier_name'],
+                'mime_type' => $row['mime_type'],
+                'size_bytes' => intval($row['file_size'] ?? 0),
+                'url_download' => $downloadUrl,
+                'link_global_page' => $globalPageUrl
+            ];
+        }, $result['data']);
+
+        return ['success' => true, 'data' => $docs];
+    }
     
     private function extractProjectName($message) {
         $original = $message;
@@ -877,6 +1111,20 @@ class SunnyTools {
             // Stop at sentence-ending punctuation
             $name = preg_split('/[.!?,]/', $name)[0];
             $name = trim($name);
+            return $name !== '' ? $name : null;
+        }
+
+        // 4) Handle trailing pattern: <name> Project (e.g., "Morgan Test Project")
+        if (preg_match('/\b([A-Za-z0-9][A-Za-z0-9 .&_()\-]{1,100})\s+project\b/i', $message, $m)) {
+            $name = trim($m[1]);
+            $name = rtrim($name, ".,!?\s");
+            return $name !== '' ? $name : null;
+        }
+
+        // 5) Handle "for <name> project" phrasing
+        if (preg_match('/\bfor\s+([A-Za-z0-9][A-Za-z0-9 .&_()\-]{1,100})\s+project\b/i', $message, $m)) {
+            $name = trim($m[1]);
+            $name = rtrim($name, ".,!?\s");
             return $name !== '' ? $name : null;
         }
 
@@ -914,6 +1162,63 @@ class SunnyTools {
             return intval($matches[1]);
         }
         return null;
+    }
+
+    // Extract basic document filters from a message (type, search term, bol, dates)
+    private function extractDocumentFilters($message) {
+        $filters = [
+            'document_type' => null,
+            'search' => null,
+            'bol' => null,
+            'start_date' => null,
+            'end_date' => null,
+            'project_id' => null,
+            'project_name' => null,
+        ];
+
+        $normalized = strtolower(str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message));
+
+        // Map common keywords to document_type used in project_documents
+        $typeMap = [
+            'pod' => 'pods',
+            'pods' => 'pods',
+            'invoice' => 'invoices',
+            'invoices' => 'invoices',
+            'shipment' => 'shipments',
+            'shipments' => 'shipments',
+            'warehous' => 'warehousing',
+            'exception' => 'exception_reports',
+            'flash test' => 'modules',
+            'spec sheet' => 'modules',
+            'safe harbor' => 'safe_harbor_evidence'
+        ];
+        foreach ($typeMap as $k => $val) {
+            if (strpos($normalized, $k) !== false) {
+                $filters['document_type'] = $val;
+                break;
+            }
+        }
+
+        // Extract BOL number if present
+        $bol = $this->extractBOLNumber($message);
+        if ($bol) $filters['bol'] = $bol;
+
+        // Extract quoted search term if present
+        if (preg_match('/["\']([^"\']{2,})["\']/', $message, $m)) {
+            $filters['search'] = rtrim(trim($m[1]), ",.!? ");
+        }
+
+        // Simple date range: phrases like from 2025-06-01 to 2025-06-30
+        if (preg_match('/from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})/i', $message, $m)) {
+            $filters['start_date'] = $m[1];
+            $filters['end_date'] = $m[2];
+        }
+
+        // Project id if explicitly given
+        $pid = $this->extractProjectId($message);
+        if ($pid) $filters['project_id'] = $pid;
+
+        return $filters;
     }
 
     /**
