@@ -1083,6 +1083,14 @@ class SunnyTools {
                         if ($pname) $filters['project_name'] = $pname;
                     }
                     return $this->getGlobalDocuments($filters);
+
+                case 'analyzedocument':
+                case 'analyze_document':
+                    $task = null;
+                    if (preg_match('/\b(summary|summarize|review|extract|issues?)\b/i', $message, $m)) {
+                        $task = strtolower($m[1]);
+                    }
+                    return $this->analyzeDocument($task);
                     
                 // Memory management tools
                 case 'storememory':
@@ -1442,6 +1450,111 @@ class SunnyTools {
             return intval($m[1]) * 30;
         }
         return null;
+    }
+
+    /**
+     * Analyze most recent uploaded document (session) and extract text for the model
+     */
+    public function analyzeDocument($task = null) {
+        try {
+            if (session_status() === PHP_SESSION_NONE) { session_name('logistics_session'); session_start(); }
+            $uploads = $_SESSION['sunny_uploads'] ?? [];
+            $lastId = $_SESSION['sunny_last_upload'] ?? null;
+            if (!$lastId || !isset($uploads[$lastId])) {
+                return ['success' => false, 'error' => 'No uploaded file found in this session'];
+            }
+            $info = $uploads[$lastId];
+            $path = $info['path'];
+            $mime = $info['mime'];
+            if (!is_readable($path)) {
+                return ['success' => false, 'error' => 'Uploaded file is not accessible'];
+            }
+
+            $content = $this->extractTextFromFile($path, $mime);
+            if ($content === null) {
+                return ['success' => false, 'error' => 'Unable to extract text from file'];
+            }
+            $preview = mb_substr($content, 0, 12000);
+            return [
+                'success' => true,
+                'data' => [
+                    'filename' => $info['filename'],
+                    'mime' => $mime,
+                    'size' => $info['size'],
+                    'task' => $task,
+                    'text_preview' => $preview,
+                    'note' => 'Preview truncated to ~12k chars. Ask for specific sections if needed.'
+                ]
+            ];
+        } catch (Exception $e) {
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    private function extractTextFromFile($path, $mime) {
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if (in_array($mime, ['text/plain', 'text/csv'])) {
+            return @file_get_contents($path) ?: '';
+        }
+        // DOCX support
+        if ($mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || $ext === 'docx') {
+            $zip = new ZipArchive();
+            if ($zip->open($path) === true) {
+                $index = $zip->locateName('word/document.xml');
+                if ($index !== false) {
+                    $xml = $zip->getFromIndex($index);
+                    $zip->close();
+                    return html_entity_decode(strip_tags($xml));
+                }
+                $zip->close();
+            }
+            return null;
+        }
+        if ($mime === 'application/pdf' || $ext === 'pdf') {
+            $autoload = dirname(__DIR__, 2) . '/vendor/autoload.php';
+            if (file_exists($autoload)) {
+                require_once $autoload;
+                if (class_exists('Smalot\\PdfParser\\Parser')) {
+                    try {
+                        $parser = new Smalot\PdfParser\Parser();
+                        $pdf = $parser->parseFile($path);
+                        return $pdf->getText();
+                    } catch (Exception $e) {
+                        // ignore and fall through
+                    }
+                }
+            }
+            // Fallback: simple text extraction for basic PDFs
+            $raw = @file_get_contents($path);
+            if ($raw !== false) {
+                $simple = $this->simplePdfExtract($raw);
+                if ($simple && trim($simple) !== '') return $simple;
+            }
+            return null;
+        }
+        return null;
+    }
+
+    private function simplePdfExtract($content) {
+        $text = '';
+        $content = str_replace("\0", '', $content);
+        if (preg_match_all('/\[(.*?)\]\s*TJ/s', $content, $m)) {
+            foreach ($m[1] as $arr) {
+                if (preg_match_all('/\((.*?)\)/s', $arr, $s)) {
+                    foreach ($s[1] as $seg) { $text .= $this->pdfDecode($seg); }
+                    $text .= "\n";
+                }
+            }
+        }
+        if (preg_match_all('/\((.*?)\)\s*Tj/s', $content, $m2)) {
+            foreach ($m2[1] as $seg) { $text .= $this->pdfDecode($seg) . "\n"; }
+        }
+        return trim($text);
+    }
+
+    private function pdfDecode($s) {
+        $s = str_replace(['\\n','\\r','\\t','\\b','\\f','\\(','\\)','\\\\'], ["\n","\r","\t","\x08","\f","(",")","\\"], $s);
+        return $s;
     }
 
     // Extract basic document filters from a message (type, search term, bol, dates)
