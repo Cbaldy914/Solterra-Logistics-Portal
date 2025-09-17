@@ -44,12 +44,20 @@ class SunnyTools {
             ";
             
             $params = [];
+            $conditions = [];
             if ($projectName) {
                 // Normalize and sanitize common quoting/punctuation around names
                 $projectName = str_replace(["“","”","‘","’"], ['"','"','\'','\''], $projectName);
                 $projectName = trim($projectName, " \t\n\r\0\x0B\"'");
-                $sql .= " WHERE p.project_name LIKE ?";
+                $conditions[] = "p.project_name LIKE ?";
                 $params[] = "%{$projectName}%";
+            }
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $conditions[] = "p.account_id = ?";
+                $params[] = $this->userAccountId;
+            }
+            if (!empty($conditions)) {
+                $sql .= " WHERE " . implode(' AND ', $conditions);
             }
             
             $sql .= " GROUP BY p.id ORDER BY p.created_at DESC LIMIT {$limit}";
@@ -216,6 +224,12 @@ class SunnyTools {
                 $params[] = $status;
             }
             
+            // Tenant scoping
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $sql .= " AND p.account_id = ?";
+                $params[] = $this->userAccountId;
+            }
+
             $sql .= " ORDER BY d.anticipated_delivery_date DESC LIMIT 50";
             
             return $this->queryExecutor->executeQuery($sql, $params);
@@ -261,7 +275,12 @@ class SunnyTools {
                 $sql .= " AND d.project_id = ?";
                 $params[] = $projectId;
             }
-            
+            // Tenant scoping
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $sql .= " AND p.account_id = ?";
+                $params[] = $this->userAccountId;
+            }
+
             $sql .= " ORDER BY d.anticipated_delivery_date ASC LIMIT 50";
             
             return $this->queryExecutor->executeQuery($sql, $params);
@@ -279,7 +298,7 @@ class SunnyTools {
      */
     public function getWarehouseInventory($warehouseId = null) {
         try {
-            // Get warehouse basic info with inventory summary
+            // Get warehouse basic info with inventory summary, scoped to account via project joins
             $sql = "
                 SELECT 
                     w.id as warehouse_id,
@@ -287,29 +306,35 @@ class SunnyTools {
                     w.address,
                     w.city,
                     w.state,
-                    -- Current inventory metrics
-                    COUNT(CASE WHEN ip.status = 'In Warehouse' THEN ip.id END) as pallets_in_storage,
-                    SUM(CASE WHEN ip.status = 'In Warehouse' THEN ip.quantity ELSE 0 END) as modules_in_storage,
-                    SUM(CASE WHEN ip.status = 'In Warehouse' THEN (ip.wattage * ip.quantity) ELSE 0 END) / 1000000 as mw_in_storage,
-                    -- Average days stored for current inventory
-                    AVG(CASE WHEN ip.status = 'In Warehouse' AND ip.arrival_date IS NOT NULL 
-                        THEN DATEDIFF(CURDATE(), ip.arrival_date) ELSE NULL END) as avg_days_stored,
-                    -- Available wattages
-                    GROUP_CONCAT(DISTINCT CASE WHEN ip.status = 'In Warehouse' THEN ip.wattage END ORDER BY ip.wattage) as wattages_available,
-                    -- Project breakdown
-                    COUNT(DISTINCT CASE WHEN ip.status = 'In Warehouse' AND ip.assigned_project_id IS NOT NULL THEN ip.assigned_project_id END) as projects_with_inventory
+                    COUNT(ip.id) as pallets_in_storage,
+                    SUM(ip.quantity) as modules_in_storage,
+                    SUM(ip.wattage * ip.quantity) / 1000000 as mw_in_storage,
+                    AVG(CASE WHEN ip.arrival_date IS NOT NULL THEN DATEDIFF(CURDATE(), ip.arrival_date) ELSE NULL END) as avg_days_stored,
+                    GROUP_CONCAT(DISTINCT ip.wattage ORDER BY ip.wattage) as wattages_available,
+                    COUNT(DISTINCT COALESCE(ip.assigned_project_id, ip.current_project_id)) as projects_with_inventory
                 FROM warehouses w
-                LEFT JOIN inventory_pallets ip ON w.id = ip.current_warehouse_id
+                LEFT JOIN inventory_pallets ip ON w.id = ip.current_warehouse_id AND ip.status = 'In Warehouse'
+                LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+                LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
             ";
-            
+
             $params = [];
+            $clauses = [];
             if ($warehouseId) {
-                $sql .= " WHERE w.id = ?";
+                $clauses[] = "w.id = ?";
                 $params[] = $warehouseId;
             }
-            
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $clauses[] = "(p_assigned.account_id = ? OR p_current.account_id = ?)";
+                $params[] = $this->userAccountId;
+                $params[] = $this->userAccountId;
+            }
+            if (!empty($clauses)) {
+                $sql .= " WHERE " . implode(' AND ', $clauses);
+            }
+
             $sql .= " GROUP BY w.id ORDER BY w.name";
-            
+
             $result = $this->queryExecutor->executeQuery($sql, $params);
             
             if ($result['success'] && !empty($result['data'])) {
@@ -319,15 +344,20 @@ class SunnyTools {
                     // Get delivery activity (inbound/outbound counts from last 30 days)
                     $deliverySql = "
                         SELECT 
-                            COUNT(CASE WHEN warehouse_arrival_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) THEN 1 END) as recent_inbound,
-                            COUNT(CASE WHEN left_warehouse_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) THEN 1 END) as recent_outbound,
-                            COUNT(CASE WHEN warehouse_arrival_date IS NOT NULL THEN 1 END) as total_inbound,
-                            COUNT(CASE WHEN left_warehouse_date IS NOT NULL THEN 1 END) as total_outbound
-                        FROM deliveries 
-                        WHERE warehouse_id = ?
-                    ";
+                            COUNT(CASE WHEN d.warehouse_arrival_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) THEN 1 END) as recent_inbound,
+                            COUNT(CASE WHEN d.left_warehouse_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) THEN 1 END) as recent_outbound,
+                            COUNT(CASE WHEN d.warehouse_arrival_date IS NOT NULL THEN 1 END) as total_inbound,
+                            COUNT(CASE WHEN d.left_warehouse_date IS NOT NULL THEN 1 END) as total_outbound
+                        FROM deliveries d
+                        LEFT JOIN projects p ON d.project_id = p.id
+                        WHERE d.warehouse_id = ?";
+                    $deliveryParams = [$warehouseId];
+                    if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                        $deliverySql .= " AND p.account_id = ?";
+                        $deliveryParams[] = $this->userAccountId;
+                    }
                     
-                    $deliveryResult = $this->queryExecutor->executeQuery($deliverySql, [$warehouseId]);
+                    $deliveryResult = $this->queryExecutor->executeQuery($deliverySql, $deliveryParams);
                     if ($deliveryResult['success'] && !empty($deliveryResult['data'])) {
                         $warehouse = array_merge($warehouse, $deliveryResult['data'][0]);
                     }
@@ -391,13 +421,15 @@ class SunnyTools {
                             SUM(ip.wattage * ip.quantity) / 1000000 as project_mw_in_storage
                         FROM inventory_pallets ip
                         JOIN projects p ON ip.assigned_project_id = p.id
-                        WHERE ip.current_warehouse_id = ? AND ip.status = 'In Warehouse'
-                        GROUP BY p.id, p.project_name
-                        ORDER BY module_count DESC
-                        LIMIT 5
-                    ";
-                    
-                    $projectResult = $this->queryExecutor->executeQuery($projectSql, [$warehouseId]);
+                        WHERE ip.current_warehouse_id = ? AND ip.status = 'In Warehouse'";
+                    $projectParams = [$warehouseId];
+                    if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                        $projectSql .= " AND p.account_id = ?";
+                        $projectParams[] = $this->userAccountId;
+                    }
+                    $projectSql .= " GROUP BY p.id, p.project_name ORDER BY module_count DESC LIMIT 5";
+
+                    $projectResult = $this->queryExecutor->executeQuery($projectSql, $projectParams);
                     if ($projectResult['success'] && !empty($projectResult['data'])) {
                         $warehouse['top_projects'] = $projectResult['data'];
                     } else {
@@ -452,7 +484,11 @@ class SunnyTools {
                 $sql .= " AND ftd.project_id = ?";
                 $params[] = $projectId;
             }
-            
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $sql .= " AND p.account_id = ?";
+                $params[] = $this->userAccountId;
+            }
+
             $sql .= " ORDER BY ftd.flash_date DESC LIMIT {$limit}";
             
             return $this->queryExecutor->executeQuery($sql, $params);
@@ -504,6 +540,12 @@ class SunnyTools {
                 $params[] = $warehouseId;
             }
             
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $sql .= " AND (p_assigned.account_id = ? OR p_current.account_id = ?)";
+                $params[] = $this->userAccountId;
+                $params[] = $this->userAccountId;
+            }
+
             $sql .= " ORDER BY ip.updated_at DESC LIMIT 100";
             
             return $this->queryExecutor->executeQuery($sql, $params);
@@ -553,7 +595,11 @@ class SunnyTools {
                 $sql .= " AND d.bol_number LIKE ?";
                 $params[] = "%{$bolNumber}%";
             }
-            
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $sql .= " AND p.account_id = ?";
+                $params[] = $this->userAccountId;
+            }
+
             $sql .= " ORDER BY d.anticipated_delivery_date DESC LIMIT 50";
             
             return $this->queryExecutor->executeQuery($sql, $params);
@@ -601,7 +647,11 @@ class SunnyTools {
                 $sql .= " AND d.project_id = ?";
                 $params[] = $projectId;
             }
-            
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $sql .= " AND p.account_id = ?";
+                $params[] = $this->userAccountId;
+            }
+
             $sql .= " ORDER BY d.actual_delivery_date DESC LIMIT 50";
             
             $result = $this->queryExecutor->executeQuery($sql, $params);
@@ -656,11 +706,173 @@ class SunnyTools {
                 $sql .= " WHERE p.id = ?";
                 $params[] = $projectId;
             }
-            
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $sql .= empty($params) ? " WHERE" : " AND";
+                $sql .= " p.account_id = ?";
+                $params[] = $this->userAccountId;
+            }
+
             $sql .= " GROUP BY p.id ORDER BY total_freight_cost DESC LIMIT 20";
             
             return $this->queryExecutor->executeQuery($sql, $params);
             
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Delivery performance metrics grouped by manufacturer, warehouse, or project
+     */
+    public function getDeliveryPerformance($days = 30, $groupBy = 'manufacturer') {
+        try {
+            $groupMap = [
+                'manufacturer' => 'd.supplier',
+                'warehouse' => 'w.name',
+                'project' => 'p.project_name'
+            ];
+            $groupExpr = $groupMap[strtolower($groupBy)] ?? $groupMap['manufacturer'];
+
+            $sql = "
+                SELECT ".$groupExpr." AS group_key,
+                    COUNT(*) AS total_deliveries,
+                    SUM(CASE WHEN d.status_of_delivery = 'Delivered to Project' THEN 1 ELSE 0 END) AS delivered_count,
+                    SUM(CASE WHEN d.status_of_delivery = 'Delivered to Project'
+                              AND d.actual_delivery_date IS NOT NULL
+                              AND d.anticipated_delivery_date IS NOT NULL
+                              AND d.actual_delivery_date <= d.anticipated_delivery_date
+                        THEN 1 ELSE 0 END) AS on_time_count,
+                    SUM(CASE WHEN d.actual_delivery_date IS NOT NULL AND d.proof_of_delivery IS NULL THEN 1 ELSE 0 END) AS missing_pod_count,
+                    SUM((d.wattage * d.quantity) / 1000000) AS total_mw,
+                    AVG(CASE WHEN d.actual_delivery_date IS NOT NULL AND d.warehouse_arrival_date IS NOT NULL
+                             THEN DATEDIFF(d.actual_delivery_date, d.warehouse_arrival_date) ELSE NULL END) AS avg_transit_days
+                FROM deliveries d
+                LEFT JOIN projects p ON d.project_id = p.id
+                LEFT JOIN warehouses w ON d.warehouse_id = w.id
+                WHERE d.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+            ";
+
+            $params = [$days];
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $sql .= " AND p.account_id = ?";
+                $params[] = $this->userAccountId;
+            }
+
+            $sql .= " GROUP BY group_key ORDER BY total_deliveries DESC LIMIT 20";
+            return $this->queryExecutor->executeQuery($sql, $params);
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * KPI Dashboard aggregates for the account
+     */
+    public function getKPIDashboard($days = 30) {
+        try {
+            $accountId = $this->userAccountId;
+            $isScoped = ($accountId !== null && $this->userRole !== 'global_admin');
+            $kpi = [
+                'delivered_mw' => 0.0,
+                'mw_in_storage' => 0.0,
+                'on_time_rate' => 0.0,
+                'missing_pods' => 0,
+                'recent_inbound_pallets' => 0,
+                'recent_outbound_pallets' => 0,
+                'top_bottlenecks' => []
+            ];
+
+            // Delivered MW in window
+            $sql = "SELECT SUM(d.wattage * d.quantity) / 1000000 AS mw
+                    FROM deliveries d
+                    JOIN projects p ON d.project_id = p.id
+                    WHERE d.status_of_delivery = 'Delivered to Project'
+                      AND d.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)";
+            $params = [$days];
+            if ($isScoped) { $sql .= " AND p.account_id = ?"; $params[] = $accountId; }
+            $res = $this->queryExecutor->executeQuery($sql, $params);
+            if ($res['success'] && !empty($res['data'])) { $kpi['delivered_mw'] = round(floatval($res['data'][0]['mw'] ?? 0), 3); }
+
+            // MW in storage (current)
+            $sql = "SELECT SUM(ip.wattage * ip.quantity) / 1000000 AS mw
+                    FROM inventory_pallets ip
+                    LEFT JOIN projects pa ON ip.assigned_project_id = pa.id
+                    LEFT JOIN projects pc ON ip.current_project_id = pc.id
+                    WHERE ip.status = 'In Warehouse'";
+            $params = [];
+            if ($isScoped) { $sql .= " AND (pa.account_id = ? OR pc.account_id = ?)"; $params[] = $accountId; $params[] = $accountId; }
+            $res = $this->queryExecutor->executeQuery($sql, $params);
+            if ($res['success'] && !empty($res['data'])) { $kpi['mw_in_storage'] = round(floatval($res['data'][0]['mw'] ?? 0), 3); }
+
+            // On-time delivery rate
+            $sql = "SELECT 
+                        SUM(CASE WHEN d.status_of_delivery = 'Delivered to Project' THEN 1 ELSE 0 END) AS delivered_count,
+                        SUM(CASE WHEN d.status_of_delivery = 'Delivered to Project' 
+                                  AND d.actual_delivery_date IS NOT NULL 
+                                  AND d.anticipated_delivery_date IS NOT NULL 
+                                  AND d.actual_delivery_date <= d.anticipated_delivery_date THEN 1 ELSE 0 END) AS on_time_count
+                    FROM deliveries d
+                    JOIN projects p ON d.project_id = p.id
+                    WHERE d.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)";
+            $params = [$days];
+            if ($isScoped) { $sql .= " AND p.account_id = ?"; $params[] = $accountId; }
+            $res = $this->queryExecutor->executeQuery($sql, $params);
+            if ($res['success'] && !empty($res['data'])) {
+                $del = intval($res['data'][0]['delivered_count'] ?? 0);
+                $ont = intval($res['data'][0]['on_time_count'] ?? 0);
+                $kpi['on_time_rate'] = $del > 0 ? round($ont / $del, 3) : 0.0;
+            }
+
+            // Missing PODs
+            $sql = "SELECT COUNT(*) AS missing_pods
+                    FROM deliveries d
+                    JOIN projects p ON d.project_id = p.id
+                    WHERE d.actual_delivery_date IS NOT NULL
+                      AND d.proof_of_delivery IS NULL
+                      AND d.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)";
+            $params = [$days];
+            if ($isScoped) { $sql .= " AND p.account_id = ?"; $params[] = $accountId; }
+            $res = $this->queryExecutor->executeQuery($sql, $params);
+            if ($res['success'] && !empty($res['data'])) { $kpi['missing_pods'] = intval($res['data'][0]['missing_pods'] ?? 0); }
+
+            // Inbound/outbound pallets (window)
+            $sql = "SELECT 
+                        SUM(CASE WHEN d.warehouse_arrival_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY) THEN 1 ELSE 0 END) AS recent_inbound,
+                        SUM(CASE WHEN d.left_warehouse_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY) THEN 1 ELSE 0 END) AS recent_outbound
+                    FROM deliveries d
+                    JOIN projects p ON d.project_id = p.id";
+            $params = [$days, $days];
+            if ($isScoped) { $sql .= " WHERE p.account_id = ?"; $params[] = $accountId; }
+            $res = $this->queryExecutor->executeQuery($sql, $params);
+            if ($res['success'] && !empty($res['data'])) {
+                $kpi['recent_inbound_pallets'] = intval($res['data'][0]['recent_inbound'] ?? 0);
+                $kpi['recent_outbound_pallets'] = intval($res['data'][0]['recent_outbound'] ?? 0);
+            }
+
+            // Top bottlenecks (warehouses by avg days stored)
+            $sql = "SELECT w.name AS warehouse_name,
+                           AVG(CASE WHEN ip.arrival_date IS NOT NULL THEN DATEDIFF(CURDATE(), ip.arrival_date) ELSE NULL END) AS avg_days,
+                           COUNT(ip.id) AS pallets
+                    FROM inventory_pallets ip
+                    JOIN warehouses w ON ip.current_warehouse_id = w.id
+                    LEFT JOIN projects pa ON ip.assigned_project_id = pa.id
+                    LEFT JOIN projects pc ON ip.current_project_id = pc.id
+                    WHERE ip.status = 'In Warehouse'";
+            $params = [];
+            if ($isScoped) { $sql .= " AND (pa.account_id = ? OR pc.account_id = ?)"; $params[] = $accountId; $params[] = $accountId; }
+            $sql .= " GROUP BY w.id, w.name ORDER BY avg_days DESC LIMIT 3";
+            $res = $this->queryExecutor->executeQuery($sql, $params);
+            if ($res['success']) { $kpi['top_bottlenecks'] = $res['data']; }
+
+            return ['success' => true, 'data' => $kpi];
+
         } catch (Exception $e) {
             return [
                 'success' => false,
@@ -678,8 +890,14 @@ class SunnyTools {
             
             // Search projects
             if ($searchType === 'all' || $searchType === 'projects') {
-                $sql = "SELECT id, project_name, project_address, city, state FROM projects WHERE project_name LIKE ? LIMIT 10";
-                $projectResults = $this->queryExecutor->executeQuery($sql, ["%{$searchTerm}%"]);
+                $sql = "SELECT id, project_name, project_address, city, state FROM projects WHERE project_name LIKE ?";
+                $p = ["%{$searchTerm}%"];
+                if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                    $sql .= " AND account_id = ?";
+                    $p[] = $this->userAccountId;
+                }
+                $sql .= " LIMIT 10";
+                $projectResults = $this->queryExecutor->executeQuery($sql, $p);
                 if ($projectResults['success']) {
                     $results['projects'] = $projectResults['data'];
                 }
@@ -691,8 +909,14 @@ class SunnyTools {
                               (d.wattage * d.quantity) / 1000000 as delivery_mw
                        FROM deliveries d 
                        LEFT JOIN projects p ON d.project_id = p.id 
-                       WHERE d.bol_number LIKE ? OR d.supplier LIKE ? LIMIT 10";
-                $deliveryResults = $this->queryExecutor->executeQuery($sql, ["%{$searchTerm}%", "%{$searchTerm}%"]);
+                       WHERE (d.bol_number LIKE ? OR d.supplier LIKE ?)";
+                $p = ["%{$searchTerm}%", "%{$searchTerm}%"];
+                if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                    $sql .= " AND p.account_id = ?";
+                    $p[] = $this->userAccountId;
+                }
+                $sql .= " LIMIT 10";
+                $deliveryResults = $this->queryExecutor->executeQuery($sql, $p);
                 if ($deliveryResults['success']) {
                     $results['deliveries'] = $deliveryResults['data'];
                 }
@@ -704,8 +928,17 @@ class SunnyTools {
                               (ip.wattage * ip.quantity) / 1000000 as pallet_mw
                        FROM inventory_pallets ip 
                        LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
-                       WHERE ip.pallet_identifier LIKE ? LIMIT 10";
-                $palletResults = $this->queryExecutor->executeQuery($sql, ["%{$searchTerm}%"]);
+                       LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+                       LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
+                       WHERE ip.pallet_identifier LIKE ?";
+                $p = ["%{$searchTerm}%"];
+                if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                    $sql .= " AND (p_assigned.account_id = ? OR p_current.account_id = ?)";
+                    $p[] = $this->userAccountId;
+                    $p[] = $this->userAccountId;
+                }
+                $sql .= " LIMIT 10";
+                $palletResults = $this->queryExecutor->executeQuery($sql, $p);
                 if ($palletResults['success']) {
                     $results['pallets'] = $palletResults['data'];
                 }
@@ -808,6 +1041,26 @@ class SunnyTools {
                 case 'search_logistics':
                     $searchTerm = $this->extractSearchTerm($message);
                     return $this->searchLogistics($searchTerm);
+
+                // Performance and KPIs
+                case 'getdeliveryperformance':
+                case 'delivery_performance':
+                case 'deliveryperformance':
+                case 'performance':
+                    $days = $this->extractDays($message) ?? 30;
+                    $groupBy = 'manufacturer';
+                    $lower = strtolower($message);
+                    if (strpos($lower, 'warehouse') !== false) $groupBy = 'warehouse';
+                    if (strpos($lower, 'project') !== false) $groupBy = 'project';
+                    if (strpos($lower, 'manufacturer') !== false || strpos($lower, 'supplier') !== false) $groupBy = 'manufacturer';
+                    return $this->getDeliveryPerformance($days, $groupBy);
+
+                case 'getkpidashboard':
+                case 'kpi_dashboard':
+                case 'kpidashboard':
+                case 'kpi':
+                    $days = $this->extractDays($message) ?? 30;
+                    return $this->getKPIDashboard($days);
 
                 // Documents
                 case 'getprojectdocuments':
@@ -950,6 +1203,11 @@ class SunnyTools {
             $sql .= " AND DATE(pd.uploaded_at) <= ?";
             $params[] = $filters['end_date'];
         }
+        // Tenant scoping
+        if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+            $sql .= " AND p.account_id = ?";
+            $params[] = $this->userAccountId;
+        }
 
         $sql .= " ORDER BY pd.uploaded_at DESC LIMIT 100";
 
@@ -1049,6 +1307,11 @@ class SunnyTools {
         if (!empty($filters['end_date'])) {
             $sql .= " AND DATE(pd.uploaded_at) <= ?";
             $params[] = $filters['end_date'];
+        }
+        // Tenant scoping
+        if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+            $sql .= " AND p.account_id = ?";
+            $params[] = $this->userAccountId;
         }
 
         $sql .= " ORDER BY pd.uploaded_at DESC LIMIT 100";
@@ -1160,6 +1423,23 @@ class SunnyTools {
         $normalized = str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message);
         if (preg_match('/["\']?(\d+)["\']?\s*weeks?/i', $normalized, $matches)) {
             return intval($matches[1]);
+        }
+        return null;
+    }
+
+    private function extractDays($message) {
+        $normalized = strtolower(str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message));
+        // explicit: "last 14 days" or "past 14 days"
+        if (preg_match('/(?:last|past)\s+(\d+)\s*days?/i', $normalized, $m)) {
+            return intval($m[1]);
+        }
+        // explicit weeks -> days
+        if (preg_match('/(?:last|past)\s+(\d+)\s*weeks?/i', $normalized, $m)) {
+            return intval($m[1]) * 7;
+        }
+        // explicit months -> days (approx)
+        if (preg_match('/(?:last|past)\s+(\d+)\s*months?/i', $normalized, $m)) {
+            return intval($m[1]) * 30;
         }
         return null;
     }
@@ -1374,8 +1654,30 @@ class SunnyTools {
             $sql = "UPDATE sunny_memory SET " . implode(', ', $updates) . " WHERE id = ? AND user_id = ?";
             $params[] = $memoryId;
             $params[] = $this->getUserId();
-            
-            return $this->queryExecutor->executeQuery($sql, $params);
+
+            // Use direct connection for write
+            require_once dirname(__DIR__, 3) . '/config.php';
+            $conn = getDBConnection();
+            if (!$conn) {
+                throw new Exception('Database connection failed');
+            }
+            $placeholders = str_repeat('s', count($params));
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                throw new Exception('Prepare failed: ' . $conn->error);
+            }
+            $stmt->bind_param($placeholders, ...$params);
+            $ok = $stmt->execute();
+            if (!$ok) {
+                $err = $stmt->error;
+                $stmt->close();
+                $conn->close();
+                throw new Exception('Update failed: ' . $err);
+            }
+            $stmt->close();
+            $conn->close();
+
+            return ['success' => true];
             
         } catch (Exception $e) {
             return [
@@ -1392,8 +1694,29 @@ class SunnyTools {
         try {
             $sql = "DELETE FROM sunny_memory WHERE id = ? AND user_id = ?";
             $params = [$memoryId, $this->getUserId()];
-            
-            return $this->queryExecutor->executeQuery($sql, $params);
+
+            // Use direct connection for write
+            require_once dirname(__DIR__, 3) . '/config.php';
+            $conn = getDBConnection();
+            if (!$conn) {
+                throw new Exception('Database connection failed');
+            }
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                throw new Exception('Prepare failed: ' . $conn->error);
+            }
+            $stmt->bind_param('ii', $params[0], $params[1]);
+            $ok = $stmt->execute();
+            if (!$ok) {
+                $err = $stmt->error;
+                $stmt->close();
+                $conn->close();
+                throw new Exception('Delete failed: ' . $err);
+            }
+            $stmt->close();
+            $conn->close();
+
+            return ['success' => true];
             
         } catch (Exception $e) {
             return [
