@@ -320,7 +320,7 @@ function needsLogisticsTools($message) {
 function detectToolsFromMessage($message) {
     $message = strtolower($message);
     $tools = [];
-    
+
     // Project related
     if (preg_match('/\b(project|projects|status)\b/', $message)) {
         $tools[] = 'getProjectSummary';
@@ -328,7 +328,12 @@ function detectToolsFromMessage($message) {
 
     // Delivery related
     if (preg_match('/\b(delivery|deliveries|shipment|tracking|carrier)\b/', $message)) {
-        $tools[] = 'getDeliveryStatus';
+        // Upcoming timeframe detection (e.g., "next 2 weeks", "coming week")
+        if (preg_match('/\b(next|coming|this)\b/', $message)) {
+            $tools[] = 'getUpcomingDeliveries';
+        } else {
+            $tools[] = 'getDeliveryStatus';
+        }
     }
 
     // Inventory/warehouse related
@@ -348,6 +353,14 @@ function detectToolsFromMessage($message) {
         if (preg_match('/\b(pods?|proof of delivery)\b/i', $message)) {
             $tools[] = 'getPODStatus';
         }
+    }
+
+    // KPIs and performance metrics
+    if (preg_match('/\b(kpi|dashboard)\b/i', $message)) {
+        $tools[] = 'getKPIDashboard';
+    }
+    if (preg_match('/\b(performance|on[-\s]?time|late|trend|trends)\b/i', $message)) {
+        $tools[] = 'getDeliveryPerformance';
     }
     
     // Default for general logistics questions
