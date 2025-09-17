@@ -195,7 +195,7 @@ if ($role === null) {
             <div class="slp-submenu" role="menu">
               <a href="modules" role="menuitem">Manage Modules</a>
               <a href="module_movements" role="menuitem">Module Movements</a>
-              <a href="manage_pallets" role="menuitem">Manage Pallets</a>
+              
               <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
               <a href="link_pallet_deliveries" role="menuitem">Link Pallets to Deliveries</a>
             </div>
@@ -266,7 +266,7 @@ if ($role === null) {
             <div class="slp-submenu" role="menu">
               <a href="modules" role="menuitem">Manage Modules</a>
               <a href="module_movements" role="menuitem">Module Movements</a>
-              <a href="manage_pallets" role="menuitem">Manage Pallets</a>
+              
               <a href="link_pallet_deliveries" role="menuitem">Link Pallets to Deliveries</a>
             </div>
           </li>
