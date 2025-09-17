@@ -34,6 +34,8 @@ if ($project_id > 0) {
 
 // Handle bulk pallet generation by modules per pallet
 $successMessage = '';
+// Track pallets created during this request to enable deep-linking to views
+$created_pallet_ids = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'generate_pallets') {
     $itemId           = intval($_POST['item_id']);
     $modulesPerPallet = max(1, intval($_POST['modules_per_pallet']));
@@ -88,11 +90,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         
         // Insert full pallets
         for ($i = 0; $i < $fullPallets; $i++) {
-            insertPallet($itemId, $wattage, $modulesPerPallet);
+            $newId = insertPallet($itemId, $wattage, $modulesPerPallet);
+            if ($newId) { $created_pallet_ids[] = $newId; }
         }
         // Insert last pallet if there's a remainder
         if ($remainder > 0) {
-            insertPallet($itemId, $wattage, $remainder);
+            $newId = insertPallet($itemId, $wattage, $remainder);
+            if ($newId) { $created_pallet_ids[] = $newId; }
+        }
+        // Persist the created pallet IDs for this session so the View Pallets button can deep-link
+        if (!empty($created_pallet_ids)) {
+            $_SESSION['recent_created_pallet_ids'] = [
+                'ids' => $created_pallet_ids,
+                'ts'  => time()
+            ];
         }
         $successMessage = "Created $totalPallets pallets (up to $modulesPerPallet modules each) for $remainingModules remaining modules.";
     }
@@ -416,7 +427,7 @@ function insertPallet($itemId, $watt, $qty) {
         // Log error or handle appropriately
         error_log("Error preparing pallet insert for item ID {$itemId}: " . $conn->error);
         // Potentially throw an exception or return false to indicate failure
-        return; // Exit function if prepare fails
+        return null; // Exit function if prepare fails
     }
 
     $emptyId = ''; // Pallet identifier will be set after insert
@@ -426,7 +437,7 @@ function insertPallet($itemId, $watt, $qty) {
     if (!$stmtIns->execute()) {
         error_log("Error executing pallet insert for item ID {$itemId}: " . $stmtIns->error);
         $stmtIns->close();
-        return; // Exit function if execute fails
+        return null; // Exit function if execute fails
     }
     
     $newId = $conn->insert_id;
@@ -440,6 +451,7 @@ function insertPallet($itemId, $watt, $qty) {
          error_log("Error preparing pallet identifier update for ID {$newId}: " . $conn->error);
     }
     $stmtIns->close();
+    return $newId;
 }
 
 // --- Data Fetching --- 
@@ -1543,19 +1555,40 @@ $conn->close();
                     <?php endforeach; ?>
                 </div>
                 
-                <!-- Link to detailed movement view -->
-                <div style="margin-top: 20px; text-align: center;">
+                <!-- Links to Movement view and consolidated Pallets view -->
+                <div style="margin-top: 20px; text-align: center; display:flex; flex-direction:column; align-items:center; gap:8px;">
                     <?php 
                     $movement_url = "module_movements?batch_id=" . urlencode($batch_id);
                     if (!empty($batch_data['project_id'])) {
                         $movement_url .= "&project_id=" . urlencode($batch_data['project_id']);
                     }
+
+                    // Build deep-link for pallets created in this session (if any)
+                    $pallet_ids_query = '';
+                    if (!empty($_SESSION['recent_created_pallet_ids']['ids'])) {
+                        $ts_ok = !empty($_SESSION['recent_created_pallet_ids']['ts']) && (time() - intval($_SESSION['recent_created_pallet_ids']['ts']) < 600);
+                        $ids = array_filter(array_map('intval', $_SESSION['recent_created_pallet_ids']['ids']));
+                        if ($ts_ok && !empty($ids)) {
+                            $pallet_ids_query = 'pallet_ids=' . urlencode(implode(',', $ids));
+                        }
+                    }
+                    // Choose destination page based on role
+                    $pallets_target_base = (in_array($role, ['admin','global_admin'])) ? 'create_shipment.php' : 'manage_pallets.php';
+                    $pallets_url_parts = [];
+                    if (!empty($batch_data['project_id'])) { $pallets_url_parts[] = 'project_id=' . urlencode($batch_data['project_id']); }
+                    if (!empty($pallet_ids_query)) { $pallets_url_parts[] = $pallet_ids_query; }
+                    $pallets_url = $pallets_target_base . (empty($pallets_url_parts) ? '' : '?' . implode('&', $pallets_url_parts));
                     ?>
-                    <a href="<?php echo $movement_url; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 12px 24px; font-size: 1em; text-decoration: none; display: inline-block;">
-                        <strong>📍 View Module Movement Map</strong>
-                    </a>
-                    <p style="font-size: 0.9em; color: #666; margin-top: 8px;">
-                        See detailed movement tracking and geographic flow of these modules
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
+                        <a href="<?php echo $movement_url; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 12px 24px; font-size: 1em; text-decoration: none; display: inline-block;">
+                            <strong>📍 View Module Movement Map</strong>
+                        </a>
+                        <a href="<?php echo $pallets_url; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 12px 24px; font-size: 1em; text-decoration: none; display: inline-block;">
+                            <strong>📦 View Pallets</strong>
+                        </a>
+                    </div>
+                    <p style="font-size: 0.9em; color: #666;">
+                        View and manage pallets in the consolidated table
                     </p>
                 </div>
             <?php else: ?>
@@ -1563,140 +1596,7 @@ $conn->close();
             <?php endif; ?>
         </div>
 
-        <!-- ====== PALLET INFORMATION SECTION ====== -->
-        <?php if (!empty($pallets)): ?>
-            <div class="pallets-section" style="margin-top: 30px;">
-                <h2 class="section-title">Associated Pallets</h2>
-                <!-- Filters Dropdown -->
-                <div class="filters-container" style="margin-bottom: 15px;">
-                    <div class="filter-dropdown">
-                        <button type="button" class="filter-toggle-btn" onclick="toggleFilters()">
-                            <span>Filters</span> <span class="filter-arrow">▼</span>
-                        </button>
-                        <div class="filter-content" id="filterContent" style="display: none;">
-                            <div style="display: flex; flex-direction: column; gap: 15px; padding: 15px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 0 0 4px 4px;">
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    <label>Search:</label>
-                                    <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()" style="flex: 1;">
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    <label for="wattageFilter">Wattage:</label>
-                                    <select id="wattageFilter" onchange="filterPallets()" style="flex: 1;">
-                                        <option value="">All</option>
-                                        <?php
-                                        $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
-                                        sort($wattages);
-                                        foreach ($wattages as $w) {
-                                            echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    <label for="statusFilter">Status:</label>
-                                    <select id="statusFilter" onchange="filterPallets()" style="flex: 1;">
-                                        <option value="">All</option>
-                                        <?php
-                                        $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
-                                        sort($statuses);
-                                        foreach ($statuses as $s) {
-                                            echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>';
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 15px;">
-                        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                            <a href="create_shipment.php<?php echo ($view_mode === 'project' && $project_id) ? '?project_id=' . $project_id : ''; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 8px 16px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">Create Shipment</a>
-                        <?php endif; ?>
-                    </div>
-                </div>
-                
-                <div class="pagination-container">
-                    <div class="pagination-info">
-                        <span id="paginationInfo">Showing 0 of 0 pallets</span>
-                    </div>
-                    <div class="pagination-controls">
-                        <label for="itemsPerPage">Show:</label>
-                        <input type="number" id="itemsPerPage" value="100" min="1" max="300" style="width: 80px;">
-                        <label>pallets per page</label>
-                        <button type="button" id="prevPage" disabled>Previous</button>
-                        <span id="pageInfo">Page 1 of 1</span>
-                        <button type="button" id="nextPage" disabled>Next</button>
-                    </div>
-                </div>
-                
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Identifier</th>
-                            <th>Wattage</th>
-                            <th>Quantity</th>
-                            <th>Status</th>
-                            <th>Deliveries</th>
-                            <th>Pallet Details</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($pallets as $pallet): ?>
-                            <tr>
-                                <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
-                                <td><?php echo $pallet['wattage']; ?>W</td>
-                                <td><?php echo number_format($pallet['quantity']); ?></td>
-                                <td>
-                                    <?php 
-                                    $status = htmlspecialchars($pallet['status']);
-                                    if ($status === 'In Transit to Warehouse' && $pallet['current_warehouse_id']) {
-                                        echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
-                                    } elseif ($status === 'In Warehouse' && $pallet['current_warehouse_id']) {
-                                        echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
-                                    } else {
-                                        echo $status;
-                                    }
-                                    ?>
-                                </td>
-                                <td>
-                                    <?php 
-                                    $deliveryInfo = $pallet['delivery_info'] ?? '';
-                                    if (empty($deliveryInfo)) {
-                                        echo 'No deliveries';
-                                    } else {
-                                        $deliveries = explode('|', $deliveryInfo);
-                                        if (count($deliveries) == 1) {
-                                            $parts = explode(':', $deliveries[0]);
-                                            $deliveryId = $parts[0];
-                                            $bolNumber = $parts[1];
-                                            echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
-                                        } else {
-                                            echo '<div class="delivery-dropdown">';
-                                            echo '<button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (' . count($deliveries) . ')</button>';
-                                            echo '<div class="delivery-list" style="display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 3px; z-index: 1000; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">';
-                                            foreach ($deliveries as $delivery) {
-                                                $parts = explode(':', $delivery);
-                                                $deliveryId = $parts[0];
-                                                $bolNumber = $parts[1];
-                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
-                                            }
-                                            echo '</div>';
-                                            echo '</div>';
-                                        }
-                                    }
-                                    ?>
-                                </td>
-                                <td>
-                                    <a href="pallet_details.php?pallet_id=<?php echo $pallet['id']; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        <?php else: ?>
-            <p style="margin-top:20px;">No pallets have been created or recorded for this batch yet.</p>
-        <?php endif; ?>
+        <!-- Pallets table removed in favor of consolidated View Pallets page -->
 
     <?php else: ?>
          <p>Batch data could not be loaded.</p>

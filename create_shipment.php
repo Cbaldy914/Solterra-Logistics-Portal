@@ -26,6 +26,17 @@ $project_id_from_url = isset($_GET['project_id']) ? intval($_GET['project_id']) 
 // Get status_filter from URL parameter for auto-filtering pallets
 $status_filter_from_url = isset($_GET['status_filter']) ? htmlspecialchars($_GET['status_filter']) : '';
 
+// Optional deep-link filter: only show specific pallet IDs
+$pallet_ids_filter = [];
+if (!empty($_GET['pallet_ids'])) {
+    $raw_ids = explode(',', $_GET['pallet_ids']);
+    foreach ($raw_ids as $rid) {
+        $ival = intval($rid);
+        if ($ival > 0) { $pallet_ids_filter[] = $ival; }
+    }
+    $pallet_ids_filter = array_values(array_unique($pallet_ids_filter));
+}
+
 // --- Account Access Control ---
 $account_id_for_admin = null;
 $is_global_admin = ($role === 'global_admin');
@@ -179,6 +190,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             throw new Exception('No pallets selected to ship.');
         }
 
+        // Server-side guard: block shipments for pallets already in transit or on water
+        $placeholders_guard = implode(',', array_fill(0, count($palletIds), '?'));
+        $types_guard = str_repeat('i', count($palletIds));
+        $disallowed = ['In Transit to Warehouse','In Transit to Project','On Water'];
+        $status_placeholders_guard = implode(',', array_fill(0, count($disallowed), '?'));
+        $stmtGuard = $conn->prepare(
+            "SELECT id, status FROM inventory_pallets WHERE id IN ($placeholders_guard) AND status IN ($status_placeholders_guard)"
+        );
+        if ($stmtGuard) {
+            $bind_types = $types_guard . str_repeat('s', count($disallowed));
+            $bind_params = array_merge($palletIds, $disallowed);
+            $stmtGuard->bind_param($bind_types, ...$bind_params);
+            $stmtGuard->execute();
+            $resGuard = $stmtGuard->get_result();
+            $blocked = [];
+            while ($r = $resGuard->fetch_assoc()) { $blocked[] = $r; }
+            $stmtGuard->close();
+            if (!empty($blocked)) {
+                $ids = array_map(function($x){ return $x['id'].' ('.$x['status'].')'; }, $blocked);
+                throw new Exception('Cannot create delivery for pallets already in transit or on water: ' . implode(', ', $ids));
+            }
+        }
+
         // --- Determine batch info from selected pallets ---
         $placeholders_for_batch = implode(',', array_fill(0, count($palletIds), '?'));
         $types_for_batch = str_repeat('i', count($palletIds));
@@ -290,6 +324,52 @@ if (!empty($container_numbers_json)) {
 } elseif (!empty($container_number)) {
     // Single shipment: use single container number
     $container_numbers_array = [$container_number];
+}
+
+// --- Handle Pallet Deletion (admins/global_admins) ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_pallets') {
+    $deleteMessage = '';
+    $conn->begin_transaction();
+    try {
+        $palletIds = $_POST['selected_pallets'] ?? [];
+        if (empty($palletIds)) {
+            throw new Exception('No pallets selected for deletion.');
+        }
+
+        $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
+        $types = str_repeat('i', count($palletIds));
+
+        // Ensure pallets are not linked to deliveries
+        $stmtCheck = $conn->prepare("SELECT inventory_pallet_id FROM delivery_pallets WHERE inventory_pallet_id IN ($placeholders)");
+        if (!$stmtCheck) { throw new Exception('Failed to prepare delivery check.'); }
+        $stmtCheck->bind_param($types, ...$palletIds);
+        $stmtCheck->execute();
+        $res = $stmtCheck->get_result();
+        $linked = [];
+        while ($row = $res->fetch_assoc()) { $linked[] = $row['inventory_pallet_id']; }
+        $stmtCheck->close();
+        if (!empty($linked)) {
+            throw new Exception('Cannot delete pallets linked to deliveries. Pallet IDs: ' . implode(', ', $linked));
+        }
+
+        $stmtDel = $conn->prepare("DELETE FROM inventory_pallets WHERE id IN ($placeholders)");
+        if (!$stmtDel) { throw new Exception('Failed to prepare pallet deletion.'); }
+        $stmtDel->bind_param($types, ...$palletIds);
+        if (!$stmtDel->execute()) { throw new Exception('Failed to delete pallets: ' . $stmtDel->error); }
+        $deleted = $stmtDel->affected_rows;
+        $stmtDel->close();
+
+        $conn->commit();
+        $_SESSION['create_shipment_message'] = "Successfully deleted $deleted pallet(s).";
+    } catch (Exception $e) {
+        $conn->rollback();
+        $_SESSION['create_shipment_message'] = 'Error deleting pallets: ' . $e->getMessage();
+    }
+    // Redirect back preserving project filter
+    $redirect_url = 'create_shipment.php';
+    if ($project_id_from_url > 0) { $redirect_url .= '?project_id=' . $project_id_from_url; }
+    header('Location: ' . $redirect_url);
+    exit();
 }
         $master_bol = $_POST['master_bol'] ?? '';
         $house_bol = $_POST['house_bol'] ?? '';
@@ -821,8 +901,16 @@ try {
             LEFT JOIN deliveries d ON dp.delivery_id = d.id";
     
     // Add account filtering for admin role (only see pallets from their account's projects)
-    // Also filter for only shippable statuses
-    $allowed_statuses = ['At Manufacturer', 'In Warehouse', 'Delivered to Project'];
+    // Include in-transit and allocated statuses so they appear and are filterable
+    $allowed_statuses = [
+        'At Manufacturer',
+        'In Warehouse',
+        'Delivered to Project',
+        'Allocated to Project',
+        'In Transit to Warehouse',
+        'In Transit to Project',
+        'On Water'
+    ];
     $status_placeholders = str_repeat('?,', count($allowed_statuses) - 1) . '?';
     
     if ($role === 'admin' && $account_id_for_admin) {
@@ -831,11 +919,17 @@ try {
         if ($project_id_from_url > 0) {
             $sql .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
         }
+        if (!empty($pallet_ids_filter)) {
+            $sql .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
+        }
     } else {
         $sql .= " WHERE ip.status IN ($status_placeholders)";
         // Add project-specific filtering if coming from a specific project page
         if ($project_id_from_url > 0) {
             $sql .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
+        }
+        if (!empty($pallet_ids_filter)) {
+            $sql .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
         }
     }
     
@@ -851,6 +945,9 @@ try {
         if ($project_id_from_url > 0) {
             $params = array_merge($params, [$project_id_from_url, $project_id_from_url]);
             $types .= 'ii';
+        }
+        if (!empty($pallet_ids_filter)) {
+            foreach ($pallet_ids_filter as $pid) { $params[] = $pid; $types .= 'i'; }
         }
         
         $stmt->bind_param($types, ...$params);
@@ -869,6 +966,9 @@ try {
         if ($project_id_from_url > 0) {
             $params = array_merge($params, [$project_id_from_url, $project_id_from_url]);
             $types .= 'ii';
+        }
+        if (!empty($pallet_ids_filter)) {
+            foreach ($pallet_ids_filter as $pid) { $params[] = $pid; $types .= 'i'; }
         }
         
         $stmt->bind_param($types, ...$params);
@@ -1496,7 +1596,9 @@ if (!empty($bolCompletionMessage)) {
                     <div style="display: flex; align-items: center; justify-content: center; flex: 1;">
                         <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
                     </div>
-                    <div style="display: flex; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <button type="button" id="deletePalletsBtn" class="action-button" style="background-color:#dc3545;" disabled>Delete</button>
+                        <button type="button" id="exportCsvBtn" class="action-button">Export to CSV</button>
                         <button type="button" id="openShipModalBtn" class="action-button" disabled>
                             Create Delivery for Selected Pallets
                         </button>
@@ -1518,7 +1620,7 @@ if (!empty($bolCompletionMessage)) {
                 </div>
                 
                 <?php if (!empty($pallets)): ?>
-                    <table>
+                    <table id="palletsTable">
                         <thead>
                             <tr>
                                 <th><input type="checkbox" id="selectAllPallets" onclick="toggleAllPalletCheckboxes(this.checked)"></th>
@@ -1533,7 +1635,7 @@ if (!empty($bolCompletionMessage)) {
                         </thead>
                         <tbody>
                             <?php foreach ($pallets as $pallet): ?>
-                                <tr>
+                                <tr data-id="<?php echo htmlspecialchars($pallet['pallet_id']); ?>">
                                     <td><input type="checkbox" name="selected_pallets[]" value="<?php echo $pallet['pallet_id']; ?>" class="pallet-checkbox"></td>
                                     <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                                     <td><?php echo $pallet['wattage']; ?>W</td>
@@ -1570,6 +1672,7 @@ if (!empty($bolCompletionMessage)) {
                                     </td>
                                     <td>
                                         <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
+                                        <a href="edit_pallet.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" style="background-color: #6c757d; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em; margin-left:6px;">Edit</a>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -1890,6 +1993,13 @@ function updateOpenShipModalButtonState() {
     const checked = document.querySelectorAll('.pallet-checkbox:checked').length;
     if (openBtn) {
         openBtn.disabled = (checked === 0);
+        if (checked > 0 && selectionHasInvalidPallets()) {
+            openBtn.title = 'Selection includes pallets already in transit or on water';
+            openBtn.setAttribute('data-invalid-selection', '1');
+        } else {
+            openBtn.title = '';
+            openBtn.removeAttribute('data-invalid-selection');
+        }
     }
 }
 
@@ -1899,6 +2009,8 @@ function updateSelectedCount() {
     if (countEl) {
         countEl.textContent = count + ' pallet' + (count === 1 ? '' : 's') + ' selected';
     }
+    const delBtn = document.getElementById('deletePalletsBtn');
+    if (delBtn) { delBtn.disabled = (count === 0); }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -1933,7 +2045,68 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('wattageFilter')?.addEventListener('change', saveFilters);
     document.getElementById('statusFilter')?.addEventListener('change', saveFilters);
     document.getElementById('itemsPerPage')?.addEventListener('change', saveFilters);
+
+    // Wire up Export and Delete controls
+    initializeExportCsv();
+    initializeDeletePallets();
 });
+
+// Export to CSV (table-level export of visible rows)
+function initializeExportCsv() {
+    const exportBtn = document.getElementById('exportCsvBtn');
+    if (!exportBtn) return;
+    exportBtn.addEventListener('click', function() {
+        const table = document.getElementById('palletsTable');
+        if (!table) return;
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        const csvData = [];
+        const headers = ["id", "pallet_identifier", "wattage", "quantity", "status", "Project", "Associated Deliveries"];
+        csvData.push(headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(','));
+        rows.forEach(row => {
+            if (row.style.display === 'none') return;
+            const cells = row.querySelectorAll('td');
+            const rowData = [];
+            const id = row.getAttribute('data-id') || '';
+            const mapping = { pallet_identifier:1, wattage:2, quantity:3, status:4, Project:5, deliveries:6 };
+            headers.forEach(h => {
+                let val = '';
+                if (h === 'id') { val = id; }
+                else if (h === 'Associated Deliveries') { val = (cells[mapping.deliveries]?.textContent || '').trim(); }
+                else if (h === 'Project') { val = (cells[mapping.Project]?.textContent || '').trim(); }
+                else {
+                    const key = h.replace(/\s+/g,'_');
+                    const idx = mapping[key] ?? mapping[h];
+                    val = (cells[idx]?.textContent || '').trim();
+                }
+                val = val.replace(/"/g,'""');
+                if (val.includes(',')) val = '"' + val + '"';
+                rowData.push(val);
+            });
+            csvData.push(rowData.join(','));
+        });
+        const blob = new Blob([csvData.join("\r\n")], {type:'text/csv;charset=utf-8;'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url; link.download = 'pallets_export_' + new Date().toISOString().slice(0,10) + '.csv';
+        document.body.appendChild(link); link.click();
+        document.body.removeChild(link); URL.revokeObjectURL(url);
+    });
+}
+
+function initializeDeletePallets() {
+    const delBtn = document.getElementById('deletePalletsBtn');
+    if (!delBtn) return;
+    delBtn.addEventListener('click', function() {
+        const count = document.querySelectorAll('.pallet-checkbox:checked').length;
+        if (count === 0) { alert('Please select pallets to delete.'); return; }
+        if (!confirm(`Are you sure you want to delete ${count} selected pallet(s)? This action cannot be undone.`)) return;
+        const form = document.getElementById('shipPalletsForm');
+        let actionInput = form.querySelector('input[name="action"]');
+        if (!actionInput) { actionInput = document.createElement('input'); actionInput.type='hidden'; actionInput.name='action'; form.appendChild(actionInput); }
+        actionInput.value = 'delete_pallets';
+        form.submit();
+    });
+}
 
 // ----------------- PAGINATION -----------------
 let currentPage = 1;
@@ -2106,6 +2279,21 @@ const shipModal = document.getElementById('shipModal');
 const openShipModalBtn = document.getElementById('openShipModalBtn');
 const closeShipModalBtn = shipModal.querySelector('.close-modal-btn');
 
+function selectionHasInvalidPallets() {
+    const invalidMatch = /in transit|on water/i;
+    const selected = document.querySelectorAll('.pallet-checkbox:checked');
+    for (const cb of selected) {
+        const row = cb.closest('tr');
+        if (!row) continue;
+        const statusCell = row.cells && row.cells[4]; // Status column
+        const statusText = (statusCell ? (statusCell.textContent || statusCell.innerText || '') : '').trim();
+        if (invalidMatch.test(statusText)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function openShipModal() {
     shipModal.style.display = 'block';
     // Initialize multi-shipment BOL fields when modal opens
@@ -2115,7 +2303,15 @@ function closeShipModal() {
     shipModal.style.display = 'none';
 }
 
-openShipModalBtn.addEventListener('click', openShipModal);
+function handleOpenShipModalClick(e) {
+    if (selectionHasInvalidPallets()) {
+        alert('You cannot create a delivery for pallets that are already In Transit or On Water. Please deselect those pallets to proceed.');
+        return;
+    }
+    openShipModal();
+}
+
+openShipModalBtn.addEventListener('click', handleOpenShipModalClick);
 if (closeShipModalBtn) {
     closeShipModalBtn.addEventListener('click', closeShipModal);
 }
