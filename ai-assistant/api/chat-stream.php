@@ -11,6 +11,8 @@ ignore_user_abort(false);
 
 // Use existing session from portal (don't start new session)
 if (session_status() === PHP_SESSION_NONE) {
+    // Use the same session as the portal
+    session_name('logistics_session');
     session_start();
 }
 if (!isset($_SESSION['user_id'])) {
@@ -107,6 +109,22 @@ try {
         require_once __DIR__ . '/sunny-tools.php';
         
         $sunnyTools = new SunnyTools($user_role, $account_id);
+
+        // If client indicates an attachment should be included, analyze it and add to tool results
+        if (!empty($_GET['attach'])) {
+            // If upload_id provided and exists in session, ensure it's set as last
+            if (!empty($_GET['upload_id']) && !empty($_SESSION['sunny_uploads'][$_GET['upload_id']])) {
+                $_SESSION['sunny_last_upload'] = $_GET['upload_id'];
+            }
+            try {
+                $doc = $sunnyTools->analyzeDocument('summary');
+                if ($doc) {
+                    $toolResults['analyzeDocument'] = $doc;
+                }
+            } catch (Exception $e) {
+                // Ignore, continue
+            }
+        }
         
         // Check if user wants to store a memory
         if (shouldStoreMemory($message)) {
@@ -342,7 +360,7 @@ function detectToolsFromMessage($message) {
     }
 
     // Document-related
-    if (preg_match('/\b(document|documents|doc|pods?|invoices?|bol|proof of delivery|spec\s*sheet|safe\s*harbor)\b/i', $message)) {
+    if (preg_match('/\b(document|documents|doc|pdf|pods?|invoices?|bol|proof of delivery|spec\s*sheet|safe\s*harbor)\b/i', $message)) {
         // If message mentions a project, prefer project documents, else global
         if (preg_match('/\bproject\b/i', $message)) {
             $tools[] = 'getProjectDocuments';
@@ -353,6 +371,11 @@ function detectToolsFromMessage($message) {
         if (preg_match('/\b(pods?|proof of delivery)\b/i', $message)) {
             $tools[] = 'getPODStatus';
         }
+
+        // If asking to summarize/analyze documents
+        if (preg_match('/\b(analy(s|z)e|summary|summarize|review)\b/i', $message)) {
+            $tools[] = 'analyzeDocument';
+        }
     }
 
     // KPIs and performance metrics
@@ -362,7 +385,12 @@ function detectToolsFromMessage($message) {
     if (preg_match('/\b(performance|on[-\s]?time|late|trend|trends)\b/i', $message)) {
         $tools[] = 'getDeliveryPerformance';
     }
-    
+
+    // If the user mentions uploaded file explicitly
+    if (preg_match('/\b(uploaded\s+file|attached\s+file|analy(s|z)e\s+(the\s+)?(upload|attachment|file|document))\b/i', $message)) {
+        $tools[] = 'analyzeDocument';
+    }
+
     // Default for general logistics questions
     if (empty($tools) && preg_match('/\b(show|get|tell|what|recent|latest)\b/', $message)) {
         $tools = ['getProjectSummary'];

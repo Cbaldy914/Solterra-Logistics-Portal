@@ -5,6 +5,7 @@ class SunnyChat {
         this.isConnected = false;
         this.currentEventSource = null;
         this.messageHistory = [];
+        this.pendingUpload = null;
         this.init();
     }
 
@@ -68,9 +69,14 @@ class SunnyChat {
                     <button class="quick-action-btn" data-action="Inventory Summary">Inventory Summary</button>
                 </div>
             </div>
+            <div class="sunny-attachments" id="sunny-attachments"></div>
             
             <div class="sunny-input-container">
                 <input type="text" id="sunny-input" placeholder="Ask me anything about your logistics..." disabled>
+                <label class="sunny-attach-label" title="Attach a document" id="sunny-attach-label">
+                    <input type="file" id="sunny-file-input" style="display:none" />
+                    +
+                </label>
                 <button id="sunny-send-btn" disabled>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -88,6 +94,8 @@ class SunnyChat {
         const chatCloseBtn = document.getElementById('sunny-chat-close-btn');
         const sendBtn = document.getElementById('sunny-send-btn');
         const input = document.getElementById('sunny-input');
+        const fileInput = document.getElementById('sunny-file-input');
+        const attachLabel = document.getElementById('sunny-attach-label');
         const quickActionBtns = document.querySelectorAll('.quick-action-btn');
         const expandBtn = document.getElementById('sunny-expand-btn');
 
@@ -133,6 +141,61 @@ class SunnyChat {
                 this.sendMessage(action);
             });
         });
+
+        // Handle file attachment
+        fileInput.addEventListener('change', async () => {
+            if (!fileInput.files || fileInput.files.length === 0) return;
+            const file = fileInput.files[0];
+            try {
+                const form = new FormData();
+                form.append('file', file);
+                const res = await fetch('./ai-assistant/api/chat-file-upload.php', {
+                    method: 'POST',
+                    body: form,
+                    credentials: 'same-origin'
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    const accepted = data.accepted || 'PDF, DOCX, TXT, CSV';
+                    const max = data.max_size || '10MB';
+                    throw new Error(`${data.error || 'Upload failed'}. Accepted: ${accepted}. Max size: ${max}.`);
+                }
+                // Store pending upload but do not send a message yet
+                this.pendingUpload = data.upload;
+                this.showAttachmentChip(this.pendingUpload.filename, this.pendingUpload.size);
+            } catch (err) {
+                console.error('Upload error:', err);
+                this.addMessage('assistant', `Sorry, I could not upload that file. ${err.message}`);
+            } finally {
+                // reset input so re-selecting same file triggers change
+                fileInput.value = '';
+            }
+        });
+    }
+
+    showAttachmentChip(filename, size) {
+        // Remove existing chip if present
+        this.clearAttachmentChip();
+        const container = document.getElementById('sunny-attachments');
+        const chip = document.createElement('div');
+        chip.className = 'sunny-attachment-chip';
+        const kb = Math.max(1, Math.round((size || 0) / 1024));
+        chip.innerHTML = `
+            <span class="chip-icon">+</span>
+            <span class="chip-name" title="${filename}">${filename}</span>
+            <span class="chip-size">${kb} KB</span>
+            <button class="chip-remove" aria-label="Remove attachment">×</button>
+        `;
+        chip.querySelector('.chip-remove').addEventListener('click', () => {
+            this.pendingUpload = null;
+            this.clearAttachmentChip();
+        });
+        container.appendChild(chip);
+    }
+
+    clearAttachmentChip() {
+        const chip = document.querySelector('.sunny-attachment-chip');
+        if (chip) chip.remove();
     }
 
     toggleChat() {
@@ -276,9 +339,13 @@ class SunnyChat {
 
     async sendMessage(message = null) {
         const input = document.getElementById('sunny-input');
-        const messageText = message || input.value.trim();
+        let messageText = message || input.value.trim();
         
-        if (!messageText || !this.isConnected) return;
+        // Allow sending if there's an attachment even with blank message
+        if ((!messageText || messageText.length === 0) && this.pendingUpload) {
+            messageText = ' ';
+        }
+        if ((!messageText || messageText.length === 0) || !this.isConnected) return;
 
         // Clear input if it was typed
         if (!message) {
@@ -298,8 +365,18 @@ class SunnyChat {
             }
 
             // Create new EventSource for streaming response
-            const eventSource = new EventSource(`./ai-assistant/api/chat-stream.php?message=${encodeURIComponent(messageText)}`);
+            let url = `./ai-assistant/api/chat-stream.php?message=${encodeURIComponent(messageText)}`;
+            if (this.pendingUpload) {
+                url += '&attach=1&upload_id=' + encodeURIComponent(this.pendingUpload.id);
+            }
+            const eventSource = new EventSource(url);
             this.currentEventSource = eventSource;
+
+            // Clear attachment indicator once sent
+            if (this.pendingUpload) {
+                this.pendingUpload = null;
+                this.clearAttachmentChip();
+            }
 
             let assistantMessageId = null;
             let fullResponse = '';
