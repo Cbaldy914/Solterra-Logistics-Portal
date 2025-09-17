@@ -463,6 +463,13 @@ $summary_stats = [ // Keep overall status counts
     'detailed_breakdown' => [],
 ];
 $wattage_summary = []; // NEW: Array to hold summary data per wattage
+// Track UMI meta for later replacement adjustments
+$item_quantity_by_id = [];
+$item_wattage_by_id = [];
+// Replacement tracking totals for callouts
+$replacement_totals = ['pallets' => 0, 'modules' => 0];
+// Replacement module totals by wattage (to subtract from 'ordered')
+$replacement_modules_by_wattage = [];
 
 $account_id_for_admin = null;
 $errorMessage = '';
@@ -583,6 +590,9 @@ try {
                 ];
             }
             $wattage_summary[$wattage]['ordered_quantity'] += $item['quantity'];
+            // Track UMI details for replacement adjustments later
+            $item_quantity_by_id[$item['id']] = (int)$item['quantity'];
+            $item_wattage_by_id[$item['id']] = (int)$item['wattage'];
             $batch_items[] = $item; // Still store raw items if needed later
         }
         $stmtItems->close();
@@ -609,6 +619,61 @@ try {
                 }
                 unset($data); // Clean up reference
             }
+        }
+
+        // Determine which pallets (and UMIs) are replacements for warranty claims within this view
+        $replacement_pallet_id_set = [];
+        $replacement_umi_id_set = [];
+        $replacement_umi_qty_by_wattage = [];
+        if (!empty($item_ids)) {
+            $ph_items = implode(',', array_fill(0, count($item_ids), '?'));
+            $types_items = str_repeat('i', count($item_ids));
+            $stmtRepl = $conn->prepare(
+                "SELECT ip.id as pallet_id, ip.unassigned_module_item_id as umi_id\n"
+                . "FROM inventory_pallets ip\n"
+                . "JOIN warranty_claim_replacements wcr ON wcr.pallet_id = ip.id\n"
+                . "WHERE ip.unassigned_module_item_id IN ($ph_items)"
+            );
+            if ($stmtRepl) {
+                $stmtRepl->bind_param($types_items, ...$item_ids);
+                $stmtRepl->execute();
+                $resRepl = $stmtRepl->get_result();
+                while ($row = $resRepl->fetch_assoc()) {
+                    $replacement_pallet_id_set[(int)$row['pallet_id']] = true;
+                    $umiId = (int)$row['umi_id'];
+                    $replacement_umi_id_set[$umiId] = true;
+                }
+                $stmtRepl->close();
+            }
+
+            // Adjust 'ordered' to remove any UMI quantities that were created
+            // solely for replacement linkage (quick mode used UMI qty as template)
+            if (!empty($replacement_umi_id_set)) {
+                foreach ($replacement_umi_id_set as $umiId => $unused) {
+                    $w = $item_wattage_by_id[$umiId] ?? null;
+                    $q = $item_quantity_by_id[$umiId] ?? 0;
+                    if ($w !== null && isset($wattage_summary[$w])) {
+                        $wattage_summary[$w]['ordered_quantity'] = max(0, (int)$wattage_summary[$w]['ordered_quantity'] - (int)$q);
+                    }
+                }
+            }
+
+            // Calculate UMI quantities by wattage for replacements to subtract from 'ordered'
+            if (!empty($replacement_umi_id_set)) {
+                foreach ($replacement_umi_id_set as $umiId => $unused) {
+                    $w = $item_wattage_by_id[$umiId] ?? null;
+                    $q = $item_quantity_by_id[$umiId] ?? 0;
+                    if ($w !== null) {
+                        if (!isset($replacement_umi_qty_by_wattage[$w])) $replacement_umi_qty_by_wattage[$w] = 0;
+                        $replacement_umi_qty_by_wattage[$w] += (int)$q;
+                        if (!isset($replacement_modules_by_wattage[$w])) $replacement_modules_by_wattage[$w] = 0;
+                        $replacement_modules_by_wattage[$w] += (int)$q;
+                    }
+                }
+            }
+
+            // Do not adjust 'ordered' yet; we will subtract replacement quantities
+            // using the actual pallet quantities gathered in the main pallet loop below
         }
     }
 
@@ -658,14 +723,22 @@ try {
         while ($pallet = $resultPallets->fetch_assoc()) {
             $wattage = $pallet['wattage'];
             if (isset($wattage_summary[$wattage])) {
-                $wattage_summary[$wattage]['palletized_quantity'] += $pallet['quantity'];
-                
+                // Exclude pallets created as replacements from palletization math, but still display below
+                $isReplacement = isset($replacement_pallet_id_set[(int)$pallet['id']]);
+                // Always count pallets (including replacements) toward display palletization
+                $wattage_summary[$wattage]['palletized_quantity'] += (int)$pallet['quantity'];
                 // Track pallet distribution by quantity
-                $pallet_qty = $pallet['quantity'];
+                $pallet_qty = (int)$pallet['quantity'];
                 if (!isset($wattage_summary[$wattage]['pallet_distribution'][$pallet_qty])) {
                     $wattage_summary[$wattage]['pallet_distribution'][$pallet_qty] = 0;
                 }
                 $wattage_summary[$wattage]['pallet_distribution'][$pallet_qty]++;
+                
+                // Track replacement totals for the Damaged callout only
+                if ($isReplacement) {
+                    $replacement_totals['pallets'] += 1;
+                    $replacement_totals['modules'] += (int)$pallet['quantity'];
+                }
             }
             // Determine display location
             if ($pallet['status'] === 'In Warehouse' && $pallet['current_warehouse_id']) {
@@ -785,7 +858,9 @@ try {
         $stmtDamagedPallets->close();
     }
 
-    // Calculate remaining quantity for each wattage
+    // Calculate remaining quantity for each wattage. Now that palletized includes
+    // both healthy and replacement pallets while 'ordered' has excluded the
+    // replacement UMI templates, Remaining is simply Ordered - Palletized.
     foreach ($wattage_summary as $wattage => &$data) { // Use reference to modify directly
         $data['remaining_quantity'] = $data['ordered_quantity'] - $data['palletized_quantity'];
     }
@@ -1538,6 +1613,15 @@ $conn->close();
                             <div style="font-weight: 600; color: #293E4C; margin-bottom: 8px;">
                                 <?php echo htmlspecialchars($status); ?>: 
                                 <span style="color: #488C9A;"><?php echo $data['pallet_count']; ?> pallets, <?php echo number_format($data['total_modules']); ?> modules</span>
+                                <?php if ($status === 'Damaged'): ?>
+                                    <?php if (($replacement_totals['pallets'] ?? 0) > 0): ?>
+                                        <span style="margin-left: 10px; color: #2e7d32; font-weight: 600;">
+                                            (Replacements created: <?php echo (int)$replacement_totals['pallets']; ?> pallets, <?php echo number_format((int)$replacement_totals['modules']); ?> modules)
+                                        </span>
+                                    <?php else: ?>
+                                        <span style="margin-left: 10px; color: #d32f2f; font-weight: 600;">(No replacements created yet)</span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
                             </div>
                             <?php if (!empty($data['wattage_breakdown'])): ?>
                                 <div style="margin-left: 20px; font-size: 0.9em; color: #666;">
