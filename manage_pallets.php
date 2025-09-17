@@ -257,6 +257,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 
 
 try {
+    // Optional filter from deep link: restrict to specific pallet IDs
+    $pallet_ids_filter = [];
+    if (!empty($_GET['pallet_ids'])) {
+        $raw_ids = explode(',', $_GET['pallet_ids']);
+        foreach ($raw_ids as $rid) {
+            $ival = intval($rid);
+            if ($ival > 0) { $pallet_ids_filter[] = $ival; }
+        }
+        $pallet_ids_filter = array_values(array_unique($pallet_ids_filter));
+    }
     $conn = getDBConnection(); // Main connection for displaying data
     // Comprehensive query to fetch pallet details
     $sql = "SELECT 
@@ -287,39 +297,51 @@ try {
             LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
             LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
             LEFT JOIN deliveries d ON dp.delivery_id = d.id";
-    
-    // Add account filtering for non-global admins
+
+    // Build conditional filters dynamically
+    $conditions = [];
+    $params = [];
+    $types = '';
+
+    // Account scoping for non-global admins
     if (!$is_global_admin && $account_id_for_user) {
-        $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR (ip.current_project_id IS NULL AND ip.assigned_project_id IS NULL))";
+        $conditions[] = "(p_current.account_id = ? OR p_assigned.account_id = ? OR (ip.current_project_id IS NULL AND ip.assigned_project_id IS NULL))";
+        $params[] = $account_id_for_user;
+        $params[] = $account_id_for_user;
+        $types .= 'ii';
     }
-    
+
+    // Optional deep-link filter to specific pallet IDs
+    if (!empty($pallet_ids_filter)) {
+        $placeholders = implode(',', array_fill(0, count($pallet_ids_filter), '?'));
+        $conditions[] = "ip.id IN ($placeholders)";
+        foreach ($pallet_ids_filter as $pid) { $params[] = $pid; $types .= 'i'; }
+    }
+
+    if (!empty($conditions)) {
+        $sql .= ' WHERE ' . implode(' AND ', $conditions);
+    }
+
     $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.flash_test_data, m.vendor_name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name";
     $sql .= " ORDER BY ip.id DESC";
-    
-    // Execute query with or without parameters
-    if (!$is_global_admin && $account_id_for_user) {
+
+    // Execute query (prepared if we have params)
+    if (!empty($params)) {
         $stmt = $conn->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param("ii", $account_id_for_user, $account_id_for_user);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            if ($result) {
-                while ($row = $result->fetch_assoc()) {
-                    $pallets[] = $row;
-                }
-            } else {
-                throw new Exception("Error fetching pallets: " . $stmt->error);
-            }
-            $stmt->close();
+        if (!$stmt) { throw new Exception("Error preparing pallets query: " . $conn->error); }
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        if ($result) {
+            while ($row = $result->fetch_assoc()) { $pallets[] = $row; }
         } else {
-            throw new Exception("Error preparing pallets query: " . $conn->error);
+            throw new Exception("Error fetching pallets: " . $stmt->error);
         }
+        $stmt->close();
     } else {
         $result = $conn->query($sql);
         if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $pallets[] = $row;
-            }
+            while ($row = $result->fetch_assoc()) { $pallets[] = $row; }
         } else {
             throw new Exception("Error fetching pallets: " . $conn->error);
         }
