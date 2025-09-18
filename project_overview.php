@@ -3504,7 +3504,6 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         gap: 6px;
-        width: 100%;
     }
     .unit-filter-btn {
         padding: 10px 8px;
