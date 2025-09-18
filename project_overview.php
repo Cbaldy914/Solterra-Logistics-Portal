@@ -1736,7 +1736,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 15px;
     margin-top: 25px;
-    width: 100%;
+    width: 90%;
     margin-left: 0;
     margin-right: 0;
     max-width: 700px;
@@ -1940,6 +1940,14 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     letter-spacing: 0.5px;
 }
 
+/* Mobile-friendly abbreviated headers */
+@media (max-width: 768px) {
+    .table-responsive th { position: relative; padding: 10px 8px; }
+    .table-responsive th .th-short { display: inline; }
+    .table-responsive th::after { display: none; }
+    .table-responsive th[aria-expanded="true"]::after { display: none; }
+}
+
 .table-responsive th:first-child {
     border-top-left-radius: 12px;
 }
@@ -2000,15 +2008,30 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 
 /* Mobile Responsiveness */
 @media (max-width: 768px) {
+    /* Remove wrapper padding/margins so mobile content can use full width */
+    .customer-content-wrapper,
+    .admin-content-wrapper {
+        padding: 0 !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        border: none !important;
+    }
     .tables-and-charts {
         grid-template-columns: 1fr;
-        gap: 20px;
-        margin: 15px;
+        gap: 8px;
+        margin: 0 !important;
+        width: 100% !important;
+        border-radius: 0 !important;
+        padding: 0 !important;
+        box-shadow: none !important;
     }
     
     .left-side, .right-side {
-        padding: 20px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+        padding: 0 !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+        border: none !important;
     }
     
     .toggle-buttons {
@@ -2028,18 +2051,9 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     /* Timeline Circular Progress Mobile Responsiveness */
-    .timeline-progress-container {
-        margin-bottom: 15px;
-    }
-    
-    .timeline-circular-progress {
-        width: 80px;
-        height: 80px;
-    }
-    
-    .timeline-progress-text {
-        font-size: 16px;
-    }
+    .timeline-progress-container { margin-bottom: 10px; }
+    .timeline-circular-progress { width: 110px; height: 110px; }
+    .timeline-progress-text { font-size: 20px; }
     
     .timeline-progress-step.completed .timeline-circular-progress {
         transform: rotate(180deg) scale(1.02);
@@ -2066,24 +2080,31 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         max-width: 100%;
         margin: 0;
         align-items: center;
+        /* Mobile sizing variables for consistent alignment */
+        --timeline-circle-size: 60px;   /* circle diameter on mobile */
+        --timeline-line-width: 6px;     /* vertical line thickness */
     }
     
     .timeline::before {
-        width: 6px;
-        height: 100%;
-        top: 0;
-        left: 24px;
+        width: var(--timeline-line-width);
+        /* Start/end at the center of the first/last circles */
+        height: calc(90% - var(--timeline-circle-size));
+        top: calc(var(--timeline-circle-size) / 2);
+        /* Center the line through the circle */
+        left: calc(var(--timeline-circle-size) / 2 - var(--timeline-line-width) / 2);
         right: auto;
         transform: none;
         z-index: 0;
     }
     
     .timeline::after {
-        width: 6px !important;
+        width: var(--timeline-line-width) !important;
         max-width: none !important;
+        /* Fill height based on progress but never extend past the last circle center */
         height: var(--progress-width, 0%);
-        top: 0;
-        left: 24px;
+        max-height: calc(90% - var(--timeline-circle-size));
+        top: calc(var(--timeline-circle-size) / 2);
+        left: calc(var(--timeline-circle-size) / 2 - var(--timeline-line-width) / 2);
         right: auto;
         transform: none;
         z-index: 1;
@@ -2093,14 +2114,23 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         width: 100%;
         max-width: 480px;
         margin-bottom: 40px;
-        padding: 0 0 0 64px;
+        padding: 0 0 0 80px; /* push content slightly right to avoid circle overlap */
         text-align: left;
         position: relative;
+        box-sizing: border-box; /* ensure padding doesn't cause overflow */
+    }
+    
+    /* Ensure variant timeline items also stay within container width */
+    .timeline-item.completed,
+    .timeline-item.current,
+    .timeline-item.timeline-progress-step {
+        width: 100%;
+        box-sizing: border-box;
     }
     
     .timeline-item .circle {
-        width: 60px;
-        height: 60px;
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
         font-size: 20px;
         margin-bottom: 12px;
         position: absolute;
@@ -2115,8 +2145,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         position: absolute;
         left: 0;
         top: 0;
-        width: 60px;
-        height: 60px;
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
         margin: 0;
         display: flex;
         align-items: center;
@@ -2124,9 +2154,11 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         z-index: 2;
     }
     .timeline-progress-step .timeline-circular-progress {
-        width: 60px;
-        height: 60px;
-        transform: rotate(-160deg); /* keep start point */
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
+        /* Scale so the ring diameter matches the visible circle size (r=45, stroke=6 => ~0.8 of viewBox) */
+        transform: rotate(-160deg) scale(1.25);
+        transform-origin: center center;
     }
     
     .timeline-item .label,
@@ -2144,13 +2176,15 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     <?php if ($role === 'admin' || $role === 'global_admin'): ?>
     
     .shipping-statuses {
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 10px;
-        margin-top: 20px;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 6px;
+        margin-top: 12px;
+        padding: 0 6px;
+        box-sizing: border-box;
     }
     
     .shipping-box {
-        padding: 12px 8px;
+        padding: 10px 6px;
     }
     
     .shipping-box .status-label {
@@ -2183,10 +2217,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     /* Chart containers */
-    .chart-container {
-        max-width: 100%;
-        margin: 20px 0;
-    }
+    .chart-container { max-width: none !important; width: 100% !important; margin: 8px 0 !important; }
     
     canvas {
         max-width: 100% !important;
@@ -2300,6 +2331,9 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     
     .timeline {
         margin: 0;
+        /* Smaller mobile circle size */
+        --timeline-circle-size: 50px;
+        --timeline-line-width: 6px;
     }
     
     .timeline-item {
@@ -2308,9 +2342,22 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .timeline-item .circle {
-        width: 50px;
-        height: 50px;
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
         font-size: 18px;
+    }
+    /* Keep progress ring same size as circles on smallest screens */
+    .timeline-progress-step .timeline-progress-container {
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
+    }
+    .timeline-progress-step .timeline-circular-progress {
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
+        transform: rotate(-160deg) scale(calc(1 / 0.8)); /* ~1.25, match visual circle size */
+        transform-origin: center center;
+        margin-left: calc((var(--timeline-circle-size) - (var(--timeline-circle-size) / 0.8)) / 2 * -1);
+        margin-top: calc((var(--timeline-circle-size) - (var(--timeline-circle-size) / 0.8)) / 2 * -1);
     }
     
     .timeline-item .label {
@@ -3189,9 +3236,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 }
 
 /* ===== UNIT FILTERS STYLING ===== */
-.unit-filters-container {
-    padding: 0 20px;
-}
+    .unit-filters-container { padding: 0 !important; margin: 0 !important; }
 
 .unit-filters {
     display: inline-flex;
@@ -3482,6 +3527,36 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   updateTruckloadsLabel();
   window.addEventListener('resize', updateTruckloadsLabel);
+});
+
+// Tap-to-reveal full table header on mobile
+document.addEventListener('DOMContentLoaded', function() {
+  if (window.innerWidth <= 768) {
+    document.querySelectorAll('.table-responsive th[data-full]').forEach(function(th) {
+      th.setAttribute('title', th.getAttribute('data-full'));
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', function() {
+        // Show full name above header row temporarily
+        const label = document.createElement('div');
+        label.textContent = th.getAttribute('data-full');
+        label.style.position = 'absolute';
+        label.style.top = '-24px';
+        label.style.left = '0';
+        label.style.right = '0';
+        label.style.textAlign = 'center';
+        label.style.fontSize = '12px';
+        label.style.fontWeight = '600';
+        label.style.color = '#293E4C';
+        label.style.background = 'rgba(255,255,255,0.9)';
+        label.style.padding = '2px 4px';
+        label.style.borderRadius = '4px';
+        label.style.boxShadow = '0 2px 6px rgba(0,0,0,0.1)';
+        th.style.position = 'relative';
+        th.appendChild(label);
+        setTimeout(function(){ label.remove(); }, 1500);
+      });
+    });
+  }
 });
 </script>
 <?php include 'header.php'; ?>
@@ -4497,9 +4572,9 @@ document.addEventListener('DOMContentLoaded', function() {
                         <table id="table1">
                             <thead>
                                 <tr>
-                                    <th>Module Type</th>
-                                    <th>Total Order</th>
-                                    <th>Delivered</th>
+                                    <th data-full="Module Type"><span class="th-short">Type</span></th>
+                                    <th data-full="Total Order"><span class="th-short">Order</span></th>
+                                    <th data-full="Delivered"><span class="th-short">Deliv.</span></th>
                                     <?php foreach($weeks as $wk): ?>
                                         <th><?php echo $wk['end']->format('n/j'); ?></th>
                                     <?php endforeach; ?>
@@ -4537,25 +4612,25 @@ document.addEventListener('DOMContentLoaded', function() {
                         <table id="table2">
                             <thead>
                                 <tr>
-                                    <th>Module Type</th>
-                                    <th>Total Order</th>
-                                    <th>At Manufacturer</th>
+                                    <th data-full="Module Type"><span class="th-short">Type</span></th>
+                                    <th data-full="Total Order"><span class="th-short">Order</span></th>
+                                    <th data-full="At Manufacturer"><span class="th-short">At Mfr.</span></th>
                                     <?php if ($on_water_combined > 0): ?>
-                                    <th>On Water</th>
+                                    <th data-full="On Water"><span class="th-short">Water</span></th>
                                     <?php endif; ?>
                                     <?php if ($cleared_customs_combined > 0): ?>
-                                    <th>Cleared Customs</th>
+                                    <th data-full="Cleared Customs"><span class="th-short">Customs</span></th>
                                     <?php endif; ?>
                                     <?php if ($in_transit_to_warehouse_combined > 0): ?>
-                                    <th>In Transit to Warehouse</th>
+                                    <th data-full="In Transit to Warehouse"><span class="th-short">To Whse</span></th>
                                     <?php endif; ?>
                                     <?php if ($in_warehouse_combined > 0): ?>
-                                    <th>In Warehouse</th>
+                                    <th data-full="In Warehouse"><span class="th-short">Whse</span></th>
                                     <?php endif; ?>
                                     <?php if ($in_transit_to_project_combined > 0): ?>
-                                    <th>In Transit to Project</th>
+                                    <th data-full="In Transit to Project"><span class="th-short">To Proj</span></th>
                                     <?php endif; ?>
-                                    <th>Delivered to Project</th>
+                                    <th data-full="Delivered to Project"><span class="th-short">Delivered</span></th>
                                 </tr>
                             </thead>
                             <tbody>
