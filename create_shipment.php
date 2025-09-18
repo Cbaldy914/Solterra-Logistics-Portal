@@ -1443,11 +1443,12 @@ if (!empty($bolCompletionMessage)) {
         .filter-toggle-btn {
             background-color: #488C9A;
             color: white;
-            padding: 8px 16px;
+            padding: 12px 20px;
             border: none;
             border-radius: 4px 4px 0 0;
             cursor: pointer;
-            font-size: 0.9em;
+            font-size: 1em;
+            font-weight: 600;
             display: flex;
             align-items: center;
             gap: 8px;
@@ -1503,11 +1504,9 @@ if (!empty($bolCompletionMessage)) {
 <main>
     <div class="breadcrumb">
         <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
         <?php if ($project_id_from_url > 0): ?>
+            <span class="separator">&raquo;</span>
             <a href="project_overview.php?project_id=<?php echo $project_id_from_url; ?>">Project Overview</a>
-        <?php else: ?>
-            <a href="project_overview.php">Project Overview</a>
         <?php endif; ?>
         <span class="separator">&raquo;</span>
         <span>Create Shipment</span>
@@ -1541,12 +1540,13 @@ if (!empty($bolCompletionMessage)) {
                 <h2 class="section-title">Select Inventory Pallets to Include in Shipment</h2>
                 <!-- Filters and Controls -->
                 <div class="filters-container" style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;">
-                    <div class="filter-dropdown" style="width: 300px;">
-                        <button type="button" class="filter-toggle-btn" onclick="toggleFilters()">
-                            <span>Filters</span> <span class="filter-arrow">▼</span>
-                        </button>
-                        <div class="filter-content" id="filterContent" style="display: none;">
-                            <div style="display: flex; flex-direction: column; gap: 15px; padding: 15px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 0 0 4px 4px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div class="filter-dropdown">
+                            <button type="button" class="filter-toggle-btn" onclick="toggleFilters()">
+                                <span>Filters</span> <span class="filter-arrow">▼</span>
+                            </button>
+                            <div class="filter-content" id="filterContent" style="display: none;">
+                                <div style="display: flex; flex-direction: column; gap: 15px; padding: 15px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 0 0 4px 4px;">
                                 <div style="display: flex; align-items: center; gap: 10px;">
                                     <label>Search:</label>
                                     <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()" style="flex: 1;">
@@ -1590,15 +1590,16 @@ if (!empty($bolCompletionMessage)) {
                                         ?>
                                     </select>
                                 </div>
+                                </div>
                             </div>
                         </div>
+                        <button type="button" id="exportCsvBtn" class="action-button">Export to CSV</button>
                     </div>
                     <div style="display: flex; align-items: center; justify-content: center; flex: 1;">
                         <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
                     </div>
                     <div style="display: flex; align-items: center; gap: 12px;">
                         <button type="button" id="deletePalletsBtn" class="action-button" style="background-color:#dc3545;" disabled>Delete</button>
-                        <button type="button" id="exportCsvBtn" class="action-button">Export to CSV</button>
                         <button type="button" id="openShipModalBtn" class="action-button" disabled>
                             Create Delivery for Selected Pallets
                         </button>
