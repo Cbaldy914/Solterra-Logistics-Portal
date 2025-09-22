@@ -223,9 +223,29 @@ try {
     // Add concise style and no filler guidance
     $systemMessage .= "\n\nStyle: Be concise, present concrete results immediately. Do not write filler like 'just a moment' or 'let me check'. If data exists above, present it directly. If no data, say 'No results found' with 1 actionable next step.";
 
-    // Construct message array: system prompt + trimmed chat history + current user msg
+    // If we have analyzed document text, surface it explicitly as content (not only JSON)
+    $docContextMessage = null;
+    if (!empty($toolResults['analyzeDocument']) &&
+        !empty($toolResults['analyzeDocument']['success']) &&
+        !empty($toolResults['analyzeDocument']['data']) &&
+        isset($toolResults['analyzeDocument']['data']['text_preview']) &&
+        trim((string)$toolResults['analyzeDocument']['data']['text_preview']) !== '') {
+        $docInfo = $toolResults['analyzeDocument']['data'];
+        $docName = $docInfo['filename'] ?? 'uploaded_document';
+        $docText = $docInfo['text_preview'];
+        // Provide the raw text in its own message for the model to use directly
+        $docContextMessage = [
+            'role' => 'system',
+            'content' => "Document Content (" . $docName . ")\n---\n" . $docText . "\n---\nUse the document content above to answer or summarize as requested."
+        ];
+    }
+
+    // Construct message array: system prompt + explicit doc content (if any) + trimmed chat history + current user msg
     $messagesForOpenAI = [];
     $messagesForOpenAI[] = ['role' => 'system', 'content' => $systemMessage];
+    if ($docContextMessage) {
+        $messagesForOpenAI[] = $docContextMessage;
+    }
 
     // Append recent history
     foreach ($chatHistory as $entry) {

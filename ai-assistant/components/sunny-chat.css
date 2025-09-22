@@ -352,6 +352,38 @@
     background: white;
 }
 
+/* Confirmation chip shown briefly after sending an attachment */
+.sunny-attachment-sent {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #eefaf2;
+    color: var(--primary-blue);
+    border: 1px solid #bfe6cc;
+    border-left: 4px solid var(--success-green);
+    border-radius: 16px;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+.sunny-attachment-sent .sent-icon {
+    color: var(--success-green);
+    font-weight: 700;
+}
+.sunny-attachment-sent .sent-name {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sunny-attachment-sent .sent-size {
+    font-size: 11px;
+    opacity: 0.7;
+}
+.sunny-attachment-sent.fade-out {
+    opacity: 0;
+    transition: opacity 0.35s ease;
+}
+
 .sunny-input-container:focus-within {
     border-color: var(--secondary-blue);
 }
