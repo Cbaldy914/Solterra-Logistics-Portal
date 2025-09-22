@@ -1511,7 +1511,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
 
                             <div class="input-group">
-                                <label>Module Documentation</label>
+                                <label>Module Documentation <span style="color:#999; font-weight:400; font-size:0.85rem;">(optional)</span></label>
                                 <button type="button" class="add-wattage-btn" onclick="openPreModuleUploadModal()">Attach Module Documentation</button>
                                 <div id="preModuleDocsSummary" style="margin-top:8px; color:#666; font-size:0.85em; display:none;"></div>
                             </div>
@@ -1528,8 +1528,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </div>
                                 <div class="modal-body">
                                   <div class="input-group">
-                                    <label for="module_docs_sub_type">Document Sub-Type</label>
-                                    <select id="module_docs_sub_type" name="module_docs_sub_type" required>
+                                    <label for="module_docs_sub_type">Document Sub-Type <span style="color:#999; font-weight:400;">(required only if uploading)</span></label>
+                                    <select id="module_docs_sub_type" name="module_docs_sub_type">
                                         <option value="">Choose sub-type...</option>
                                         <option value="Module Invoice">Module Invoice</option>
                                         <option value="Flash Test Data">Flash Test Data</option>
