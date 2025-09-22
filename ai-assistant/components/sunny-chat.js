@@ -198,6 +198,26 @@ class SunnyChat {
         if (chip) chip.remove();
     }
 
+    showAttachmentSent(filename, size) {
+        const container = document.getElementById('sunny-attachments');
+        if (!container) return;
+        const sent = document.createElement('div');
+        sent.className = 'sunny-attachment-sent';
+        const kb = Math.max(1, Math.round((size || 0) / 1024));
+        sent.innerHTML = `
+            <span class="sent-icon" aria-hidden="true">✔</span>
+            <span class="sent-text">Sent attachment:</span>
+            <span class="sent-name" title="${filename}">${filename}</span>
+            <span class="sent-size">${kb} KB</span>
+        `;
+        container.appendChild(sent);
+        // Auto-remove after a short delay
+        setTimeout(() => {
+            sent.classList.add('fade-out');
+            setTimeout(() => sent.remove(), 400);
+        }, 2200);
+    }
+
     toggleChat() {
         const chatWindow = document.getElementById('sunny-chat-window');
         const chatButton = document.getElementById('sunny-chat-button');
@@ -366,16 +386,22 @@ class SunnyChat {
 
             // Create new EventSource for streaming response
             let url = `./ai-assistant/api/chat-stream.php?message=${encodeURIComponent(messageText)}`;
+            // If an upload is pending, include it and prep confirmation
+            let sentAttachment = null;
             if (this.pendingUpload) {
                 url += '&attach=1&upload_id=' + encodeURIComponent(this.pendingUpload.id);
+                sentAttachment = { filename: this.pendingUpload.filename, size: this.pendingUpload.size };
             }
             const eventSource = new EventSource(url);
             this.currentEventSource = eventSource;
 
-            // Clear attachment indicator once sent
+            // Clear attachment indicator once sent and show confirmation
             if (this.pendingUpload) {
                 this.pendingUpload = null;
                 this.clearAttachmentChip();
+                if (sentAttachment) {
+                    this.showAttachmentSent(sentAttachment.filename, sentAttachment.size);
+                }
             }
 
             let assistantMessageId = null;
