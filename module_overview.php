@@ -29,7 +29,9 @@ if ($project_id > 0) {
 } elseif ($batch_id > 0) {
     $view_mode = 'batch';
 } else {
-    die("Either Batch ID or Project ID must be provided.");
+    // Graceful handling when neither is provided
+    $view_mode = 'project';
+    $project_id = 0;
 }
 
 // Handle bulk pallet generation by modules per pallet
@@ -503,16 +505,20 @@ try {
         
     } elseif ($view_mode === 'project') {
         // Fetch project data and all its module batches
-        $stmtProject = $conn->prepare("SELECT * FROM projects WHERE id = ?");
-        if (!$stmtProject) throw new Exception("Prepare project fetch failed: " . $conn->error);
-        $stmtProject->bind_param("i", $project_id);
-        $stmtProject->execute();
-        $resultProject = $stmtProject->get_result();
-        if ($resultProject->num_rows === 0) {
-            throw new Exception("Project not found.");
+        if ($project_id > 0) {
+            $stmtProject = $conn->prepare("SELECT * FROM projects WHERE id = ?");
+            if (!$stmtProject) throw new Exception("Prepare project fetch failed: " . $conn->error);
+            $stmtProject->bind_param("i", $project_id);
+            $stmtProject->execute();
+            $resultProject = $stmtProject->get_result();
+            if ($resultProject->num_rows === 0) {
+                throw new Exception("Project not found.");
+            }
+            $project_data = $resultProject->fetch_assoc();
+            $stmtProject->close();
+        } else {
+            $project_data = null;
         }
-        $project_data = $resultProject->fetch_assoc();
-        $stmtProject->close();
         
         // Fetch all module batches for this project
         $stmtBatches = $conn->prepare("
@@ -532,16 +538,15 @@ try {
         }
         $stmtBatches->close();
         
-        if (empty($module_batches)) {
-            throw new Exception("No module batches found for this project.");
+        // If none found, we'll render a friendly empty state
+        if (!empty($module_batches)) {
+            // Set batch_data to the first batch for compatibility with existing code
+            $batch_data = $module_batches[0];
         }
-        
-        // Set batch_data to the first batch for compatibility with existing code
-        $batch_data = $module_batches[0];
     }
 
     // Access Control for Admin role
-    if ($role === 'admin') {
+    if ($role === 'admin' && !empty($module_batches)) {
         $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
         $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
         if ($stmtAdminAcc) {
@@ -1458,9 +1463,22 @@ $conn->close();
         
         <div class="overview-header">
             <?php if ($view_mode === 'project'): ?>
-                <h1>Modules for <?php echo htmlspecialchars($project_data['project_name']); ?></h1>
-                <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project_data['project_address']); ?></p>
+                <h1>Modules for <?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></h1>
+                <?php if (!empty($project_data)): ?>
+                    <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project_data['project_address']); ?></p>
+                <?php endif; ?>
                 <p><strong>Number of Module Batches:</strong> <?php echo count($module_batches); ?></p>
+                <?php if (count($module_batches) === 0): ?>
+                    <div style="margin-top: 16px; padding: 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; text-align: center;">
+                        <div style="font-size: 16px; color: #293E4C; font-weight: 600;">No modules found for this project</div>
+                        <div style="font-size: 13px; color: #6b7280; margin-top: 6px;">Once you add a module batch, you can palletize and track them here.</div>
+                        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin']) && !empty($project_id)): ?>
+                            <div style="margin-top: 16px;">
+                                <a href="add_module_batch.php?project_id=<?php echo (int)$project_id; ?>" style="display:inline-block; padding:10px 16px; background:#488C9A; color:#fff; border-radius:8px; text-decoration:none;">+ Add Module Batch</a>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
                 
                 <?php if (count($module_batches) > 1): ?>
                     <div style="margin-top: 15px; padding: 15px; background-color: #f8f9fa; border-radius: 8px;">
@@ -1472,18 +1490,18 @@ $conn->close();
                                 <strong>Initial Location:</strong> <?php echo htmlspecialchars($batch['initial_location']); ?><br>
                                 <strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch['created_at'])); ?>
                                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                                    <br><a href="edit_module?batch_id=<?php echo $batch['id']; ?>" style="color: #488C9A; text-decoration: none;">Edit Batch</a>
+                                    <br><a href="edit_module_batch.php?project_id=<?php echo (int)$project_data['id']; ?>&batch_id=<?php echo (int)$batch['id']; ?>" style="color: #488C9A; text-decoration: none;">Edit Batch</a>
                                 <?php endif; ?>
                             </div>
                         <?php endforeach; ?>
                     </div>
-                <?php else: ?>
+                <?php elseif (count($module_batches) === 1): ?>
                     <p><strong>Batch:</strong> <?php echo htmlspecialchars($module_batches[0]['vendor_name']); ?></p>
                     <p><strong>Account:</strong> <?php echo htmlspecialchars($module_batches[0]['account_name']); ?></p>
                     <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($module_batches[0]['initial_location']); ?></p>
                     <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($module_batches[0]['created_at'])); ?></p>
                     <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                    <button class="edit-button" onclick="window.location.href='edit_module?batch_id=<?php echo $module_batches[0]['id']; ?>'">Edit Batch Details</button>
+                    <button class="edit-button" onclick="window.location.href='edit_module_batch.php?project_id=<?php echo (int)$project_data['id']; ?>&batch_id=<?php echo (int)$module_batches[0]['id']; ?>'">Edit Batch Details</button>
                     <?php endif; ?>
                 <?php endif; ?>
                 
@@ -1503,7 +1521,7 @@ $conn->close();
                 <p><strong>Batch ID:</strong> <?php echo $batch_data['id']; ?></p>
                 <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch_data['created_at'])); ?></p>
                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                <button class="edit-button" onclick="window.location.href='edit_module?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
+                <button class="edit-button" onclick="window.location.href='<?php echo !empty($batch_data['project_id']) ? ('edit_module_batch.php?project_id='.(int)$batch_data['project_id'].'&batch_id='.(int)$batch_id) : ('edit_module_batch.php?batch_id='.(int)$batch_id); ?>'">Edit Batch Details</button>
                 <?php endif; ?>
             <?php endif; ?>
         </div>

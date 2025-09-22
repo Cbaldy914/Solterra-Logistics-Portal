@@ -26,6 +26,53 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// Inline update of module batch info (admin/global_admin only)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_module_batch' && in_array($role, ['admin','global_admin'])) {
+    $upd_batch_id = intval($_POST['batch_id'] ?? 0);
+    if ($upd_batch_id > 0) {
+        $fields = [
+            'modules_per_pallet' => FILTER_VALIDATE_INT,
+            'pallets_per_truck' => FILTER_VALIDATE_INT,
+            'modules_per_truck' => FILTER_VALIDATE_INT,
+            'pallet_length_mm' => FILTER_VALIDATE_INT,
+            'pallet_depth_mm' => FILTER_VALIDATE_INT,
+            'pallet_double_stacked_height_mm' => FILTER_VALIDATE_INT,
+            'pallet_total_weight_kg' => FILTER_VALIDATE_INT,
+            'forklift_truck_long_side_mm' => FILTER_VALIDATE_INT,
+            'forklift_truck_short_side_mm' => FILTER_VALIDATE_INT,
+            'pallet_jack_long_side_mm' => FILTER_VALIDATE_INT,
+            'pallet_jack_short_side_mm' => FILTER_VALIDATE_INT
+        ];
+        $ints = [];
+        foreach ($fields as $k => $f) { $ints[$k] = ($_POST[$k] ?? '') !== '' ? intval($_POST[$k]) : null; }
+        $module_notes = trim($_POST['module_notes'] ?? '');
+
+        // Build dynamic update
+        $sets = [
+            'modules_per_pallet = ?', 'pallets_per_truck = ?', 'modules_per_truck = ?',
+            'pallet_length_mm = ?', 'pallet_depth_mm = ?', 'pallet_double_stacked_height_mm = ?',
+            'pallet_total_weight_kg = ?', 'forklift_truck_long_side_mm = ?', 'forklift_truck_short_side_mm = ?',
+            'pallet_jack_long_side_mm = ?', 'pallet_jack_short_side_mm = ?', 'module_notes = ?'
+        ];
+        $sql = 'UPDATE modules SET ' . implode(', ', $sets) . ', last_updated_at = NOW() WHERE id = ?';
+        $stmtU = $conn->prepare($sql);
+        if ($stmtU) {
+            $stmtU->bind_param(
+                'iiiiiiiiiiisi',
+                $ints['modules_per_pallet'], $ints['pallets_per_truck'], $ints['modules_per_truck'],
+                $ints['pallet_length_mm'], $ints['pallet_depth_mm'], $ints['pallet_double_stacked_height_mm'],
+                $ints['pallet_total_weight_kg'], $ints['forklift_truck_long_side_mm'], $ints['forklift_truck_short_side_mm'],
+                $ints['pallet_jack_long_side_mm'], $ints['pallet_jack_short_side_mm'], $module_notes, $upd_batch_id
+            );
+            $stmtU->execute();
+            $stmtU->close();
+        }
+        $_SESSION['project_overview_message'] = 'Module batch updated successfully.';
+    }
+    header('Location: project_overview.php?project_id=' . $project_id . '&view_mode=' . urlencode($view_mode));
+    exit();
+}
+
 $view_mode = isset($_GET['view_mode']) ? $_GET['view_mode'] : 'mw';
 
 /**
@@ -3700,10 +3747,15 @@ document.addEventListener('DOMContentLoaded', function() {
                         </li>
                         
                         <li class="timeline-item<?php echo $step2_completed ? ' completed' : ''; ?><?php echo $current_step == 2 ? ' current' : ''; ?>">
-                            <div class="circle clickable" onclick="window.location.href='modules.php?project_id=<?php echo $project_id; ?>'">2</div>
-                            <span class="label">
-                                <a href="modules.php?project_id=<?php echo $project_id; ?>">Add Modules</a>
-                            </span>
+                            <?php if (in_array($_SESSION['role'], ['admin','global_admin'])): ?>
+                                <div class="circle clickable" onclick="window.location.href='add_module_batch.php?project_id=<?php echo $project_id; ?>'">2</div>
+                                <span class="label">
+                                    <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>">Add Modules</a>
+                                </span>
+                            <?php else: ?>
+                                <div class="circle">2</div>
+                                <span class="label">Add Modules</span>
+                            <?php endif; ?>
                             <div class="description"><?php echo number_format($total_raw_modules); ?> modules added</div>
                         </li>
                         
@@ -4138,7 +4190,6 @@ document.addEventListener('DOMContentLoaded', function() {
                                         Edit Module Information ▼
                                     </button>
                                     <div class="module-actions-content" id="moduleActionsDropdown">
-                                        <a href="edit_module_batch.php?project_id=<?php echo $project_id; ?>&batch_id=<?php echo !empty($module_batches) ? $module_batches[0]['id'] : ''; ?>">Edit Current Module Batch</a>
                                         <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>">+ Add New Module Batch</a>
                                     </div>
                                 </div>
@@ -4274,7 +4325,52 @@ document.addEventListener('DOMContentLoaded', function() {
                                             <?php endif; ?>
                                         </div>
                                     </div>
-                                    
+                                    <?php if (in_array($role, ['admin','global_admin'])): ?>
+                                        <div style="margin-top: 12px; text-align:right;">
+                                            <button type="button" class="info-action-button" onclick="var f=document.getElementById('inline-edit-<?php echo $batch['id']; ?>'); f.style.display = (f.style.display==='none'||!f.style.display)?'block':'none';">Edit This Batch</button>
+                                        </div>
+                                        <form method="POST" id="inline-edit-<?php echo $batch['id']; ?>" style="display:none; margin-top:12px; padding:16px; border:1px solid #e5e7eb; border-radius:12px; background:#fafafa;">
+                                            <input type="hidden" name="action" value="update_module_batch" />
+                                            <input type="hidden" name="batch_id" value="<?php echo (int)$batch['id']; ?>" />
+                                            <div class="info-grid">
+                                                <div class="info-section">
+                                                    <h4>Logistics Specs</h4>
+                                                    <div class="info-item"><label>Modules per Pallet</label><input type="number" name="modules_per_pallet" id="mpp-<?php echo $batch['id']; ?>" value="<?php echo (int)($batch['modules_per_pallet'] ?? 0); ?>" /></div>
+                                                    <div class="info-item"><label>Pallets per Truck</label><input type="number" name="pallets_per_truck" id="ppt-<?php echo $batch['id']; ?>" value="<?php echo (int)($batch['pallets_per_truck'] ?? 0); ?>" /></div>
+                                                    <div class="info-item"><label>Modules per Truck</label><input type="number" name="modules_per_truck" id="mpt-<?php echo $batch['id']; ?>" value="<?php echo (int)($batch['modules_per_truck'] ?? 0); ?>" readonly style="background:#f3f4f6;" /></div>
+                                                    <div class="info-item"><label>Pallet Length (mm)</label><input type="number" name="pallet_length_mm" value="<?php echo (int)($batch['pallet_length_mm'] ?? 0); ?>" /></div>
+                                                    <div class="info-item"><label>Pallet Depth (mm)</label><input type="number" name="pallet_depth_mm" value="<?php echo (int)($batch['pallet_depth_mm'] ?? 0); ?>" /></div>
+                                                    <div class="info-item"><label>Stack Height (mm)</label><input type="number" name="pallet_double_stacked_height_mm" value="<?php echo (int)($batch['pallet_double_stacked_height_mm'] ?? 0); ?>" /></div>
+                                                    <div class="info-item"><label>Pallet Weight (kg)</label><input type="number" name="pallet_total_weight_kg" value="<?php echo (int)($batch['pallet_total_weight_kg'] ?? 0); ?>" /></div>
+                                                </div>
+                                                <div class="info-section">
+                                                    <h4>Handling & Notes</h4>
+                                                    <div class="info-item"><label>Forklift Long (mm)</label><input type="number" name="forklift_truck_long_side_mm" value="<?php echo (int)($batch['forklift_truck_long_side_mm'] ?? 0); ?>" /></div>
+                                                    <div class="info-item"><label>Forklift Short (mm)</label><input type="number" name="forklift_truck_short_side_mm" value="<?php echo (int)($batch['forklift_truck_short_side_mm'] ?? 0); ?>" /></div>
+                                                    <div class="info-item"><label>Pallet Jack Long (mm)</label><input type="number" name="pallet_jack_long_side_mm" value="<?php echo (int)($batch['pallet_jack_long_side_mm'] ?? 0); ?>" /></div>
+                                                    <div class="info-item"><label>Pallet Jack Short (mm)</label><input type="number" name="pallet_jack_short_side_mm" value="<?php echo (int)($batch['pallet_jack_short_side_mm'] ?? 0); ?>" /></div>
+                                                    <div class="info-item"><label>Module Notes</label><textarea name="module_notes" rows="3" style="width:100%; padding:8px; border:1px solid #e5e7eb; border-radius:8px;"><?php echo htmlspecialchars($batch['module_notes'] ?? ''); ?></textarea></div>
+                                                </div>
+                                            </div>
+                                            <div style="text-align:right; margin-top:12px;">
+                                                <button type="submit" class="info-action-button">Save Changes</button>
+                                            </div>
+                                        </form>
+                                        <script>
+                                            (function(){
+                                                const mpp = document.getElementById('mpp-<?php echo $batch['id']; ?>');
+                                                const ppt = document.getElementById('ppt-<?php echo $batch['id']; ?>');
+                                                const mpt = document.getElementById('mpt-<?php echo $batch['id']; ?>');
+                                                function recalc(){
+                                                    const a = parseInt(mpp.value,10), b = parseInt(ppt.value,10);
+                                                    if(!isNaN(a)&&!isNaN(b)&&a>0&&b>0){ mpt.value = a*b; }
+                                                }
+                                                if (mpp) mpp.addEventListener('input', recalc);
+                                                if (ppt) ppt.addEventListener('input', recalc);
+                                            })();
+                                        </script>
+                                    <?php endif; ?>
+
                                     <div style="margin-top: 20px; text-align: center;">
                                         <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="info-action-button">
                                             View Pallets & Module Status
@@ -4289,7 +4385,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 </p>
                                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
                                     <div style="text-align: center;">
-                                        <a href="modules.php?project_id=<?php echo $project_id; ?>" class="info-action-button">
+                                        <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" class="info-action-button">
                                             + Add Module Batch
                                         </a>
                                     </div>

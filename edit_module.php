@@ -14,6 +14,23 @@ if (!$conn) {
     die("Database connection failed.");
 }
 
+// Legacy redirect: forward to new batch editor
+$legacy_batch_id = isset($_GET['batch_id']) ? intval($_GET['batch_id']) : 0;
+if ($legacy_batch_id > 0) {
+    $pid = null;
+    if ($stmt = $conn->prepare("SELECT project_id FROM modules WHERE id = ? LIMIT 1")) {
+        $stmt->bind_param("i", $legacy_batch_id);
+        $stmt->execute();
+        $stmt->bind_result($pid);
+        $stmt->fetch();
+        $stmt->close();
+    }
+    $q = 'edit_module_batch.php?batch_id=' . $legacy_batch_id;
+    if (!empty($pid)) { $q .= '&project_id=' . intval($pid); }
+    header('Location: ' . $q);
+    exit();
+}
+
 // Function to sync project_wattage_orders table from actual module batches
 function syncProjectWattageOrders($conn, $project_id) {
     if (!$project_id) return;

@@ -938,7 +938,7 @@ if ($conn && $conn instanceof mysqli) {
     <div class="header-container">
         <h1>Manage Modules</h1>
         <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-        <button id="openAddModalBtn" class="action-buttons add-new">Add Module Batch</button>
+        <a href="add_module_batch.php" class="action-buttons add-new" style="text-decoration:none; display:inline-block; line-height: 36px;">Add Module Batch</a>
         <?php endif; ?>
     </div>
 
@@ -1123,7 +1123,7 @@ if ($conn && $conn instanceof mysqli) {
                                 <div class="dropdown" style="display: inline-block;">
                                     <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-p<?php echo $batch['id']; ?>')" title="More actions">✏️</button>
                                     <div id="dropdown-menu-p<?php echo $batch['id']; ?>" class="dropdown-menu">
-                                        <a href="edit_module.php?batch_id=<?php echo $batch['id']; ?>" class="dropdown-item edit">Edit</a>
+                                        <a href="edit_module_batch.php?project_id=<?php echo (int)$batch['project_id']; ?>&batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item edit">Edit</a>
                                         <form action="delete_module_batch.php" method="POST" style="display:inline; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
                                             <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
                                             <button type="submit" class="dropdown-item delete" style="border: none; cursor: pointer; background: none; width: 100%; text-align: left;">Delete</button>
@@ -1211,7 +1211,7 @@ if ($conn && $conn instanceof mysqli) {
                                 <div class="dropdown" style="display: inline-block;">
                                     <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-u<?php echo $batch['id']; ?>')" title="More actions">✏️</button>
                                     <div id="dropdown-menu-u<?php echo $batch['id']; ?>" class="dropdown-menu">
-                                        <a href="edit_module.php?batch_id=<?php echo $batch['id']; ?>" class="dropdown-item edit">Edit</a>
+                                        <a href="edit_module_batch.php?batch_id=<?php echo (int)$batch['id']; ?>" class="dropdown-item edit">Edit</a>
                                         <form action="delete_module_batch.php" method="POST" style="display:inline; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this entire batch permanently?');">
                                             <input type="hidden" name="batch_id" value="<?php echo $batch['id']; ?>">
                                             <button type="submit" class="dropdown-item delete" style="border: none; cursor: pointer; background: none; width: 100%; text-align: left;">Delete</button>
