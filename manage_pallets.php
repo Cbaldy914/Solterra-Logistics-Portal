@@ -714,7 +714,8 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         <div class="warning-message">
             <?php echo htmlspecialchars($warningDetails['message'] ?? 'An unspecified warning occurred.'); ?>
             <?php if (!empty($warningDetails['batch_id'])): ?>
-                <a href="edit_module.php?batch_id=<?php echo htmlspecialchars($warningDetails['batch_id']); ?>">Update Batch Details</a>
+                <?php $wd_pid = isset($warningDetails['project_id']) ? (int)$warningDetails['project_id'] : 0; $wd_bid = (int)$warningDetails['batch_id']; ?>
+                <a href="<?php echo $wd_pid ? ('edit_module_batch.php?project_id='.$wd_pid.'&batch_id='.$wd_bid) : ('edit_module_batch.php?batch_id='.$wd_bid); ?>">Update Batch Details</a>
             <?php endif; ?>
         </div>
     <?php endif; ?>

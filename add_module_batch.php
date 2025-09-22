@@ -18,42 +18,63 @@ $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'];
 $project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
 
-if (!$project_id) {
-    header('Location: dashboard.php?error=missing_project_id');
-    exit();
+// If a project is provided, verify access and load it; otherwise enable unassigned flow
+$project = null;
+if ($project_id) {
+    if ($role === 'admin') {
+        $stmtAccess = $conn->prepare("
+            SELECT p.*, ca.name as account_name
+            FROM projects p 
+            JOIN customer_accounts ca ON p.account_id = ca.id
+            JOIN customer_account_users cau ON p.account_id = cau.account_id 
+            WHERE p.id = ? AND cau.user_id = ? AND cau.role = 'admin'
+        ");
+        $stmtAccess->bind_param("ii", $project_id, $user_id);
+    } else {
+        $stmtAccess = $conn->prepare("
+            SELECT p.*, ca.name as account_name
+            FROM projects p 
+            JOIN customer_accounts ca ON p.account_id = ca.id
+            WHERE p.id = ?
+        ");
+        $stmtAccess->bind_param("i", $project_id);
+    }
+    $stmtAccess->execute();
+    $result = $stmtAccess->get_result();
+    if ($result->num_rows === 0) {
+        header('Location: dashboard.php?error=access_denied');
+        exit();
+    }
+    $project = $result->fetch_assoc();
+    $stmtAccess->close();
 }
 
-// Verify user has access to this project
-if ($role === 'admin') {
-    $stmtAccess = $conn->prepare("
-        SELECT p.*, ca.name as account_name
-        FROM projects p 
-        JOIN customer_accounts ca ON p.account_id = ca.id
-        JOIN customer_account_users cau ON p.account_id = cau.account_id 
-        WHERE p.id = ? AND cau.user_id = ? AND cau.role = 'admin'
-    ");
-    $stmtAccess->bind_param("ii", $project_id, $user_id);
-} else {
-    // Global admin has access to all projects
-    $stmtAccess = $conn->prepare("
-        SELECT p.*, ca.name as account_name
-        FROM projects p 
-        JOIN customer_accounts ca ON p.account_id = ca.id
-        WHERE p.id = ?
-    ");
-    $stmtAccess->bind_param("i", $project_id);
+// For admin/global_admin with no project selected, prepare account/projects for selection
+$accounts = [];
+$projects_for_account = [];
+$account_id_for_admin = null;
+if (!$project && $role === 'admin') {
+    $stmtAdmin = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1");
+    $stmtAdmin->bind_param("i", $user_id);
+    $stmtAdmin->execute();
+    $stmtAdmin->bind_result($account_id_for_admin);
+    $stmtAdmin->fetch();
+    $stmtAdmin->close();
+    if ($account_id_for_admin) {
+        $stmtProj = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC");
+        $stmtProj->bind_param("i", $account_id_for_admin);
+        $stmtProj->execute();
+        $resProj = $stmtProj->get_result();
+        while ($row = $resProj->fetch_assoc()) { $projects_for_account[] = $row; }
+        $stmtProj->close();
+    }
 }
-
-$stmtAccess->execute();
-$result = $stmtAccess->get_result();
-
-if ($result->num_rows === 0) {
-    header('Location: dashboard.php?error=access_denied');
-    exit();
+if (!$project && $role === 'global_admin') {
+    $resAcc = $conn->query("SELECT id, name FROM customer_accounts ORDER BY name ASC");
+    if ($resAcc) { while ($r = $resAcc->fetch_assoc()) { $accounts[] = $r; } }
+    $resProj = $conn->query("SELECT id, project_name, account_id FROM projects ORDER BY account_id, project_name ASC");
+    if ($resProj) { while ($r = $resProj->fetch_assoc()) { $projects_for_account[] = $r; } }
 }
-
-$project = $result->fetch_assoc();
-$stmtAccess->close();
 
 // Get manufacturers for dropdown
 $manufacturers = [];
@@ -67,8 +88,26 @@ $stmtManufacturers->close();
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $vendor_name = trim($_POST['vendor_name'] ?? '');
-    $initial_location = trim($_POST['initial_location'] ?? '');
+    // Allow selecting project on page
+    if (!$project_id) {
+        $project_id = isset($_POST['project_id']) && $_POST['project_id'] !== '' ? intval($_POST['project_id']) : 0;
+        if ($project_id) {
+            // Load for account id
+            $stmtP = $conn->prepare("SELECT account_id, project_name FROM projects WHERE id = ?");
+            $stmtP->bind_param("i", $project_id);
+            $stmtP->execute();
+            $stmtP->bind_result($proj_acc_id, $proj_name);
+            if ($stmtP->fetch()) {
+                $project = ['id'=>$project_id, 'account_id'=>$proj_acc_id, 'project_name'=>$proj_name];
+            }
+            $stmtP->close();
+        }
+    }
+    // Derive vendor/location from manufacturer + location selection (align with add_project Initial Module Batch)
+    $manufacturer_id = isset($_POST['manufacturer_id']) && $_POST['manufacturer_id'] !== '' ? (int)$_POST['manufacturer_id'] : null;
+    $location_id = isset($_POST['location_id']) && $_POST['location_id'] !== '' ? (int)$_POST['location_id'] : null;
+    $vendor_name = '';
+    $initial_location = '';
     $modules_per_pallet = isset($_POST['modules_per_pallet']) && $_POST['modules_per_pallet'] !== '' ? intval($_POST['modules_per_pallet']) : 0;
     $pallets_per_truck = isset($_POST['pallets_per_truck']) && $_POST['pallets_per_truck'] !== '' ? intval($_POST['pallets_per_truck']) : 0;
     $modules_per_truck = isset($_POST['modules_per_truck']) && $_POST['modules_per_truck'] !== '' ? intval($_POST['modules_per_truck']) : 0;
@@ -84,14 +123,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pallet_jack_short_side_mm = isset($_POST['pallet_jack_short_side_mm']) && $_POST['pallet_jack_short_side_mm'] !== '' ? intval($_POST['pallet_jack_short_side_mm']) : 0;
     $module_notes = trim($_POST['module_notes'] ?? '');
     
+    // Build vendor/location defaults
+    if ($manufacturer_id) {
+        if ($stmtM = $conn->prepare("SELECT name FROM manufacturers WHERE id = ?")) {
+            $stmtM->bind_param("i", $manufacturer_id);
+            $stmtM->execute();
+            $stmtM->bind_result($mname);
+            if ($stmtM->fetch()) { $vendor_name = $mname; }
+            $stmtM->close();
+        }
+        if ($location_id && ($stmtL = $conn->prepare("SELECT street_address, city, state, zip_code FROM manufacturer_locations WHERE id = ?"))) {
+            $stmtL->bind_param("i", $location_id);
+            $stmtL->execute();
+            $stmtL->bind_result($st, $ci, $stt, $zip);
+            if ($stmtL->fetch()) { $initial_location = implode(', ', array_filter([$st, $ci, $stt, $zip])); }
+            $stmtL->close();
+        } else {
+            // Fallback to primary location
+            if ($stmtL2 = $conn->prepare("SELECT street_address, city, state, zip_code FROM manufacturer_locations WHERE manufacturer_id = ? AND is_primary = TRUE LIMIT 1")) {
+                $stmtL2->bind_param("i", $manufacturer_id);
+                $stmtL2->execute();
+                $stmtL2->bind_result($st2, $ci2, $stt2, $zip2);
+                if ($stmtL2->fetch()) { $initial_location = implode(', ', array_filter([$st2, $ci2, $stt2, $zip2])); }
+                $stmtL2->close();
+            }
+        }
+    }
+    if ($vendor_name === '') { $vendor_name = 'Unknown Manufacturer'; }
+    if ($initial_location === '') {
+        $initial_location = implode(', ', array_filter([$project['street_address'] ?? '', $project['city'] ?? '', $project['state'] ?? '', $project['zip_code'] ?? '']));
+    }
+    if ($initial_location === '') { $initial_location = 'Unassigned'; }
+
     // Validate required fields
     $errors = [];
-    if (empty($vendor_name)) {
-        $errors[] = 'Vendor name is required';
-    }
-    if (empty($initial_location)) {
-        $errors[] = 'Initial location is required';
-    }
     
     // Validate wattages and quantities
     if (!isset($_POST['wattages']) || !isset($_POST['quantities']) || empty($_POST['wattages'])) {
@@ -129,8 +194,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     pallet_jack_long_side_mm, pallet_jack_short_side_mm, module_notes, module_docs_url
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
             ");
+            // Determine account for insert
+            $insert_account_id = 0;
+            if (!empty($project['account_id'])) {
+                $insert_account_id = (int)$project['account_id'];
+            } elseif ($role === 'admin' && $account_id_for_admin) {
+                $insert_account_id = (int)$account_id_for_admin;
+            } elseif ($role === 'global_admin') {
+                $insert_account_id = isset($_POST['account_id']) ? intval($_POST['account_id']) : 0;
+            }
+            if ($insert_account_id <= 0) {
+                throw new Exception('Please select a valid account (or project).');
+            }
+
             $stmtInsert->bind_param("issiiiiiiiissiiis", 
-                $project['account_id'], $vendor_name, $initial_location, $project_id, $modules_per_pallet,
+                $insert_account_id, $vendor_name, $initial_location, $project_id, $modules_per_pallet,
                 $pallets_per_truck, $modules_per_truck, $pallet_length_mm, $pallet_depth_mm,
                 $pallet_double_stacked_height_mm, $pallet_total_weight_kg, $stacking_in_warehouse,
                 $stacking_during_transport, $forklift_truck_long_side_mm, $forklift_truck_short_side_mm,
@@ -432,7 +510,13 @@ $conn->close();
         <div class="form-container">
             <div class="form-header">
                 <h1>Add New Module Batch</h1>
-                <p><?php echo htmlspecialchars($project['project_name']); ?></p>
+                <p>
+                    <?php if ($project): ?>
+                        <?php echo htmlspecialchars($project['project_name']); ?>
+                    <?php else: ?>
+                        Unassigned or Select Project
+                    <?php endif; ?>
+                </p>
             </div>
             
             <div class="form-content">
@@ -447,23 +531,51 @@ $conn->close();
                 <?php endif; ?>
                 
                 <form method="POST" id="addBatchForm">
+                    <?php if (!$project): ?>
+                        <div class="form-section">
+                            <h2>Assignment</h2>
+                            <div class="form-grid">
+                                <?php if ($role === 'global_admin'): ?>
+                                <div class="form-group">
+                                    <label for="account_id">Account (required if no project)</label>
+                                    <select name="account_id" id="account_id" required>
+                                        <option value="">Select Account</option>
+                                        <?php foreach ($accounts as $acc): ?>
+                                            <option value="<?php echo (int)$acc['id']; ?>"><?php echo htmlspecialchars($acc['name']); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <?php endif; ?>
+                                <div class="form-group">
+                                    <label for="project_id">Assign to Project (optional)</label>
+                                    <select name="project_id" id="project_id">
+                                        <option value="">-- None (Unassigned) --</option>
+                                        <?php foreach ($projects_for_account as $p): ?>
+                                            <option value="<?php echo (int)$p['id']; ?>"><?php echo htmlspecialchars($p['project_name']); ?><?php if (!empty($p['account_id'])) echo ' (Acct '.$p['account_id'].')'; ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                    <?php $prefManufacturerId = null; $prefLocationId = null; $existingWattages = []; include __DIR__ . '/components/module_batch_section.php'; ?>
                     <!-- Basic Information -->
-                    <div class="form-section">
+                    <div class="form-section" style="display:none">
                         <h2>Basic Information</h2>
                         <div class="form-grid">
                             <div class="form-group">
                                 <label for="vendor_name">Vendor/Manufacturer Name: *</label>
-                                <input type="text" name="vendor_name" id="vendor_name" value="<?php echo htmlspecialchars($_POST['vendor_name'] ?? ''); ?>" required>
+                                <input type="text" name="vendor_name" id="vendor_name" value="<?php echo htmlspecialchars($_POST['vendor_name'] ?? ''); ?>" disabled>
                             </div>
                             <div class="form-group">
                                 <label for="initial_location">Initial Location: *</label>
-                                <input type="text" name="initial_location" id="initial_location" value="<?php echo htmlspecialchars($_POST['initial_location'] ?? ''); ?>" required>
+                                <input type="text" name="initial_location" id="initial_location" value="<?php echo htmlspecialchars($_POST['initial_location'] ?? ''); ?>" disabled>
                             </div>
                         </div>
                     </div>
                     
                     <!-- Wattage & Quantities -->
-                    <div class="form-section">
+                    <div class="form-section" style="display:none">
                         <h2>Module Configuration</h2>
                         <div class="wattage-container">
                             <button type="button" class="add-wattage-btn" onclick="addWattageEntry()">+ Add Wattage</button>
@@ -484,7 +596,7 @@ $conn->close();
                     </div>
                     
                     <!-- Logistics Specifications -->
-                    <div class="form-section">
+                    <div class="form-section" style="display:none">
                         <h2>Logistics Specifications (Optional)</h2>
                         <div class="form-grid">
                             <div class="form-group">

@@ -19,8 +19,8 @@ $role = $_SESSION['role'];
 $project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
 $batch_id = isset($_GET['batch_id']) ? intval($_GET['batch_id']) : 0;
 
-if (!$project_id || !$batch_id) {
-    header('Location: dashboard.php?error=missing_parameters');
+if (!$batch_id) {
+    header('Location: dashboard.php?error=missing_batch_id');
     exit();
 }
 
@@ -29,20 +29,20 @@ if ($role === 'admin') {
     $stmtAccess = $conn->prepare("
         SELECT m.*, p.project_name, p.account_id
         FROM modules m 
-        JOIN projects p ON m.project_id = p.id
-        JOIN customer_account_users cau ON p.account_id = cau.account_id 
-        WHERE m.id = ? AND m.project_id = ? AND cau.user_id = ? AND cau.role = 'admin'
+        LEFT JOIN projects p ON m.project_id = p.id
+        JOIN customer_account_users cau ON m.account_id = cau.account_id 
+        WHERE m.id = ? AND cau.user_id = ? AND cau.role = 'admin'
     ");
-    $stmtAccess->bind_param("iii", $batch_id, $project_id, $user_id);
+    $stmtAccess->bind_param("ii", $batch_id, $user_id);
 } else {
     // Global admin has access to all batches
     $stmtAccess = $conn->prepare("
         SELECT m.*, p.project_name, p.account_id
         FROM modules m 
-        JOIN projects p ON m.project_id = p.id
-        WHERE m.id = ? AND m.project_id = ?
+        LEFT JOIN projects p ON m.project_id = p.id
+        WHERE m.id = ?
     ");
-    $stmtAccess->bind_param("ii", $batch_id, $project_id);
+    $stmtAccess->bind_param("i", $batch_id);
 }
 
 $stmtAccess->execute();
@@ -85,8 +85,11 @@ $stmtManufacturers->close();
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $vendor_name = trim($_POST['vendor_name'] ?? '');
-    $initial_location = trim($_POST['initial_location'] ?? '');
+    // Default to existing values
+    $vendor_name = $module_batch['vendor_name'];
+    $initial_location = $module_batch['initial_location'];
+    $manufacturer_id = isset($_POST['manufacturer_id']) && $_POST['manufacturer_id'] !== '' ? (int)$_POST['manufacturer_id'] : null;
+    $location_id = isset($_POST['location_id']) && $_POST['location_id'] !== '' ? (int)$_POST['location_id'] : null;
     $modules_per_pallet = isset($_POST['modules_per_pallet']) && $_POST['modules_per_pallet'] !== '' ? intval($_POST['modules_per_pallet']) : 0;
     $pallets_per_truck = isset($_POST['pallets_per_truck']) && $_POST['pallets_per_truck'] !== '' ? intval($_POST['pallets_per_truck']) : 0;
     $modules_per_truck = isset($_POST['modules_per_truck']) && $_POST['modules_per_truck'] !== '' ? intval($_POST['modules_per_truck']) : 0;
@@ -102,14 +105,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pallet_jack_short_side_mm = isset($_POST['pallet_jack_short_side_mm']) && $_POST['pallet_jack_short_side_mm'] !== '' ? intval($_POST['pallet_jack_short_side_mm']) : 0;
     $module_notes = trim($_POST['module_notes'] ?? '');
     
+    // If a new manufacturer/location was chosen, derive values
+    if ($manufacturer_id) {
+        if ($stmtM = $conn->prepare("SELECT name FROM manufacturers WHERE id = ?")) {
+            $stmtM->bind_param("i", $manufacturer_id);
+            $stmtM->execute();
+            $stmtM->bind_result($mname);
+            if ($stmtM->fetch()) { $vendor_name = $mname; }
+            $stmtM->close();
+        }
+        if ($location_id && ($stmtL = $conn->prepare("SELECT street_address, city, state, zip_code FROM manufacturer_locations WHERE id = ?"))) {
+            $stmtL->bind_param("i", $location_id);
+            $stmtL->execute();
+            $stmtL->bind_result($st, $ci, $stt, $zip);
+            if ($stmtL->fetch()) { $initial_location = implode(', ', array_filter([$st, $ci, $stt, $zip])); }
+            $stmtL->close();
+        }
+    }
+
     // Validate required fields
     $errors = [];
-    if (empty($vendor_name)) {
-        $errors[] = 'Vendor name is required';
-    }
-    if (empty($initial_location)) {
-        $errors[] = 'Initial location is required';
-    }
     
     // Validate wattages and quantities
     if (!isset($_POST['wattages']) || !isset($_POST['quantities']) || empty($_POST['wattages'])) {
@@ -529,8 +544,13 @@ $conn->close();
         <div class="breadcrumb" style="margin: 10px 20px;">
             <a href="dashboard.php">Dashboard</a>
             <span class="separator">»</span>
-            <a href="project_overview.php?project_id=<?php echo $project_id; ?>"><?php echo htmlspecialchars($module_batch['project_name']); ?></a>
-            <span class="separator">»</span>
+            <?php if (!empty($module_batch['project_id'])): ?>
+                <a href="project_overview.php?project_id=<?php echo (int)$module_batch['project_id']; ?>"><?php echo htmlspecialchars($module_batch['project_name']); ?></a>
+                <span class="separator">»</span>
+            <?php else: ?>
+                <span>Unassigned</span>
+                <span class="separator">»</span>
+            <?php endif; ?>
             <span>Edit Module Batch</span>
         </div>
         
@@ -552,23 +572,25 @@ $conn->close();
                 <?php endif; ?>
                 
                 <form method="POST" id="editBatchForm">
-                    <!-- Basic Information -->
-                    <div class="form-section">
-                        <h2>Basic Information</h2>
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label for="vendor_name">Vendor/Manufacturer Name: *</label>
-                                <input type="text" name="vendor_name" id="vendor_name" value="<?php echo htmlspecialchars($module_batch['vendor_name']); ?>" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="initial_location">Initial Location: *</label>
-                                <input type="text" name="initial_location" id="initial_location" value="<?php echo htmlspecialchars($module_batch['initial_location']); ?>" required>
-                            </div>
-                        </div>
-                    </div>
+                    <?php
+                        // Preselect manufacturer by matching name
+                        $prefManufacturerId = null; $prefLocationId = null; $existingWattages = [];
+                        if (!empty($module_batch['vendor_name'])) {
+                            if ($stmtPM = $conn->prepare("SELECT id FROM manufacturers WHERE name = ? LIMIT 1")) {
+                                $stmtPM->bind_param("s", $module_batch['vendor_name']);
+                                $stmtPM->execute();
+                                $stmtPM->bind_result($pmid);
+                                if ($stmtPM->fetch()) { $prefManufacturerId = (int)$pmid; }
+                                $stmtPM->close();
+                            }
+                        }
+                        // existing wattages for the component prefill
+                        foreach ($current_wattages as $w) { $existingWattages[] = ['wattage'=>(int)$w['wattage'], 'quantity'=>(int)$w['quantity']]; }
+                        include __DIR__ . '/components/module_batch_section.php';
+                    ?>
                     
                     <!-- Wattage & Quantities -->
-                    <div class="form-section">
+                    <div class="form-section" style="display:none">
                         <h2>Module Configuration</h2>
                         <div class="wattage-container">
                             <button type="button" class="add-wattage-btn" onclick="addWattageEntry()">+ Add Wattage</button>
@@ -605,7 +627,7 @@ $conn->close();
                     </div>
                     
                     <!-- Logistics Specifications -->
-                    <div class="form-section">
+                    <div class="form-section" style="display:none">
                         <h2>Logistics Specifications</h2>
                         <div class="form-grid">
                             <div class="form-group">
