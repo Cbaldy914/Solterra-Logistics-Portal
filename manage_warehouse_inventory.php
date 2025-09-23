@@ -946,37 +946,15 @@ $conn->close();
 </head>
 <body>
 <?php include 'header.php'; ?>
+<?php require_once 'components/breadcrumbs.php'; ?>
 <main>
-    <!-- Add breadcrumb navigation -->
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <?php 
-        $from_project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
-        if ($from_project_id > 0): 
-            // Coming from project overview - show project breadcrumb
-            $project_name = 'Project';
-            $conn_breadcrumb = getDBConnection();
-            if ($conn_breadcrumb) {
-                $stmt_breadcrumb = $conn_breadcrumb->prepare("SELECT project_name FROM projects WHERE id = ?");
-                if ($stmt_breadcrumb) {
-                    $stmt_breadcrumb->bind_param("i", $from_project_id);
-                    $stmt_breadcrumb->execute();
-                    $stmt_breadcrumb->bind_result($project_name);
-                    $stmt_breadcrumb->fetch();
-                    $stmt_breadcrumb->close();
-                }
-                $conn_breadcrumb->close();
-            }
-        ?>
-            <a href="project_overview.php?project_id=<?php echo $from_project_id; ?>" style="color: #488C9A; text-decoration: none;"><?php echo htmlspecialchars($project_name); ?></a>
-            <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <?php else: ?>
-            <a href="manage_warehouses.php" style="color: #488C9A; text-decoration: none;">Manage Warehouses</a>
-            <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <?php endif; ?>
-        <span>Warehouse Inventory</span>
-    </div>
+    <?php
+    require_once 'components/breadcrumbs.php';
+    $extra = [];
+    $from_project_id = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
+    if ($from_project_id <= 0) { $extra[] = ['label'=>'Manage Warehouses','url'=>'manage_warehouses.php']; }
+    echo slp_render_breadcrumbs(['current_label' => 'Warehouse Inventory', 'extra' => $extra]);
+    ?>
     
     <?php if (!empty($successMessage)): ?>
         <div class="success-message"><?php echo $successMessage; ?></div>
