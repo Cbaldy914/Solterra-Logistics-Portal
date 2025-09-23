@@ -399,17 +399,17 @@ $conn->close();
             font-weight: 300;
         }
 
-        /* Header Section */
-        .form-header {
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-            border-radius: 24px;
-            padding: 32px;
-            margin-bottom: 40px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
-            border: 1px solid rgba(72, 140, 154, 0.08);
-            position: relative;
-            overflow: hidden;
-        }
+         /* Header Section */
+         .form-header {
+             background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+             border-radius: 24px;
+             padding: 32px;
+             margin-bottom: 20px;
+             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+             border: 1px solid rgba(72, 140, 154, 0.08);
+             position: relative;
+             overflow: hidden;
+         }
 
         .form-header::before {
             content: '';

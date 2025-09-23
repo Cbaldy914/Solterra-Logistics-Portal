@@ -270,23 +270,195 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        .breadcrumb { display:flex; align-items:center; margin-bottom:30px; margin-top:10px; font-size:0.95em; color:#6c757d; }
-        .breadcrumb a { color:#488C9A; text-decoration:none; transition:color .3s ease; font-weight:500; }
-        .breadcrumb a:hover { color:#293E4C; }
-        .breadcrumb .separator { margin:0 12px; color:#d1d5db; font-weight:300; }
-        .form-header { background:linear-gradient(135deg,#f8f9fa 0%,#ffffff 100%); border-radius:24px; padding:32px; margin-bottom:40px; box-shadow:0 8px 32px rgba(0,0,0,.06); border:1px solid rgba(72,140,154,.08); position:relative; overflow:hidden; }
-        .form-header::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background:linear-gradient(90deg,#488C9A 0%,#293E4C 100%); }
-        .header-content { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:24px; }
-        .header-info h1 { margin:0; font-size:2.2em; color:#293E4C; }
-        .header-subtitle { margin:4px 0 0; color:#6c757d; font-size:1.05em; }
-        .form-container { max-width:1200px; margin:20px auto; }
-        .form-content { background:#fff; border-radius:16px; box-shadow:0 6px 20px rgba(0,0,0,.06); padding:32px; }
-        .form-section { padding:0; border:none; background:transparent; }
-        .error-message { background:#f8d7da; color:#721c24; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #f5c6cb; }
-        .button-group { display:flex; justify-content:space-between; margin-top:20px; gap:16px; }
-        .btn-cancel { background:#6c757d; color:white; padding:12px 30px; border:none; border-radius:8px; text-decoration:none; font-weight:600; }
-        .btn-submit { background:#488C9A; color:white; padding:12px 30px; border:none; border-radius:8px; font-weight:600; }
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            margin-bottom: 30px;
+            margin-top: 10px;
+            font-size: 0.95em;
+            color: #6c757d;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+            transition: color 0.3s ease;
+            font-weight: 500;
+        }
+        .breadcrumb a:hover {
+            color: #293E4C;
+        }
+        .breadcrumb .separator {
+            margin: 0 12px;
+            color: #d1d5db;
+            font-weight: 300;
+        }
+
+        /* Header Section */
+        .form-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .form-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+        
+        .form-container {
+            margin: 20px 0;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .form-content {
+            padding: 40px;
+        }
+        
+        .form-section {
+            margin-bottom: 40px;
+            padding: 30px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border-left: 4px solid #488C9A;
+        }
+        
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .button-group {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 40px;
+            gap: 20px;
+        }
+        
+        .btn-cancel {
+            background: #6c757d;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-cancel:hover {
+            background: #5a6268;
+            transform: translateY(-1px);
+        }
+        
+        .btn-submit {
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            color: white;
+            border: none;
+            padding: 16px 48px;
+            border-radius: 50px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 16px rgba(40, 62, 76, 0.2);
+        }
+        
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(40, 62, 76, 0.3);
+        }
+
+        @media (max-width: 768px) {
+            .form-container {
+                margin: 10px 0;
+            }
+            
+            .form-content {
+                padding: 20px;
+            }
+            
+            .form-section {
+                padding: 20px;
+            }
+            
+            .button-group {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .form-header {
+                padding: 20px;
+                margin-bottom: 20px;
+            }
+            
+            .header-content {
+                gap: 16px;
+            }
+            
+            .header-left {
+                gap: 16px;
+            }
+            
+            .header-info h1 {
+                font-size: 2em;
+            }
+            
+            .header-subtitle {
+                font-size: 1em;
+            }
+        }
     </style>
 </head>
 <body>
@@ -305,17 +477,20 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
         <span>Edit Module Batch</span>
     </div>
 
+    <!-- Beautiful Header Section -->
     <div class="form-header">
         <div class="header-content">
-            <div class="header-info">
-                <h1>Edit Module Batch</h1>
-                <p class="header-subtitle">
-                    <?php if ($project_id): ?>
-                        Editing modules for <?php echo htmlspecialchars($module['project_name']); ?>
-                    <?php else: ?>
-                        Edit an unassigned module batch
-                    <?php endif; ?>
-                </p>
+            <div class="header-left">
+                <div class="header-info">
+                    <h1>Edit Module Batch</h1>
+                    <p class="header-subtitle">
+                        <?php if ($project_id): ?>
+                            Editing modules for <?php echo htmlspecialchars($module['project_name']); ?>
+                        <?php else: ?>
+                            Edit an unassigned module batch
+                        <?php endif; ?>
+                    </p>
+                </div>
             </div>
         </div>
     </div>
@@ -331,11 +506,9 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
             <form method="POST" id="editBatchForm">
                 <?php include __DIR__ . '/components/module_batch_section.php'; ?>
 
-                <div class="form-section" style="margin-top:20px;">
-                    <div class="button-group">
-                        <a href="<?php echo $project_id ? ('project_overview.php?project_id='.(int)$project_id) : 'modules.php'; ?>" class="btn-cancel">Cancel</a>
-                        <button type="submit" class="btn-submit">Save</button>
-                    </div>
+                <div class="button-group">
+                    <a href="<?php echo $project_id ? ('project_overview.php?project_id='.(int)$project_id) : 'modules.php'; ?>" class="btn-cancel">Cancel</a>
+                    <button type="submit" class="btn-submit">Save Module Batch</button>
                 </div>
             </form>
         </div>

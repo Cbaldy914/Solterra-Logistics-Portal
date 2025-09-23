@@ -1333,8 +1333,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
 
                     <div class="input-group">
-                        <label for="estimated_completion_date">Estimated Completion Date</label>
-                        <input type="date" id="estimated_completion_date" name="estimated_completion_date">
+                        <label for="estimated_completion_date">Estimated Completion Date *</label>
+                        <input type="date" id="estimated_completion_date" name="estimated_completion_date" required>
                     </div>
 
                     <div class="input-group">
