@@ -574,7 +574,7 @@ try {
         $placeholders_batches = implode(',', array_fill(0, count($batch_ids), '?'));
         $types_batches = str_repeat('i', count($batch_ids));
         
-        $stmtItems = $conn->prepare("SELECT id, unassigned_module_id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id IN ($placeholders_batches) ORDER BY wattage ASC");
+        $stmtItems = $conn->prepare("SELECT id, unassigned_module_id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id IN ($placeholders_batches) AND wattage > 0 AND quantity > 0 ORDER BY wattage ASC");
         if (!$stmtItems) throw new Exception("Prepare items fetch failed: " . $conn->error);
         $stmtItems->bind_param($types_batches, ...$batch_ids);
         $stmtItems->execute();
@@ -1701,8 +1701,32 @@ $conn->close();
         <!-- Pallets table removed in favor of consolidated View Pallets page -->
 
     <?php else: ?>
-         <p>Batch data could not be loaded.</p>
-         <a href="modules">Back to Modules List</a>
+        <?php if (in_array($role, ['admin', 'global_admin'])): ?>
+            <div style="text-align: center; padding: 60px 20px; background: #f8f9fa; border-radius: 12px; margin: 20px 0;">
+                <div style="font-size: 3em; margin-bottom: 20px; color: #6c757d;">📦</div>
+                <h2 style="color: #293E4C; margin-bottom: 16px;">No Modules Found</h2>
+                <p style="color: #6c757d; margin-bottom: 32px; font-size: 1.1em;">
+                    This project doesn't have any modules assigned yet. Would you like to add some?
+                </p>
+                <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" 
+                   style="background: #488C9A; color: white; padding: 16px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 1.1em; transition: all 0.3s ease; display: inline-block;">
+                    ➕ Add Module Batch
+                </a>
+            </div>
+        <?php else: ?>
+            <div style="text-align: center; padding: 60px 20px; background: #f8f9fa; border-radius: 12px; margin: 20px 0;">
+                <div style="font-size: 3em; margin-bottom: 20px; color: #6c757d;">📦</div>
+                <h2 style="color: #293E4C; margin-bottom: 16px;">No Modules Assigned</h2>
+                <p style="color: #6c757d; font-size: 1.1em;">
+                    There are no modules assigned to this project currently.
+                </p>
+                <div style="margin-top: 24px;">
+                    <a href="modules" style="color: #488C9A; text-decoration: none; font-weight: 500;">
+                        ← Back to Modules List
+                    </a>
+                </div>
+            </div>
+        <?php endif; ?>
     <?php endif; ?>
 </main>
 
