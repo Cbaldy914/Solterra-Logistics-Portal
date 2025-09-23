@@ -28,10 +28,6 @@
 </style>
 
 <div class="module-section">
-    <div class="module-intro">
-        <h3>Initial Module Batch</h3>
-        <p>Select manufacturer/location, add wattage items, and logistics specs.</p>
-    </div>
 
     <div class="form-grid">
         <div class="form-section">
@@ -115,7 +111,7 @@ function mb_addWattageField(wattage = '', quantity = '') {
     const wLabel = document.createElement('label');
     wLabel.textContent = 'Wattage (W)';
     const wInput = document.createElement('input');
-    wInput.type = 'number'; wInput.step = '1'; wInput.name = 'wattages['+index+']'; wInput.required = true; wInput.placeholder = 'e.g. 555';
+    wInput.type = 'number'; wInput.step = '1'; wInput.name = 'wattages[]'; wInput.required = true; wInput.placeholder = 'e.g. 555';
     if (wattage !== '') wInput.value = wattage;
     wGroup.appendChild(wLabel); wGroup.appendChild(wInput);
 
@@ -124,7 +120,7 @@ function mb_addWattageField(wattage = '', quantity = '') {
     const qLabel = document.createElement('label');
     qLabel.textContent = 'Quantity';
     const qInput = document.createElement('input');
-    qInput.type = 'number'; qInput.step = '1'; qInput.name = 'quantities['+index+']'; qInput.required = true; qInput.placeholder = 'e.g. 1000';
+    qInput.type = 'number'; qInput.step = '1'; qInput.name = 'quantities[]'; qInput.required = true; qInput.placeholder = 'e.g. 1000';
     if (quantity !== '') qInput.value = quantity;
     qGroup.appendChild(qLabel); qGroup.appendChild(qInput);
 

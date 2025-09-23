@@ -9,6 +9,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 }
 
 require_once '../config.php';
+require_once 'document_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
@@ -169,10 +170,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Wattage and quantity arrays must match';
         } else {
             for ($i = 0; $i < count($wattages); $i++) {
-                $wattage = filter_var(trim($wattages[$i]), FILTER_VALIDATE_INT);
-                $quantity = filter_var(trim($quantities[$i]), FILTER_VALIDATE_INT);
+                $wattage_str = trim($wattages[$i]);
+                $quantity_str = trim($quantities[$i]);
                 
-                if ($wattage === false || $quantity === false || $wattage <= 0 || $quantity <= 0) {
+                // Skip empty entries
+                if (empty($wattage_str) && empty($quantity_str)) {
+                    continue;
+                }
+                
+                // Check if values are numeric and positive
+                if (!is_numeric($wattage_str) || !is_numeric($quantity_str)) {
+                    $errors[] = 'All wattages and quantities must be positive integers';
+                    break;
+                }
+                
+                $wattage = intval($wattage_str);
+                $quantity = intval($quantity_str);
+                
+                if ($wattage <= 0 || $quantity <= 0) {
                     $errors[] = 'All wattages and quantities must be positive integers';
                     break;
                 }
@@ -207,7 +222,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Please select a valid account (or project).');
             }
 
-            $stmtInsert->bind_param("issiiiiiiiissiiis", 
+            $stmtInsert->bind_param("issiiiiiiiissiiiis", 
                 $insert_account_id, $vendor_name, $initial_location, $project_id, $modules_per_pallet,
                 $pallets_per_truck, $modules_per_truck, $pallet_length_mm, $pallet_depth_mm,
                 $pallet_double_stacked_height_mm, $pallet_total_weight_kg, $stacking_in_warehouse,
@@ -231,6 +246,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             for ($i = 0; $i < count($wattages); $i++) {
                 $wattage = intval(trim($wattages[$i]));
                 $quantity = intval(trim($quantities[$i]));
+                // Skip empty or zero entries defensively
+                if ($wattage <= 0 || $quantity <= 0) { continue; }
                 
                 $stmtWattages->bind_param("iii", $module_id, $wattage, $quantity);
                 if (!$stmtWattages->execute()) {
@@ -239,27 +256,103 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $stmtWattages->close();
             
-            // Update project_wattage_orders for project size calculation
-            $stmtOrders = $conn->prepare("
-                INSERT INTO project_wattage_orders (project_id, wattage, total_order) 
-                VALUES (?, ?, ?) 
-                ON DUPLICATE KEY UPDATE total_order = total_order + VALUES(total_order)
-            ");
-            
-            for ($i = 0; $i < count($wattages); $i++) {
-                $wattage = intval(trim($wattages[$i]));
-                $quantity = intval(trim($quantities[$i]));
+            // Update project_wattage_orders for project size calculation (only if assigned to a project)
+            if ($project_id > 0) {
+                $stmtOrders = $conn->prepare("
+                    INSERT INTO project_wattage_orders (project_id, wattage, total_order) 
+                    VALUES (?, ?, ?) 
+                    ON DUPLICATE KEY UPDATE total_order = total_order + VALUES(total_order)
+                ");
                 
-                $stmtOrders->bind_param("iii", $project_id, $wattage, $quantity);
-                if (!$stmtOrders->execute()) {
-                    throw new Exception("Error updating project wattage orders: " . $stmtOrders->error);
+                for ($i = 0; $i < count($wattages); $i++) {
+                    $wattage = intval(trim($wattages[$i]));
+                    $quantity = intval(trim($quantities[$i]));
+                    // Skip empty or zero entries defensively
+                    if ($wattage <= 0 || $quantity <= 0) { continue; }
+                    
+                    $stmtOrders->bind_param("iii", $project_id, $wattage, $quantity);
+                    if (!$stmtOrders->execute()) {
+                        throw new Exception("Error updating project wattage orders: " . $stmtOrders->error);
+                    }
+                }
+                $stmtOrders->close();
+                // Clean up zero or negative entries for this project, if any existed
+                $stmtCleanup = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ? AND total_order <= 0");
+                if ($stmtCleanup) {
+                    $stmtCleanup->bind_param("i", $project_id);
+                    $stmtCleanup->execute();
+                    $stmtCleanup->close();
                 }
             }
-            $stmtOrders->close();
-            
+
+            // If documentation files are provided and a project is selected, save them to project_documents
+            $hasDocs = isset($_FILES['module_docs']) && (
+                (is_array($_FILES['module_docs']['error']) && count(array_filter($_FILES['module_docs']['error'], fn($e)=>$e!==UPLOAD_ERR_NO_FILE))>0) ||
+                (!is_array($_FILES['module_docs']['error']) && $_FILES['module_docs']['error'] !== UPLOAD_ERR_NO_FILE)
+            );
+            if ($hasDocs) {
+                $module_docs_sub_type = trim($_POST['module_docs_sub_type'] ?? '');
+                $module_docs_description = trim($_POST['module_docs_description'] ?? '');
+                $names = (array)$_FILES['module_docs']['name'];
+                $tmps  = (array)$_FILES['module_docs']['tmp_name'];
+                $errs  = (array)$_FILES['module_docs']['error'];
+                $sizes = (array)$_FILES['module_docs']['size'];
+                $firstSaved = '';
+                foreach ($names as $i => $orig) {
+                    if (!isset($errs[$i]) || $errs[$i] === UPLOAD_ERR_NO_FILE) continue;
+                    if ($errs[$i] !== UPLOAD_ERR_OK) {
+                        throw new Exception('Module document upload error for file: ' . $orig);
+                    }
+                    $tmpName = $tmps[$i];
+                    $mime    = mime_content_type($tmpName);
+                    $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
+                    $allowed_ext = ['pdf','doc','docx','xls','xlsx','jpg','jpeg','png','gif','txt','csv'];
+                    if (!in_array($ext, $allowed_ext)) {
+                        throw new Exception('Invalid documentation file type: ' . $ext);
+                    }
+                    if ($project_id > 0) {
+                        if ($module_docs_sub_type === '') {
+                            throw new Exception('Please choose a Module Documentation Sub-Type when uploading files.');
+                        }
+                        $doc = [
+                            'project_id' => $project_id,
+                            'document_type' => 'modules',
+                            'document_sub_type' => $module_docs_sub_type,
+                            'original_name' => $orig,
+                            'file_size' => $sizes[$i],
+                            'mime_type' => $mime,
+                            'uploaded_by' => $user_id,
+                            'tmp_name' => $tmpName,
+                            'description' => ($module_docs_description !== '' ? $module_docs_description : 'Module Documentation')
+                        ];
+                        saveDocumentToProjectDocuments($conn, $doc);
+                    } else {
+                        // Save under batch folder and link first file to modules.module_docs_url
+                        $baseDir = 'uploads/module_batches/' . $module_id . '/';
+                        if (!is_dir($baseDir)) { @mkdir($baseDir, 0755, true); }
+                        $safeName = preg_replace('/[^A-Za-z0-9._-]/', '_', pathinfo($orig, PATHINFO_FILENAME));
+                        $server = time() . '_' . bin2hex(random_bytes(3)) . '_' . $safeName . '.' . $ext;
+                        $dest = $baseDir . $server;
+                        if (!move_uploaded_file($tmpName, $dest)) {
+                            throw new Exception('Failed to store documentation file: ' . $orig);
+                        }
+                        if ($firstSaved === '') { $firstSaved = $dest; }
+                    }
+                }
+                if ($project_id <= 0 && $firstSaved !== '') {
+                    $stmtUpd = $conn->prepare("UPDATE modules SET module_docs_url = ? WHERE id = ?");
+                    if ($stmtUpd) {
+                        $stmtUpd->bind_param("si", $firstSaved, $module_id);
+                        $stmtUpd->execute();
+                        $stmtUpd->close();
+                    }
+                }
+            }
+
             $conn->commit();
-            
-            header("Location: project_overview.php?project_id={$project_id}&success=batch_added");
+
+            $redirect = $project_id ? ("project_overview.php?project_id={$project_id}&success=batch_added") : 'modules.php';
+            header("Location: $redirect");
             exit();
             
         } catch (Exception $e) {
@@ -277,49 +370,108 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Module Batch - <?php echo htmlspecialchars($project['project_name']); ?></title>
+    <title>Add Module Batch<?php echo $project ? (' - ' . htmlspecialchars($project['project_name'])) : ''; ?></title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
         .breadcrumb {
             display: flex;
-            margin-bottom: 20px;
+            align-items: center;
+            margin-bottom: 30px;
+            margin-top: 10px;
+            font-size: 0.95em;
+            color: #6c757d;
         }
         .breadcrumb a {
             color: #488C9A;
             text-decoration: none;
+            transition: color 0.3s ease;
+            font-weight: 500;
+        }
+        .breadcrumb a:hover {
+            color: #293E4C;
         }
         .breadcrumb .separator {
-            margin: 0 8px;
+            margin: 0 12px;
+            color: #d1d5db;
+            font-weight: 300;
+        }
+
+        /* Header Section */
+        .form-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .form-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 32px;
+            box-shadow: 0 12px 24px rgba(72, 140, 154, 0.3);
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
             color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
         }
         
         .form-container {
-            max-width: 1200px;
-            margin: 20px auto;
+            margin: 20px 0;
             background: white;
             border-radius: 12px;
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
             overflow: hidden;
-        }
-        
-        .form-header {
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
-        
-        .form-header h1 {
-            margin: 0;
-            font-size: 2em;
-            font-weight: 600;
-        }
-        
-        .form-header p {
-            margin: 10px 0 0 0;
-            opacity: 0.9;
         }
         
         .form-content {
@@ -421,42 +573,47 @@ $conn->close();
             background: #c82333;
         }
         
-        .button-group {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 40px;
-            gap: 20px;
-        }
-        
-        .btn-cancel {
-            background: #6c757d;
-            color: white;
-            padding: 12px 30px;
-            border: none;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
-            transition: background 0.3s ease;
-        }
-        
-        .btn-cancel:hover {
-            background: #5a6268;
-        }
-        
-        .btn-submit {
-            background: #488C9A;
-            color: white;
-            padding: 12px 30px;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.3s ease;
-        }
-        
-        .btn-submit:hover {
-            background: #3A6E7F;
-        }
+         .button-group {
+             display: flex;
+             justify-content: center;
+             align-items: center;
+             margin-top: 40px;
+             gap: 20px;
+         }
+         
+         .btn-cancel {
+             background: #6c757d;
+             color: white;
+             padding: 12px 30px;
+             border: none;
+             border-radius: 8px;
+             text-decoration: none;
+             font-weight: 600;
+             transition: all 0.3s ease;
+         }
+         
+         .btn-cancel:hover {
+             background: #5a6268;
+             transform: translateY(-1px);
+         }
+         
+         .btn-submit {
+             background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+             color: white;
+             border: none;
+             padding: 16px 48px;
+             border-radius: 50px;
+             font-size: 1.1em;
+             font-weight: 600;
+             cursor: pointer;
+             transition: all 0.3s ease;
+             box-shadow: 0 4px 16px rgba(40, 62, 76, 0.2);
+         }
+         
+         .btn-submit:hover {
+             transform: translateY(-2px);
+             box-shadow: 0 8px 24px rgba(40, 62, 76, 0.3);
+         }
         
         .error-message {
             background: #f8d7da;
@@ -469,7 +626,7 @@ $conn->close();
         
         @media (max-width: 768px) {
             .form-container {
-                margin: 10px;
+                margin: 10px 0;
             }
             
             .form-content {
@@ -489,8 +646,36 @@ $conn->close();
                 gap: 10px;
             }
             
-            .button-group {
-                flex-direction: column;
+             .button-group {
+                 flex-direction: column;
+                 align-items: center;
+             }
+            
+            .form-header {
+                padding: 20px;
+                margin-bottom: 20px;
+            }
+            
+            .header-content {
+                gap: 16px;
+            }
+            
+            .header-left {
+                gap: 16px;
+            }
+            
+            .header-icon {
+                width: 60px;
+                height: 60px;
+                font-size: 24px;
+            }
+            
+            .header-info h1 {
+                font-size: 2em;
+            }
+            
+            .header-subtitle {
+                font-size: 1em;
             }
         }
     </style>
@@ -502,22 +687,36 @@ $conn->close();
         <div class="breadcrumb" style="margin: 10px 20px;">
             <a href="dashboard.php">Dashboard</a>
             <span class="separator">»</span>
-            <a href="project_overview.php?project_id=<?php echo $project_id; ?>"><?php echo htmlspecialchars($project['project_name']); ?></a>
-            <span class="separator">»</span>
-            <span>Add Module Batch</span>
+            <?php if ($project): ?>
+                <a href="project_overview.php?project_id=<?php echo (int)$project_id; ?>"><?php echo htmlspecialchars($project['project_name']); ?></a>
+                <span class="separator">»</span>
+                <span>Add Module Batch</span>
+            <?php else: ?>
+                <a href="modules.php">Modules</a>
+                <span class="separator">»</span>
+                <span>Add Module Batch</span>
+            <?php endif; ?>
+        </div>
+        
+        <!-- Beautiful Header Section -->
+        <div class="form-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="header-info">
+                        <h1>Add Module Batch</h1>
+                        <p class="header-subtitle">
+                            <?php if ($project): ?>
+                                Adding modules to <?php echo htmlspecialchars($project['project_name']); ?>
+                            <?php else: ?>
+                                Create a new module batch for assignment
+                            <?php endif; ?>
+                        </p>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <div class="form-container">
-            <div class="form-header">
-                <h1>Add New Module Batch</h1>
-                <p>
-                    <?php if ($project): ?>
-                        <?php echo htmlspecialchars($project['project_name']); ?>
-                    <?php else: ?>
-                        Unassigned or Select Project
-                    <?php endif; ?>
-                </p>
-            </div>
             
             <div class="form-content">
                 <?php if (!empty($errors)): ?>
@@ -530,7 +729,7 @@ $conn->close();
                     </div>
                 <?php endif; ?>
                 
-                <form method="POST" id="addBatchForm">
+                <form method="POST" id="addBatchForm" enctype="multipart/form-data">
                     <?php if (!$project): ?>
                         <div class="form-section">
                             <h2>Assignment</h2>
@@ -558,7 +757,20 @@ $conn->close();
                             </div>
                         </div>
                     <?php endif; ?>
+
                     <?php $prefManufacturerId = null; $prefLocationId = null; $existingWattages = []; include __DIR__ . '/components/module_batch_section.php'; ?>
+                    
+                     <!-- Module Documentation Section -->
+                     <div class="form-section">
+                         <h2>Module Documentation</h2>
+                         <div class="form-group">
+                             <label>Module Documentation <span style="color:#999; font-weight:400; font-size:0.85rem;">(optional)</span></label>
+                             <button type="button" class="add-wattage-btn" onclick="openPreModuleUploadModal()" style="background: #488C9A; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 1em;">
+                                 <i class="fas fa-upload" style="margin-right: 8px;"></i>Attach Module Documentation
+                             </button>
+                             <div id="preModuleDocsSummary" style="margin-top: 12px; color: #666; font-size: 0.9em; display: none;"></div>
+                         </div>
+                     </div>
                     <!-- Basic Information -->
                     <div class="form-section" style="display:none">
                         <h2>Basic Information</h2>
@@ -583,11 +795,11 @@ $conn->close();
                                 <div class="wattage-entry">
                                     <div class="form-group">
                                         <label>Wattage (W)</label>
-                                        <input type="number" name="wattages[]" min="1" required>
+                                        <input type="number" name="wattages[]" min="1">
                                     </div>
                                     <div class="form-group">
                                         <label>Quantity</label>
-                                        <input type="number" name="quantities[]" min="1" required>
+                                        <input type="number" name="quantities[]" min="1">
                                     </div>
                                     <button type="button" class="remove-wattage-btn" onclick="removeWattageEntry(this)">Remove</button>
                                 </div>
@@ -661,10 +873,52 @@ $conn->close();
                     </div>
                     
                     <div class="button-group">
-                        <a href="project_overview.php?project_id=<?php echo $project_id; ?>" class="btn-cancel">Cancel</a>
+                        <a href="<?php echo $project ? ('project_overview.php?project_id='.(int)$project_id) : 'modules.php'; ?>" class="btn-cancel">Cancel</a>
                         <button type="submit" class="btn-submit">Create Module Batch</button>
                     </div>
                 </form>
+            </div>
+        </div>
+        
+        <!-- Module Documentation Upload Modal -->
+        <div id="moduleUploadModal" class="upload-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+            <div class="modal-content" style="background: white; border-radius: 12px; padding: 0; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;">
+                <div class="modal-header" style="padding: 24px; border-bottom: 1px solid #e9ecef; display: flex; justify-content: space-between; align-items: center;">
+                    <h2 class="modal-title" style="margin: 0; color: #293E4C; font-size: 1.5em;">
+                        <i class="fas fa-file-alt" style="margin-right: 8px; color: #488C9A;"></i>
+                        Upload Module Documentation
+                    </h2>
+                    <button type="button" class="close-modal" onclick="closeModuleUploadModal()" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #6c757d;">&times;</button>
+                </div>
+                 <div class="modal-body" style="padding: 24px;">
+                     <div class="input-group" style="margin-bottom: 20px;">
+                         <label for="module_docs_sub_type" style="display: block; font-weight: 600; margin-bottom: 8px;">Document Sub-Type <span style="color:#999; font-weight:400;">(required only if uploading)</span></label>
+                         <select id="module_docs_sub_type" name="module_docs_sub_type" style="width: 100%; padding: 12px; border: 2px solid #e9ecef; border-radius: 8px;">
+                             <option value="">Choose sub-type...</option>
+                             <option value="Module Invoice">Module Invoice</option>
+                             <option value="Flash Test Data">Flash Test Data</option>
+                             <option value="Spec Sheets">Spec Sheets</option>
+                         </select>
+                     </div>
+                     <div class="input-group" style="margin-bottom: 20px;">
+                         <label for="module_docs_description" style="display: block; font-weight: 600; margin-bottom: 8px;">Description (Optional)</label>
+                         <input type="text" id="module_docs_description" name="module_docs_description" placeholder="Short description" style="width: 100%; padding: 12px; border: 2px solid #e9ecef; border-radius: 8px; box-sizing: border-box;">
+                     </div>
+                     <div class="input-group" style="margin-bottom: 20px;">
+                         <label style="display: block; font-weight: 600; margin-bottom: 8px;">Select File(s)</label>
+                         <div class="file-upload-area" onclick="document.getElementById('module_docs').click()" style="border: 2px dashed #488C9A; border-radius: 12px; padding: 40px; text-align: center; cursor: pointer; background: #f8f9fa; transition: all 0.3s ease;">
+                             <i class="fas fa-cloud-upload-alt upload-icon" style="font-size: 48px; color: #488C9A; margin-bottom: 16px;"></i>
+                             <div class="upload-text" style="font-size: 1.1em; font-weight: 600; color: #293E4C; margin-bottom: 8px;">Drop files here or click to browse</div>
+                             <div class="upload-subtext" style="color: #6c757d; font-size: 0.9em;">Supports: PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, TXT, CSV (Max: 50MB each)</div>
+                         </div>
+                         <input type="file" id="module_docs" name="module_docs[]" multiple style="display:none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv">
+                         <div id="moduleDocFileList" class="file-list" style="margin-top: 16px;"></div>
+                     </div>
+                     <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                         <button type="button" onclick="closePreModuleUploadModal()" style="background: #6c757d; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer;">Cancel</button>
+                         <button type="button" onclick="confirmPreModuleDocs()" style="background: #488C9A; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600;">Done</button>
+                     </div>
+                 </div>
             </div>
         </div>
     </main>
@@ -677,11 +931,11 @@ $conn->close();
             newEntry.innerHTML = `
                 <div class="form-group">
                     <label>Wattage (W)</label>
-                    <input type="number" name="wattages[]" min="1" required>
+                    <input type="number" name="wattages[]" min="1">
                 </div>
                 <div class="form-group">
                     <label>Quantity</label>
-                    <input type="number" name="quantities[]" min="1" required>
+                    <input type="number" name="quantities[]" min="1">
                 </div>
                 <button type="button" class="remove-wattage-btn" onclick="removeWattageEntry(this)">Remove</button>
             `;
@@ -696,6 +950,168 @@ $conn->close();
                 alert('At least one wattage entry is required.');
             }
         }
+
+        // Module Documentation Upload Modal controls
+        function openModuleUploadModal() {
+            const modal = document.getElementById('moduleUploadModal');
+            if (modal) {
+                modal.style.display = 'flex';
+                document.body.style.overflow = 'hidden';
+            }
+        }
+
+        function closeModuleUploadModal() {
+            const modal = document.getElementById('moduleUploadModal');
+            if (modal) {
+                modal.style.display = 'none';
+                document.body.style.overflow = '';
+                // Reset form
+                document.getElementById('moduleDocSubType').value = '';
+                document.getElementById('moduleDocDescription').value = '';
+                document.getElementById('moduleDocFiles').value = '';
+                document.getElementById('moduleDocFileList').innerHTML = '';
+                document.getElementById('moduleDocProgress').style.display = 'none';
+            }
+        }
+
+        async function uploadModuleDocuments() {
+            const filesInput = document.getElementById('moduleDocFiles');
+            const subTypeEl = document.getElementById('moduleDocSubType');
+            const descEl = document.getElementById('moduleDocDescription');
+            const progress = document.getElementById('moduleDocProgress');
+            const fill = document.getElementById('moduleDocProgressFill');
+            const text = document.getElementById('moduleDocProgressText');
+            const files = filesInput ? filesInput.files : null;
+            const subType = subTypeEl ? (subTypeEl.value || '').trim() : '';
+            const description = descEl ? (descEl.value || '').trim() : '';
+            const projectId = <?php echo $project_id ? (int)$project_id : 0; ?>;
+
+            if (!projectId) { 
+                alert('Project not found. Please save the module batch first or select a project.'); 
+                return; 
+            }
+            if (!files || files.length === 0) { 
+                alert('Please select at least one file.'); 
+                return; 
+            }
+            if (!subType) { 
+                alert('Please select a document sub-type.'); 
+                return; 
+            }
+
+            progress.style.display = 'block';
+            fill.style.width = '0%';
+            text.textContent = 'Uploading...';
+
+            try {
+                for (let i = 0; i < files.length; i++) {
+                    const fd = new FormData();
+                    fd.append('document', files[i]);
+                    fd.append('project_id', projectId);
+                    fd.append('document_type', 'modules');
+                    fd.append('document_sub_type', subType);
+                    if (description) fd.append('description', description);
+
+                    await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+                        xhr.upload.onprogress = function(e){
+                            if (e.lengthComputable) {
+                                const pct = ((i + e.loaded / e.total) / files.length) * 100;
+                                fill.style.width = pct + '%';
+                                text.textContent = 'Uploading ' + (i+1) + '/' + files.length + '...';
+                            }
+                        };
+                        xhr.onload = function(){
+                            if (xhr.status === 200) {
+                                const resp = JSON.parse(xhr.responseText || '{}');
+                                if (resp.success) resolve(); 
+                                else reject(new Error(resp.message || 'Upload failed'));
+                            } else {
+                                reject(new Error('Upload failed'));
+                            }
+                        };
+                        xhr.onerror = () => reject(new Error('Network error'));
+                        xhr.open('POST', 'upload_project_document.php');
+                        xhr.send(fd);
+                    });
+                }
+                text.textContent = 'Upload complete';
+                setTimeout(() => { 
+                    closeModuleUploadModal(); 
+                    updateModuleDocumentsList();
+                }, 600);
+                alert('Module documentation uploaded successfully.');
+            } catch (err) {
+                alert('Upload failed: ' + err.message);
+                progress.style.display = 'none';
+            }
+        }
+
+        function updateModuleDocumentsList() {
+            // This would typically fetch and display uploaded documents
+            // For now, just show a simple confirmation
+            const list = document.getElementById('moduleDocumentsList');
+            if (list) {
+                list.innerHTML = '<div style="color: #28a745; font-size: 0.9em; margin-top: 8px;"><i class="fas fa-check-circle"></i> Documents uploaded successfully</div>';
+            }
+        }
+
+         // Pre-creation Module Documentation Modal controls
+         function openPreModuleUploadModal(){
+             const m = document.getElementById('moduleUploadModal');
+             if (m) { m.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+         }
+         
+         function closePreModuleUploadModal(){
+             const m = document.getElementById('moduleUploadModal');
+             if (m) { m.style.display = 'none'; document.body.style.overflow = ''; }
+         }
+         
+         function confirmPreModuleDocs(){
+             const select = document.getElementById('module_docs_sub_type');
+             const files = document.getElementById('module_docs');
+             if (!select || !files) { closePreModuleUploadModal(); return; }
+             if (files.files && files.files.length > 0 && !select.value) {
+                 alert('Please choose a Module Documentation Sub-Type.');
+                 return;
+             }
+             const summary = document.getElementById('preModuleDocsSummary');
+             if (summary) {
+                 const n = files.files ? files.files.length : 0;
+                 if (n > 0) {
+                     summary.style.display = '';
+                     summary.textContent = n + ' file' + (n>1?'s':'') + ' attached (' + select.value + ')';
+                 } else {
+                     summary.style.display = 'none'; 
+                     summary.textContent = '';
+                 }
+             }
+             closePreModuleUploadModal();
+         }
+
+         // File selection display
+         document.addEventListener('DOMContentLoaded', function() {
+             const fileInput = document.getElementById('module_docs');
+             const fileList = document.getElementById('moduleDocFileList');
+             
+             if (fileInput && fileList) {
+                 fileInput.addEventListener('change', function() {
+                     fileList.innerHTML = '';
+                     if (this.files.length > 0) {
+                         for (let i = 0; i < this.files.length; i++) {
+                             const file = this.files[i];
+                             const fileItem = document.createElement('div');
+                             fileItem.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #f8f9fa; border-radius: 6px; margin-bottom: 8px; border: 1px solid #e9ecef;';
+                             fileItem.innerHTML = `
+                                 <span style="font-size: 0.9em; color: #293E4C;">${file.name}</span>
+                                 <span style="font-size: 0.8em; color: #6c757d;">${(file.size / 1024 / 1024).toFixed(2)} MB</span>
+                             `;
+                             fileList.appendChild(fileItem);
+                         }
+                     }
+                 });
+             }
+         });
     </script>
 </body>
 </html> 
