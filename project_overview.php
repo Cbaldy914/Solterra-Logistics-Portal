@@ -1176,7 +1176,7 @@ while ($module = $modules_result->fetch_assoc()) {
     $stmt_wattages = $conn->prepare("
         SELECT wattage, quantity 
         FROM unassigned_module_items 
-        WHERE unassigned_module_id = ? 
+        WHERE unassigned_module_id = ? AND wattage > 0 AND quantity > 0
         ORDER BY wattage ASC
     ");
     $stmt_wattages->bind_param("i", $module['id']);
@@ -4187,10 +4187,16 @@ document.addEventListener('DOMContentLoaded', function() {
                             <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
                                 <div class="module-actions-dropdown">
                                     <button class="info-action-button" onclick="toggleModuleActions()" style="margin: 0;">
-                                        Edit Module Information ▼
+                                        Add/Edit Module Info ▼
                                     </button>
                                     <div class="module-actions-content" id="moduleActionsDropdown">
                                         <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>">+ Add New Module Batch</a>
+                                        <?php if (!empty($module_batches)): ?>
+                                            <div style="border-top:1px solid #e5e7eb; margin:6px 0;"></div>
+                                            <?php foreach ($module_batches as $i => $b): ?>
+                                                <a href="edit_module_batch.php?batch_id=<?php echo (int)$b['id']; ?>&project_id=<?php echo (int)$project_id; ?>">Edit Batch <?php echo $i+1; ?>: <?php echo htmlspecialchars($b['vendor_name']); ?></a>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                             <?php endif; ?>
@@ -4218,7 +4224,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                                 <span><?php echo htmlspecialchars($batch['vendor_name']); ?></span>
                                             </div>
                                             <div class="info-item">
-                                                <label>Initial Location:</label>
+                                                <label>Location:</label>
                                                 <span><?php echo htmlspecialchars($batch['initial_location']); ?></span>
                                             </div>
                                                                                             <div class="info-item">
@@ -4325,51 +4331,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                             <?php endif; ?>
                                         </div>
                                     </div>
-                                    <?php if (in_array($role, ['admin','global_admin'])): ?>
-                                        <div style="margin-top: 12px; text-align:right;">
-                                            <button type="button" class="info-action-button" onclick="var f=document.getElementById('inline-edit-<?php echo $batch['id']; ?>'); f.style.display = (f.style.display==='none'||!f.style.display)?'block':'none';">Edit This Batch</button>
-                                        </div>
-                                        <form method="POST" id="inline-edit-<?php echo $batch['id']; ?>" style="display:none; margin-top:12px; padding:16px; border:1px solid #e5e7eb; border-radius:12px; background:#fafafa;">
-                                            <input type="hidden" name="action" value="update_module_batch" />
-                                            <input type="hidden" name="batch_id" value="<?php echo (int)$batch['id']; ?>" />
-                                            <div class="info-grid">
-                                                <div class="info-section">
-                                                    <h4>Logistics Specs</h4>
-                                                    <div class="info-item"><label>Modules per Pallet</label><input type="number" name="modules_per_pallet" id="mpp-<?php echo $batch['id']; ?>" value="<?php echo (int)($batch['modules_per_pallet'] ?? 0); ?>" /></div>
-                                                    <div class="info-item"><label>Pallets per Truck</label><input type="number" name="pallets_per_truck" id="ppt-<?php echo $batch['id']; ?>" value="<?php echo (int)($batch['pallets_per_truck'] ?? 0); ?>" /></div>
-                                                    <div class="info-item"><label>Modules per Truck</label><input type="number" name="modules_per_truck" id="mpt-<?php echo $batch['id']; ?>" value="<?php echo (int)($batch['modules_per_truck'] ?? 0); ?>" readonly style="background:#f3f4f6;" /></div>
-                                                    <div class="info-item"><label>Pallet Length (mm)</label><input type="number" name="pallet_length_mm" value="<?php echo (int)($batch['pallet_length_mm'] ?? 0); ?>" /></div>
-                                                    <div class="info-item"><label>Pallet Depth (mm)</label><input type="number" name="pallet_depth_mm" value="<?php echo (int)($batch['pallet_depth_mm'] ?? 0); ?>" /></div>
-                                                    <div class="info-item"><label>Stack Height (mm)</label><input type="number" name="pallet_double_stacked_height_mm" value="<?php echo (int)($batch['pallet_double_stacked_height_mm'] ?? 0); ?>" /></div>
-                                                    <div class="info-item"><label>Pallet Weight (kg)</label><input type="number" name="pallet_total_weight_kg" value="<?php echo (int)($batch['pallet_total_weight_kg'] ?? 0); ?>" /></div>
-                                                </div>
-                                                <div class="info-section">
-                                                    <h4>Handling & Notes</h4>
-                                                    <div class="info-item"><label>Forklift Long (mm)</label><input type="number" name="forklift_truck_long_side_mm" value="<?php echo (int)($batch['forklift_truck_long_side_mm'] ?? 0); ?>" /></div>
-                                                    <div class="info-item"><label>Forklift Short (mm)</label><input type="number" name="forklift_truck_short_side_mm" value="<?php echo (int)($batch['forklift_truck_short_side_mm'] ?? 0); ?>" /></div>
-                                                    <div class="info-item"><label>Pallet Jack Long (mm)</label><input type="number" name="pallet_jack_long_side_mm" value="<?php echo (int)($batch['pallet_jack_long_side_mm'] ?? 0); ?>" /></div>
-                                                    <div class="info-item"><label>Pallet Jack Short (mm)</label><input type="number" name="pallet_jack_short_side_mm" value="<?php echo (int)($batch['pallet_jack_short_side_mm'] ?? 0); ?>" /></div>
-                                                    <div class="info-item"><label>Module Notes</label><textarea name="module_notes" rows="3" style="width:100%; padding:8px; border:1px solid #e5e7eb; border-radius:8px;"><?php echo htmlspecialchars($batch['module_notes'] ?? ''); ?></textarea></div>
-                                                </div>
-                                            </div>
-                                            <div style="text-align:right; margin-top:12px;">
-                                                <button type="submit" class="info-action-button">Save Changes</button>
-                                            </div>
-                                        </form>
-                                        <script>
-                                            (function(){
-                                                const mpp = document.getElementById('mpp-<?php echo $batch['id']; ?>');
-                                                const ppt = document.getElementById('ppt-<?php echo $batch['id']; ?>');
-                                                const mpt = document.getElementById('mpt-<?php echo $batch['id']; ?>');
-                                                function recalc(){
-                                                    const a = parseInt(mpp.value,10), b = parseInt(ppt.value,10);
-                                                    if(!isNaN(a)&&!isNaN(b)&&a>0&&b>0){ mpt.value = a*b; }
-                                                }
-                                                if (mpp) mpp.addEventListener('input', recalc);
-                                                if (ppt) ppt.addEventListener('input', recalc);
-                                            })();
-                                        </script>
-                                    <?php endif; ?>
+                                    <?php /* Inline edit removed; editing should be via edit_module_batch.php */ ?>
 
                                     <div style="margin-top: 20px; text-align: center;">
                                         <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="info-action-button">
@@ -6998,7 +6960,7 @@ document.getElementById('editBatchForm').addEventListener('submit', function(e) 
                 </div>
                 
                 <div class="modal-form-group">
-                    <label for="modal_initial_location">Initial Location:</label>
+                    <label for="modal_initial_location">Location:</label>
                     <input type="text" id="modal_initial_location" name="initial_location" required>
                 </div>
                 
