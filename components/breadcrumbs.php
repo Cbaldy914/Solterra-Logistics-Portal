@@ -62,15 +62,9 @@ if (!function_exists('slp_render_breadcrumbs')) {
         $crumbs = [];
         $crumbs[] = ['label' => 'Dashboard', 'url' => 'dashboard.php'];
 
-        // Insert any extra crumbs provided by caller
-        foreach ($extra as $c) {
-            if (!empty($c['label'])) {
-                $crumbs[] = ['label' => (string)$c['label'], 'url' => $c['url'] ?? null];
-            }
-        }
-
-        // Project context (if provided)
-        $project_id = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
+        // Determine project context: prefer override in opts, fallback to GET
+        $project_id = isset($opts['project_id']) ? (int)$opts['project_id'] : (int)($_GET['project_id'] ?? 0);
+        $project_name = null;
         if ($project_id > 0) {
             $project_name = 'Project';
             if (!function_exists('getDBConnection')) {
@@ -90,9 +84,29 @@ if (!function_exists('slp_render_breadcrumbs')) {
                     @$tmp->close();
                 }
             }
+            // Always place project crumb immediately after Dashboard
             $crumbs[] = ['label' => $project_name, 'url' => 'project_overview.php?project_id=' . (int)$project_id];
-        } else {
-            // Best-effort: interpret HTTP referer for context
+        }
+
+        // Insert any extra crumbs provided by caller, but avoid duplicating the project overview link
+        $filtered_extra = [];
+        foreach ($extra as $c) {
+            if (!empty($c['url']) && $project_id > 0) {
+                $url = (string)$c['url'];
+                // Normalize for comparison
+                if (stripos($url, 'project_overview.php') !== false && stripos($url, 'project_id=') !== false) {
+                    // Skip: project crumb already added with project name
+                    continue;
+                }
+            }
+            if (!empty($c['label'])) {
+                $filtered_extra[] = ['label' => (string)$c['label'], 'url' => $c['url'] ?? null];
+            }
+        }
+        foreach ($filtered_extra as $c) { $crumbs[] = $c; }
+
+        // If no explicit project context and no extras, best-effort referer-based crumb
+        if ($project_id <= 0) {
             $ref = $_SERVER['HTTP_REFERER'] ?? '';
             if ($ref) {
                 $path = parse_url($ref, PHP_URL_PATH) ?: '';
@@ -100,7 +114,6 @@ if (!function_exists('slp_render_breadcrumbs')) {
                 if (isset($ref_map[$refBase])) {
                     $crumbs[] = $ref_map[$refBase];
                 } else {
-                    // Contains check fallback
                     foreach ($ref_map as $needle => $meta) {
                         if (stripos($ref, $needle) !== false) { $crumbs[] = $meta; break; }
                     }
@@ -110,6 +123,19 @@ if (!function_exists('slp_render_breadcrumbs')) {
 
         // Current page crumb (no link)
         $crumbs[] = ['label' => $current, 'url' => null];
+
+        // Replace any crumb that links to project_overview with the project name (if known)
+        if ($project_id > 0 && $project_name !== null) {
+            foreach ($crumbs as &$c) {
+                if (!empty($c['url'])) {
+                    $u = (string)$c['url'];
+                    if (stripos($u, 'project_overview.php') !== false && stripos($u, 'project_id=') !== false) {
+                        $c['label'] = $project_name;
+                    }
+                }
+            }
+            unset($c);
+        }
 
         // Deduplicate consecutive identical crumbs (e.g., when both extra and referer add the same hub)
         $deduped = [];

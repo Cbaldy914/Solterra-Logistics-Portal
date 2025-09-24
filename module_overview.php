@@ -1399,19 +1399,21 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <?php if ($view_mode === 'project'): ?>
-            <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
-            <span class="separator">&raquo;</span>
-            <span>Modules for <?php echo htmlspecialchars($project_data['project_name']); ?></span>
-        <?php else: ?>
-            <a href="modules">Modules</a>
-            <span class="separator">&raquo;</span>
-            <span>Batch: <?php echo $batch_data ? htmlspecialchars($batch_data['vendor_name']) : 'Module Batch'; ?></span>
-        <?php endif; ?>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        if ($view_mode === 'project') {
+            echo slp_render_breadcrumbs([
+                'current_label' => 'Modules',
+                'project_id' => (int)$project_id
+            ]);
+        } else {
+            $label = 'Batch: '.($batch_data ? ($batch_data['vendor_name'] ?? 'Module Batch') : 'Module Batch');
+            echo slp_render_breadcrumbs([
+                'current_label' => $label,
+                'extra' => [ ['label' => 'Modules', 'url' => 'modules.php'] ]
+            ]);
+        }
+    ?>
 
     <?php if (!empty($errorMessage)): ?>
         <div class="error-message"><strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?></div>
@@ -1720,11 +1722,7 @@ $conn->close();
                 <p style="color: #6c757d; font-size: 1.1em;">
                     There are no modules assigned to this project currently.
                 </p>
-                <div style="margin-top: 24px;">
-                    <a href="modules" style="color: #488C9A; text-decoration: none; font-weight: 500;">
-                        ← Back to Modules List
-                    </a>
-                </div>
+                
             </div>
         <?php endif; ?>
     <?php endif; ?>

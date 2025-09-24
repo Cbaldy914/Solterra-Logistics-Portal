@@ -1502,15 +1502,14 @@ if (!empty($bolCompletionMessage)) {
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <?php if ($project_id_from_url > 0): ?>
-            <span class="separator">&raquo;</span>
-            <a href="project_overview.php?project_id=<?php echo $project_id_from_url; ?>">Project Overview</a>
-        <?php endif; ?>
-        <span class="separator">&raquo;</span>
-        <span>Create Shipment</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        if ($project_id_from_url > 0) {
+            echo slp_render_breadcrumbs(['current_label' => 'Create Shipment', 'project_id' => (int)$project_id_from_url]);
+        } else {
+            echo slp_render_breadcrumbs(['current_label' => 'Create Shipment']);
+        }
+    ?>
 
     <h1 id="page-title">Create Shipment</h1>
 

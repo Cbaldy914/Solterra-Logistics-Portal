@@ -330,11 +330,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_project'])) {
 <body>
     <?php include 'header.php'; ?>
     <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <span>Future Projects</span>
-    </div>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Future Projects']); ?>
     
     <h1>Future Projects
     <span class="info-tooltip">?

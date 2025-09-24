@@ -1498,17 +1498,16 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
  <body class="global-documents-page">
  <?php include 'header.php'; ?>
  <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <?php if ($from_page === 'project_overview' && !empty($project_name)): ?>
-            <a href="project_overview.php?project_id=<?php echo $pre_selected_project; ?>">Project Overview (<?php echo htmlspecialchars($project_name); ?>)</a>
-        <?php else: ?>
-            <a href="documents.php">Documents</a>
-        <?php endif; ?>
-        <span class="separator">&raquo;</span>
-        <span>Global Documents</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        $extra = [];
+        if ($from_page === 'project_overview' && !empty($project_name) && !empty($pre_selected_project)) {
+            $extra[] = ['label' => 'Project Overview ('.htmlspecialchars($project_name).')', 'url' => 'project_overview.php?project_id='.(int)$pre_selected_project];
+        } else {
+            $extra[] = ['label' => 'Documents', 'url' => 'documents.php'];
+        }
+        echo slp_render_breadcrumbs(['current_label' => 'Global Documents', 'extra' => $extra]);
+    ?>
 
     <div class="global-documents-header">
         <div class="header-content">

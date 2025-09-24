@@ -756,7 +756,7 @@ $conn->close();
     <?php endif; ?> 
 
     <div class="back-link" style="margin-top: 20px;">
-        <a href="module_overview.php?batch_id=<?php echo $batch_id; ?>">&larr; Back to Module Overview</a>
+        
     </div>
 </main>
 </body>
