@@ -417,23 +417,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 <?php include 'header.php'; ?>
 <main>
 
-    <!-- Breadcrumb Navigation -->
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <?php
-        // Build manage deliveries link with proper context
-        $manage_deliveries_url = "manage_deliveries.php";
-        if ($context_project_id) {
-            $manage_deliveries_url .= "?filter_project_id=" . $context_project_id;
-        } elseif ($is_unassigned_delivery) {
-            $manage_deliveries_url .= "?filter_project_id=unassigned";
-        }
-        ?>
-        <a href="<?php echo $manage_deliveries_url; ?>" style="color: #488C9A; text-decoration: none;">Manage Deliveries</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <span>Edit Delivery</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Edit Delivery',
+            'extra' => [ ['label' => 'Manage Deliveries', 'url' => 'manage_deliveries.php'] ]
+        ]);
+    ?>
 
 <h1>
   Edit Delivery

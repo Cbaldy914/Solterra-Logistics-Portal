@@ -963,12 +963,12 @@ $conn->close();
         <div class="error-message">
             <strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?>
         </div>
-        <p><a href="manage_warehouses.php" class="action-buttons">&larr; Back to Warehouses List</a></p>
+        
     <?php elseif (!$warehouse): ?>
         <div class="error-message">
             Warehouse not found or could not be loaded.
         </div>
-        <p><a href="manage_warehouses.php" class="action-buttons">&larr; Back to Warehouses List</a></p>
+        
     <?php else: ?>
         <!-- Warehouse Details -->
         <div class="warehouse-details-container">
@@ -1427,7 +1427,7 @@ $conn->close();
         </div>
         
         <div class="back-link" style="margin-top: 20px;">
-            <a href="manage_warehouses.php" class="action-buttons">&larr; Back to Warehouses List</a>
+                
         </div>
     <?php endif; ?>
 </main>

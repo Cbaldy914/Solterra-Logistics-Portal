@@ -1253,13 +1253,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <?php include 'header.php'; ?>
 <main>
     <!-- Breadcrumb Navigation -->
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <a href="manage_projects.php" style="color: #488C9A; text-decoration: none;">Manage Projects</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <span>Add Project</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Add Project',
+            'extra' => [ ['label' => 'Manage Projects', 'url' => 'manage_projects.php'] ]
+        ]);
+    ?>
 
     <div class="page-header">
         <h1>Add Project</h1>

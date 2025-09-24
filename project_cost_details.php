@@ -827,11 +827,13 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
-        <span class="separator">&raquo;</span>
-        <span>Cost Details</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Cost Details',
+            'project_id' => (int)$project_id
+        ]);
+    ?>
 
     <h1>Cost Details for <?php echo htmlspecialchars($project_name); ?></h1>
 

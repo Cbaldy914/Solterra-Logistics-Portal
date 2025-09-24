@@ -682,21 +682,14 @@ $conn->close();
 </head>
 <body>
     <?php include 'header.php'; ?>
+    <?php require_once 'components/breadcrumbs.php'; ?>
     
     <main>
-        <div class="breadcrumb" style="margin: 10px 20px;">
-            <a href="dashboard.php">Dashboard</a>
-            <span class="separator">»</span>
-            <?php if ($project): ?>
-                <a href="project_overview.php?project_id=<?php echo (int)$project_id; ?>"><?php echo htmlspecialchars($project['project_name']); ?></a>
-                <span class="separator">»</span>
-                <span>Add Module Batch</span>
-            <?php else: ?>
-                <a href="modules.php">Modules</a>
-                <span class="separator">»</span>
-                <span>Add Module Batch</span>
-            <?php endif; ?>
-        </div>
+        <?php
+            $extra = [];
+            if (!$project_id) { $extra[] = ['label' => 'Modules', 'url' => 'modules.php']; }
+            echo slp_render_breadcrumbs(['current_label' => 'Add Module Batch', 'extra' => $extra]);
+        ?>
         
         <!-- Beautiful Header Section -->
         <div class="form-header">

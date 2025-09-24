@@ -238,13 +238,13 @@ $conn->close();
 <?php include 'header.php'; ?>
 
 <main class="container">
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <a href="manage_users.php" style="color: #488C9A; text-decoration: none;">Manage Users</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <span>Add New User</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Add New User',
+            'extra' => [ ['label' => 'Manage Users', 'url' => 'manage_users.php'] ]
+        ]);
+    ?>
 
     <h1>Add New User</h1>
 

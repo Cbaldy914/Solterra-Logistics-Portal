@@ -310,7 +310,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
     <?php endif; // End if($pallet) ?>
 
     <div class="back-link">
-        <a href="manage_pallets.php">&larr; Back to Manage Pallets</a>
+        
     </div>
 </main>
 

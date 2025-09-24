@@ -311,14 +311,13 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Breadcrumb Navigation -->
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="<?php echo htmlspecialchars($dashboard_link); ?>" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <a href="manufacturers.php" style="color: #488C9A; text-decoration: none;">Manage Manufacturers</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <span>Add Manufacturer</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Add Manufacturer',
+            'extra' => [ ['label' => 'Manage Manufacturers', 'url' => 'manufacturers.php'] ]
+        ]);
+    ?>
 
     <h1>Add Manufacturer</h1>
 

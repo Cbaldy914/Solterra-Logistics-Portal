@@ -31,7 +31,7 @@ if ($stmt === false) {
 
 if ($stmt->execute()) {
     echo "Project deleted successfully.";
-    echo "<br><a href='manage_projects'>Back to Manage Projects</a>";
+    
 } else {
     echo "Error: " . $stmt->error;
 }

@@ -288,11 +288,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <span>Freight Cost Estimator</span>
-    </div>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Freight Cost Estimator']); ?>
 <h1>Freight Cost Estimator</h1>
 <!-- Saved Estimates Section -->
 <div id="saved-estimates">

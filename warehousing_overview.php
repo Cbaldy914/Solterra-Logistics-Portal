@@ -475,11 +475,7 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <span>Warehousing Overview</span>
-    </div>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Warehousing Overview']); ?>
 
     <h1>Warehousing Overview</h1>
 
