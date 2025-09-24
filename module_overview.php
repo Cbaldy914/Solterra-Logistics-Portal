@@ -1938,6 +1938,8 @@ function handlePalletizationSubmit(event) {
     const wattage = form.querySelector('input[name="wattage"]').value;
     const currentModulesPerPallet = form.querySelector('input[name="current_modules_per_pallet"]').value;
     const originalValue = form.querySelector('input[name="modules_per_pallet"]').getAttribute('data-original-value');
+    const updateField = form.querySelector('input[name="update_modules_table"]');
+    const updateApproved = updateField && updateField.value === 'true';
     
     if (isNaN(modulesPerPallet) || modulesPerPallet <= 0) {
         alert('Please enter a valid number of modules per pallet.');
@@ -1946,7 +1948,7 @@ function handlePalletizationSubmit(event) {
     
     // Check if the entered value differs from the database value
     const dbValue = currentModulesPerPallet ? parseInt(currentModulesPerPallet) : null;
-    if (dbValue !== null && dbValue !== modulesPerPallet) {
+    if (dbValue !== null && dbValue !== modulesPerPallet && !updateApproved) {
         // Show modules per pallet confirmation modal
         currentForm = form;
         showModulesPerPalletModal(dbValue, modulesPerPallet, wattage);
@@ -2000,14 +2002,14 @@ function showWarningModal(fullPallets, modulesPerPallet, remainder, wattage) {
 function closeWarningModal() {
     const modal = document.getElementById('warningModal');
     modal.style.display = 'none';
-    currentForm = null;
 }
 
 function confirmPalletization() {
     if (currentForm) {
+        const form = currentForm;
         closeWarningModal();
         showLoadingModal();
-        currentForm.submit();
+        form.submit();
     }
 }
 
@@ -2034,19 +2036,20 @@ function showModulesPerPalletModal(originalValue, newValue, wattage) {
 function closeModulesPerPalletModal() {
     const modal = document.getElementById('modulesPerPalletModal');
     modal.style.display = 'none';
-    currentForm = null;
 }
 
 function confirmModulesPerPalletUpdate() {
     if (currentForm) {
+        const form = currentForm;
         // Set flag to update modules table
-        currentForm.querySelector('input[name="update_modules_table"]').value = 'true';
+        const updateField = form.querySelector('input[name="update_modules_table"]');
+        if (updateField) updateField.value = 'true';
         closeModulesPerPalletModal();
         
         // Continue with normal palletization flow
-        const modulesPerPallet = parseInt(currentForm.querySelector('input[name="modules_per_pallet"]').value);
-        const remainingModules = parseInt(currentForm.querySelector('input[name="remaining_modules"]').value);
-        const wattage = currentForm.querySelector('input[name="wattage"]').value;
+        const modulesPerPallet = parseInt(form.querySelector('input[name="modules_per_pallet"]').value);
+        const remainingModules = parseInt(form.querySelector('input[name="remaining_modules"]').value);
+        const wattage = form.querySelector('input[name="wattage"]').value;
         
         const fullPallets = Math.floor(remainingModules / modulesPerPallet);
         const remainder = remainingModules % modulesPerPallet;
@@ -2054,7 +2057,7 @@ function confirmModulesPerPalletUpdate() {
         if (remainder === 0) {
             // Even distribution, proceed without warning
             showLoadingModal();
-            currentForm.submit();
+            form.submit();
         } else {
             // Uneven distribution, show warning
             showWarningModal(fullPallets, modulesPerPallet, remainder, wattage);
