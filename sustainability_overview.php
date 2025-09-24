@@ -416,11 +416,7 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <span>Sustainability Overview</span>
-    </div>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Sustainability Overview']); ?>
     <h1>Sustainability Overview
         <span class="info-tooltip">?
             <span class="tooltip-text">

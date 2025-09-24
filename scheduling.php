@@ -2349,14 +2349,7 @@ include('header.php');
 </head>
 <body>
     <main>
-        <!-- Breadcrumb -->
-        <div class="breadcrumb" style="display: flex; margin-bottom: 20px; margin-top: 10px;">
-            <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-            <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-            <a href="project_overview.php?project_id=<?php echo $project_id; ?>" style="color: #488C9A; text-decoration: none;"><?php echo htmlspecialchars($project_name); ?></a>
-            <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-            <span>Scheduling</span>
-        </div>
+        <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Scheduling', 'project_id' => (int)$project_id]); ?>
 
         <h1>Scheduling - <?php echo htmlspecialchars($project_name); ?></h1>
 

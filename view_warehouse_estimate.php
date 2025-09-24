@@ -121,13 +121,13 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <a href="warehouse_estimate.php">Warehouse Quote Request</a>
-        <span class="separator">&raquo;</span>
-        <span><?php echo htmlspecialchars($name); ?></span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => htmlspecialchars($name),
+            'extra' => [ ['label' => 'Warehouse Quote Request', 'url' => 'warehouse_estimate.php'] ]
+        ]);
+    ?>
     <h1><?php echo htmlspecialchars($name); ?></h1>
     <p><strong>Created At:</strong> <?php echo htmlspecialchars($created_at); ?></p>
 

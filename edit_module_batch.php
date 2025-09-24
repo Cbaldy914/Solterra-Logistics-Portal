@@ -464,18 +464,12 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">»</span>
-        <?php if ($project_id): ?>
-            <a href="project_overview.php?project_id=<?php echo (int)$project_id; ?>"><?php echo htmlspecialchars($module['project_name']); ?></a>
-            <span class="separator">»</span>
-        <?php else: ?>
-            <a href="modules.php">Modules</a>
-            <span class="separator">»</span>
-        <?php endif; ?>
-        <span>Edit Module Batch</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        $extra = [];
+        if (!$project_id) { $extra[] = ['label' => 'Modules', 'url' => 'modules.php']; }
+        echo slp_render_breadcrumbs(['current_label' => 'Edit Module Batch', 'extra' => $extra]);
+    ?>
 
     <!-- Beautiful Header Section -->
     <div class="form-header">

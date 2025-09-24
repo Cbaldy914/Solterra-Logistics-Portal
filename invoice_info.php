@@ -670,7 +670,7 @@ $conn->close();
   </form>
 
   <a class="back-link" href="generate_invoice.php?project_id=<?php echo $project_id; ?>">
-    &larr; Back to Deliveries
+    
   </a>
 </div>
 </body>

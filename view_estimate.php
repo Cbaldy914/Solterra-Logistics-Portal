@@ -495,13 +495,13 @@ if($in_fee_w3!=0 || $out_fee_w3!=0 || $sto_fee_w3!=0 || !empty($pallets_entering
 <?php include 'header.php'; ?>
 <main>
     <!-- Page Header -->
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <a href="cost_estimate_calculator.php">Cost Estimate Calculator</a>
-        <span class="separator">&raquo;</span>
-        <span><?php echo htmlspecialchars($estimate_row['name']); ?></span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => htmlspecialchars($estimate_row['name']),
+            'extra' => [ ['label' => 'Cost Estimate Calculator', 'url' => 'cost_estimate_calculator.php'] ]
+        ]);
+    ?>
     
     <h1>Viewing Saved Estimate: <?php echo htmlspecialchars($estimate_row['name']); ?></h1>
 
