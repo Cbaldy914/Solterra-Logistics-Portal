@@ -205,7 +205,7 @@ $conn->close();
 
             <button type="submit">Update Invoice</button>
         </form>
-        <a href="add_invoice" class="back-link">Back to Invoices</a>
+        
     </div>
 </main>
 </body>

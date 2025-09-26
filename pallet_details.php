@@ -269,15 +269,7 @@ try {
 
 $conn->close();
 
-// Set up breadcrumbs
-$breadcrumbs = [];
-if ($role === 'admin' || $role === 'global_admin') {
-    $breadcrumbs[] = ['href' => 'dashboard.php', 'text' => 'Dashboard'];
-    $breadcrumbs[] = ['href' => 'manage_pallets.php', 'text' => 'Manage Pallets'];
-} else {
-    $breadcrumbs[] = ['href' => 'dashboard.php', 'text' => 'Dashboard'];
-}
-$breadcrumbs[] = ['text' => 'Pallet Details'];
+// (Breadcrumbs handled in template using the shared helper)
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -434,19 +426,7 @@ $breadcrumbs[] = ['text' => 'Pallet Details'];
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Breadcrumb navigation -->
-    <div class="breadcrumb">
-        <?php foreach ($breadcrumbs as $index => $crumb): ?>
-            <?php if (isset($crumb['href'])): ?>
-                <a href="<?php echo $crumb['href']; ?>"><?php echo htmlspecialchars($crumb['text']); ?></a>
-            <?php else: ?>
-                <span><?php echo htmlspecialchars($crumb['text']); ?></span>
-            <?php endif; ?>
-            <?php if ($index < count($breadcrumbs) - 1): ?>
-                <span class="separator">&raquo;</span>
-            <?php endif; ?>
-        <?php endforeach; ?>
-    </div>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Pallet Details', 'extra' => [ ['label' => 'Manage Pallets', 'url' => 'manage_pallets.php'] ]]); ?>
 
     <div class="main-content">
         <h1>Pallet Details - ID: <?php echo $pallet_id; ?></h1>

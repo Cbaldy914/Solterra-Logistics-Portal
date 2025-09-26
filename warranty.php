@@ -162,15 +162,13 @@ persistWarrantyFilters($filters);
             foreach ($projects as $p) { if ((int)$p['id'] === $selectedProjectId) { $selectedProjectName = (string)$p['project_name']; break; } }
         }
     ?>
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php">Dashboard</a>
-        <?php if ($selectedProjectId > 0 && $selectedProjectName !== ''): ?>
-            <span class="separator">&raquo;</span>
-            <a href="project_overview.php?project_id=<?php echo (int)$selectedProjectId; ?>">Project: <?php echo htmlspecialchars($selectedProjectName); ?></a>
-        <?php endif; ?>
-        <span class="separator">&raquo;</span>
-        <span>Exceptions Report</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Exceptions Report',
+            'project_id' => (int)$selectedProjectId
+        ]);
+    ?>
 
     <h1>Exceptions Report</h1>
     <div style="height: 6px;"></div>

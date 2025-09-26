@@ -209,50 +209,98 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <title>Edit Project</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
-    <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        /* Modern container design */
-        main {
-            max-width: 1400px;
-            width: 90%;
-            margin: 0 auto;
-            padding: 20px;
-        }
-
-        /* Page header */
-        .page-header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-
-        .page-header h1 {
-            font-size: 2.5rem;
-            font-weight: 300;
-            color: #1a1a1a;
-            margin-bottom: 8px;
-        }
-
-        .page-header p {
-            color: #666;
-            font-size: 1.1rem;
-            font-weight: 300;
-        }
-
-        /* Form layout */
-        .form-container {
-            background: #fff;
-            border-radius: 16px;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.06);
-            overflow: hidden;
+        .breadcrumb {
+            display: flex;
+            align-items: center;
             margin-bottom: 30px;
+            margin-top: 10px;
+            font-size: 0.95em;
+            color: #6c757d;
+        }
+        .breadcrumb a {
+            color: #488C9A;
+            text-decoration: none;
+            transition: color 0.3s ease;
+            font-weight: 500;
+        }
+        .breadcrumb a:hover {
+            color: #293E4C;
+        }
+        .breadcrumb .separator {
+            margin: 0 12px;
+            color: #d1d5db;
+            font-weight: 300;
         }
 
-        .form-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            min-height: 600px;
+        /* Header Section */
+        .form-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
         }
 
+        .form-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+        
+        .form-container {
+            margin: 20px 0;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .form-content {
+            padding: 0;
+        }
+        
         .form-section {
             padding: 40px;
             border-right: 1px solid #f0f0f0;
@@ -261,14 +309,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .form-section:last-child {
             border-right: none;
         }
-
+        
         .form-section h2 {
-            font-size: 1.4rem;
+            color: #293E4C;
+            margin-bottom: 20px;
+            font-size: 1.3em;
             font-weight: 600;
-            color: #1a1a1a;
-            margin-bottom: 24px;
-            padding-bottom: 12px;
-            border-bottom: 2px solid #488C9A;
+        }
+        
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            min-height: 600px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            color: #293E4C;
+            margin-bottom: 8px;
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+            box-sizing: border-box;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #488C9A;
         }
 
         /* Input styling */
@@ -278,8 +360,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         .input-group label {
             display: block;
-            font-weight: 500;
-            color: #333;
+            font-weight: 600;
+            color: #293E4C;
             margin-bottom: 8px;
             font-size: 0.95rem;
         }
@@ -487,34 +569,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             text-decoration: underline;
         }
 
-        /* Submit section */
-        .submit-section {
-            grid-column: 1 / -1;
-            text-align: center;
-            padding: 40px;
-            background: #f8f9fa;
-            border-top: 1px solid #f0f0f0;
+        .button-group {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 40px;
+            gap: 20px;
         }
-
-        .submit-btn {
+        
+        .btn-submit {
             background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
             color: white;
             border: none;
             padding: 16px 48px;
             border-radius: 50px;
-            font-size: 1.1rem;
+            font-size: 1.1em;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
             box-shadow: 0 4px 16px rgba(40, 62, 76, 0.2);
         }
-
-        .submit-btn:hover {
+        
+        .btn-submit:hover {
             transform: translateY(-2px);
             box-shadow: 0 8px 24px rgba(40, 62, 76, 0.3);
         }
 
         /* Responsive design */
+        @media (max-width: 768px) {
+            .form-container {
+                margin: 10px 0;
+            }
+            
+            .form-content {
+                padding: 20px;
+            }
+            
+            .form-section {
+                padding: 24px;
+            }
+            
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .button-group {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .form-header {
+                padding: 20px;
+                margin-bottom: 20px;
+            }
+            
+            .header-content {
+                gap: 16px;
+            }
+            
+            .header-left {
+                gap: 16px;
+            }
+            
+            .header-info h1 {
+                font-size: 2em;
+            }
+            
+            .header-subtitle {
+                font-size: 1em;
+            }
+        }
+
         @media (max-width: 1024px) {
             .form-grid {
                 grid-template-columns: 1fr;
@@ -600,24 +725,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Breadcrumb Navigation -->
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <a href="manage_projects.php" style="color: #488C9A; text-decoration: none;">Manage Projects</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <span>Edit Project</span>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Edit Project',
+            'extra' => [ ['label' => 'Manage Projects', 'url' => 'manage_projects.php'] ]
+        ]);
+    ?>
+
+    <!-- Beautiful Header Section -->
+    <div class="form-header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="header-info">
+                    <h1>Edit Project</h1>
+                    <p class="header-subtitle">Update project details and site information</p>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div class="page-header">
-        <h1>Edit Project</h1>
-        <p>Update project details and site information</p>
-    </div>
-
-    <form id="edit-project-form" action="edit_project.php" method="POST" enctype="multipart/form-data">
-        <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-        
-        <div class="form-container">
+    <div class="form-container">
+        <div class="form-content">
+            <form id="edit-project-form" action="edit_project.php" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
             <div class="form-grid">
                 <!-- Left Column: Basic Project Information -->
                 <div class="form-section">
@@ -813,17 +944,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <a href="modules.php" style="color: #856404; font-weight: 600;">Manage Modules</a>.
                     </div>
                 </div>
-
-                <!-- Submit Section -->
-                <div class="submit-section">
-                    <button type="submit" class="submit-btn">Update Project</button>
-                </div>
             </div>
-        </div>
-    </form>
 
-    <div style="text-align: center;">
-        <a href="dashboard.php" class="nav-link">← Back to Dashboard</a>
+            <div class="button-group">
+                <button type="submit" class="btn-submit">Update Project</button>
+            </div>
+            </form>
+        </div>
     </div>
 </main>
 

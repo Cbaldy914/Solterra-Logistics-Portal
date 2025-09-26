@@ -257,6 +257,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 
 
 try {
+    // Optional filter from deep link: restrict to specific pallet IDs
+    $pallet_ids_filter = [];
+    if (!empty($_GET['pallet_ids'])) {
+        $raw_ids = explode(',', $_GET['pallet_ids']);
+        foreach ($raw_ids as $rid) {
+            $ival = intval($rid);
+            if ($ival > 0) { $pallet_ids_filter[] = $ival; }
+        }
+        $pallet_ids_filter = array_values(array_unique($pallet_ids_filter));
+    }
     $conn = getDBConnection(); // Main connection for displaying data
     // Comprehensive query to fetch pallet details
     $sql = "SELECT 
@@ -287,39 +297,51 @@ try {
             LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
             LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
             LEFT JOIN deliveries d ON dp.delivery_id = d.id";
-    
-    // Add account filtering for non-global admins
+
+    // Build conditional filters dynamically
+    $conditions = [];
+    $params = [];
+    $types = '';
+
+    // Account scoping for non-global admins
     if (!$is_global_admin && $account_id_for_user) {
-        $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR (ip.current_project_id IS NULL AND ip.assigned_project_id IS NULL))";
+        $conditions[] = "(p_current.account_id = ? OR p_assigned.account_id = ? OR (ip.current_project_id IS NULL AND ip.assigned_project_id IS NULL))";
+        $params[] = $account_id_for_user;
+        $params[] = $account_id_for_user;
+        $types .= 'ii';
     }
-    
+
+    // Optional deep-link filter to specific pallet IDs
+    if (!empty($pallet_ids_filter)) {
+        $placeholders = implode(',', array_fill(0, count($pallet_ids_filter), '?'));
+        $conditions[] = "ip.id IN ($placeholders)";
+        foreach ($pallet_ids_filter as $pid) { $params[] = $pid; $types .= 'i'; }
+    }
+
+    if (!empty($conditions)) {
+        $sql .= ' WHERE ' . implode(' AND ', $conditions);
+    }
+
     $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.flash_test_data, m.vendor_name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name";
     $sql .= " ORDER BY ip.id DESC";
-    
-    // Execute query with or without parameters
-    if (!$is_global_admin && $account_id_for_user) {
+
+    // Execute query (prepared if we have params)
+    if (!empty($params)) {
         $stmt = $conn->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param("ii", $account_id_for_user, $account_id_for_user);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            if ($result) {
-                while ($row = $result->fetch_assoc()) {
-                    $pallets[] = $row;
-                }
-            } else {
-                throw new Exception("Error fetching pallets: " . $stmt->error);
-            }
-            $stmt->close();
+        if (!$stmt) { throw new Exception("Error preparing pallets query: " . $conn->error); }
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        if ($result) {
+            while ($row = $result->fetch_assoc()) { $pallets[] = $row; }
         } else {
-            throw new Exception("Error preparing pallets query: " . $conn->error);
+            throw new Exception("Error fetching pallets: " . $stmt->error);
         }
+        $stmt->close();
     } else {
         $result = $conn->query($sql);
         if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $pallets[] = $row;
-            }
+            while ($row = $result->fetch_assoc()) { $pallets[] = $row; }
         } else {
             throw new Exception("Error fetching pallets: " . $conn->error);
         }
@@ -653,33 +675,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Add breadcrumb navigation -->
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <?php 
-        $from_project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
-        if ($from_project_id > 0): 
-            // Coming from project overview - show project breadcrumb
-            $project_name = 'Project';
-            $conn_breadcrumb = getDBConnection();
-            if ($conn_breadcrumb) {
-                $stmt_breadcrumb = $conn_breadcrumb->prepare("SELECT project_name FROM projects WHERE id = ?");
-                if ($stmt_breadcrumb) {
-                    $stmt_breadcrumb->bind_param("i", $from_project_id);
-                    $stmt_breadcrumb->execute();
-                    $stmt_breadcrumb->bind_result($project_name);
-                    $stmt_breadcrumb->fetch();
-                    $stmt_breadcrumb->close();
-                }
-                $conn_breadcrumb->close();
-            }
-        ?>
-            <a href="project_overview.php?project_id=<?php echo $from_project_id; ?>" style="color: #488C9A; text-decoration: none;"><?php echo htmlspecialchars($project_name); ?></a>
-            <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <?php endif; ?>
-        <span>Manage Pallets</span>
-    </div>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Manage Pallets']); ?>
     
     <h1>Manage All Pallets</h1>
 
@@ -692,7 +688,8 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         <div class="warning-message">
             <?php echo htmlspecialchars($warningDetails['message'] ?? 'An unspecified warning occurred.'); ?>
             <?php if (!empty($warningDetails['batch_id'])): ?>
-                <a href="edit_module.php?batch_id=<?php echo htmlspecialchars($warningDetails['batch_id']); ?>">Update Batch Details</a>
+                <?php $wd_pid = isset($warningDetails['project_id']) ? (int)$warningDetails['project_id'] : 0; $wd_bid = (int)$warningDetails['batch_id']; ?>
+                <a href="<?php echo $wd_pid ? ('edit_module_batch.php?project_id='.$wd_pid.'&batch_id='.$wd_bid) : ('edit_module_batch.php?batch_id='.$wd_bid); ?>">Update Batch Details</a>
             <?php endif; ?>
         </div>
     <?php endif; ?>
@@ -907,7 +904,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         </div>
 
         <div class="back-link" style="margin-top: 20px;">
-            <a href="dashboard.php" class="action-button">&larr; Back to Dashboard</a>
+            
         </div>
     </form> <!-- End shipPalletsForm -->
 </main>

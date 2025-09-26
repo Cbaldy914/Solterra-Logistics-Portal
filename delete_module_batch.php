@@ -40,8 +40,9 @@ try {
         $stmtCheck->close();
     }
 
-    // Fetch related item IDs
+    // Fetch related item IDs and quantity sums per wattage
     $itemIds = [];
+    $wattageSums = [];
     $stmtItems = $conn->prepare("SELECT id FROM unassigned_module_items WHERE unassigned_module_id = ?");
     $stmtItems->bind_param("i", $batchId);
     $stmtItems->execute();
@@ -50,6 +51,28 @@ try {
         $itemIds[] = $row['id'];
     }
     $stmtItems->close();
+
+    // Aggregate wattage totals for this batch (to update project_wattage_orders if needed)
+    $stmtSum = $conn->prepare("SELECT wattage, SUM(quantity) AS total_qty FROM unassigned_module_items WHERE unassigned_module_id = ? GROUP BY wattage");
+    $stmtSum->bind_param("i", $batchId);
+    $stmtSum->execute();
+    $resSum = $stmtSum->get_result();
+    while ($r = $resSum->fetch_assoc()) {
+        $w = (int)$r['wattage'];
+        $q = (int)$r['total_qty'];
+        if ($w > 0 && $q > 0) { $wattageSums[$w] = $q; }
+    }
+    $stmtSum->close();
+
+    // Get project linkage and possible docs path
+    $projId = null; $moduleDocsUrl = null;
+    if ($stmtMeta = $conn->prepare("SELECT project_id, module_docs_url FROM modules WHERE id = ?")) {
+        $stmtMeta->bind_param("i", $batchId);
+        $stmtMeta->execute();
+        $stmtMeta->bind_result($pid, $docs);
+        if ($stmtMeta->fetch()) { $projId = $pid ? (int)$pid : null; $moduleDocsUrl = $docs; }
+        $stmtMeta->close();
+    }
 
     $deleted_counts = [
         'delivery_pallets' => 0,
@@ -119,14 +142,31 @@ try {
         }
     }
 
-    // Step 5: Delete unassigned_module_items
+    // Step 5: If assigned to a project, decrement project_wattage_orders by this batch's totals
+    if (!empty($projId) && $projId > 0 && !empty($wattageSums)) {
+        foreach ($wattageSums as $wattage => $qty) {
+            // Reduce totals, clamp to zero
+            $stmtUpd = $conn->prepare("UPDATE project_wattage_orders SET total_order = GREATEST(total_order - ?, 0) WHERE project_id = ? AND wattage = ?");
+            $wattStr = (string)$wattage;
+            $stmtUpd->bind_param("iis", $qty, $projId, $wattStr);
+            $stmtUpd->execute();
+            $stmtUpd->close();
+        }
+        // Clean up zero or negative entries
+        $stmtClean = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ? AND total_order <= 0");
+        $stmtClean->bind_param("i", $projId);
+        $stmtClean->execute();
+        $stmtClean->close();
+    }
+
+    // Step 6: Delete unassigned_module_items
     $stmtDelItems = $conn->prepare("DELETE FROM unassigned_module_items WHERE unassigned_module_id = ?");
     $stmtDelItems->bind_param("i", $batchId);
     $stmtDelItems->execute();
     $deleted_counts['module_items'] = $stmtDelItems->affected_rows;
     $stmtDelItems->close();
-
-    // Step 6: Delete the module batch itself
+    
+    // Step 7: Delete the module batch itself
     $stmtDelBatch = $conn->prepare("DELETE FROM modules WHERE id = ?");
     $stmtDelBatch->bind_param("i", $batchId);
     $stmtDelBatch->execute();
@@ -135,6 +175,17 @@ try {
 
     if (!$batch_deleted) {
         throw new Exception("Failed to delete module batch");
+    }
+
+    // Best-effort: remove uploaded docs folder for this batch if it exists and is not a project document
+    if (!empty($moduleDocsUrl) && strpos($moduleDocsUrl, 'uploads/module_batches/') === 0) {
+        $baseDir = dirname($moduleDocsUrl);
+        if (is_dir($baseDir)) {
+            foreach (glob($baseDir . '/*') as $f) { @unlink($f); }
+            @rmdir($baseDir);
+        } else {
+            @unlink($moduleDocsUrl);
+        }
     }
 
     $conn->commit();

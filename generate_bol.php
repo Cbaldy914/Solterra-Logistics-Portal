@@ -1097,7 +1097,7 @@ $conn->close();
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             display: inline-block;
         " onmouseover="this.style.background='#5a6268'; this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.15)'" onmouseout="this.style.background='#6c757d'; this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'">
-            ← Back to Shipments
+            
         </a>
         <button type="submit" name="generate_pdf" formtarget="_blank" form="bolForm" style="
             background: #488C9A;

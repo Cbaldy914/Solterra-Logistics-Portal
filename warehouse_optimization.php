@@ -476,11 +476,7 @@ $stmt->close();
 <body>
   <?php include 'header.php'; ?>
   <main>
-    <div class="breadcrumb">
-      <a href="dashboard.php">Dashboard</a>
-      <span class="separator">&raquo;</span>
-      <span>Warehouse Optimization</span>
-    </div>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Warehouse Optimization']); ?>
 
     <h1>Warehouse Optimization</h1>
 

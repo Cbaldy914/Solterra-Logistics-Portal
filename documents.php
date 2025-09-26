@@ -433,11 +433,7 @@ while ($project = $projects_result->fetch_assoc()) {
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <span>Documents</span>
-    </div>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Documents']); ?>
 
             <div class="documents-header">
             <div class="documents-title">

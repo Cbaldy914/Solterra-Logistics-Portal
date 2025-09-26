@@ -208,14 +208,15 @@ $conn->close();
 <main>
     <div class="page-header">
         <div>
-            <div class="breadcrumb" style="margin-bottom:8px;">
-                <?php $projId = (int)$claim['project_id']; $projName = (string)$claim['project_name']; ?>
-                <a href="project_overview.php?project_id=<?php echo $projId; ?>">Project: <?php echo htmlspecialchars($projName); ?></a>
-                <span class="separator">&raquo;</span>
-                <a href="warranty.php?project_id=<?php echo $projId; ?>">Exceptions Report</a>
-                <span class="separator">&raquo;</span>
-                <span>Ticket #<?php echo htmlspecialchars($claimId); ?></span>
-            </div>
+            <?php
+                require_once 'components/breadcrumbs.php';
+                $projId = (int)$claim['project_id'];
+                echo slp_render_breadcrumbs([
+                    'current_label' => 'Ticket #'.htmlspecialchars($claimId),
+                    'project_id' => $projId,
+                    'extra' => [ ['label' => 'Exceptions Report', 'url' => 'warranty.php?project_id='.$projId] ]
+                ]);
+            ?>
             <h1 style="margin:0 0 6px 0;">Ticket #<?php echo htmlspecialchars($claimId); ?> · <?php echo htmlspecialchars($claim['project_name']); ?></h1>
             <div class="d-flex flex-wrap" style="gap:8px;">
                 <span class="badge-chip badge-issue">Issue: <?php echo htmlspecialchars(str_replace('_',' ', (string)$claim['issue_type'])); ?></span>

@@ -293,6 +293,97 @@
     transition: border-color 0.3s ease;
 }
 
+.sunny-attach-label {
+    cursor: pointer;
+    user-select: none;
+    font-size: 18px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid #e0e0e0;
+    color: var(--primary-blue);
+}
+.sunny-attach-label:hover {
+    background: #f5f7f9;
+}
+
+/* Attachment chip inside input container */
+.sunny-attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #eef3f6;
+    color: var(--primary-blue);
+    border: 1px solid #d5e0e6;
+    border-radius: 16px;
+    padding: 4px 8px;
+}
+.sunny-attachment-chip .chip-icon {
+    font-weight: 700;
+}
+.sunny-attachment-chip .chip-name {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sunny-attachment-chip .chip-size {
+    font-size: 11px;
+    opacity: 0.7;
+}
+.sunny-attachment-chip .chip-remove {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 4px;
+}
+.sunny-attachment-chip .chip-remove:hover {
+    color: var(--error-red);
+}
+
+/* Attachments container above input */
+.sunny-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 6px 20px 0 20px;
+    background: white;
+}
+
+/* Confirmation chip shown briefly after sending an attachment */
+.sunny-attachment-sent {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #eefaf2;
+    color: var(--primary-blue);
+    border: 1px solid #bfe6cc;
+    border-left: 4px solid var(--success-green);
+    border-radius: 16px;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+.sunny-attachment-sent .sent-icon {
+    color: var(--success-green);
+    font-weight: 700;
+}
+.sunny-attachment-sent .sent-name {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sunny-attachment-sent .sent-size {
+    font-size: 11px;
+    opacity: 0.7;
+}
+.sunny-attachment-sent.fade-out {
+    opacity: 0;
+    transition: opacity 0.35s ease;
+}
+
 .sunny-input-container:focus-within {
     border-color: var(--secondary-blue);
 }

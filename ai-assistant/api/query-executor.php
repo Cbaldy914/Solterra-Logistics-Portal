@@ -27,26 +27,24 @@ class SunnyQueryExecutor {
     }
     
     private function setAllowedTables() {
+        // Expanded allow-list to match tools used by Sunny
+        $common = [
+            'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
+            'manufacturers', 'inventory_pallets', 'freight_estimates', 'warehouse_estimates',
+            'project_invoices', 'project_wattage_orders', 'project_documents', 'sunny_memory',
+            'flash_test_data', 'site_scheduling', 'warehouse_cost_items', 'accounts_payable'
+        ];
+
         $this->allowedTables = [
-            'global_admin' => [
-                'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
-                'manufacturers', 'accounts', 'customer_accounts', 'users', 'inventory_pallets',
-                'freight_estimates', 'warehouse_estimates', 'sites', 'project_invoices',
-                'project_wattage_orders', 'sunny_memory'
-            ],
-            'admin' => [
-                'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
-                'manufacturers', 'inventory_pallets', 'freight_estimates', 'warehouse_estimates',
-                'project_invoices', 'project_wattage_orders', 'sunny_memory'
-            ],
-            'user' => [
-                'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
-                'inventory_pallets', 'project_invoices', 'project_wattage_orders', 'sunny_memory'
-            ],
-            'DDPm' => [
-                'projects', 'modules', 'deliveries', 'delivery_pallets', 'warehouses',
-                'inventory_pallets', 'project_wattage_orders', 'sunny_memory'
-            ]
+            'global_admin' => array_merge($common, [
+                'accounts', 'customer_accounts', 'users', 'customer_account_users'
+            ]),
+            'admin' => array_merge($common, [
+                // Admins may need to read account-user mapping in some contexts
+                'customer_account_users'
+            ]),
+            'user' => $common,
+            'DDPm' => $common
         ];
     }
     
@@ -161,19 +159,13 @@ class SunnyQueryExecutor {
      * Apply role-based filtering to SQL query
      */
     private function applyRoleBasedFiltering($sql) {
-        // Global admin can access everything without extra filters
-        if ($this->userRole === 'global_admin') {
-            return $sql;
-        }
-
-        // For non-admin users, only add the tenant filter when we actually know the account_id.
-        // If it is missing we fall back to returning the original read-only query so that the
-        // assistant can still answer generic questions. You may tighten this later once the
-        // authentication flow guarantees account_id in the session.
-        if ($this->userAccountId !== null) {
-            $sql = $this->addAccountIdFilter($sql);
-        }
-
+        // IMPORTANT: We no longer inject tenant filters at this generic layer
+        // because it is brittle with aliases and multi-table joins. Instead,
+        // each tool query is responsible for explicitly scoping by account via
+        // joins to the projects table and a "projects.account_id = ?" predicate.
+        //
+        // Leaving this method as a no-op preserves backwards compatibility
+        // while avoiding accidental SQL errors from naive string injection.
         return $sql;
     }
     
@@ -197,20 +189,8 @@ class SunnyQueryExecutor {
             return $sql; // Skip injection if no table supports account_id
         }
 
-        // Simple insertion similar to previous logic
-        if (stripos($sql, 'WHERE') !== false) {
-            $sql = preg_replace('/WHERE/i', "WHERE account_id = {$this->userAccountId} AND", $sql, 1);
-        } else {
-            $insertPos = strlen($sql);
-            $keywords = ['ORDER BY', 'GROUP BY', 'HAVING', 'LIMIT'];
-            foreach ($keywords as $keyword) {
-                $pos = stripos($sql, $keyword);
-                if ($pos !== false && $pos < $insertPos) {
-                    $insertPos = $pos;
-                }
-            }
-            $sql = substr_replace($sql, " WHERE account_id = {$this->userAccountId} ", $insertPos, 0);
-        }
+        // Deprecated: do not inject unqualified account_id conditions here.
+        // Rely on explicit scoping in the tool queries.
         return $sql;
     }
     

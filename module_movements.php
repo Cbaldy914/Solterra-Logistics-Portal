@@ -655,15 +655,13 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <?php if (!empty($breadcrumb_text)): ?>
-            <a href="<?php echo $breadcrumb_link; ?>"><?php echo htmlspecialchars($breadcrumb_text); ?></a>
-            <span class="separator">&raquo;</span>
-        <?php endif; ?>
-        <span>Module Movements</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        $extra = [];
+        if ($batch_id > 0) { $extra[] = ['label' => 'Module Batch Overview', 'url' => 'module_overview.php?batch_id='.(int)$batch_id]; }
+        elseif ($selected_project_id > 0) { $extra[] = ['label' => 'Project Overview', 'url' => 'project_overview.php?project_id='.(int)$selected_project_id]; }
+        echo slp_render_breadcrumbs(['current_label' => 'Module Movements', 'extra' => $extra]);
+    ?>
 
     <h1>Module Movement Tracking</h1>
 

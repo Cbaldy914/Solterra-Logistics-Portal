@@ -251,16 +251,16 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Breadcrumb Navigation -->
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="<?php echo htmlspecialchars($dashboard_link); ?>" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <a href="manufacturers.php" style="color: #488C9A; text-decoration: none;">Manage Manufacturers</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <a href="manufacturer_locations.php?manufacturer_id=<?php echo $manufacturer_id; ?>" style="color: #488C9A; text-decoration: none;">Manage Locations</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <span>Add Location</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Add Manufacturer Location',
+            'extra' => [
+                ['label' => 'Manage Manufacturers', 'url' => 'manufacturers.php'],
+                ['label' => 'Manage Locations', 'url' => 'manufacturer_locations.php?manufacturer_id='.(int)$manufacturer_id]
+            ]
+        ]);
+    ?>
 
     <!-- Manufacturer Info -->
     <?php if ($manufacturer): ?>
@@ -281,7 +281,7 @@ $conn->close();
     <?php if (!empty($successMessage)): ?>
         <div class="success-message">
             <strong><?php echo htmlspecialchars($successMessage); ?></strong>
-            <br><a href="manufacturer_locations.php?manufacturer_id=<?php echo $manufacturer_id; ?>">Back to Locations</a>
+            
         </div>
     <?php endif; ?>
 

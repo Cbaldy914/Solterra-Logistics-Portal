@@ -629,13 +629,13 @@ $total_logistics_cost = $total_warehouse_cost + $total_freight_cost;
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <a href="future_projects.php">Future Projects</a>
-        <span class="separator">&raquo;</span>
-        <span><?php echo htmlspecialchars($name); ?></span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => htmlspecialchars($name),
+            'extra' => [ ['label' => 'Future Projects', 'url' => 'future_projects.php'] ]
+        ]);
+    ?>
     <div class="project-container">
         <div class="project-image">
             <img src="<?php echo htmlspecialchars($image_path); ?>" alt="Project Image">

@@ -11,6 +11,8 @@ ignore_user_abort(false);
 
 // Use existing session from portal (don't start new session)
 if (session_status() === PHP_SESSION_NONE) {
+    // Use the same session as the portal
+    session_name('logistics_session');
     session_start();
 }
 if (!isset($_SESSION['user_id'])) {
@@ -97,6 +99,7 @@ try {
 
     // Load tools if needed (carefully)
     $toolResults = [];
+    $lastToolResults = $_SESSION['sunny_last_tool_results'] ?? [];
     $memoryResults = [];
     $needsTools = needsLogisticsTools($message);
     
@@ -106,6 +109,22 @@ try {
         require_once __DIR__ . '/sunny-tools.php';
         
         $sunnyTools = new SunnyTools($user_role, $account_id);
+
+        // If client indicates an attachment should be included, analyze it and add to tool results
+        if (!empty($_GET['attach'])) {
+            // If upload_id provided and exists in session, ensure it's set as last
+            if (!empty($_GET['upload_id']) && !empty($_SESSION['sunny_uploads'][$_GET['upload_id']])) {
+                $_SESSION['sunny_last_upload'] = $_GET['upload_id'];
+            }
+            try {
+                $doc = $sunnyTools->analyzeDocument('summary');
+                if ($doc) {
+                    $toolResults['analyzeDocument'] = $doc;
+                }
+            } catch (Exception $e) {
+                // Ignore, continue
+            }
+        }
         
         // Check if user wants to store a memory
         if (shouldStoreMemory($message)) {
@@ -161,6 +180,11 @@ try {
         }
     }
 
+    // If no tools executed this turn, but we have prior tool results, reuse them to let the model present them
+    if (empty($toolResults) && !empty($lastToolResults)) {
+        $toolResults = $lastToolResults;
+    }
+
     // Build system message starting with the canonical Sunny system prompt (markdown file)
     $promptPath = dirname(__DIR__) . '/sunny_system_prompt.md';
     if (file_exists($promptPath)) {
@@ -182,8 +206,10 @@ try {
                 $systemMessage .= "{$tool}: (error: " . ($data['error'] ?? 'unknown') . ")\n";
             }
         }
+        // Persist for follow-up turns like "please present them"
+        $_SESSION['sunny_last_tool_results'] = $toolResults;
     } else {
-        $systemMessage .= "\n\n(If the user requests specific logistics data that isn't provided above, gently let them know data isn't available and offer general guidance.)";
+        $systemMessage .= "\n\n(If the user requests specific logistics data that isn't provided above, say clearly that no results were found for their request and ask for a different filter or timeframe. Do not invent placeholders.)";
     }
 
     // Add memory context to system message
@@ -194,9 +220,32 @@ try {
         }
     }
 
-    // Construct message array: system prompt + trimmed chat history + current user msg
+    // Add concise style and no filler guidance
+    $systemMessage .= "\n\nStyle: Be concise, present concrete results immediately. Do not write filler like 'just a moment' or 'let me check'. If data exists above, present it directly. If no data, say 'No results found' with 1 actionable next step.";
+
+    // If we have analyzed document text, surface it explicitly as content (not only JSON)
+    $docContextMessage = null;
+    if (!empty($toolResults['analyzeDocument']) &&
+        !empty($toolResults['analyzeDocument']['success']) &&
+        !empty($toolResults['analyzeDocument']['data']) &&
+        isset($toolResults['analyzeDocument']['data']['text_preview']) &&
+        trim((string)$toolResults['analyzeDocument']['data']['text_preview']) !== '') {
+        $docInfo = $toolResults['analyzeDocument']['data'];
+        $docName = $docInfo['filename'] ?? 'uploaded_document';
+        $docText = $docInfo['text_preview'];
+        // Provide the raw text in its own message for the model to use directly
+        $docContextMessage = [
+            'role' => 'system',
+            'content' => "Document Content (" . $docName . ")\n---\n" . $docText . "\n---\nUse the document content above to answer or summarize as requested."
+        ];
+    }
+
+    // Construct message array: system prompt + explicit doc content (if any) + trimmed chat history + current user msg
     $messagesForOpenAI = [];
     $messagesForOpenAI[] = ['role' => 'system', 'content' => $systemMessage];
+    if ($docContextMessage) {
+        $messagesForOpenAI[] = $docContextMessage;
+    }
 
     // Append recent history
     foreach ($chatHistory as $entry) {
@@ -290,11 +339,11 @@ function needsLogisticsTools($message) {
         }
     }
     
-    // Use tools for logistics questions
+    // Use tools for logistics questions (extended with docs)
     $logisticsPatterns = [
-        '/\b(project|projects|delivery|deliveries|shipment|tracking|carrier|inventory|warehouse|storage|stock|module|modules)\b/',
-        '/\b(recent|latest|new|status|summary|overview|performance)\b/',
-        '/\b(show|get|tell|what|how|when|where|list)\b/'
+        '/\b(project|projects|delivery|deliveries|shipment|tracking|carrier|inventory|warehouse|storage|stock|module|modules|document|documents|doc|pods?|invoices?|bol|proof of delivery|spec\s*sheet|safe\s*harbor)\b/i',
+        '/\b(recent|latest|new|status|summary|overview|performance|download|find|open|show)\b/i',
+        '/\b(show|get|tell|what|how|when|where|list)\b/i'
     ];
     
     foreach ($logisticsPatterns as $pattern) {
@@ -309,22 +358,59 @@ function needsLogisticsTools($message) {
 function detectToolsFromMessage($message) {
     $message = strtolower($message);
     $tools = [];
-    
+
     // Project related
     if (preg_match('/\b(project|projects|status)\b/', $message)) {
         $tools[] = 'getProjectSummary';
     }
-    
+
     // Delivery related
     if (preg_match('/\b(delivery|deliveries|shipment|tracking|carrier)\b/', $message)) {
-        $tools[] = 'getDeliveryStatus';
+        // Upcoming timeframe detection (e.g., "next 2 weeks", "coming week")
+        if (preg_match('/\b(next|coming|this)\b/', $message)) {
+            $tools[] = 'getUpcomingDeliveries';
+        } else {
+            $tools[] = 'getDeliveryStatus';
+        }
     }
-    
+
     // Inventory/warehouse related
     if (preg_match('/\b(inventory|warehouse|storage|stock)\b/', $message)) {
         $tools[] = 'getWarehouseInventory';
     }
-    
+
+    // Document-related
+    if (preg_match('/\b(document|documents|doc|pdf|pods?|invoices?|bol|proof of delivery|spec\s*sheet|safe\s*harbor)\b/i', $message)) {
+        // If message mentions a project, prefer project documents, else global
+        if (preg_match('/\bproject\b/i', $message)) {
+            $tools[] = 'getProjectDocuments';
+        } else {
+            $tools[] = 'getGlobalDocuments';
+        }
+        // Also fetch POD status if asking about PODs
+        if (preg_match('/\b(pods?|proof of delivery)\b/i', $message)) {
+            $tools[] = 'getPODStatus';
+        }
+
+        // If asking to summarize/analyze documents
+        if (preg_match('/\b(analy(s|z)e|summary|summarize|review)\b/i', $message)) {
+            $tools[] = 'analyzeDocument';
+        }
+    }
+
+    // KPIs and performance metrics
+    if (preg_match('/\b(kpi|dashboard)\b/i', $message)) {
+        $tools[] = 'getKPIDashboard';
+    }
+    if (preg_match('/\b(performance|on[-\s]?time|late|trend|trends)\b/i', $message)) {
+        $tools[] = 'getDeliveryPerformance';
+    }
+
+    // If the user mentions uploaded file explicitly
+    if (preg_match('/\b(uploaded\s+file|attached\s+file|analy(s|z)e\s+(the\s+)?(upload|attachment|file|document))\b/i', $message)) {
+        $tools[] = 'analyzeDocument';
+    }
+
     // Default for general logistics questions
     if (empty($tools) && preg_match('/\b(show|get|tell|what|recent|latest)\b/', $message)) {
         $tools = ['getProjectSummary'];

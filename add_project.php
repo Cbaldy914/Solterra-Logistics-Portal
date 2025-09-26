@@ -1253,13 +1253,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <?php include 'header.php'; ?>
 <main>
     <!-- Breadcrumb Navigation -->
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php" style="color: #488C9A; text-decoration: none;">Dashboard</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <a href="manage_projects.php" style="color: #488C9A; text-decoration: none;">Manage Projects</a>
-        <span class="separator" style="margin: 0 8px; color: #6c757d;">&raquo;</span>
-        <span>Add Project</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Add Project',
+            'extra' => [ ['label' => 'Manage Projects', 'url' => 'manage_projects.php'] ]
+        ]);
+    ?>
 
     <div class="page-header">
         <h1>Add Project</h1>
@@ -1332,9 +1332,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     </div>
 
-                    <div class="input-group">
+                    <div class="input-group required">
                         <label for="estimated_completion_date">Estimated Completion Date</label>
-                        <input type="date" id="estimated_completion_date" name="estimated_completion_date">
+                        <input type="date" id="estimated_completion_date" name="estimated_completion_date" required>
                     </div>
 
                     <div class="input-group">
@@ -1511,7 +1511,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
 
                             <div class="input-group">
-                                <label>Module Documentation</label>
+                                <label>Module Documentation <span style="color:#999; font-weight:400; font-size:0.85rem;">(optional)</span></label>
                                 <button type="button" class="add-wattage-btn" onclick="openPreModuleUploadModal()">Attach Module Documentation</button>
                                 <div id="preModuleDocsSummary" style="margin-top:8px; color:#666; font-size:0.85em; display:none;"></div>
                             </div>
@@ -1528,8 +1528,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </div>
                                 <div class="modal-body">
                                   <div class="input-group">
-                                    <label for="module_docs_sub_type">Document Sub-Type</label>
-                                    <select id="module_docs_sub_type" name="module_docs_sub_type" required>
+                                    <label for="module_docs_sub_type">Document Sub-Type <span style="color:#999; font-weight:400;">(required only if uploading)</span></label>
+                                    <select id="module_docs_sub_type" name="module_docs_sub_type">
                                         <option value="">Choose sub-type...</option>
                                         <option value="Module Invoice">Module Invoice</option>
                                         <option value="Flash Test Data">Flash Test Data</option>
