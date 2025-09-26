@@ -267,7 +267,7 @@ $conn->close();
             overflow: hidden;
             transition: all 0.3s ease;
             cursor: pointer;
-            width: 400px;
+            min-width: 300px;
         }
 
         .project-item:hover {

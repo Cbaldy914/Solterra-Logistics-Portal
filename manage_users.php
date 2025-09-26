@@ -271,11 +271,7 @@ $conn->close();
 <body>
     <?php include 'header.php'; ?>
     <main class="container">
-        <div class="breadcrumb">
-            <a href="dashboard.php">Dashboard</a>
-            <span class="separator">&raquo;</span>
-            <span>Manage Users</span>
-        </div>
+        <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Manage Users']); ?>
         
         <div class="page-header">
             <h1>Manage Users</h1>

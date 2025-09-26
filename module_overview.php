@@ -29,11 +29,15 @@ if ($project_id > 0) {
 } elseif ($batch_id > 0) {
     $view_mode = 'batch';
 } else {
-    die("Either Batch ID or Project ID must be provided.");
+    // Graceful handling when neither is provided
+    $view_mode = 'project';
+    $project_id = 0;
 }
 
 // Handle bulk pallet generation by modules per pallet
 $successMessage = '';
+// Track pallets created during this request to enable deep-linking to views
+$created_pallet_ids = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'generate_pallets') {
     $itemId           = intval($_POST['item_id']);
     $modulesPerPallet = max(1, intval($_POST['modules_per_pallet']));
@@ -88,11 +92,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
         
         // Insert full pallets
         for ($i = 0; $i < $fullPallets; $i++) {
-            insertPallet($itemId, $wattage, $modulesPerPallet);
+            $newId = insertPallet($itemId, $wattage, $modulesPerPallet);
+            if ($newId) { $created_pallet_ids[] = $newId; }
         }
         // Insert last pallet if there's a remainder
         if ($remainder > 0) {
-            insertPallet($itemId, $wattage, $remainder);
+            $newId = insertPallet($itemId, $wattage, $remainder);
+            if ($newId) { $created_pallet_ids[] = $newId; }
+        }
+        // Persist the created pallet IDs for this session so the View Pallets button can deep-link
+        if (!empty($created_pallet_ids)) {
+            $_SESSION['recent_created_pallet_ids'] = [
+                'ids' => $created_pallet_ids,
+                'ts'  => time()
+            ];
         }
         $successMessage = "Created $totalPallets pallets (up to $modulesPerPallet modules each) for $remainingModules remaining modules.";
     }
@@ -416,7 +429,7 @@ function insertPallet($itemId, $watt, $qty) {
         // Log error or handle appropriately
         error_log("Error preparing pallet insert for item ID {$itemId}: " . $conn->error);
         // Potentially throw an exception or return false to indicate failure
-        return; // Exit function if prepare fails
+        return null; // Exit function if prepare fails
     }
 
     $emptyId = ''; // Pallet identifier will be set after insert
@@ -426,7 +439,7 @@ function insertPallet($itemId, $watt, $qty) {
     if (!$stmtIns->execute()) {
         error_log("Error executing pallet insert for item ID {$itemId}: " . $stmtIns->error);
         $stmtIns->close();
-        return; // Exit function if execute fails
+        return null; // Exit function if execute fails
     }
     
     $newId = $conn->insert_id;
@@ -440,6 +453,7 @@ function insertPallet($itemId, $watt, $qty) {
          error_log("Error preparing pallet identifier update for ID {$newId}: " . $conn->error);
     }
     $stmtIns->close();
+    return $newId;
 }
 
 // --- Data Fetching --- 
@@ -450,7 +464,17 @@ $summary_stats = [ // Keep overall status counts
     'status_counts' => [],
     'detailed_breakdown' => [],
 ];
-$wattage_summary = []; // NEW: Array to hold summary data per wattage
+// Aggregate structures
+$wattage_summary = []; // Existing: per-wattage summary across all batches (kept for compatibility in some views)
+$batch_wattage_summary = []; // NEW: per-batch, per-wattage summary used in project view UI
+$umi_id_to_batch_id = []; // Map each UMI id -> module batch id
+// Track UMI meta for later replacement adjustments
+$item_quantity_by_id = [];
+$item_wattage_by_id = [];
+// Replacement tracking totals for callouts
+$replacement_totals = ['pallets' => 0, 'modules' => 0];
+// Replacement module totals by wattage (to subtract from 'ordered')
+$replacement_modules_by_wattage = [];
 
 $account_id_for_admin = null;
 $errorMessage = '';
@@ -484,16 +508,20 @@ try {
         
     } elseif ($view_mode === 'project') {
         // Fetch project data and all its module batches
-        $stmtProject = $conn->prepare("SELECT * FROM projects WHERE id = ?");
-        if (!$stmtProject) throw new Exception("Prepare project fetch failed: " . $conn->error);
-        $stmtProject->bind_param("i", $project_id);
-        $stmtProject->execute();
-        $resultProject = $stmtProject->get_result();
-        if ($resultProject->num_rows === 0) {
-            throw new Exception("Project not found.");
+        if ($project_id > 0) {
+            $stmtProject = $conn->prepare("SELECT * FROM projects WHERE id = ?");
+            if (!$stmtProject) throw new Exception("Prepare project fetch failed: " . $conn->error);
+            $stmtProject->bind_param("i", $project_id);
+            $stmtProject->execute();
+            $resultProject = $stmtProject->get_result();
+            if ($resultProject->num_rows === 0) {
+                throw new Exception("Project not found.");
+            }
+            $project_data = $resultProject->fetch_assoc();
+            $stmtProject->close();
+        } else {
+            $project_data = null;
         }
-        $project_data = $resultProject->fetch_assoc();
-        $stmtProject->close();
         
         // Fetch all module batches for this project
         $stmtBatches = $conn->prepare("
@@ -513,16 +541,15 @@ try {
         }
         $stmtBatches->close();
         
-        if (empty($module_batches)) {
-            throw new Exception("No module batches found for this project.");
+        // If none found, we'll render a friendly empty state
+        if (!empty($module_batches)) {
+            // Set batch_data to the first batch for compatibility with existing code
+            $batch_data = $module_batches[0];
         }
-        
-        // Set batch_data to the first batch for compatibility with existing code
-        $batch_data = $module_batches[0];
     }
 
     // Access Control for Admin role
-    if ($role === 'admin') {
+    if ($role === 'admin' && !empty($module_batches)) {
         $sqlAdminAcc = "SELECT account_id FROM customer_account_users WHERE user_id = ? AND role = 'admin' LIMIT 1";
         $stmtAdminAcc = $conn->prepare($sqlAdminAcc);
         if ($stmtAdminAcc) {
@@ -550,7 +577,7 @@ try {
         $placeholders_batches = implode(',', array_fill(0, count($batch_ids), '?'));
         $types_batches = str_repeat('i', count($batch_ids));
         
-        $stmtItems = $conn->prepare("SELECT id, unassigned_module_id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id IN ($placeholders_batches) ORDER BY wattage ASC");
+        $stmtItems = $conn->prepare("SELECT id, unassigned_module_id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id IN ($placeholders_batches) AND wattage > 0 AND quantity > 0 ORDER BY unassigned_module_id, wattage ASC");
         if (!$stmtItems) throw new Exception("Prepare items fetch failed: " . $conn->error);
         $stmtItems->bind_param($types_batches, ...$batch_ids);
         $stmtItems->execute();
@@ -558,19 +585,40 @@ try {
         
         while ($item = $resultItems->fetch_assoc()) {
             $item_ids[] = $item['id'];
-            $wattage = $item['wattage'];
-            if (!isset($wattage_summary[$wattage])) {
-                $wattage_summary[$wattage] = [
-                    'item_id' => $item['id'], // For single batch mode compatibility
+            $wattage = (int)$item['wattage'];
+            $batchId = (int)$item['unassigned_module_id'];
+            $umi_id_to_batch_id[(int)$item['id']] = $batchId;
+            if (!isset($batch_wattage_summary[$batchId])) {
+                $batch_wattage_summary[$batchId] = [];
+            }
+            if (!isset($batch_wattage_summary[$batchId][$wattage])) {
+                $batch_wattage_summary[$batchId][$wattage] = [
+                    'item_id' => (int)$item['id'],
                     'ordered_quantity' => 0,
                     'palletized_quantity' => 0,
                     'remaining_quantity' => 0,
                     'pallet_distribution' => [],
                     'modules_per_pallet' => null,
-                    'batch_id' => $item['unassigned_module_id']
+                    'batch_id' => $batchId
                 ];
             }
-            $wattage_summary[$wattage]['ordered_quantity'] += $item['quantity'];
+            $batch_wattage_summary[$batchId][$wattage]['ordered_quantity'] += (int)$item['quantity'];
+            // Maintain legacy aggregate by wattage as a sum across batches
+            if (!isset($wattage_summary[$wattage])) {
+                $wattage_summary[$wattage] = [
+                    'item_id' => (int)$item['id'],
+                    'ordered_quantity' => 0,
+                    'palletized_quantity' => 0,
+                    'remaining_quantity' => 0,
+                    'pallet_distribution' => [],
+                    'modules_per_pallet' => null,
+                    'batch_id' => $batchId
+                ];
+            }
+            $wattage_summary[$wattage]['ordered_quantity'] += (int)$item['quantity'];
+            // Track UMI details for replacement adjustments later
+            $item_quantity_by_id[$item['id']] = (int)$item['quantity'];
+            $item_wattage_by_id[$item['id']] = (int)$item['wattage'];
             $batch_items[] = $item; // Still store raw items if needed later
         }
         $stmtItems->close();
@@ -589,14 +637,72 @@ try {
                 $stmtModulesPerPallet->close();
                 
                 // Associate modules_per_pallet with wattage summary
-                foreach ($wattage_summary as $wattage => &$data) {
-                    $batch_id = $data['batch_id'];
-                    if (isset($modules_per_pallet_data[$batch_id])) {
-                        $data['modules_per_pallet'] = $modules_per_pallet_data[$batch_id];
+                foreach ($batch_wattage_summary as $bId => &$byW) {
+                    foreach ($byW as $w => &$data) {
+                        if (isset($modules_per_pallet_data[$bId])) {
+                            $data['modules_per_pallet'] = $modules_per_pallet_data[$bId];
+                        }
                     }
+                    unset($data);
                 }
+                unset($byW);
                 unset($data); // Clean up reference
             }
+        }
+
+        // Determine which pallets (and UMIs) are replacements for warranty claims within this view
+        $replacement_pallet_id_set = [];
+        $replacement_umi_id_set = [];
+        $replacement_umi_qty_by_wattage = [];
+        if (!empty($item_ids)) {
+            $ph_items = implode(',', array_fill(0, count($item_ids), '?'));
+            $types_items = str_repeat('i', count($item_ids));
+            $stmtRepl = $conn->prepare(
+                "SELECT ip.id as pallet_id, ip.unassigned_module_item_id as umi_id\n"
+                . "FROM inventory_pallets ip\n"
+                . "JOIN warranty_claim_replacements wcr ON wcr.pallet_id = ip.id\n"
+                . "WHERE ip.unassigned_module_item_id IN ($ph_items)"
+            );
+            if ($stmtRepl) {
+                $stmtRepl->bind_param($types_items, ...$item_ids);
+                $stmtRepl->execute();
+                $resRepl = $stmtRepl->get_result();
+                while ($row = $resRepl->fetch_assoc()) {
+                    $replacement_pallet_id_set[(int)$row['pallet_id']] = true;
+                    $umiId = (int)$row['umi_id'];
+                    $replacement_umi_id_set[$umiId] = true;
+                }
+                $stmtRepl->close();
+            }
+
+            // Adjust 'ordered' to remove any UMI quantities that were created
+            // solely for replacement linkage (quick mode used UMI qty as template)
+            if (!empty($replacement_umi_id_set)) {
+                foreach ($replacement_umi_id_set as $umiId => $unused) {
+                    $w = $item_wattage_by_id[$umiId] ?? null;
+                    $q = $item_quantity_by_id[$umiId] ?? 0;
+                    if ($w !== null && isset($wattage_summary[$w])) {
+                        $wattage_summary[$w]['ordered_quantity'] = max(0, (int)$wattage_summary[$w]['ordered_quantity'] - (int)$q);
+                    }
+                }
+            }
+
+            // Calculate UMI quantities by wattage for replacements to subtract from 'ordered'
+            if (!empty($replacement_umi_id_set)) {
+                foreach ($replacement_umi_id_set as $umiId => $unused) {
+                    $w = $item_wattage_by_id[$umiId] ?? null;
+                    $q = $item_quantity_by_id[$umiId] ?? 0;
+                    if ($w !== null) {
+                        if (!isset($replacement_umi_qty_by_wattage[$w])) $replacement_umi_qty_by_wattage[$w] = 0;
+                        $replacement_umi_qty_by_wattage[$w] += (int)$q;
+                        if (!isset($replacement_modules_by_wattage[$w])) $replacement_modules_by_wattage[$w] = 0;
+                        $replacement_modules_by_wattage[$w] += (int)$q;
+                    }
+                }
+            }
+
+            // Do not adjust 'ordered' yet; we will subtract replacement quantities
+            // using the actual pallet quantities gathered in the main pallet loop below
         }
     }
 
@@ -644,16 +750,32 @@ try {
         $stmtPallets->execute();
         $resultPallets = $stmtPallets->get_result();
         while ($pallet = $resultPallets->fetch_assoc()) {
-            $wattage = $pallet['wattage'];
-            if (isset($wattage_summary[$wattage])) {
-                $wattage_summary[$wattage]['palletized_quantity'] += $pallet['quantity'];
-                
-                // Track pallet distribution by quantity
-                $pallet_qty = $pallet['quantity'];
-                if (!isset($wattage_summary[$wattage]['pallet_distribution'][$pallet_qty])) {
-                    $wattage_summary[$wattage]['pallet_distribution'][$pallet_qty] = 0;
+            $wattage = (int)$pallet['wattage'];
+            $umiId = (int)$pallet['unassigned_module_item_id'];
+            $batchId = $umi_id_to_batch_id[$umiId] ?? null;
+            if ($batchId !== null && isset($batch_wattage_summary[$batchId][$wattage])) {
+                // Exclude pallets created as replacements from palletization math, but still display below
+                $isReplacement = isset($replacement_pallet_id_set[(int)$pallet['id']]);
+                // Always count pallets (including replacements) toward display palletization
+                $qty = (int)$pallet['quantity'];
+                $batch_wattage_summary[$batchId][$wattage]['palletized_quantity'] += $qty;
+                // Track pallet distribution by quantity for this batch
+                if (!isset($batch_wattage_summary[$batchId][$wattage]['pallet_distribution'][$qty])) {
+                    $batch_wattage_summary[$batchId][$wattage]['pallet_distribution'][$qty] = 0;
                 }
-                $wattage_summary[$wattage]['pallet_distribution'][$pallet_qty]++;
+                $batch_wattage_summary[$batchId][$wattage]['pallet_distribution'][$qty]++;
+                // Maintain legacy aggregate too
+                if (!isset($wattage_summary[$wattage]['pallet_distribution'][$qty])) {
+                    $wattage_summary[$wattage]['pallet_distribution'][$qty] = 0;
+                }
+                $wattage_summary[$wattage]['pallet_distribution'][$qty]++;
+                $wattage_summary[$wattage]['palletized_quantity'] += $qty;
+                
+                // Track replacement totals for callout only
+                if ($isReplacement) {
+                    $replacement_totals['pallets'] += 1;
+                    $replacement_totals['modules'] += $qty;
+                }
             }
             // Determine display location
             if ($pallet['status'] === 'In Warehouse' && $pallet['current_warehouse_id']) {
@@ -773,11 +895,22 @@ try {
         $stmtDamagedPallets->close();
     }
 
-    // Calculate remaining quantity for each wattage
-    foreach ($wattage_summary as $wattage => &$data) { // Use reference to modify directly
-        $data['remaining_quantity'] = $data['ordered_quantity'] - $data['palletized_quantity'];
+    // Calculate remaining quantity for each wattage. Now that palletized includes
+    // both healthy and replacement pallets while 'ordered' has excluded the
+    // replacement UMI templates, Remaining is simply Ordered - Palletized.
+    // Per-batch remaining
+    foreach ($batch_wattage_summary as $bId => &$byW) {
+        foreach ($byW as $w => &$data) {
+            $data['remaining_quantity'] = (int)$data['ordered_quantity'] - (int)$data['palletized_quantity'];
+        }
+        unset($data);
     }
-    unset($data); // Unset reference after loop
+    unset($byW);
+    // Maintain legacy aggregate remaining as well
+    foreach ($wattage_summary as $wattage => &$data) {
+        $data['remaining_quantity'] = (int)$data['ordered_quantity'] - (int)$data['palletized_quantity'];
+    }
+    unset($data);
 
     // Fetch Projects for the account associated with this batch (with addresses)
     $account_projects = [];
@@ -1307,19 +1440,21 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <?php if ($view_mode === 'project'): ?>
-            <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
-            <span class="separator">&raquo;</span>
-            <span>Modules for <?php echo htmlspecialchars($project_data['project_name']); ?></span>
-        <?php else: ?>
-            <a href="modules">Modules</a>
-            <span class="separator">&raquo;</span>
-            <span>Batch: <?php echo $batch_data ? htmlspecialchars($batch_data['vendor_name']) : 'Module Batch'; ?></span>
-        <?php endif; ?>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        if ($view_mode === 'project') {
+            echo slp_render_breadcrumbs([
+                'current_label' => 'Modules',
+                'project_id' => (int)$project_id
+            ]);
+        } else {
+            $label = 'Batch: '.($batch_data ? ($batch_data['vendor_name'] ?? 'Module Batch') : 'Module Batch');
+            echo slp_render_breadcrumbs([
+                'current_label' => $label,
+                'extra' => [ ['label' => 'Modules', 'url' => 'modules.php'] ]
+            ]);
+        }
+    ?>
 
     <?php if (!empty($errorMessage)): ?>
         <div class="error-message"><strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?></div>
@@ -1371,9 +1506,22 @@ $conn->close();
         
         <div class="overview-header">
             <?php if ($view_mode === 'project'): ?>
-                <h1>Modules for <?php echo htmlspecialchars($project_data['project_name']); ?></h1>
-                <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project_data['project_address']); ?></p>
+                <h1>Modules for <?php echo htmlspecialchars($project_data['project_name'] ?? 'Project'); ?></h1>
+                <?php if (!empty($project_data)): ?>
+                    <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project_data['project_address']); ?></p>
+                <?php endif; ?>
                 <p><strong>Number of Module Batches:</strong> <?php echo count($module_batches); ?></p>
+                <?php if (count($module_batches) === 0): ?>
+                    <div style="margin-top: 16px; padding: 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; text-align: center;">
+                        <div style="font-size: 16px; color: #293E4C; font-weight: 600;">No modules found for this project</div>
+                        <div style="font-size: 13px; color: #6b7280; margin-top: 6px;">Once you add a module batch, you can palletize and track them here.</div>
+                        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin']) && !empty($project_id)): ?>
+                            <div style="margin-top: 16px;">
+                                <a href="add_module_batch.php?project_id=<?php echo (int)$project_id; ?>" style="display:inline-block; padding:10px 16px; background:#488C9A; color:#fff; border-radius:8px; text-decoration:none;">+ Add Module Batch</a>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
                 
                 <?php if (count($module_batches) > 1): ?>
                     <div style="margin-top: 15px; padding: 15px; background-color: #f8f9fa; border-radius: 8px;">
@@ -1385,18 +1533,18 @@ $conn->close();
                                 <strong>Initial Location:</strong> <?php echo htmlspecialchars($batch['initial_location']); ?><br>
                                 <strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch['created_at'])); ?>
                                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                                    <br><a href="edit_module?batch_id=<?php echo $batch['id']; ?>" style="color: #488C9A; text-decoration: none;">Edit Batch</a>
+                                    <br><a href="edit_module_batch.php?project_id=<?php echo (int)$project_data['id']; ?>&batch_id=<?php echo (int)$batch['id']; ?>" style="color: #488C9A; text-decoration: none;">Edit Batch</a>
                                 <?php endif; ?>
                             </div>
                         <?php endforeach; ?>
                     </div>
-                <?php else: ?>
+                <?php elseif (count($module_batches) === 1): ?>
                     <p><strong>Batch:</strong> <?php echo htmlspecialchars($module_batches[0]['vendor_name']); ?></p>
                     <p><strong>Account:</strong> <?php echo htmlspecialchars($module_batches[0]['account_name']); ?></p>
                     <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($module_batches[0]['initial_location']); ?></p>
                     <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($module_batches[0]['created_at'])); ?></p>
                     <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                    <button class="edit-button" onclick="window.location.href='edit_module?batch_id=<?php echo $module_batches[0]['id']; ?>'">Edit Batch Details</button>
+                    <button class="edit-button" onclick="window.location.href='edit_module_batch.php?project_id=<?php echo (int)$project_data['id']; ?>&batch_id=<?php echo (int)$module_batches[0]['id']; ?>'">Edit Batch Details</button>
                     <?php endif; ?>
                 <?php endif; ?>
                 
@@ -1416,7 +1564,7 @@ $conn->close();
                 <p><strong>Batch ID:</strong> <?php echo $batch_data['id']; ?></p>
                 <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch_data['created_at'])); ?></p>
                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                <button class="edit-button" onclick="window.location.href='edit_module?batch_id=<?php echo $batch_id; ?>'">Edit Batch Details</button>
+                <button class="edit-button" onclick="window.location.href='<?php echo !empty($batch_data['project_id']) ? ('edit_module_batch.php?project_id='.(int)$batch_data['project_id'].'&batch_id='.(int)$batch_id) : ('edit_module_batch.php?batch_id='.(int)$batch_id); ?>'">Edit Batch Details</button>
                 <?php endif; ?>
             <?php endif; ?>
         </div>
@@ -1426,6 +1574,71 @@ $conn->close();
             
             <!-- Container for wattage blocks -->
             <div class="wattage-blocks-container">
+                <?php if ($view_mode === 'project' && !empty($batch_wattage_summary)): ?>
+                    <?php foreach ($module_batches as $batch): $bId = (int)$batch['id']; ?>
+                        <div class="wattage-summary-block" style="grid-column: 1 / -1; background:#f7fbfc; border:1px solid #e2ecef; padding:12px; border-radius:8px;">
+                            <h3 style="margin-top:0; color:#293E4C;">Batch #<?php echo $bId; ?> — <?php echo htmlspecialchars($batch['vendor_name'] ?? ''); ?></h3>
+                            <?php if (!empty($batch_wattage_summary[$bId])): ?>
+                                <?php foreach ($batch_wattage_summary[$bId] as $wattage => $data): ?>
+                                    <div class="wattage-summary-block">
+                                        <h4><?php echo htmlspecialchars($wattage); ?>W Modules</h4>
+                                        <p><strong>Ordered:</strong> <?php echo number_format($data['ordered_quantity']); ?></p>
+                                        <p><strong>On Pallets:</strong> <?php echo number_format($data['palletized_quantity']); ?></p>
+                                        <?php if ($data['palletized_quantity'] > 0 && !empty($data['pallet_distribution'])): ?>
+                                            <div style="margin: 8px 0; padding: 8px; background-color: #f8f9fa; border-radius: 4px; border-left: 3px solid #488C9A;">
+                                                <strong>Pallet Distribution:</strong><br>
+                                                <?php $distribution=$data['pallet_distribution']; krsort($distribution); $parts=[]; foreach ($distribution as $mpp=>$cnt){ $parts[] = $cnt.' '.($cnt===1?'pallet':'pallets')." with {$mpp} modules"; } echo '<span style="font-size:0.9em;color:#555;">'.implode('<br>', $parts).'</span>'; ?>
+                                            </div>
+                                        <?php endif; ?>
+                                        <?php if ($data['remaining_quantity'] < 0): ?>
+                                            <p><strong>Over-palletized:</strong> <span style="color:#d32f2f;">&nbsp;<?php echo number_format(abs($data['remaining_quantity'])); ?> excess modules</span></p>
+                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin'])): ?>
+                                                <form method="POST" style="margin-top: 10px;">
+                                                    <input type="hidden" name="action" value="undo_palletization">
+                                                    <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                                    <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules in this batch?');" style="background-color: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
+                                                        Undo All Palletization (Batch)
+                                                    </button>
+                                                </form>
+                                            <?php endif; ?>
+                                        <?php elseif ($data['remaining_quantity'] > 0): ?>
+                                            <p><strong>Remaining:</strong> <span style="color:#2e7d32;">&nbsp;<?php echo number_format($data['remaining_quantity']); ?></span></p>
+                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin'])): ?>
+                                                <form method="POST" class="palletization-form" onsubmit="return handlePalletizationSubmit(event)">
+                                                    <input type="hidden" name="action" value="generate_pallets">
+                                                    <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
+                                                    <input type="hidden" name="remaining_modules" value="<?php echo $data['remaining_quantity']; ?>">
+                                                    <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                                    <input type="hidden" name="batch_id" value="<?php echo $data['batch_id']; ?>">
+                                                    <input type="hidden" name="current_modules_per_pallet" value="<?php echo $data['modules_per_pallet'] ?? ''; ?>">
+                                                    <input type="hidden" name="update_modules_table" value="false">
+                                                    <div>
+                                                        <label for="modules_per_pallet_<?php echo $bId.'_'.$wattage; ?>">Modules per Pallet:</label>
+                                                        <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $bId.'_'.$wattage; ?>" min="1" value="<?php echo $data['modules_per_pallet'] ?? 1; ?>" required data-original-value="<?php echo $data['modules_per_pallet'] ?? ''; ?>" data-batch-id="<?php echo $data['batch_id']; ?>">
+                                                        <button type="submit">Generate</button>
+                                                    </div>
+                                                </form>
+                                            <?php endif; ?>
+                                        <?php else: ?>
+                                            <p><strong>Remaining:</strong> <span style="color:green;">0 (Perfect match)</span></p>
+                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin'])): ?>
+                                                <form method="POST" style="margin-top: 10px;">
+                                                    <input type="hidden" name="action" value="undo_palletization">
+                                                    <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                                    <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules in this batch?');" style="background-color: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
+                                                        Undo All Palletization (Batch)
+                                                    </button>
+                                                </form>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <p style="margin:0; color:#6c757d;">No module items in this batch.</p>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                <?php else: ?>
                 <?php if (!empty($wattage_summary)):
                     foreach ($wattage_summary as $wattage => $data):
                 ?>
@@ -1516,8 +1729,11 @@ $conn->close();
                     endif; // End if !empty($wattage_summary)
                 ?>
             </div>
+            <?php endif; ?>
+        </div>
 
-            <!-- Keep Pallet Status Breakdown -->
+        <!-- Separate Overall Pallet Status Breakdown section -->
+        <div class="pallet-status-section">
             <h3 style="margin-top: 30px;">Overall Pallet Status Breakdown:</h3>
             <?php if (!empty($summary_stats['detailed_breakdown'])): ?>
                 <div class="status-breakdown-detailed">
@@ -1526,6 +1742,15 @@ $conn->close();
                             <div style="font-weight: 600; color: #293E4C; margin-bottom: 8px;">
                                 <?php echo htmlspecialchars($status); ?>: 
                                 <span style="color: #488C9A;"><?php echo $data['pallet_count']; ?> pallets, <?php echo number_format($data['total_modules']); ?> modules</span>
+                                <?php if ($status === 'Damaged'): ?>
+                                    <?php if (($replacement_totals['pallets'] ?? 0) > 0): ?>
+                                        <span style="margin-left: 10px; color: #2e7d32; font-weight: 600;">
+                                            (Replacements created: <?php echo (int)$replacement_totals['pallets']; ?> pallets, <?php echo number_format((int)$replacement_totals['modules']); ?> modules)
+                                        </span>
+                                    <?php else: ?>
+                                        <span style="margin-left: 10px; color: #d32f2f; font-weight: 600;">(No replacements created yet)</span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
                             </div>
                             <?php if (!empty($data['wattage_breakdown'])): ?>
                                 <div style="margin-left: 20px; font-size: 0.9em; color: #666;">
@@ -1543,19 +1768,40 @@ $conn->close();
                     <?php endforeach; ?>
                 </div>
                 
-                <!-- Link to detailed movement view -->
-                <div style="margin-top: 20px; text-align: center;">
+                <!-- Links to Movement view and consolidated Pallets view -->
+                <div style="margin-top: 20px; text-align: center; display:flex; flex-direction:column; align-items:center; gap:8px;">
                     <?php 
                     $movement_url = "module_movements?batch_id=" . urlencode($batch_id);
                     if (!empty($batch_data['project_id'])) {
                         $movement_url .= "&project_id=" . urlencode($batch_data['project_id']);
                     }
+
+                    // Build deep-link for pallets created in this session (if any)
+                    $pallet_ids_query = '';
+                    if (!empty($_SESSION['recent_created_pallet_ids']['ids'])) {
+                        $ts_ok = !empty($_SESSION['recent_created_pallet_ids']['ts']) && (time() - intval($_SESSION['recent_created_pallet_ids']['ts']) < 600);
+                        $ids = array_filter(array_map('intval', $_SESSION['recent_created_pallet_ids']['ids']));
+                        if ($ts_ok && !empty($ids)) {
+                            $pallet_ids_query = 'pallet_ids=' . urlencode(implode(',', $ids));
+                        }
+                    }
+                    // Choose destination page based on role
+                    $pallets_target_base = (in_array($role, ['admin','global_admin'])) ? 'create_shipment.php' : 'manage_pallets.php';
+                    $pallets_url_parts = [];
+                    if (!empty($batch_data['project_id'])) { $pallets_url_parts[] = 'project_id=' . urlencode($batch_data['project_id']); }
+                    if (!empty($pallet_ids_query)) { $pallets_url_parts[] = $pallet_ids_query; }
+                    $pallets_url = $pallets_target_base . (empty($pallets_url_parts) ? '' : '?' . implode('&', $pallets_url_parts));
                     ?>
-                    <a href="<?php echo $movement_url; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 12px 24px; font-size: 1em; text-decoration: none; display: inline-block;">
-                        <strong>📍 View Module Movement Map</strong>
-                    </a>
-                    <p style="font-size: 0.9em; color: #666; margin-top: 8px;">
-                        See detailed movement tracking and geographic flow of these modules
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
+                        <a href="<?php echo $movement_url; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 12px 24px; font-size: 1em; text-decoration: none; display: inline-block;">
+                            <strong>📍 View Module Movement Map</strong>
+                        </a>
+                        <a href="<?php echo $pallets_url; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 12px 24px; font-size: 1em; text-decoration: none; display: inline-block;">
+                            <strong>📦 View Pallets</strong>
+                        </a>
+                    </div>
+                    <p style="font-size: 0.9em; color: #666;">
+                        View and manage pallets in the consolidated table
                     </p>
                 </div>
             <?php else: ?>
@@ -1563,144 +1809,32 @@ $conn->close();
             <?php endif; ?>
         </div>
 
-        <!-- ====== PALLET INFORMATION SECTION ====== -->
-        <?php if (!empty($pallets)): ?>
-            <div class="pallets-section" style="margin-top: 30px;">
-                <h2 class="section-title">Associated Pallets</h2>
-                <!-- Filters Dropdown -->
-                <div class="filters-container" style="margin-bottom: 15px;">
-                    <div class="filter-dropdown">
-                        <button type="button" class="filter-toggle-btn" onclick="toggleFilters()">
-                            <span>Filters</span> <span class="filter-arrow">▼</span>
-                        </button>
-                        <div class="filter-content" id="filterContent" style="display: none;">
-                            <div style="display: flex; flex-direction: column; gap: 15px; padding: 15px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 0 0 4px 4px;">
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    <label>Search:</label>
-                                    <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()" style="flex: 1;">
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    <label for="wattageFilter">Wattage:</label>
-                                    <select id="wattageFilter" onchange="filterPallets()" style="flex: 1;">
-                                        <option value="">All</option>
-                                        <?php
-                                        $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
-                                        sort($wattages);
-                                        foreach ($wattages as $w) {
-                                            echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>';
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    <label for="statusFilter">Status:</label>
-                                    <select id="statusFilter" onchange="filterPallets()" style="flex: 1;">
-                                        <option value="">All</option>
-                                        <?php
-                                        $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
-                                        sort($statuses);
-                                        foreach ($statuses as $s) {
-                                            echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>';
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 15px;">
-                        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                            <a href="create_shipment.php<?php echo ($view_mode === 'project' && $project_id) ? '?project_id=' . $project_id : ''; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 8px 16px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">Create Shipment</a>
-                        <?php endif; ?>
-                    </div>
-                </div>
-                
-                <div class="pagination-container">
-                    <div class="pagination-info">
-                        <span id="paginationInfo">Showing 0 of 0 pallets</span>
-                    </div>
-                    <div class="pagination-controls">
-                        <label for="itemsPerPage">Show:</label>
-                        <input type="number" id="itemsPerPage" value="100" min="1" max="300" style="width: 80px;">
-                        <label>pallets per page</label>
-                        <button type="button" id="prevPage" disabled>Previous</button>
-                        <span id="pageInfo">Page 1 of 1</span>
-                        <button type="button" id="nextPage" disabled>Next</button>
-                    </div>
-                </div>
-                
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Identifier</th>
-                            <th>Wattage</th>
-                            <th>Quantity</th>
-                            <th>Status</th>
-                            <th>Deliveries</th>
-                            <th>Pallet Details</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($pallets as $pallet): ?>
-                            <tr>
-                                <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
-                                <td><?php echo $pallet['wattage']; ?>W</td>
-                                <td><?php echo number_format($pallet['quantity']); ?></td>
-                                <td>
-                                    <?php 
-                                    $status = htmlspecialchars($pallet['status']);
-                                    if ($status === 'In Transit to Warehouse' && $pallet['current_warehouse_id']) {
-                                        echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
-                                    } elseif ($status === 'In Warehouse' && $pallet['current_warehouse_id']) {
-                                        echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
-                                    } else {
-                                        echo $status;
-                                    }
-                                    ?>
-                                </td>
-                                <td>
-                                    <?php 
-                                    $deliveryInfo = $pallet['delivery_info'] ?? '';
-                                    if (empty($deliveryInfo)) {
-                                        echo 'No deliveries';
-                                    } else {
-                                        $deliveries = explode('|', $deliveryInfo);
-                                        if (count($deliveries) == 1) {
-                                            $parts = explode(':', $deliveries[0]);
-                                            $deliveryId = $parts[0];
-                                            $bolNumber = $parts[1];
-                                            echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
-                                        } else {
-                                            echo '<div class="delivery-dropdown">';
-                                            echo '<button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (' . count($deliveries) . ')</button>';
-                                            echo '<div class="delivery-list" style="display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 3px; z-index: 1000; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">';
-                                            foreach ($deliveries as $delivery) {
-                                                $parts = explode(':', $delivery);
-                                                $deliveryId = $parts[0];
-                                                $bolNumber = $parts[1];
-                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
-                                            }
-                                            echo '</div>';
-                                            echo '</div>';
-                                        }
-                                    }
-                                    ?>
-                                </td>
-                                <td>
-                                    <a href="pallet_details.php?pallet_id=<?php echo $pallet['id']; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
+        <!-- Pallets table removed in favor of consolidated View Pallets page -->
+
+    <?php endif; ?>
+    <?php if (empty($errorMessage) && empty($batch_data)): ?>
+        <?php if (in_array($role, ['admin', 'global_admin'])): ?>
+            <div style="text-align: center; padding: 60px 20px; background: #f8f9fa; border-radius: 12px; margin: 20px 0;">
+                <div style="font-size: 3em; margin-bottom: 20px; color: #6c757d;">📦</div>
+                <h2 style="color: #293E4C; margin-bottom: 16px;">No Modules Found</h2>
+                <p style="color: #6c757d; margin-bottom: 32px; font-size: 1.1em;">
+                    This project doesn't have any modules assigned yet. Would you like to add some?
+                </p>
+                <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" 
+                   style="background: #488C9A; color: white; padding: 16px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 1.1em; transition: all 0.3s ease; display: inline-block;">
+                    ➕ Add Module Batch
+                </a>
             </div>
         <?php else: ?>
-            <p style="margin-top:20px;">No pallets have been created or recorded for this batch yet.</p>
+            <div style="text-align: center; padding: 60px 20px; background: #f8f9fa; border-radius: 12px; margin: 20px 0;">
+                <div style="font-size: 3em; margin-bottom: 20px; color: #6c757d;">📦</div>
+                <h2 style="color: #293E4C; margin-bottom: 16px;">No Modules Assigned</h2>
+                <p style="color: #6c757d; font-size: 1.1em;">
+                    There are no modules assigned to this project currently.
+                </p>
+                
+            </div>
         <?php endif; ?>
-
-    <?php else: ?>
-         <p>Batch data could not be loaded.</p>
-         <a href="modules">Back to Modules List</a>
     <?php endif; ?>
 </main>
 
@@ -1914,6 +2048,8 @@ function handlePalletizationSubmit(event) {
     const wattage = form.querySelector('input[name="wattage"]').value;
     const currentModulesPerPallet = form.querySelector('input[name="current_modules_per_pallet"]').value;
     const originalValue = form.querySelector('input[name="modules_per_pallet"]').getAttribute('data-original-value');
+    const updateField = form.querySelector('input[name="update_modules_table"]');
+    const updateApproved = updateField && updateField.value === 'true';
     
     if (isNaN(modulesPerPallet) || modulesPerPallet <= 0) {
         alert('Please enter a valid number of modules per pallet.');
@@ -1922,7 +2058,7 @@ function handlePalletizationSubmit(event) {
     
     // Check if the entered value differs from the database value
     const dbValue = currentModulesPerPallet ? parseInt(currentModulesPerPallet) : null;
-    if (dbValue !== null && dbValue !== modulesPerPallet) {
+    if (dbValue !== null && dbValue !== modulesPerPallet && !updateApproved) {
         // Show modules per pallet confirmation modal
         currentForm = form;
         showModulesPerPalletModal(dbValue, modulesPerPallet, wattage);
@@ -1976,14 +2112,14 @@ function showWarningModal(fullPallets, modulesPerPallet, remainder, wattage) {
 function closeWarningModal() {
     const modal = document.getElementById('warningModal');
     modal.style.display = 'none';
-    currentForm = null;
 }
 
 function confirmPalletization() {
     if (currentForm) {
+        const form = currentForm;
         closeWarningModal();
         showLoadingModal();
-        currentForm.submit();
+        form.submit();
     }
 }
 
@@ -2010,19 +2146,20 @@ function showModulesPerPalletModal(originalValue, newValue, wattage) {
 function closeModulesPerPalletModal() {
     const modal = document.getElementById('modulesPerPalletModal');
     modal.style.display = 'none';
-    currentForm = null;
 }
 
 function confirmModulesPerPalletUpdate() {
     if (currentForm) {
+        const form = currentForm;
         // Set flag to update modules table
-        currentForm.querySelector('input[name="update_modules_table"]').value = 'true';
+        const updateField = form.querySelector('input[name="update_modules_table"]');
+        if (updateField) updateField.value = 'true';
         closeModulesPerPalletModal();
         
         // Continue with normal palletization flow
-        const modulesPerPallet = parseInt(currentForm.querySelector('input[name="modules_per_pallet"]').value);
-        const remainingModules = parseInt(currentForm.querySelector('input[name="remaining_modules"]').value);
-        const wattage = currentForm.querySelector('input[name="wattage"]').value;
+        const modulesPerPallet = parseInt(form.querySelector('input[name="modules_per_pallet"]').value);
+        const remainingModules = parseInt(form.querySelector('input[name="remaining_modules"]').value);
+        const wattage = form.querySelector('input[name="wattage"]').value;
         
         const fullPallets = Math.floor(remainingModules / modulesPerPallet);
         const remainder = remainingModules % modulesPerPallet;
@@ -2030,7 +2167,7 @@ function confirmModulesPerPalletUpdate() {
         if (remainder === 0) {
             // Even distribution, proceed without warning
             showLoadingModal();
-            currentForm.submit();
+            form.submit();
         } else {
             // Uneven distribution, show warning
             showWarningModal(fullPallets, modulesPerPallet, remainder, wattage);

@@ -581,14 +581,13 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Breadcrumb Navigation -->
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">»</span>
-        <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
-        <span class="separator">»</span>
-        <span>Project Details</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Project Details',
+            'extra' => [ ['label' => 'Project Overview', 'url' => 'project_overview.php?project_id='.(int)$project_id] ]
+        ]);
+    ?>
 
     <div class="page-header">
         <h1><?php echo htmlspecialchars($project['project_name']); ?></h1>
@@ -793,7 +792,7 @@ $conn->close();
             <div class="navigation-section">
                 <div class="nav-buttons">
                     <a href="project_overview.php?project_id=<?php echo $project_id; ?>" class="nav-link">
-                        ← Back to Project Overview
+                        
                     </a>
                 </div>
             </div>

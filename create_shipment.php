@@ -26,6 +26,17 @@ $project_id_from_url = isset($_GET['project_id']) ? intval($_GET['project_id']) 
 // Get status_filter from URL parameter for auto-filtering pallets
 $status_filter_from_url = isset($_GET['status_filter']) ? htmlspecialchars($_GET['status_filter']) : '';
 
+// Optional deep-link filter: only show specific pallet IDs
+$pallet_ids_filter = [];
+if (!empty($_GET['pallet_ids'])) {
+    $raw_ids = explode(',', $_GET['pallet_ids']);
+    foreach ($raw_ids as $rid) {
+        $ival = intval($rid);
+        if ($ival > 0) { $pallet_ids_filter[] = $ival; }
+    }
+    $pallet_ids_filter = array_values(array_unique($pallet_ids_filter));
+}
+
 // --- Account Access Control ---
 $account_id_for_admin = null;
 $is_global_admin = ($role === 'global_admin');
@@ -179,6 +190,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ship_
             throw new Exception('No pallets selected to ship.');
         }
 
+        // Server-side guard: block shipments for pallets already in transit or on water
+        $placeholders_guard = implode(',', array_fill(0, count($palletIds), '?'));
+        $types_guard = str_repeat('i', count($palletIds));
+        $disallowed = ['In Transit to Warehouse','In Transit to Project','On Water'];
+        $status_placeholders_guard = implode(',', array_fill(0, count($disallowed), '?'));
+        $stmtGuard = $conn->prepare(
+            "SELECT id, status FROM inventory_pallets WHERE id IN ($placeholders_guard) AND status IN ($status_placeholders_guard)"
+        );
+        if ($stmtGuard) {
+            $bind_types = $types_guard . str_repeat('s', count($disallowed));
+            $bind_params = array_merge($palletIds, $disallowed);
+            $stmtGuard->bind_param($bind_types, ...$bind_params);
+            $stmtGuard->execute();
+            $resGuard = $stmtGuard->get_result();
+            $blocked = [];
+            while ($r = $resGuard->fetch_assoc()) { $blocked[] = $r; }
+            $stmtGuard->close();
+            if (!empty($blocked)) {
+                $ids = array_map(function($x){ return $x['id'].' ('.$x['status'].')'; }, $blocked);
+                throw new Exception('Cannot create shipment for pallets already in transit or on water: ' . implode(', ', $ids));
+            }
+        }
+
         // --- Determine batch info from selected pallets ---
         $placeholders_for_batch = implode(',', array_fill(0, count($palletIds), '?'));
         $types_for_batch = str_repeat('i', count($palletIds));
@@ -290,6 +324,52 @@ if (!empty($container_numbers_json)) {
 } elseif (!empty($container_number)) {
     // Single shipment: use single container number
     $container_numbers_array = [$container_number];
+}
+
+// --- Handle Pallet Deletion (admins/global_admins) ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_pallets') {
+    $deleteMessage = '';
+    $conn->begin_transaction();
+    try {
+        $palletIds = $_POST['selected_pallets'] ?? [];
+        if (empty($palletIds)) {
+            throw new Exception('No pallets selected for deletion.');
+        }
+
+        $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
+        $types = str_repeat('i', count($palletIds));
+
+        // Ensure pallets are not linked to deliveries
+        $stmtCheck = $conn->prepare("SELECT inventory_pallet_id FROM delivery_pallets WHERE inventory_pallet_id IN ($placeholders)");
+        if (!$stmtCheck) { throw new Exception('Failed to prepare delivery check.'); }
+        $stmtCheck->bind_param($types, ...$palletIds);
+        $stmtCheck->execute();
+        $res = $stmtCheck->get_result();
+        $linked = [];
+        while ($row = $res->fetch_assoc()) { $linked[] = $row['inventory_pallet_id']; }
+        $stmtCheck->close();
+        if (!empty($linked)) {
+            throw new Exception('Cannot delete pallets linked to deliveries. Pallet IDs: ' . implode(', ', $linked));
+        }
+
+        $stmtDel = $conn->prepare("DELETE FROM inventory_pallets WHERE id IN ($placeholders)");
+        if (!$stmtDel) { throw new Exception('Failed to prepare pallet deletion.'); }
+        $stmtDel->bind_param($types, ...$palletIds);
+        if (!$stmtDel->execute()) { throw new Exception('Failed to delete pallets: ' . $stmtDel->error); }
+        $deleted = $stmtDel->affected_rows;
+        $stmtDel->close();
+
+        $conn->commit();
+        $_SESSION['create_shipment_message'] = "Successfully deleted $deleted pallet(s).";
+    } catch (Exception $e) {
+        $conn->rollback();
+        $_SESSION['create_shipment_message'] = 'Error deleting pallets: ' . $e->getMessage();
+    }
+    // Redirect back preserving project filter
+    $redirect_url = 'create_shipment.php';
+    if ($project_id_from_url > 0) { $redirect_url .= '?project_id=' . $project_id_from_url; }
+    header('Location: ' . $redirect_url);
+    exit();
 }
         $master_bol = $_POST['master_bol'] ?? '';
         $house_bol = $_POST['house_bol'] ?? '';
@@ -821,8 +901,16 @@ try {
             LEFT JOIN deliveries d ON dp.delivery_id = d.id";
     
     // Add account filtering for admin role (only see pallets from their account's projects)
-    // Also filter for only shippable statuses
-    $allowed_statuses = ['At Manufacturer', 'In Warehouse', 'Delivered to Project'];
+    // Include in-transit and allocated statuses so they appear and are filterable
+    $allowed_statuses = [
+        'At Manufacturer',
+        'In Warehouse',
+        'Delivered to Project',
+        'Allocated to Project',
+        'In Transit to Warehouse',
+        'In Transit to Project',
+        'On Water'
+    ];
     $status_placeholders = str_repeat('?,', count($allowed_statuses) - 1) . '?';
     
     if ($role === 'admin' && $account_id_for_admin) {
@@ -831,11 +919,17 @@ try {
         if ($project_id_from_url > 0) {
             $sql .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
         }
+        if (!empty($pallet_ids_filter)) {
+            $sql .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
+        }
     } else {
         $sql .= " WHERE ip.status IN ($status_placeholders)";
         // Add project-specific filtering if coming from a specific project page
         if ($project_id_from_url > 0) {
             $sql .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
+        }
+        if (!empty($pallet_ids_filter)) {
+            $sql .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
         }
     }
     
@@ -851,6 +945,9 @@ try {
         if ($project_id_from_url > 0) {
             $params = array_merge($params, [$project_id_from_url, $project_id_from_url]);
             $types .= 'ii';
+        }
+        if (!empty($pallet_ids_filter)) {
+            foreach ($pallet_ids_filter as $pid) { $params[] = $pid; $types .= 'i'; }
         }
         
         $stmt->bind_param($types, ...$params);
@@ -869,6 +966,9 @@ try {
         if ($project_id_from_url > 0) {
             $params = array_merge($params, [$project_id_from_url, $project_id_from_url]);
             $types .= 'ii';
+        }
+        if (!empty($pallet_ids_filter)) {
+            foreach ($pallet_ids_filter as $pid) { $params[] = $pid; $types .= 'i'; }
         }
         
         $stmt->bind_param($types, ...$params);
@@ -1046,10 +1146,11 @@ if (!empty($bolCompletionMessage)) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Shipment</title>
+    <title>Manage Pallets - Solterra Logistics Portal</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
         .breadcrumb {
             display: flex;
@@ -1064,6 +1165,144 @@ if (!empty($bolCompletionMessage)) {
             margin: 0 8px;
             color: #6c757d;
         }
+
+        /* Header Section */
+        .manage-pallets-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .manage-pallets-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 32px;
+            box-shadow: 0 12px 24px rgba(72, 140, 154, 0.3);
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+
+        .stat-item {
+            text-align: center;
+            min-width: 80px;
+        }
+
+        .stat-number {
+            font-size: 2.2em;
+            font-weight: 700;
+            color: #293E4C;
+            margin: 0 0 4px 0;
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 0.85em;
+            color: #6c757d;
+            font-weight: 500;
+            margin: 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        @media (max-width: 768px) {
+            .manage-pallets-header {
+                padding: 24px;
+                margin-bottom: 24px;
+            }
+
+            .header-content {
+                flex-direction: column;
+                text-align: center;
+                gap: 20px;
+            }
+
+            .header-left {
+                flex-direction: column;
+                gap: 16px;
+            }
+
+            .header-icon {
+                width: 60px;
+                height: 60px;
+                font-size: 24px;
+            }
+
+            .header-info h1 {
+                font-size: 2em;
+            }
+
+            .header-stats {
+                gap: 20px;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
+            .stat-item {
+                min-width: 60px;
+            }
+
+            .stat-number {
+                font-size: 1.8em;
+            }
+        }
+
         .section-title {
             font-size: 1.3em;
             margin-bottom: 15px;
@@ -1343,11 +1582,12 @@ if (!empty($bolCompletionMessage)) {
         .filter-toggle-btn {
             background-color: #488C9A;
             color: white;
-            padding: 8px 16px;
+            padding: 12px 20px;
             border: none;
             border-radius: 4px 4px 0 0;
             cursor: pointer;
-            font-size: 0.9em;
+            font-size: 1em;
+            font-weight: 600;
             display: flex;
             align-items: center;
             gap: 8px;
@@ -1401,19 +1641,42 @@ if (!empty($bolCompletionMessage)) {
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <?php if ($project_id_from_url > 0): ?>
-            <a href="project_overview.php?project_id=<?php echo $project_id_from_url; ?>">Project Overview</a>
-        <?php else: ?>
-            <a href="project_overview.php">Project Overview</a>
-        <?php endif; ?>
-        <span class="separator">&raquo;</span>
-        <span>Create Shipment</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        if ($project_id_from_url > 0) {
+            echo slp_render_breadcrumbs(['current_label' => 'Manage Pallets', 'project_id' => (int)$project_id_from_url]);
+        } else {
+            echo slp_render_breadcrumbs(['current_label' => 'Manage Pallets']);
+        }
+    ?>
 
-    <h1 id="page-title">Create Shipment</h1>
+    <div class="manage-pallets-header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="header-icon">
+                    <i class="fas fa-pallet"></i>
+                </div>
+                <div class="header-info">
+                    <h1>Manage Pallets</h1>
+                    <p class="header-subtitle">Manage pallets and create shipments</p>
+                </div>
+            </div>
+            <div class="header-stats">
+                <div class="stat-item">
+                    <p class="stat-number" id="totalPallets">0</p>
+                    <p class="stat-label">Total Pallets</p>
+                </div>
+                <div class="stat-item">
+                    <p class="stat-number" id="selectedPallets">0</p>
+                    <p class="stat-label">Selected</p>
+                </div>
+                <div class="stat-item">
+                    <p class="stat-number" id="availablePallets">0</p>
+                    <p class="stat-label">Available to Ship</p>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <?php if (!empty($sessionMessage)): ?>
         <?php $messageClass = (strpos(strtolower($sessionMessage), 'error') !== false) ? 'error-message' : 'success-message'; ?>
@@ -1438,15 +1701,16 @@ if (!empty($bolCompletionMessage)) {
             <input type="hidden" name="action" value="ship_pallets">
             
             <div class="pallets-section">
-                <h2 class="section-title">Select Inventory Pallets to Include in Shipment</h2>
+                <h2 class="section-title">Select Pallets to Create Shipment</h2>
                 <!-- Filters and Controls -->
                 <div class="filters-container" style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;">
-                    <div class="filter-dropdown" style="width: 300px;">
-                        <button type="button" class="filter-toggle-btn" onclick="toggleFilters()">
-                            <span>Filters</span> <span class="filter-arrow">▼</span>
-                        </button>
-                        <div class="filter-content" id="filterContent" style="display: none;">
-                            <div style="display: flex; flex-direction: column; gap: 15px; padding: 15px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 0 0 4px 4px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div class="filter-dropdown">
+                            <button type="button" class="filter-toggle-btn" onclick="toggleFilters()">
+                                <span>Filters</span> <span class="filter-arrow">▼</span>
+                            </button>
+                            <div class="filter-content" id="filterContent" style="display: none;">
+                                <div style="display: flex; flex-direction: column; gap: 15px; padding: 15px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 0 0 4px 4px;">
                                 <div style="display: flex; align-items: center; gap: 10px;">
                                     <label>Search:</label>
                                     <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()" style="flex: 1;">
@@ -1490,15 +1754,18 @@ if (!empty($bolCompletionMessage)) {
                                         ?>
                                     </select>
                                 </div>
+                                </div>
                             </div>
                         </div>
+                        <button type="button" id="exportCsvBtn" class="action-button">Export to CSV</button>
                     </div>
                     <div style="display: flex; align-items: center; justify-content: center; flex: 1;">
                         <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
                     </div>
-                    <div style="display: flex; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <button type="button" id="deletePalletsBtn" class="action-button" style="background-color:#dc3545;" disabled>Delete</button>
                         <button type="button" id="openShipModalBtn" class="action-button" disabled>
-                            Create Delivery for Selected Pallets
+                            Create Shipment with Selected Pallets
                         </button>
                     </div>
                 </div>
@@ -1518,7 +1785,7 @@ if (!empty($bolCompletionMessage)) {
                 </div>
                 
                 <?php if (!empty($pallets)): ?>
-                    <table>
+                    <table id="palletsTable">
                         <thead>
                             <tr>
                                 <th><input type="checkbox" id="selectAllPallets" onclick="toggleAllPalletCheckboxes(this.checked)"></th>
@@ -1533,8 +1800,8 @@ if (!empty($bolCompletionMessage)) {
                         </thead>
                         <tbody>
                             <?php foreach ($pallets as $pallet): ?>
-                                <tr>
-                                    <td><input type="checkbox" name="selected_pallets[]" value="<?php echo $pallet['pallet_id']; ?>" class="pallet-checkbox"></td>
+                                <tr data-id="<?php echo htmlspecialchars($pallet['pallet_id']); ?>">
+                                    <td><input type="checkbox" name="selected_pallets[]" value="<?php echo $pallet['pallet_id']; ?>" class="pallet-checkbox" data-status="<?php echo htmlspecialchars($pallet['status']); ?>"></td>
                                     <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                                     <td><?php echo $pallet['wattage']; ?>W</td>
                                     <td><?php echo number_format($pallet['quantity']); ?></td>
@@ -1570,6 +1837,7 @@ if (!empty($bolCompletionMessage)) {
                                     </td>
                                     <td>
                                         <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
+                                        <a href="edit_pallet.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" style="background-color: #6c757d; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em; margin-left:6px;">Edit</a>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -1588,7 +1856,7 @@ if (!empty($bolCompletionMessage)) {
     <div class="modal-content">
         <span class="close-modal-btn">&times;</span>
         <div class="shipment-details-modal-content">
-            <h2 class="section-title" style="margin-top:0; text-align:center;">Create Delivery</h2>
+            <h2 class="section-title" style="margin-top:0; text-align:center;">Create Shipment</h2>
             <div class="tabs">
                 <button type="button" class="modal-tab active" id="singleTabBtn">Single Shipment</button>
                 <button type="button" class="modal-tab" id="multiTabBtn">Multiple Shipments</button>
@@ -1709,7 +1977,7 @@ if (!empty($bolCompletionMessage)) {
                     </div>
                     
                     <button type="button" id="confirmShipmentBtn" class="action-button" style="margin-top:15px;">
-                        Create Delivery
+                        Create Shipment
                     </button>
                 </form>
             </div>
@@ -1890,6 +2158,13 @@ function updateOpenShipModalButtonState() {
     const checked = document.querySelectorAll('.pallet-checkbox:checked').length;
     if (openBtn) {
         openBtn.disabled = (checked === 0);
+        if (checked > 0 && selectionHasInvalidPallets()) {
+            openBtn.title = 'Selection includes pallets already in transit or on water';
+            openBtn.setAttribute('data-invalid-selection', '1');
+        } else {
+            openBtn.title = '';
+            openBtn.removeAttribute('data-invalid-selection');
+        }
     }
 }
 
@@ -1898,6 +2173,34 @@ function updateSelectedCount() {
     const countEl = document.getElementById('selectedCount');
     if (countEl) {
         countEl.textContent = count + ' pallet' + (count === 1 ? '' : 's') + ' selected';
+    }
+    const delBtn = document.getElementById('deletePalletsBtn');
+    if (delBtn) { delBtn.disabled = (count === 0); }
+    
+    // Update header stats
+    updateHeaderStats();
+}
+
+function updateHeaderStats() {
+    // Update selected pallets count
+    const selectedCount = document.querySelectorAll('.pallet-checkbox:checked').length;
+    const selectedPalletsEl = document.getElementById('selectedPallets');
+    if (selectedPalletsEl) {
+        selectedPalletsEl.textContent = selectedCount;
+    }
+    
+    // Update total pallets count (visible pallets)
+    const totalVisible = document.querySelectorAll('.pallet-checkbox').length;
+    const totalPalletsEl = document.getElementById('totalPallets');
+    if (totalPalletsEl) {
+        totalPalletsEl.textContent = totalVisible;
+    }
+    
+    // Update available pallets count (pallets that can be shipped)
+    const availableCount = document.querySelectorAll('.pallet-checkbox[data-status="In Warehouse"], .pallet-checkbox[data-status="At Manufacturer"], .pallet-checkbox[data-status="Delivered to Project"]').length;
+    const availablePalletsEl = document.getElementById('availablePallets');
+    if (availablePalletsEl) {
+        availablePalletsEl.textContent = availableCount;
     }
 }
 
@@ -1933,7 +2236,71 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('wattageFilter')?.addEventListener('change', saveFilters);
     document.getElementById('statusFilter')?.addEventListener('change', saveFilters);
     document.getElementById('itemsPerPage')?.addEventListener('change', saveFilters);
+
+    // Wire up Export and Delete controls
+    initializeExportCsv();
+    initializeDeletePallets();
+    
+    // Initialize header stats
+    updateHeaderStats();
 });
+
+// Export to CSV (table-level export of visible rows)
+function initializeExportCsv() {
+    const exportBtn = document.getElementById('exportCsvBtn');
+    if (!exportBtn) return;
+    exportBtn.addEventListener('click', function() {
+        const table = document.getElementById('palletsTable');
+        if (!table) return;
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        const csvData = [];
+        const headers = ["id", "pallet_identifier", "wattage", "quantity", "status", "Project", "Associated Deliveries"];
+        csvData.push(headers.map(h => '"' + h.replace(/"/g, '""') + '"').join(','));
+        rows.forEach(row => {
+            if (row.style.display === 'none') return;
+            const cells = row.querySelectorAll('td');
+            const rowData = [];
+            const id = row.getAttribute('data-id') || '';
+            const mapping = { pallet_identifier:1, wattage:2, quantity:3, status:4, Project:5, deliveries:6 };
+            headers.forEach(h => {
+                let val = '';
+                if (h === 'id') { val = id; }
+                else if (h === 'Associated Deliveries') { val = (cells[mapping.deliveries]?.textContent || '').trim(); }
+                else if (h === 'Project') { val = (cells[mapping.Project]?.textContent || '').trim(); }
+                else {
+                    const key = h.replace(/\s+/g,'_');
+                    const idx = mapping[key] ?? mapping[h];
+                    val = (cells[idx]?.textContent || '').trim();
+                }
+                val = val.replace(/"/g,'""');
+                if (val.includes(',')) val = '"' + val + '"';
+                rowData.push(val);
+            });
+            csvData.push(rowData.join(','));
+        });
+        const blob = new Blob([csvData.join("\r\n")], {type:'text/csv;charset=utf-8;'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url; link.download = 'pallets_export_' + new Date().toISOString().slice(0,10) + '.csv';
+        document.body.appendChild(link); link.click();
+        document.body.removeChild(link); URL.revokeObjectURL(url);
+    });
+}
+
+function initializeDeletePallets() {
+    const delBtn = document.getElementById('deletePalletsBtn');
+    if (!delBtn) return;
+    delBtn.addEventListener('click', function() {
+        const count = document.querySelectorAll('.pallet-checkbox:checked').length;
+        if (count === 0) { alert('Please select pallets to delete.'); return; }
+        if (!confirm(`Are you sure you want to delete ${count} selected pallet(s)? This action cannot be undone.`)) return;
+        const form = document.getElementById('shipPalletsForm');
+        let actionInput = form.querySelector('input[name="action"]');
+        if (!actionInput) { actionInput = document.createElement('input'); actionInput.type='hidden'; actionInput.name='action'; form.appendChild(actionInput); }
+        actionInput.value = 'delete_pallets';
+        form.submit();
+    });
+}
 
 // ----------------- PAGINATION -----------------
 let currentPage = 1;
@@ -2106,6 +2473,21 @@ const shipModal = document.getElementById('shipModal');
 const openShipModalBtn = document.getElementById('openShipModalBtn');
 const closeShipModalBtn = shipModal.querySelector('.close-modal-btn');
 
+function selectionHasInvalidPallets() {
+    const invalidMatch = /in transit|on water/i;
+    const selected = document.querySelectorAll('.pallet-checkbox:checked');
+    for (const cb of selected) {
+        const row = cb.closest('tr');
+        if (!row) continue;
+        const statusCell = row.cells && row.cells[4]; // Status column
+        const statusText = (statusCell ? (statusCell.textContent || statusCell.innerText || '') : '').trim();
+        if (invalidMatch.test(statusText)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function openShipModal() {
     shipModal.style.display = 'block';
     // Initialize multi-shipment BOL fields when modal opens
@@ -2115,7 +2497,15 @@ function closeShipModal() {
     shipModal.style.display = 'none';
 }
 
-openShipModalBtn.addEventListener('click', openShipModal);
+function handleOpenShipModalClick(e) {
+    if (selectionHasInvalidPallets()) {
+        alert('You cannot create a delivery for pallets that are already In Transit or On Water. Please deselect those pallets to proceed.');
+        return;
+    }
+    openShipModal();
+}
+
+openShipModalBtn.addEventListener('click', handleOpenShipModalClick);
 if (closeShipModalBtn) {
     closeShipModalBtn.addEventListener('click', closeShipModal);
 }
@@ -2627,7 +3017,7 @@ function hideOverseasFields() {
     // Reset button and modal styling for domestic shipments
     const createButton = document.getElementById('openShipModalBtn');
     if (createButton) {
-        createButton.innerHTML = 'Create Delivery for Selected Pallets';
+        createButton.innerHTML = 'Create Shipment with Selected Pallets';
         createButton.style.backgroundColor = ''; // Reset to default background
         createButton.style.borderColor = ''; // Reset to default border
     }
@@ -2635,7 +3025,7 @@ function hideOverseasFields() {
     // Reset modal title for domestic shipments
     const modalTitle = document.querySelector('.shipment-details-modal-content h2.section-title');
     if (modalTitle) {
-        modalTitle.innerHTML = 'Create Delivery';
+        modalTitle.innerHTML = 'Create Shipment';
         modalTitle.style.color = ''; // Reset to default color
         modalTitle.style.background = '';
         modalTitle.style.webkitBackgroundClip = '';

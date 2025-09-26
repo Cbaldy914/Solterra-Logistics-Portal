@@ -26,6 +26,53 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// Inline update of module batch info (admin/global_admin only)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_module_batch' && in_array($role, ['admin','global_admin'])) {
+    $upd_batch_id = intval($_POST['batch_id'] ?? 0);
+    if ($upd_batch_id > 0) {
+        $fields = [
+            'modules_per_pallet' => FILTER_VALIDATE_INT,
+            'pallets_per_truck' => FILTER_VALIDATE_INT,
+            'modules_per_truck' => FILTER_VALIDATE_INT,
+            'pallet_length_mm' => FILTER_VALIDATE_INT,
+            'pallet_depth_mm' => FILTER_VALIDATE_INT,
+            'pallet_double_stacked_height_mm' => FILTER_VALIDATE_INT,
+            'pallet_total_weight_kg' => FILTER_VALIDATE_INT,
+            'forklift_truck_long_side_mm' => FILTER_VALIDATE_INT,
+            'forklift_truck_short_side_mm' => FILTER_VALIDATE_INT,
+            'pallet_jack_long_side_mm' => FILTER_VALIDATE_INT,
+            'pallet_jack_short_side_mm' => FILTER_VALIDATE_INT
+        ];
+        $ints = [];
+        foreach ($fields as $k => $f) { $ints[$k] = ($_POST[$k] ?? '') !== '' ? intval($_POST[$k]) : null; }
+        $module_notes = trim($_POST['module_notes'] ?? '');
+
+        // Build dynamic update
+        $sets = [
+            'modules_per_pallet = ?', 'pallets_per_truck = ?', 'modules_per_truck = ?',
+            'pallet_length_mm = ?', 'pallet_depth_mm = ?', 'pallet_double_stacked_height_mm = ?',
+            'pallet_total_weight_kg = ?', 'forklift_truck_long_side_mm = ?', 'forklift_truck_short_side_mm = ?',
+            'pallet_jack_long_side_mm = ?', 'pallet_jack_short_side_mm = ?', 'module_notes = ?'
+        ];
+        $sql = 'UPDATE modules SET ' . implode(', ', $sets) . ', last_updated_at = NOW() WHERE id = ?';
+        $stmtU = $conn->prepare($sql);
+        if ($stmtU) {
+            $stmtU->bind_param(
+                'iiiiiiiiiiisi',
+                $ints['modules_per_pallet'], $ints['pallets_per_truck'], $ints['modules_per_truck'],
+                $ints['pallet_length_mm'], $ints['pallet_depth_mm'], $ints['pallet_double_stacked_height_mm'],
+                $ints['pallet_total_weight_kg'], $ints['forklift_truck_long_side_mm'], $ints['forklift_truck_short_side_mm'],
+                $ints['pallet_jack_long_side_mm'], $ints['pallet_jack_short_side_mm'], $module_notes, $upd_batch_id
+            );
+            $stmtU->execute();
+            $stmtU->close();
+        }
+        $_SESSION['project_overview_message'] = 'Module batch updated successfully.';
+    }
+    header('Location: project_overview.php?project_id=' . $project_id . '&view_mode=' . urlencode($view_mode));
+    exit();
+}
+
 $view_mode = isset($_GET['view_mode']) ? $_GET['view_mode'] : 'mw';
 
 /**
@@ -68,6 +115,64 @@ if (!empty($project['forecasted_costs'])) {
 $forecasted_freight     = $forecasted_costs['freight']     ?? 0;
 $forecasted_warehousing = $forecasted_costs['warehousing'] ?? 0; 
 $forecasted_accessorial = $forecasted_costs['accessorial'] ?? 0;
+
+// Ensure project_wattage_orders reflects all module batches assigned to this project
+// We compare against actual batch items, and if mismatched, we rebuild the totals.
+try {
+    $actual_totals = [];
+    if ($stmtA = $conn->prepare("\n        SELECT umi.wattage, SUM(umi.quantity) AS total_qty\n        FROM unassigned_module_items umi\n        JOIN modules m ON umi.unassigned_module_id = m.id\n        WHERE m.project_id = ?\n        GROUP BY umi.wattage\n    ")) {
+        $stmtA->bind_param("i", $project_id);
+        $stmtA->execute();
+        $resA = $stmtA->get_result();
+        while ($row = $resA->fetch_assoc()) {
+            $w = (int)$row['wattage'];
+            $q = (int)$row['total_qty'];
+            if ($w > 0 && $q > 0) { $actual_totals[$w] = $q; }
+        }
+        $stmtA->close();
+    }
+
+    $pwo_totals = [];
+    if ($stmtP = $conn->prepare("SELECT wattage, total_order FROM project_wattage_orders WHERE project_id = ?")) {
+        $stmtP->bind_param("i", $project_id);
+        $stmtP->execute();
+        $resP = $stmtP->get_result();
+        while ($row = $resP->fetch_assoc()) {
+            $pwo_totals[(int)$row['wattage']] = (int)$row['total_order'];
+        }
+        $stmtP->close();
+    }
+
+    $needs_sync = false;
+    if (count($actual_totals) !== count($pwo_totals)) {
+        $needs_sync = true;
+    } else {
+        foreach ($actual_totals as $w => $q) {
+            if (!isset($pwo_totals[$w]) || $pwo_totals[$w] !== $q) { $needs_sync = true; break; }
+        }
+    }
+
+    if ($needs_sync) {
+        $conn->begin_transaction();
+        if ($stmtDel = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ?")) {
+            $stmtDel->bind_param("i", $project_id);
+            $stmtDel->execute();
+            $stmtDel->close();
+        }
+        if (!empty($actual_totals)) {
+            if ($stmtIns = $conn->prepare("INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)")) {
+                foreach ($actual_totals as $w => $q) {
+                    $stmtIns->bind_param("iii", $project_id, $w, $q);
+                    $stmtIns->execute();
+                }
+                $stmtIns->close();
+            }
+        }
+        $conn->commit();
+    }
+} catch (Exception $e) {
+    // If anything fails, do not block page rendering; leave existing data in place
+}
 
 // Fetch total orders
 $stmt = $conn->prepare("
@@ -1021,8 +1126,19 @@ $stmt_palletized->bind_result($actual_palletized_count);
 $stmt_palletized->fetch();
 $stmt_palletized->close();
 
-// Calculate total expected pallets (modules / 30)
-$expected_pallets = ceil($total_raw_modules / 30);
+// Calculate total expected pallets using actual pallet rows, not an average per pallet
+$stmt_expected = $conn->prepare("
+    SELECT COUNT(*) as expected
+    FROM inventory_pallets ip
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
+");
+$stmt_expected->bind_param("iii", $project_id, $project_id, $project_id);
+$stmt_expected->execute();
+$stmt_expected->bind_result($expected_pallets);
+$stmt_expected->fetch();
+$stmt_expected->close();
 
 // Get delivered modules breakdown for JavaScript (using inventory_pallets for accuracy)
 $delivered_by_wattage = [];
@@ -1129,7 +1245,7 @@ while ($module = $modules_result->fetch_assoc()) {
     $stmt_wattages = $conn->prepare("
         SELECT wattage, quantity 
         FROM unassigned_module_items 
-        WHERE unassigned_module_id = ? 
+        WHERE unassigned_module_id = ? AND wattage > 0 AND quantity > 0
         ORDER BY wattage ASC
     ");
     $stmt_wattages->bind_param("i", $module['id']);
@@ -1551,7 +1667,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         inset 0 -1px 0 rgba(0, 0, 0, 0.03);
     border: 2px solid rgba(255, 255, 255, 0.8);
     position: relative;
-    overflow: hidden;
+    overflow: visible;
     backdrop-filter: blur(10px);
 }
 
@@ -1733,19 +1849,28 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 /* Enhanced Shipping Statuses */
 .shipping-statuses {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 15px;
     margin-top: 25px;
-    max-width: 800px;
-    margin-left: auto;
-    margin-right: auto;
+    width: 90%;
+    margin-left: 0;
+    margin-right: 0;
+    max-width: 700px;
+}
+
+/* Responsive wrapping for shipping statuses (admin + customer) */
+@media (max-width: 1200px) {
+    .shipping-statuses { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); max-width: 500px;}
+}
+@media (max-width: 992px) {
+    .shipping-statuses { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); max-width: 400px;}
 }
 
 .shipping-box {
     background: linear-gradient(135deg, #fafbfc 0%, #f1f3f4 100%);
     border: 2px solid rgba(255, 255, 255, 0.8);
     border-radius: 12px;
-    padding: 20px 15px;
+    padding: 15px 12px;
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
@@ -1784,15 +1909,21 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     font-weight: 600;
     color: #293E4C;
     font-size: 14px;
-    margin-bottom: 8px;
+    margin-bottom: 25px;
     line-height: 1.3;
 }
 
 .shipping-box .status-count {
-    font-size: 24px;
+    font-size: clamp(18px, 4.5vw, 28px);
     font-weight: 700;
     color: #488C9A;
     margin-bottom: 2px;
+    margin-top: 0px;
+    word-break: break-all;
+    line-height: 1.1;
+    max-width: 100%;
+    overflow: hidden;
+    text-align: center;
 }
 
 .shipping-box .status-unit {
@@ -1800,6 +1931,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     color: #6c757d;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    margin-top: 1px;
 }
 
 /* Shipping Status Connection Line */
@@ -1924,6 +2056,14 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     letter-spacing: 0.5px;
 }
 
+/* Mobile-friendly abbreviated headers */
+@media (max-width: 768px) {
+    .table-responsive th { position: relative; padding: 10px 8px; }
+    .table-responsive th .th-short { display: inline; }
+    .table-responsive th::after { display: none; }
+    .table-responsive th[aria-expanded="true"]::after { display: none; }
+}
+
 .table-responsive th:first-child {
     border-top-left-radius: 12px;
 }
@@ -1984,15 +2124,30 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 
 /* Mobile Responsiveness */
 @media (max-width: 768px) {
+    /* Remove wrapper padding/margins so mobile content can use full width */
+    .customer-content-wrapper,
+    .admin-content-wrapper {
+        padding: 0 !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        border: none !important;
+    }
     .tables-and-charts {
         grid-template-columns: 1fr;
-        gap: 20px;
-        margin: 15px;
+        gap: 8px;
+        margin: 0 !important;
+        width: 100% !important;
+        border-radius: 0 !important;
+        padding: 0 !important;
+        box-shadow: none !important;
     }
     
     .left-side, .right-side {
-        padding: 20px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+        padding: 0 !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+        border: none !important;
     }
     
     .toggle-buttons {
@@ -2012,18 +2167,9 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     /* Timeline Circular Progress Mobile Responsiveness */
-    .timeline-progress-container {
-        margin-bottom: 15px;
-    }
-    
-    .timeline-circular-progress {
-        width: 80px;
-        height: 80px;
-    }
-    
-    .timeline-progress-text {
-        font-size: 16px;
-    }
+    .timeline-progress-container { margin-bottom: 10px; }
+    .timeline-circular-progress { width: 110px; height: 110px; }
+    .timeline-progress-text { font-size: 20px; }
     
     .timeline-progress-step.completed .timeline-circular-progress {
         transform: rotate(180deg) scale(1.02);
@@ -2050,39 +2196,85 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         max-width: 100%;
         margin: 0;
         align-items: center;
+        /* Mobile sizing variables for consistent alignment */
+        --timeline-circle-size: 60px;   /* circle diameter on mobile */
+        --timeline-line-width: 6px;     /* vertical line thickness */
     }
     
     .timeline::before {
-        width: 6px;
-        height: 80%;
-        top: 10%;
-        left: 50%;
+        width: var(--timeline-line-width);
+        /* Start/end at the center of the first/last circles */
+        height: calc(90% - var(--timeline-circle-size));
+        top: calc(var(--timeline-circle-size) / 2);
+        /* Center the line through the circle */
+        left: calc(var(--timeline-circle-size) / 2 - var(--timeline-line-width) / 2);
         right: auto;
-        transform: translateX(-50%);
+        transform: none;
+        z-index: 0;
     }
     
     .timeline::after {
-        width: 6px !important;
+        width: var(--timeline-line-width) !important;
         max-width: none !important;
-        height: calc(var(--progress-width, 0%) * 0.8);
-        top: 10%;
-        left: 50%;
+        /* Fill height based on progress but never extend past the last circle center */
+        height: var(--progress-width, 0%);
+        max-height: calc(90% - var(--timeline-circle-size));
+        top: calc(var(--timeline-circle-size) / 2);
+        left: calc(var(--timeline-circle-size) / 2 - var(--timeline-line-width) / 2);
         right: auto;
-        transform: translateX(-50%);
+        transform: none;
+        z-index: 1;
     }
     
     .timeline-item {
         width: 100%;
-        max-width: 400px;
+        max-width: 480px;
         margin-bottom: 40px;
-        padding: 0;
+        padding: 0 0 0 80px; /* push content slightly right to avoid circle overlap */
+        text-align: left;
+        position: relative;
+        box-sizing: border-box; /* ensure padding doesn't cause overflow */
+    }
+    
+    /* Ensure variant timeline items also stay within container width */
+    .timeline-item.completed,
+    .timeline-item.current,
+    .timeline-item.timeline-progress-step {
+        width: 100%;
+        box-sizing: border-box;
     }
     
     .timeline-item .circle {
-        width: 60px;
-        height: 60px;
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
         font-size: 20px;
-        margin-bottom: 15px;
+        margin-bottom: 12px;
+        position: absolute;
+        left: 0;
+        top: 0;
+        transform: none;
+        z-index: 2;
+    }
+
+    /* Align progress circle like other circles on mobile */
+    .timeline-progress-step .timeline-progress-container {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2;
+    }
+    .timeline-progress-step .timeline-circular-progress {
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
+        /* Scale so the ring diameter matches the visible circle size (r=45, stroke=6 => ~0.8 of viewBox) */
+        transform: rotate(-160deg) scale(1.25);
+        transform-origin: center center;
     }
     
     .timeline-item .label,
@@ -2100,13 +2292,15 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     <?php if ($role === 'admin' || $role === 'global_admin'): ?>
     
     .shipping-statuses {
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 10px;
-        margin-top: 20px;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 6px;
+        margin-top: 12px;
+        padding: 0 6px;
+        box-sizing: border-box;
     }
     
     .shipping-box {
-        padding: 15px 10px;
+        padding: 10px 6px;
     }
     
     .shipping-box .status-label {
@@ -2114,7 +2308,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .shipping-box .status-count {
-        font-size: 20px;
+        font-size: clamp(16px, 3.8vw, 22px);
+        word-break: break-all;
     }
     <?php endif; ?>
     
@@ -2138,15 +2333,40 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     /* Chart containers */
-    .chart-container {
-        max-width: 100%;
-        margin: 20px 0;
-    }
+    .chart-container { max-width: none !important; width: 100% !important; margin: 8px 0 !important; }
     
     canvas {
         max-width: 100% !important;
         height: auto !important;
     }
+}
+
+/* Deterministic columns for shipping statuses across breakpoints */
+.shipping-statuses {
+    max-width: 700px; /* ~4 cards per row */
+    margin-left: auto;
+    margin-right: auto;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 1290px) {
+    .shipping-statuses { grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 500px; }
+}
+@media (max-width: 1030px) {
+    .shipping-statuses { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 400px; }
+}
+@media (max-width: 600px) {
+    .shipping-statuses { grid-template-columns: 1fr; max-width: 360px; }
+}
+
+/* Tablet/laptop optimizations to avoid clipping before mobile layout kicks in */
+@media (max-width: 1200px) and (min-width: 769px) {
+    .timeline-container { padding: 30px 20px; overflow: visible; }
+    .timeline-item { padding: 0 8px; }
+    .timeline-item .circle { width: 60px; height: 60px; font-size: 20px; }
+    .timeline-item .label, .timeline-content h3 { font-size: 14px; }
+    .timeline-item .description, .timeline-content p { font-size: 11px; }
+    .timeline::before { top: 30px; }
+    .timeline::after { top: 30px; }
 }
 
 @media (max-width: 580px) {
@@ -2227,6 +2447,9 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     
     .timeline {
         margin: 0;
+        /* Smaller mobile circle size */
+        --timeline-circle-size: 50px;
+        --timeline-line-width: 6px;
     }
     
     .timeline-item {
@@ -2235,9 +2458,22 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .timeline-item .circle {
-        width: 50px;
-        height: 50px;
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
         font-size: 18px;
+    }
+    /* Keep progress ring same size as circles on smallest screens */
+    .timeline-progress-step .timeline-progress-container {
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
+    }
+    .timeline-progress-step .timeline-circular-progress {
+        width: var(--timeline-circle-size);
+        height: var(--timeline-circle-size);
+        transform: rotate(-160deg) scale(calc(1 / 0.8)); /* ~1.25, match visual circle size */
+        transform-origin: center center;
+        margin-left: calc((var(--timeline-circle-size) - (var(--timeline-circle-size) / 0.8)) / 2 * -1);
+        margin-top: calc((var(--timeline-circle-size) - (var(--timeline-circle-size) / 0.8)) / 2 * -1);
     }
     
     .timeline-item .label {
@@ -2254,7 +2490,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .shipping-box {
-        padding: 12px 8px;
+        padding: 10px 6px;
     }
     
     .shipping-box .status-label {
@@ -2262,7 +2498,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .shipping-box .status-count {
-        font-size: 18px;
+        font-size: clamp(14px, 3.2vw, 20px);
+        word-break: break-all;
     }
     <?php endif; ?>
     
@@ -2505,6 +2742,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     transition: background-color 0.3s ease;
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
     min-width: 140px;
     margin: 5px;
@@ -2578,6 +2816,24 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         font-size: 0.9em;
     }
 }
+/* Make plain buttons in button groups match dropdown buttons and center text */
+.button-group > button {
+    background: #488C9A;
+    color: #fff;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 1em;
+    transition: background-color 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 140px;
+    margin: 5px;
+}
+.button-group > button:hover { background: #293E4C; }
 
 /* Info Container Styles */
 .info-container {
@@ -3096,9 +3352,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 }
 
 /* ===== UNIT FILTERS STYLING ===== */
-.unit-filters-container {
-    padding: 0 20px;
-}
+    .unit-filters-container { padding: 0 !important; margin: 0 !important; }
 
 .unit-filters {
     display: inline-flex;
@@ -3182,12 +3436,12 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 
 .shipping-statuses {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 15px;
     margin-top: 25px;
-    max-width: 800px;
-    margin-left: auto;
-    margin-right: auto;
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
     position: relative;
 }
 
@@ -3207,7 +3461,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
     border: 2px solid rgba(72, 140, 154, 0.1);
     border-radius: 12px;
-    padding: 20px 15px;
+    padding: 15px 12px;
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
@@ -3247,18 +3501,24 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     color: #293E4C;
     font-size: 0.9rem;
     line-height: 1.3;
-    min-height: 40px;
+    min-height: 38px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: auto;
+    margin-bottom: 25px;
 }
 
 .shipping-box-customer .status-count {
-    font-size: 2rem;
+    font-size: clamp(1.4rem, 4.5vw, 2.2rem);
     font-weight: 700;
     color: #488C9A;
     margin: auto 0 2px 0;
+    margin-top: -1px;
+    word-break: break-all;
+    line-height: 1;
+    max-width: 100%;
+    overflow: hidden;
+    text-align: center;
 }
 
 .shipping-box-customer .status-unit {
@@ -3267,6 +3527,24 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     text-transform: uppercase;
     letter-spacing: 0.5px;
     font-weight: 500;
+    margin-top: 1px;
+}
+
+/* Handle very large numbers by scaling even smaller */
+.shipping-box .status-count:has-text-length-gt-6,
+.shipping-box-customer .status-count:has-text-length-gt-6 {
+    font-size: clamp(0.9rem, 2.5vw, 1.4rem) !important;
+    line-height: 1;
+    letter-spacing: -0.5px;
+}
+
+/* Alternative approach using CSS for text that's too long */
+.shipping-box .status-count[data-large-number="true"],
+.shipping-box-customer .status-count[data-large-number="true"] {
+    font-size: clamp(1rem, 2.8vw, 1.6rem) !important;
+    line-height: 0.9;
+    letter-spacing: -0.5px;
+    word-spacing: -1px;
 }
 
 /* ===== PULSE ANIMATION ===== */
@@ -3330,36 +3608,85 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     }
     
     .shipping-box-customer {
-        padding: 15px 10px;
+        padding: 12px 8px;
     }
     
     .shipping-box-customer .status-count {
-        font-size: 1.5rem;
+        font-size: clamp(1.1rem, 3.8vw, 1.7rem);
+        word-break: break-all;
     }
     
     .unit-filters {
-        flex-wrap: wrap;
-        gap: 8px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
     }
-    
     .unit-filter-btn {
-        padding: 10px 16px;
-        font-size: 0.9rem;
+        padding: 10px 8px;
+        font-size: 0.85rem;
+        text-align: center;
     }
 }
 </style>
 </head>
 <body>
+<script>
+// Keep unit filter buttons on one line on mobile by shortening Truckloads to Trucks
+document.addEventListener('DOMContentLoaded', function() {
+  function updateTruckloadsLabel() {
+    const isMobile = window.innerWidth <= 768;
+    document.querySelectorAll('.unit-filter-btn[data-unit="truckloads"]').forEach(btn => {
+      const desired = isMobile ? 'Trucks' : 'Truckloads';
+      if (btn.textContent.trim() !== desired) btn.textContent = desired;
+    });
+  }
+  updateTruckloadsLabel();
+  window.addEventListener('resize', updateTruckloadsLabel);
+});
+
+// Tap-to-reveal full table header on mobile
+document.addEventListener('DOMContentLoaded', function() {
+  if (window.innerWidth <= 768) {
+    document.querySelectorAll('.table-responsive th[data-full]').forEach(function(th) {
+      th.setAttribute('title', th.getAttribute('data-full'));
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', function() {
+        // Show full name above header row temporarily
+        const label = document.createElement('div');
+        label.textContent = th.getAttribute('data-full');
+        label.style.position = 'absolute';
+        label.style.top = '-24px';
+        label.style.left = '0';
+        label.style.right = '0';
+        label.style.textAlign = 'center';
+        label.style.fontSize = '12px';
+        label.style.fontWeight = '600';
+        label.style.color = '#293E4C';
+        label.style.background = 'rgba(255,255,255,0.9)';
+        label.style.padding = '2px 4px';
+        label.style.borderRadius = '4px';
+        label.style.boxShadow = '0 2px 6px rgba(0,0,0,0.1)';
+        th.style.position = 'relative';
+        th.appendChild(label);
+        setTimeout(function(){ label.remove(); }, 1500);
+      });
+    });
+  }
+});
+</script>
 <?php include 'header.php'; ?>
 <main>
     <?php
     $backLink = 'dashboard.php';
     ?>
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="<?php echo $backLink; ?>">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <span><?php echo htmlspecialchars($project['project_name']); ?></span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        // On project overview, show only: Dashboard » <Project Name>
+        echo slp_render_breadcrumbs([
+            'project_id'  => (int)$project_id,
+            'omit_current'=> true,
+        ]);
+    ?>
 
 
 
@@ -3393,15 +3720,11 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
             </div>
             
             <!-- Admin View Buttons -->
-            <div id="admin-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: block;"' : 'style="display: none;"'; ?>>
+            <div id="admin-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: flex;"' : 'style="display: none;"'; ?>>
                 <div class="dropdown">
-                    <button class="dropdown-btn" onclick="toggleModulesDropdown()">
-                        Modules <span class="dropdown-arrow">▼</span>
+                    <button class="dropdown-btn" onclick="window.location.href='module_overview.php?project_id=<?php echo $project_id; ?>'">
+                        Modules
                     </button>
-                    <div class="dropdown-content" id="modulesDropdown">
-                        <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Module Overview</a>
-                        <a href="manage_pallets.php?project_id=<?php echo $project_id; ?>">Manage Pallets</a>
-                    </div>
                 </div>
                 <div class="dropdown">
                     <button class="dropdown-btn" onclick="toggleAdminDeliveriesDropdown()">
@@ -3427,7 +3750,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
             </div>
             
             <!-- Customer View Buttons -->
-            <div id="customer-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: none;"' : 'style="display: block;"'; ?>>
+            <div id="customer-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: none;"' : 'style="display: flex;"';?> >
                 <div class="dropdown">
                     <button class="dropdown-btn" onclick="toggleCustomerDeliveriesDropdown()">
                         Deliveries <span class="dropdown-arrow">▼</span>
@@ -3496,10 +3819,15 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         </li>
                         
                         <li class="timeline-item<?php echo $step2_completed ? ' completed' : ''; ?><?php echo $current_step == 2 ? ' current' : ''; ?>">
-                            <div class="circle clickable" onclick="window.location.href='modules.php?project_id=<?php echo $project_id; ?>'">2</div>
-                            <span class="label">
-                                <a href="modules.php?project_id=<?php echo $project_id; ?>">Add Modules</a>
-                            </span>
+                            <?php if (in_array($_SESSION['role'], ['admin','global_admin'])): ?>
+                                <div class="circle clickable" onclick="window.location.href='add_module_batch.php?project_id=<?php echo $project_id; ?>'">2</div>
+                                <span class="label">
+                                    <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>">Add Modules</a>
+                                </span>
+                            <?php else: ?>
+                                <div class="circle">2</div>
+                                <span class="label">Add Modules</span>
+                            <?php endif; ?>
                             <div class="description"><?php echo number_format($total_raw_modules); ?> modules added</div>
                         </li>
                         
@@ -3931,11 +4259,16 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                             <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
                                 <div class="module-actions-dropdown">
                                     <button class="info-action-button" onclick="toggleModuleActions()" style="margin: 0;">
-                                        Edit Module Information ▼
+                                        Add/Edit Module Info ▼
                                     </button>
                                     <div class="module-actions-content" id="moduleActionsDropdown">
-                                        <a href="edit_module_batch.php?project_id=<?php echo $project_id; ?>&batch_id=<?php echo !empty($module_batches) ? $module_batches[0]['id'] : ''; ?>">Edit Current Module Batch</a>
                                         <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>">+ Add New Module Batch</a>
+                                        <?php if (!empty($module_batches)): ?>
+                                            <div style="border-top:1px solid #e5e7eb; margin:6px 0;"></div>
+                                            <?php foreach ($module_batches as $i => $b): ?>
+                                                <a href="edit_module_batch.php?batch_id=<?php echo (int)$b['id']; ?>&project_id=<?php echo (int)$project_id; ?>">Edit Batch <?php echo $i+1; ?>: <?php echo htmlspecialchars($b['vendor_name']); ?></a>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                             <?php endif; ?>
@@ -3963,7 +4296,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                                 <span><?php echo htmlspecialchars($batch['vendor_name']); ?></span>
                                             </div>
                                             <div class="info-item">
-                                                <label>Initial Location:</label>
+                                                <label>Location:</label>
                                                 <span><?php echo htmlspecialchars($batch['initial_location']); ?></span>
                                             </div>
                                                                                             <div class="info-item">
@@ -4070,7 +4403,8 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                             <?php endif; ?>
                                         </div>
                                     </div>
-                                    
+                                    <?php /* Inline edit removed; editing should be via edit_module_batch.php */ ?>
+
                                     <div style="margin-top: 20px; text-align: center;">
                                         <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="info-action-button">
                                             View Pallets & Module Status
@@ -4085,7 +4419,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                 </p>
                                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
                                     <div style="text-align: center;">
-                                        <a href="modules.php?project_id=<?php echo $project_id; ?>" class="info-action-button">
+                                        <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" class="info-action-button">
                                             + Add Module Batch
                                         </a>
                                     </div>
@@ -4219,7 +4553,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                                                 $mws = round(($modules * $avg_wattage) / 1000000, 2);
                                             }
                                     ?>
-                                    <div class="shipping-box-customer" onclick="showCustomerShippingModal('<?php echo $status_key; ?>')" 
+                                    <div class="shipping-box-customer" onclick="showCustomerShippingModal('<?php echo htmlspecialchars($status_key, ENT_QUOTES); ?>')" 
                                          data-pallets="<?php echo $pallets; ?>" 
                                          data-modules="<?php echo $modules; ?>" 
                                          data-truckloads="<?php echo ($truckloads !== null ? $truckloads : ''); ?>" 
@@ -4367,9 +4701,9 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         <table id="table1">
                             <thead>
                                 <tr>
-                                    <th>Module Type</th>
-                                    <th>Total Order</th>
-                                    <th>Delivered</th>
+                                    <th data-full="Module Type"><span class="th-short">Type</span></th>
+                                    <th data-full="Total Order"><span class="th-short">Order</span></th>
+                                    <th data-full="Delivered"><span class="th-short">Deliv.</span></th>
                                     <?php foreach($weeks as $wk): ?>
                                         <th><?php echo $wk['end']->format('n/j'); ?></th>
                                     <?php endforeach; ?>
@@ -4407,25 +4741,25 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
                         <table id="table2">
                             <thead>
                                 <tr>
-                                    <th>Module Type</th>
-                                    <th>Total Order</th>
-                                    <th>At Manufacturer</th>
+                                    <th data-full="Module Type"><span class="th-short">Type</span></th>
+                                    <th data-full="Total Order"><span class="th-short">Order</span></th>
+                                    <th data-full="At Manufacturer"><span class="th-short">At Mfr.</span></th>
                                     <?php if ($on_water_combined > 0): ?>
-                                    <th>On Water</th>
+                                    <th data-full="On Water"><span class="th-short">Water</span></th>
                                     <?php endif; ?>
                                     <?php if ($cleared_customs_combined > 0): ?>
-                                    <th>Cleared Customs</th>
+                                    <th data-full="Cleared Customs"><span class="th-short">Customs</span></th>
                                     <?php endif; ?>
                                     <?php if ($in_transit_to_warehouse_combined > 0): ?>
-                                    <th>In Transit to Warehouse</th>
+                                    <th data-full="In Transit to Warehouse"><span class="th-short">To Whse</span></th>
                                     <?php endif; ?>
                                     <?php if ($in_warehouse_combined > 0): ?>
-                                    <th>In Warehouse</th>
+                                    <th data-full="In Warehouse"><span class="th-short">Whse</span></th>
                                     <?php endif; ?>
                                     <?php if ($in_transit_to_project_combined > 0): ?>
-                                    <th>In Transit to Project</th>
+                                    <th data-full="In Transit to Project"><span class="th-short">To Proj</span></th>
                                     <?php endif; ?>
-                                    <th>Delivered to Project</th>
+                                    <th data-full="Delivered to Project"><span class="th-short">Delivered</span></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -4659,8 +4993,8 @@ var lineChart = new Chart(ctxLine, {
 }
 
 // Delivery Overview pie (for regular users)
-var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages));?>;
-var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages));?>;
+var pieChartData   = <?php echo json_encode(array_values($pieChartPercentages ?? []), JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
+var pieChartLabels = <?php echo json_encode(array_keys($pieChartPercentages ?? []), JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
 
 // Create dynamic color mapping based on actual labels
 var colorMap = {
@@ -4703,7 +5037,7 @@ var pieChart = new Chart(ctxPie,{
                         
                         // Add damaged count for Delivered to Project
                         if (lab === 'Delivered to Project') {
-                            const deliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+                            const deliveredDamagedTotal = <?php echo (int)($delivered_damaged_total ?? 0); ?>;
                             if (deliveredDamagedTotal > 0) {
                                 tooltipText += ` (${deliveredDamagedTotal} modules damaged)`;
                             }
@@ -4802,7 +5136,7 @@ function loadModuleInfo() {
 }
 
 // Shipping Breakdown modal
-const shippingBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
+const shippingBreakdown = <?php echo json_encode($detailed_breakdown ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
 function showShippingBreakdown(type){
     const modal = document.getElementById('shippingModal');
     const title = document.getElementById('shippingModalTitle');
@@ -4822,7 +5156,7 @@ function generateShippingContent(filter){
     // Handle special case for "Delivered" status
     if(filter === 'Delivered') {
         has = true;
-        const totalDeliveredRaw = <?php echo $delivered_raw_total; ?>;
+        const totalDeliveredRaw = <?php echo (int)($delivered_raw_total ?? 0); ?>;
         const totalDeliveredMW = <?php echo $delivered_combined; ?>;
         const totalPallets = Math.round(totalDeliveredRaw / 30);
         
@@ -4856,7 +5190,7 @@ function generateShippingContent(filter){
                `</div>`;
         
         // Show wattage breakdown for delivered modules        
-        const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage); ?>;
+        const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
         if(deliveredBreakdown.length > 0) {
             html += '<div style="margin-top:20px;"><h5 style="color:#28a745;">Wattage Breakdown:</h5><ul style="list-style:none;padding:0;">';
             deliveredBreakdown.forEach(function(item) {
@@ -4965,7 +5299,7 @@ function generateShippingContent(filter){
 }
 
 // Admin warehousing functionality
-const warehousesWithInventory = <?php echo json_encode($warehouses_with_inventory); ?>;
+const warehousesWithInventory = <?php echo json_encode($warehouses_with_inventory ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
 function handleAdminWarehousing() {
     const projectId = <?php echo $project_id; ?>;
     
@@ -5049,8 +5383,8 @@ window.conversionAvailability = {
 // Actual pallets by status for Module Delivery Status table
 window.actualStatusData = {
     pallets: {
-        main: <?php echo json_encode($pallets_status_main); ?>,
-        sub: <?php echo json_encode($pallets_sub_rows_status); ?>
+        main: <?php echo json_encode($pallets_status_main ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>,
+        sub: <?php echo json_encode($pallets_sub_rows_status ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>
     }
 };
 
@@ -5111,6 +5445,9 @@ function syncFiltersToState() {
     updateCustomerShippingBoxes(currentFilter, document.getElementById('project-progress'));
     updateCustomerShippingBoxes(currentFilter, document.getElementById('delivery-info'));
     
+    // Handle large numbers after updating
+    setTimeout(handleLargeNumbers, 100);
+    
     // Update timeline remaining text
     updateTimelineRemainingText(currentFilter);
 }
@@ -5125,9 +5462,9 @@ function updateTimelineRemainingText(filterType) {
     if (isCompleted) return; // Don't update if project is already completed
     
     // Get project data for calculations  
-    const totalModules = <?php echo $total_raw_modules; ?>;
-    const deliveredModules = <?php echo $delivered_raw_total; ?>;
-    const projectSizeMW = <?php echo number_format($project_size_mw, 2); ?>;
+    const totalModules = <?php echo (int)($total_raw_modules ?? 0); ?>;
+    const deliveredModules = <?php echo (int)($delivered_raw_total ?? 0); ?>;
+    const projectSizeMW = <?php echo is_numeric($project_size_mw) ? round($project_size_mw, 2) : 0; ?>;
     
     // Calculate delivered MW (approximate based on delivered/total ratio)
     const deliveryRatio = totalModules > 0 ? (deliveredModules / totalModules) : 0;
@@ -5150,7 +5487,7 @@ function updateTimelineRemainingText(filterType) {
             
         case 'pallets':
             // Use actual pallet counts from the database
-            const actualPalletData = <?php echo json_encode($pallets_status_main); ?>;
+            const actualPalletData = <?php echo json_encode($pallets_status_main ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
             const totalActualPallets = actualPalletData.total_order;
             const deliveredActualPallets = actualPalletData.delivered;
             remaining = totalActualPallets - deliveredActualPallets;
@@ -5799,25 +6136,25 @@ function closeCustomerShippingModal() {
 }
 
 function generateCustomerShippingContent(status) {
-    const shippingBreakdown = <?php echo json_encode($detailed_breakdown); ?>;
+    const shippingBreakdown = <?php echo json_encode($detailed_breakdown ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
     let html = '<div style="height:250px;overflow-y:auto;">';
     let has = false;
     
     // Handle special case for "Delivered" status
     if(status === 'Delivered') {
         has = true;
-        const totalDeliveredRaw = <?php echo $delivered_raw_total; ?>;
+        const totalDeliveredRaw = <?php echo (int)($delivered_raw_total ?? 0); ?>;
         const totalPallets = Math.round(totalDeliveredRaw / 30);
         
         // Calculate MWs
-        const wattages = <?php echo json_encode($wattages); ?>;
+        const wattages = <?php echo json_encode($wattages ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
         let totalMWs = 0;
         if (wattages.length > 0 && totalDeliveredRaw > 0) {
             const avgWattage = wattages.reduce((a, b) => a + b) / wattages.length;
             totalMWs = ((totalDeliveredRaw * avgWattage) / 1000000).toFixed(2);
         }
         
-        const customerDeliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
+        const customerDeliveredDamagedTotal = <?php echo (int)($delivered_damaged_total ?? 0); ?>;
         const palletDisplay = customerDeliveredDamagedTotal > 0 ? 
             `${totalPallets}<br><small style="color:#e65100;">(${Math.ceil(customerDeliveredDamagedTotal / 30)} damaged)</small>` : 
             totalPallets;
@@ -5840,7 +6177,7 @@ function generateCustomerShippingContent(status) {
                `</div>`;
         
         // Show wattage breakdown
-        const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage); ?>;
+        const deliveredBreakdown = <?php echo json_encode($delivered_by_wattage ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
         if(deliveredBreakdown.length > 0) {
             html += '<div style="margin-top:20px;"><h5 style="color:#28a745;">Wattage Breakdown:</h5><ul style="list-style:none;padding:0;">';
             deliveredBreakdown.forEach(function(item) {
@@ -5870,7 +6207,7 @@ function generateCustomerShippingContent(status) {
         const totalExceptionModules = exceptionsData.damaged_modules;
         
         // Calculate MWs
-        const wattages = <?php echo json_encode($wattages); ?>;
+        const wattages = <?php echo json_encode($wattages ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
         let totalMWs = 0;
         if (wattages.length > 0 && totalExceptionModules > 0) {
             const avgWattage = wattages.reduce((a, b) => a + b) / wattages.length;
@@ -5911,13 +6248,14 @@ function generateCustomerShippingContent(status) {
                 const data = shippingBreakdown[key];
                 
                 // Calculate MWs and truckloads
-                const wattages = <?php echo json_encode($wattages); ?>;
+                const wattages = <?php echo json_encode($wattages ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]'; ?>;
                 let totalMWs = 0;
                 if (wattages.length > 0 && data.total_modules > 0) {
                     const avgWattage = wattages.reduce((a, b) => a + b) / wattages.length;
                     totalMWs = ((data.total_modules * avgWattage) / 1000000).toFixed(2);
                 }
-                const truckloads = (data.pallet_count / <?php echo $average_pallets_per_truck; ?>).toFixed(1);
+                const avgPPT = <?php echo ($average_pallets_per_truck !== null && $average_pallets_per_truck > 0) ? (float)$average_pallets_per_truck : 'null'; ?>;
+                const truckloads = avgPPT ? (data.pallet_count / avgPPT).toFixed(1) : 'N/A';
                 
                 html += `<div style="margin-bottom:20px;padding:20px;background:#f8f9fa;border-radius:12px;border-left:4px solid #488C9A;">`+
                        `<h4 style="margin-top:0;color:#488C9A;">${key}</h4>`+
@@ -5984,12 +6322,36 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize timeline remaining text with current filter
     updateTimelineRemainingText(currentFilter);
+    
+    // Handle large numbers in shipping boxes
+    handleLargeNumbers();
 });
 
+// Function to detect and handle large numbers in shipping boxes
+function handleLargeNumbers() {
+    const shippingBoxes = document.querySelectorAll('.shipping-box .status-count, .shipping-box-customer .status-count');
+    
+    shippingBoxes.forEach(function(countElement) {
+        const text = countElement.textContent || countElement.innerText;
+        const numericText = text.replace(/[^\d]/g, ''); // Remove non-numeric characters
+        
+        // If number has 6+ digits (like 204540), mark it as large
+        if (numericText.length >= 6) {
+            countElement.setAttribute('data-large-number', 'true');
+            
+            // Also reduce padding on parent container for very large numbers
+            const parentBox = countElement.closest('.shipping-box, .shipping-box-customer');
+            if (parentBox && numericText.length >= 7) {
+                parentBox.style.padding = '15px 8px';
+            }
+        }
+    });
+}
+
 // Prepare costPie + budgetLineChart (for regular users)
-var pieChartDataFinancial = <?php echo json_encode($pieChartDataFinancial);?>;
-var dateLabelsForBudget   = <?php echo $dateLabelsForBudget;?>;
-var budgetLineData        = <?php echo $budgetLineChartDataJSON;?>;
+var pieChartDataFinancial = <?php echo json_encode($pieChartDataFinancial ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '[]';?>;
+var dateLabelsForBudget   = <?php echo $dateLabelsForBudget ?: '[]';?>;
+var budgetLineData        = <?php echo $budgetLineChartDataJSON ?: '[]';?>;
 
 function initializeFinancialCharts(){
     // Cost Breakdown Pie
@@ -6124,6 +6486,9 @@ function initializeShippingFilters() {
             
             // Update all shipping boxes
             updateShippingBoxes(filterType);
+            
+            // Handle large numbers after updating
+            setTimeout(handleLargeNumbers, 100);
         });
     });
 }
@@ -6218,6 +6583,9 @@ function initializeAdminUnitFilters() {
                 
                 // Update admin shipping boxes
                 updateShippingBoxes(filterType);
+                
+                // Handle large numbers after updating
+                setTimeout(handleLargeNumbers, 100);
             });
         });
     });
@@ -6258,7 +6626,7 @@ function updateTimelineRemainingTextAdmin() {
             
         case 'pallets':
             // Use actual pallet counts from the database
-            const actualPalletData = <?php echo json_encode($pallets_status_main); ?>;
+            const actualPalletData = <?php echo json_encode($pallets_status_main ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
             const totalActualPallets = actualPalletData.total_order;
             const deliveredActualPallets = actualPalletData.delivered;
             remaining = totalActualPallets - deliveredActualPallets;
@@ -6664,7 +7032,7 @@ document.getElementById('editBatchForm').addEventListener('submit', function(e) 
                 </div>
                 
                 <div class="modal-form-group">
-                    <label for="modal_initial_location">Initial Location:</label>
+                    <label for="modal_initial_location">Location:</label>
                     <input type="text" id="modal_initial_location" name="initial_location" required>
                 </div>
                 

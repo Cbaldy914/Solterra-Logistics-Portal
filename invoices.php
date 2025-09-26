@@ -222,13 +222,13 @@ sort($statuses);
 <body>
     <?php include 'header.php'; ?>
     <main>
-        <div class="breadcrumb">
-            <a href="dashboard.php">Dashboard</a>
-            <span class="separator">&raquo;</span>
-            <a href="project_documents.php?project_id=<?php echo $project_id; ?>">Project Documents</a>
-            <span class="separator">&raquo;</span>
-            <span>Invoices</span>
-        </div>
+        <?php
+            require_once 'components/breadcrumbs.php';
+            echo slp_render_breadcrumbs([
+                'current_label' => 'Invoices',
+                'extra' => [ ['label' => 'Project Documents', 'url' => 'project_documents.php?project_id='.(int)$project_id] ]
+            ]);
+        ?>
         <div class="page-header">
             <h1>Invoices for <?php echo htmlspecialchars($project_name); ?></h1>
         </div>

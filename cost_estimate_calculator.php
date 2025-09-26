@@ -337,11 +337,7 @@ for ($w = 0; $w < $max_warehouses; $w++) {
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="dashboard.php">Dashboard</a>
-        <span class="separator">&raquo;</span>
-        <span>Cost Estimate Calculator</span>
-    </div>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Cost Estimate Calculator']); ?>
 
     <h1>Cost Estimate Calculator</h1>
 

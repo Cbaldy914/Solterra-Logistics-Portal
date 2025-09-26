@@ -363,6 +363,14 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
+<?php
+    require_once 'components/breadcrumbs.php';
+    echo slp_render_breadcrumbs([
+        'current_label' => 'Create Replacement Pallets',
+        'project_id' => (int)$projectId,
+        'extra' => [ ['label' => 'Exceptions Report', 'url' => 'warranty.php?project_id='.(int)$projectId] ]
+    ]);
+?>
 <div class="container">
   <div class="header">
     <h1>Create Replacement Pallets</h1>
@@ -372,9 +380,6 @@ $conn->close();
     <div class="notice">Quick Replace will create pallets with status <strong>At Manufacturer</strong>. Manufacturer location is taken from the damaged pallets; pallets are packed as full pallets first with a partial pallet for any remaining modules.</div>
     <?php if (empty($quickPlan)) : ?>
       <div class="notice" style="background:#fff3cd; border-color:#ffe69c;">No damaged pallet details available on this claim. Quick Replace is unavailable.</div>
-      <div class="actions">
-        <a class="btn btn-secondary" href="warranty_detail.php?id=<?php echo (int)$claimId; ?>">Back</a>
-      </div>
     <?php else: ?>
       <table class="plan-table">
         <thead>
