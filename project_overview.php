@@ -3610,7 +3610,14 @@ document.addEventListener('DOMContentLoaded', function() {
     <?php
     $backLink = 'dashboard.php';
     ?>
-    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Project Overview', 'project_id' => (int)$project_id]); ?>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        // On project overview, show only: Dashboard » <Project Name>
+        echo slp_render_breadcrumbs([
+            'project_id'  => (int)$project_id,
+            'omit_current'=> true,
+        ]);
+    ?>
 
 
 

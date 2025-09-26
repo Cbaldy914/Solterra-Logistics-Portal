@@ -24,7 +24,7 @@ $successMessage = '';
 
 // Note: Delete handling is now done via AJAX endpoints for better user experience
 
-// --- Fetch Projects --- 
+// --- Fetch Projects with Enhanced Data --- 
 $sqlProjects        = "";
 $paramTypesProjects = "";
 $paramsProjects     = [];
@@ -33,13 +33,44 @@ $account_id_for_admin = null; // Define it here for potential reuse
 // If the user is global_admin, they can see all projects
 if ($role === 'global_admin') {
     $sqlProjects = "
-        SELECT p.id, p.project_name, c.name AS account_name, p.estimated_completion_date,
-               SUM(pwo.wattage * pwo.total_order) AS project_size
-          FROM projects p
-          JOIN customer_accounts c ON p.account_id = c.id
-          LEFT JOIN project_wattage_orders pwo ON p.id = pwo.project_id
-         GROUP BY p.id, p.project_name, c.name, p.estimated_completion_date
-         ORDER BY c.name ASC, p.project_name ASC
+        SELECT 
+            p.id,
+            p.project_name,
+            c.name AS account_name,
+            p.estimated_completion_date,
+            p.project_address,
+            p.street_address,
+            p.city,
+            p.state,
+            p.zip_code,
+            COALESCE((
+                SELECT SUM(d2.wattage * d2.quantity)
+                FROM deliveries d2
+                WHERE d2.project_id = p.id
+                  AND (d2.status_of_delivery IS NULL OR d2.status_of_delivery <> 'Canceled')
+            ), 0) AS project_size,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM deliveries d3
+                WHERE d3.project_id = p.id
+                  AND (d3.status_of_delivery IS NULL OR d3.status_of_delivery <> 'Canceled')
+            ), 0) AS delivery_count,
+            (
+                SELECT COUNT(*) FROM inventory_pallets ip 
+                LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+                LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+                WHERE (m.project_id = p.id OR ip.assigned_project_id = p.id OR ip.current_project_id = p.id)
+                  AND ip.status = 'Delivered to Project'
+            ) AS delivered_pallets,
+            (
+                SELECT COUNT(*) FROM inventory_pallets ip 
+                LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+                LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+                WHERE (m.project_id = p.id OR ip.assigned_project_id = p.id OR ip.current_project_id = p.id)
+            ) AS total_pallets
+        FROM projects p
+        JOIN customer_accounts c ON p.account_id = c.id
+        ORDER BY c.name ASC, p.project_name ASC
     ";
 } elseif ($role === 'admin') {
     // Look up the admin's single account_id
@@ -58,14 +89,45 @@ if ($role === 'global_admin') {
          $sqlProjects = "SELECT NULL LIMIT 0"; // No projects if no account
     } else {
         $sqlProjects = "
-            SELECT p.id, p.project_name, c.name AS account_name, p.estimated_completion_date,
-                   SUM(pwo.wattage * pwo.total_order) AS project_size
-              FROM projects p
-              JOIN customer_accounts c ON p.account_id = c.id
-              LEFT JOIN project_wattage_orders pwo ON p.id = pwo.project_id
-             WHERE p.account_id = ?
-             GROUP BY p.id, p.project_name, c.name, p.estimated_completion_date
-             ORDER BY p.project_name ASC
+            SELECT 
+                p.id,
+                p.project_name,
+                c.name AS account_name,
+                p.estimated_completion_date,
+                p.project_address,
+                p.street_address,
+                p.city,
+                p.state,
+                p.zip_code,
+                COALESCE((
+                    SELECT SUM(d2.wattage * d2.quantity)
+                    FROM deliveries d2
+                    WHERE d2.project_id = p.id
+                      AND (d2.status_of_delivery IS NULL OR d2.status_of_delivery <> 'Canceled')
+                ), 0) AS project_size,
+                COALESCE((
+                    SELECT COUNT(*)
+                    FROM deliveries d3
+                    WHERE d3.project_id = p.id
+                      AND (d3.status_of_delivery IS NULL OR d3.status_of_delivery <> 'Canceled')
+                ), 0) AS delivery_count,
+                (
+                    SELECT COUNT(*) FROM inventory_pallets ip 
+                    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+                    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+                    WHERE (m.project_id = p.id OR ip.assigned_project_id = p.id OR ip.current_project_id = p.id)
+                      AND ip.status = 'Delivered to Project'
+                ) AS delivered_pallets,
+                (
+                    SELECT COUNT(*) FROM inventory_pallets ip 
+                    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+                    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+                    WHERE (m.project_id = p.id OR ip.assigned_project_id = p.id OR ip.current_project_id = p.id)
+                ) AS total_pallets
+            FROM projects p
+            JOIN customer_accounts c ON p.account_id = c.id
+            WHERE p.account_id = ?
+            ORDER BY p.project_name ASC
         ";
         $paramTypesProjects = "i";
         $paramsProjects     = [$account_id_for_admin];
@@ -86,10 +148,35 @@ $resultProjects = $stmtProjects->get_result();
 
 if ($resultProjects) {
     while ($project = $resultProjects->fetch_assoc()) {
+        // Calculate project status and progress
+        $delivered_pallets = (int)($project['delivered_pallets'] ?? 0);
+        $total_pallets = (int)($project['total_pallets'] ?? 0);
+        $delivery_progress = $total_pallets > 0 ? ($delivered_pallets / $total_pallets) * 100 : 0;
+        
+        // Determine project status
+        $project_status = 'Planning';
+        if ($total_pallets > 0) {
+            if ($delivery_progress >= 100) {
+                $project_status = 'Completed';
+            } elseif ($delivery_progress > 0) {
+                $project_status = 'In Progress';
+            } else {
+                $project_status = 'Ready to Ship';
+            }
+        }
+        
+        $project['delivery_progress'] = $delivery_progress;
+        $project['project_status'] = $project_status;
         $projects[] = $project;
     }
 }
 $stmtProjects->close();
+
+// Calculate summary statistics
+$total_projects = count($projects);
+$completed_projects = count(array_filter($projects, fn($p) => $p['project_status'] === 'Completed'));
+$in_progress_projects = count(array_filter($projects, fn($p) => $p['project_status'] === 'In Progress'));
+$total_mw = array_sum(array_map(fn($p) => (float)($p['project_size'] ?? 0) / 1_000_000, $projects));
 
 $conn->close(); // Close connection after fetching project data
 ?>
@@ -103,74 +190,341 @@ $conn->close(); // Close connection after fetching project data
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
-        .header-container {
+        /* Header Section - Exact Match to Global Documents */
+        .projects-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .projects-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            text-align: center;
+            background: rgba(72, 140, 154, 0.08);
+            padding: 16px 20px;
+            border-radius: 16px;
+            min-width: 120px;
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: 700;
+            color: #488C9A;
+            margin: 0;
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin: 4px 0 0 0;
+            font-weight: 500;
+        }
+        
+        .add-project-btn {
+            background: #488C9A;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+        }
+        
+        .add-project-btn:hover {
+            background: #3A6E7F;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(72, 140, 154, 0.2);
+        }
+        
+        /* Responsive Header */
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                text-align: center;
+                gap: 20px;
+            }
+            
+            .header-stats {
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 15px;
+            }
+            
+            .stat-item {
+                min-width: 100px;
+                padding: 12px 16px;
+            }
+            
+            .header-info h1 {
+                font-size: 2rem;
+            }
+            
+            .header-subtitle {
+                font-size: 1rem;
+            }
+        }
+        /* Project Cards */
+        .projects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 25px;
+            margin-top: 30px;
+        }
+        
+        .project-card {
+            background: white;
+            border-radius: 16px;
+            padding: 25px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            border: 1px solid #f0f0f0;
+            transition: all 0.3s ease;
+            position: relative;
+            /* Allow dropdowns to be fully visible outside the card */
+            overflow: visible;
+        }
+        
+        .project-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 32px rgba(72, 140, 154, 0.15);
+            border-color: #488C9A;
+        }
+        
+        .project-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+        }
+        
+        .project-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+        
+        .project-title {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #293E4C;
+            margin: 0 0 5px 0;
+            line-height: 1.3;
+        }
+        
+        .project-account {
+            font-size: 0.95rem;
+            color: #666;
+            margin: 0;
+            font-weight: 500;
+        }
+        
+        .project-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .status-planning {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-ready {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+        
+        .status-progress {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-completed {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+        
+        .project-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .metric-item {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .metric-value {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #488C9A;
+            margin: 0 0 5px 0;
+        }
+        
+        .metric-label {
+            font-size: 0.85rem;
+            color: #666;
+            margin: 0;
+            font-weight: 500;
+        }
+        
+        .progress-section {
+            margin: 20px 0;
+        }
+        
+        .progress-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #e0e0e0;
+            margin-bottom: 8px;
         }
-        .action-buttons.add-new {
-            display: inline-block;
-            padding: 8px 15px;
-            background-color: #488C9A;
-            color: white;
-            text-decoration: none;
-            border: none;
+        
+        .progress-label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #293E4C;
+        }
+        
+        .progress-percentage {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #488C9A;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e9ecef;
             border-radius: 4px;
-            cursor: pointer;
+            overflow: hidden;
         }
-        .action-buttons.add-new:hover {
-            background-color: #293E4C;
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 4px;
+            transition: width 0.6s ease;
         }
-        .action-buttons.edit {
-            background-color: #488C9A;
+        
+        .project-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #f0f0f0;
+        }
+        
+        .btn-details {
+            flex: 1;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
             color: white;
-            padding: 4px 8px;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
             text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
-            margin-right: 5px;
+            font-weight: 600;
+            text-align: center;
+            transition: all 0.3s ease;
         }
-        .action-buttons.edit:hover {
-            background-color: #293E4C;
+        
+        .btn-details:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
         }
-        .action-buttons.delete {
-            background-color: #dc3545;
-            color: white;
-            padding: 4px 8px;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
+        
+        .completion-date {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            text-align: center;
         }
-        .action-buttons.delete:hover {
-            background-color: #c82333;
+        
+        .completion-date.overdue {
+            background: #f8d7da;
+            color: #721c24;
         }
-        .action-buttons.view {
-            background-color: #488C9A;
-            color: white;
-            padding: 4px 8px;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
-            margin-right: 5px;
+        
+        .completion-date.upcoming {
+            background: #fff3cd;
+            color: #856404;
         }
-        .action-buttons.view:hover {
-            background-color: #293E4C;
+        
+        /* Legacy table styles for fallback */
+        .table-responsive {
+            display: none;
         }
-        .action-buttons.warehouse {
-            background-color: #488C9A;
-            color: white;
-            padding: 4px 8px;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
-            margin-right: 5px;
-        }
-        .action-buttons.warehouse:hover {
-            background-color: #293E4C;
-        }
+        /* Clean up old styles - replaced with modern card design */
         .error-message {
             color: #721c24;
             background-color: #f8d7da;
@@ -187,25 +541,27 @@ $conn->close(); // Close connection after fetching project data
             border-radius: 4px;
             margin-bottom: 20px;
         }
-        .project-info {
-            font-size: 0.9em;
-            color: #666;
+        /* Enhanced responsive design */
+        @media (max-width: 1200px) {
+            .projects-grid {
+                grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            }
         }
-        .project-size {
-            font-weight: 500;
-            color: #488C9A;
-        }
-        .completion-date {
-            font-size: 0.85em;
-            color: #666;
-        }
-        .completion-date.overdue {
-            color: #dc3545;
-            font-weight: 500;
-        }
-        .completion-date.upcoming {
-            color: #ffc107;
-            font-weight: 500;
+        
+        @media (max-width: 768px) {
+            .projects-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+            
+            .project-card {
+                padding: 20px;
+            }
+            
+            .project-metrics {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
         }
         
         /* Dropdown menu styling */
@@ -230,17 +586,69 @@ $conn->close(); // Close connection after fetching project data
         .dropdown-menu {
             display: none;
             position: absolute;
-            right: 0;
-            top: 100%;
+            top: calc(100% + 6px);
+            bottom: auto;
             background-color: white;
-            min-width: 120px;
+            min-width: 140px;
             box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
             border-radius: 4px;
             z-index: 1000;
             border: 1px solid #ddd;
+            right: 0;
+            left: auto;
+            /* Animation setup */
+            opacity: 0;
+            transform: translateY(6px) scale(0.98);
+            transform-origin: top right;
+            transition: opacity 140ms ease, transform 140ms ease;
+            will-change: opacity, transform;
+        }
+        
+        /* Alternative positioning for dropdowns that would overflow */
+        .dropdown-menu.dropdown-left {
+            right: auto;
+            left: 0;
+        }
+
+        /* Show above the toggle button */
+        .dropdown-menu.dropdown-up {
+            top: auto;
+            bottom: calc(100% + 6px);
+            transform-origin: bottom right;
+            /* initial offset for animation when hidden */
+            transform: translateY(-6px) scale(0.98);
+        }
+
+        /* Show to the right of the toggle */
+        .dropdown-menu.dropdown-side-right {
+            top: 0;
+            bottom: auto;
+            left: calc(100% + 6px);
+            right: auto;
+            transform-origin: top left;
+            transform: translateX(6px) scale(0.98);
+        }
+
+        /* Show to the left of the toggle */
+        .dropdown-menu.dropdown-side-left {
+            top: 0;
+            bottom: auto;
+            right: calc(100% + 6px);
+            left: auto;
+            transform-origin: top right;
+            transform: translateX(-6px) scale(0.98);
+        }
+        
+        /* For very small screens, make dropdown smaller */
+        @media (max-width: 768px) {
+            .dropdown-menu {
+                min-width: 120px;
+            }
         }
         .dropdown-menu.show {
             display: block;
+            opacity: 1;
+            transform: translate(0, 0) scale(1);
         }
         .dropdown-item {
             display: block;
@@ -270,14 +678,25 @@ $conn->close(); // Close connection after fetching project data
             border-radius: 0 0 4px 4px;
         }
         
-        /* Actions cell styling */
-        .actions-cell {
+        /* Enhanced dropdown styling for cards */
+        .project-actions .dropdown {
             position: relative;
         }
-        .actions-cell .dropdown {
-            position: absolute;
-            top: 4px;
-            right: 4px;
+        
+        .project-actions .dropdown-toggle {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            color: #495057;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 1rem;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+        }
+        
+        .project-actions .dropdown-toggle:hover {
+            background: #e9ecef;
+            border-color: #adb5bd;
         }
         
         /* Delete modal styling */
@@ -520,20 +939,71 @@ $conn->close(); // Close connection after fetching project data
             });
         }
         
-        // Dropdown functionality
+        // Dropdown functionality with smart positioning
         function toggleDropdown(event, dropdownId) {
             event.stopPropagation();
-            
+
+            const toggle = event.currentTarget;
+
             // Close all other dropdowns
             document.querySelectorAll('.dropdown-menu').forEach(menu => {
                 if (menu.id !== dropdownId) {
-                    menu.classList.remove('show');
+                    menu.classList.remove('show', 'dropdown-left', 'dropdown-up', 'dropdown-side-right', 'dropdown-side-left');
                 }
             });
-            
+
             // Toggle the clicked dropdown
             const dropdown = document.getElementById(dropdownId);
-            dropdown.classList.toggle('show');
+            const isShowing = dropdown.classList.contains('show');
+
+            if (isShowing) {
+                dropdown.classList.remove('show');
+                return;
+            }
+
+            // Reset positioning classes
+            dropdown.classList.remove('dropdown-left', 'dropdown-up', 'dropdown-side-right', 'dropdown-side-left');
+
+            // Measure size without triggering animation or visual flicker
+            const prevDisplay = dropdown.style.display;
+            const prevVisibility = dropdown.style.visibility;
+            dropdown.style.display = 'block';
+            dropdown.style.visibility = 'hidden';
+
+            // Check menu size and available space
+            const menuRect = dropdown.getBoundingClientRect();
+            const toggleRect = toggle.getBoundingClientRect();
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+
+            const spaceBelow = windowHeight - toggleRect.bottom;
+            const spaceAbove = toggleRect.top;
+            const spaceRight = windowWidth - toggleRect.right;
+            const spaceLeft = toggleRect.left;
+
+            // Decide vertical or side placement
+            if (spaceBelow >= menuRect.height + 8) {
+                // default: below (no class needed)
+            } else if (spaceAbove >= menuRect.height + 8) {
+                dropdown.classList.add('dropdown-up');
+            } else if (spaceRight >= menuRect.width + 8) {
+                dropdown.classList.add('dropdown-side-right');
+            } else {
+                dropdown.classList.add('dropdown-side-left');
+            }
+            
+            // Restore styles and show with animation
+            dropdown.style.display = prevDisplay;
+            dropdown.style.visibility = prevVisibility;
+            dropdown.classList.add('show');
+
+            // For below/above placements, ensure it doesn't overflow off the right edge
+            if (!dropdown.classList.contains('dropdown-side-right') && !dropdown.classList.contains('dropdown-side-left')) {
+                const rectAfter = dropdown.getBoundingClientRect();
+                if (rectAfter.right > windowWidth - 8) {
+                    dropdown.classList.add('dropdown-left');
+                }
+            }
         }
         
         // Close dropdowns when clicking outside
@@ -557,9 +1027,37 @@ $conn->close(); // Close connection after fetching project data
 <main>
     <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Manage Projects']); ?>
     
-    <div class="header-container">
-        <h1>Manage Projects</h1>
-        <a href="add_project.php" class="action-buttons add-new">Add New Project</a>
+    <div class="projects-header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="header-info">
+                    <h1>Manage Projects</h1>
+                    <p class="header-subtitle">Comprehensive project management and tracking dashboard</p>
+                </div>
+            </div>
+            <div class="header-stats">
+                <div class="stat-item">
+                    <p class="stat-number"><?php echo $total_projects; ?></p>
+                    <p class="stat-label">Projects</p>
+                </div>
+                <div class="stat-item">
+                    <p class="stat-number"><?php echo number_format($total_mw, 1); ?></p>
+                    <p class="stat-label">Total MW</p>
+                </div>
+                <div class="stat-item">
+                    <p class="stat-number"><?php echo $in_progress_projects; ?></p>
+                    <p class="stat-label">In Progress</p>
+                </div>
+                <div class="stat-item">
+                    <p class="stat-number"><?php echo $completed_projects; ?></p>
+                    <p class="stat-label">Completed</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div style="display: flex; justify-content: flex-end; margin-bottom: 20px;">
+        <a href="add_project.php" class="add-project-btn">+ Add New Project</a>
     </div>
 
     <?php if (!empty($errorMessage)): ?>
@@ -574,79 +1072,116 @@ $conn->close(); // Close connection after fetching project data
         </div>
     <?php endif; ?>
 
-    <div class="table-responsive">
-        <table>
-            <thead>
-                <tr>
-                    <th>Project</th>
-                    <th>Project Size</th>
-                    <th>Completion Date</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (!empty($projects)): ?>
-                    <?php foreach ($projects as $project): ?>
-                        <tr>
-                            <td>
-                                <strong><?php echo htmlspecialchars($project['project_name']); ?></strong>
-                                <div class="project-info"><?php echo htmlspecialchars($project['account_name']); ?></div>
-                            </td>
-                            <td>
-                                <div class="project-size">
-                                    <?php
-                                        $project_size    = (float)($project['project_size'] ?? 0);
-                                        $project_size_mw = $project_size / 1_000_000; // convert watts to MW
-                                        echo number_format($project_size_mw, 2) . ' MW';
-                                    ?>
-                                </div>
-                            </td>
-                            <td>
-                                <?php if (!empty($project['estimated_completion_date'])): ?>
-                                    <?php 
-                                        $completion_date = new DateTime($project['estimated_completion_date']);
-                                        $today = new DateTime();
-                                        $interval = $today->diff($completion_date);
-                                        $days_until = (int)$interval->format('%R%a');
-                                        
-                                        $date_class = 'completion-date';
-                                        if ($days_until < 0) $date_class .= ' overdue';
-                                        elseif ($days_until <= 30) $date_class .= ' upcoming';
-                                    ?>
-                                    <div class="<?php echo $date_class; ?>">
-                                        📅 <?php echo $completion_date->format('M j, Y'); ?>
-                                        <?php if ($days_until < 0): ?>
-                                            <br><small>(<?php echo abs($days_until); ?> days overdue)</small>
-                                        <?php elseif ($days_until <= 30): ?>
-                                            <br><small>(<?php echo $days_until; ?> days remaining)</small>
-                                        <?php endif; ?>
-                                    </div>
-                                <?php else: ?>
-                                    <span style="color: #999;">Not set</span>
-                                <?php endif; ?>
-                            </td>
-                            <td class="actions-cell">
-                                <a href="manage_deliveries.php?project_id=<?php echo $project['id']; ?>" class="action-buttons view">Deliveries</a>
-                                <a href="warehouse_info.php?project_id=<?php echo $project['id']; ?>" class="action-buttons warehouse">Warehouse</a>
-                                <div class="dropdown">
-                                    <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $project['id']; ?>')" title="More actions">✏️</button>
-                                    <div id="dropdown-menu-<?php echo $project['id']; ?>" class="dropdown-menu">
-                                        <a href="edit_project.php?project_id=<?php echo $project['id']; ?>" class="dropdown-item edit">Edit</a>
-                                        <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($project['project_name'], ENT_QUOTES); ?>', <?php echo $project['id']; ?>)" class="dropdown-item delete">Delete</a>
-                                    </div>
-                                </div>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr>
-                        <td colspan="4" style="text-align: center; padding: 20px; color: #666;">
-                            No projects found. <a href="add_project.php">Add the first project</a>
-                        </td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
+    <div class="projects-grid">
+        <?php if (!empty($projects)): ?>
+            <?php foreach ($projects as $project): ?>
+                <?php
+                    $project_size = (float)($project['project_size'] ?? 0);
+                    $project_size_mw = $project_size / 1_000_000; // convert watts to MW
+                    $delivery_progress = $project['delivery_progress'];
+                    $project_status = $project['project_status'];
+                    
+                    // Format address
+                    $address_parts = array_filter([
+                        $project['street_address'], 
+                        $project['city'], 
+                        $project['state'], 
+                        $project['zip_code']
+                    ]);
+                    $formatted_address = implode(', ', $address_parts);
+                    
+                    // Status class mapping
+                    $status_classes = [
+                        'Planning' => 'status-planning',
+                        'Ready to Ship' => 'status-ready',
+                        'In Progress' => 'status-progress',
+                        'Completed' => 'status-completed'
+                    ];
+                    $status_class = $status_classes[$project_status] ?? 'status-planning';
+                ?>
+                <div class="project-card">
+                    <div class="project-header">
+                        <div>
+                            <h3 class="project-title"><?php echo htmlspecialchars($project['project_name']); ?></h3>
+                            <p class="project-account"><?php echo htmlspecialchars($project['account_name']); ?></p>
+                        </div>
+                        <div class="project-status <?php echo $status_class; ?>">
+                            <?php echo $project_status; ?>
+                        </div>
+                    </div>
+                    
+                    <?php if (!empty($formatted_address)): ?>
+                    <div style="margin-bottom: 15px; color: #666; font-size: 0.9rem;">
+                        📍 <?php echo htmlspecialchars($formatted_address); ?>
+                    </div>
+                    <?php endif; ?>
+                    
+                    <div class="project-metrics">
+                        <div class="metric-item">
+                            <div class="metric-value"><?php echo number_format($project_size_mw, 2); ?></div>
+                            <div class="metric-label">MW Size</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value"><?php echo (int)($project['delivery_count'] ?? 0); ?></div>
+                            <div class="metric-label">Deliveries</div>
+                        </div>
+                    </div>
+                    
+                    <?php if ($project['total_pallets'] > 0): ?>
+                    <div class="progress-section">
+                        <div class="progress-header">
+                            <span class="progress-label">Delivery Progress</span>
+                            <span class="progress-percentage"><?php echo number_format($delivery_progress, 1); ?>%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: <?php echo min(100, $delivery_progress); ?>%;"></div>
+                        </div>
+                    </div>
+                    <?php endif; ?>
+                    
+                    <?php if (!empty($project['estimated_completion_date'])): ?>
+                        <?php 
+                            $completion_date = new DateTime($project['estimated_completion_date']);
+                            $today = new DateTime();
+                            $interval = $today->diff($completion_date);
+                            $days_until = (int)$interval->format('%R%a');
+                            
+                            $date_class = 'completion-date';
+                            if ($days_until < 0) $date_class .= ' overdue';
+                            elseif ($days_until <= 30) $date_class .= ' upcoming';
+                        ?>
+                        <div class="<?php echo $date_class; ?>">
+                            📅 Target: <?php echo $completion_date->format('M j, Y'); ?>
+                            <?php if ($days_until < 0): ?>
+                                <br><small><?php echo abs($days_until); ?> days overdue</small>
+                            <?php elseif ($days_until <= 30): ?>
+                                <br><small><?php echo $days_until; ?> days remaining</small>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <div class="project-actions">
+                        <a href="project_overview.php?project_id=<?php echo $project['id']; ?>" class="btn-details">
+                            View Details
+                        </a>
+                        <div class="dropdown">
+                            <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $project['id']; ?>')" title="More actions">⚙️</button>
+                            <div id="dropdown-menu-<?php echo $project['id']; ?>" class="dropdown-menu">
+                                <a href="edit_project.php?project_id=<?php echo $project['id']; ?>" class="dropdown-item edit">Edit Project</a>
+                                <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($project['project_name'], ENT_QUOTES); ?>', <?php echo $project['id']; ?>)" class="dropdown-item delete">Delete Project</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        <?php else: ?>
+            <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: #666;">
+                <div style="font-size: 3rem; margin-bottom: 20px; opacity: 0.3;">📋</div>
+                <h3 style="margin-bottom: 10px; color: #293E4C;">No Projects Found</h3>
+                <p style="margin-bottom: 30px;">Get started by creating your first project</p>
+                <a href="add_project.php" class="btn-details" style="display: inline-block; max-width: 200px;">Add First Project</a>
+            </div>
+        <?php endif; ?>
     </div>
 
     <!-- Delete Confirmation Modal -->

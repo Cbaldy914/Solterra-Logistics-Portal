@@ -531,13 +531,13 @@ $conn2->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Simple back button -->
-    <a href="dashboard" class="back-icon" style="margin:20px;">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width:24px;height:24px;">
-            <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-        </svg>
-        Back
-    </a>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'DDPm Overview',
+            'project_id' => (int)$project_id
+        ]);
+    ?>
     <div class="project-overview-container">
         <!-- Mobile Project Name -->
         <h1 class="project-name-mobile"><?php echo htmlspecialchars($project['project_name']); ?></h1>

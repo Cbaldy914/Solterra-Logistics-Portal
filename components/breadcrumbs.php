@@ -17,6 +17,7 @@
  * - class (string): CSS class for the container. Default 'breadcrumb'.
  * - separator (string): Text separator between crumbs. Default '»'.
  * - extra (array): Additional crumbs to insert after Dashboard and before context/current. Each: ['label'=>..., 'url'=>...].
+ * - omit_current (bool): If true, do not render the final current page crumb.
  * - ref_map (array): Map of substring => ['label'=>..., 'url'=>...]; used to interpret HTTP_REFERER.
  */
 
@@ -121,8 +122,22 @@ if (!function_exists('slp_render_breadcrumbs')) {
             }
         }
 
-        // Current page crumb (no link)
-        $crumbs[] = ['label' => $current, 'url' => null];
+        // Current page crumb (no link) unless explicitly omitted
+        // Default behavior: if we're on project_overview for a specific project, omit the redundant "Project Overview" crumb
+        if (array_key_exists('omit_current', $opts)) {
+            $omit_current = (bool)$opts['omit_current'];
+        } else {
+            $omit_current = false;
+            $script = basename(parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '');
+            $is_project_overview = in_array($script, ['project_overview.php','project_overview'], true);
+            $label_is_overview   = (stripos($current ?? '', 'Project Overview') !== false);
+            if (($project_id ?? 0) > 0 && ($is_project_overview || $label_is_overview)) {
+                $omit_current = true;
+            }
+        }
+        if (!$omit_current) {
+            $crumbs[] = ['label' => $current, 'url' => null];
+        }
 
         // Replace any crumb that links to project_overview with the project name (if known)
         if ($project_id > 0 && $project_name !== null) {

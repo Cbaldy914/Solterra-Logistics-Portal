@@ -23,8 +23,8 @@ $filter = $_GET['filter'] ?? 'total';
 $current_year = date('Y');
 
 // Prepare to fetch projects differently depending on role
-if ($role === 'admin' || $role === 'global_admin') {
-    // Admin or global_admin => can see all projects
+if ($role === 'global_admin') {
+    // Global admin => can see all projects
     $sql_projects = "
         SELECT p.id, p.project_name, p.image_url
         FROM projects p
@@ -32,7 +32,7 @@ if ($role === 'admin' || $role === 'global_admin') {
     $params = [];
     $paramTypes = "";
 } else {
-    // Regular user => must join with customer_account_users to ensure user_id belongs to the project's account
+    // Admins and regular users => only projects tied to their account(s)
     $sql_projects = "
         SELECT p.id, p.project_name, p.image_url
         FROM projects p
@@ -144,22 +144,114 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        /* Header Section - Matching Manage Projects Style */
+        .sustainability-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            /* Allow tooltips and overlays to render outside the header */
+            overflow: visible;
+        }
+
+        .sustainability-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        /* Ensure tooltip text is visible inside gradient header */
+        .header-info h1 .info-tooltip {
+            -webkit-text-fill-color: #ffffff !important;
+            -webkit-background-clip: initial !important;
+            background-clip: initial !important;
+            color: #ffffff !important;
+            /* prevent inheriting giant font-size from h1 */
+            font-size: 12px;
+        }
+        .header-info h1 .info-tooltip *,
+        .info-tooltip .tooltip-text,
+        .info-tooltip .tooltip-text * {
+            -webkit-text-fill-color: initial !important;
+            color: #333 !important;
+        }
+        .header-info h1 .info-tooltip .tooltip-text {
+            font-size: 0.9rem;
+            line-height: 1.4;
+            width: 320px;
+            padding: 12px 14px;
+            left: -160px; /* center better under the icon */
+        }
+        .header-info h1 .info-tooltip .tooltip-text p {
+            margin: 0 0 6px 0;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+        .header-info h1 .info-tooltip .tooltip-text ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+
+        /* Remove header stats - they're redundant */
+        
         .info-tooltip {
-            display: inline-block;
-            width: 18px;
-            height: 18px;
-            line-height: 18px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            line-height: 20px;
             text-align: center;
             background-color: #488C9A;
             color: white;
             border-radius: 50%;
             font-weight: bold;
             cursor: pointer;
-            margin-left: 5px;
+            margin-left: 8px;
             position: relative;
             vertical-align: middle;
-            top: -3px;
-            font-size: 0.5em;
+            top: -2px;
+            font-size: 0.8em;
+            z-index: 2;
         }
         .info-tooltip:hover {
             background-color: #293E4C;
@@ -173,9 +265,9 @@ $conn->close();
             border-radius: 4px;
             padding: 8px;
             position: absolute;
-            z-index: 1;
-            top: 25px;
-            left: -200px;
+            z-index: 3000;
+            top: 26px;
+            left: -190px;
             box-shadow: 0 0 5px rgba(0,0,0,0.3);
             font-weight: normal;
         }
@@ -273,13 +365,17 @@ $conn->close();
             font-weight: bold;
             color: #488C9A;
         }
-        .projects-container {
+        /* Remove old project styles - replaced with sustainability-project-* classes */
+        /* New beautiful sustainability cards - no portal.css conflicts */
+        .sustainability-projects-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-            gap: 20px;
+            gap: 25px;
             padding: 0;
+            margin-top: 30px;
         }
-        .project-item {
+        
+        .sustainability-project-card {
             background: #ffffff;
             border-radius: 16px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
@@ -288,42 +384,54 @@ $conn->close();
             transition: all 0.3s ease;
             cursor: pointer;
         }
-        .project-item:hover {
+        
+        .sustainability-project-card:hover {
             transform: translateY(-8px);
             box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
         }
-        .project-image {
+        .sustainability-project-header {
+            padding: 25px 25px 20px 25px;
+            background: #ffffff;
+            border-bottom: 1px solid #f1f3f4;
+            text-align: center;
+        }
+        
+        .sustainability-project-title {
+            margin: 0;
+            font-size: 1.4em;
+            color: #293E4C;
+            font-weight: 600;
+        }
+        
+        .sustainability-project-title a {
+            text-decoration: none;
+            color: inherit;
+            transition: color 0.3s ease;
+        }
+        
+        .sustainability-project-title a:hover {
+            color: #488C9A;
+        }
+        
+        .sustainability-project-image {
             width: 100%;
             height: 200px;
             overflow: hidden;
             position: relative;
         }
-        .project-image img {
+        
+        .sustainability-project-image img {
             width: 100%;
             height: 100%;
             object-fit: cover;
             transition: transform 0.3s ease;
         }
-        .project-item:hover .project-image img {
+        
+        .sustainability-project-card:hover .sustainability-project-image img {
             transform: scale(1.05);
         }
-        .project-title {
-            padding: 20px 20px 15px 20px;
-            background: #ffffff;
-            border-bottom: 1px solid #f1f3f4;
-        }
-        .project-title h3 {
-            margin: 0;
-            font-size: 1.4em;
-            color: #293E4C;
-            font-weight: 600;
-            text-align: center;
-        }
-        .project-title h3 a {
-            text-decoration: none;
-            color: inherit;
-        }
-        .project-overlay {
+        
+        .sustainability-project-overlay {
             position: absolute;
             top: 0;
             left: 0;
@@ -337,53 +445,92 @@ $conn->close();
             transition: opacity 0.3s ease;
             z-index: 3;
         }
-        .project-item:hover .project-overlay {
+        
+        .sustainability-project-card:hover .sustainability-project-overlay {
             opacity: 1;
         }
-        .project-overlay-text {
+        
+        .sustainability-project-overlay-text {
             color: white;
             font-size: 1.2em;
             font-weight: 600;
             text-align: center;
         }
-        .project-content {
+        
+        .sustainability-project-body {
             padding: 25px;
             background: #fafbfc;
-            width: 100% !important;
-            box-sizing: border-box;
-            text-align: left !important;
-            position: relative;
+            display: flex;
+            flex-direction: column;
         }
-        .project-details {
+        
+        .sustainability-metrics-container {
             background: #ffffff;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 15px;
+            border-radius: 12px;
+            padding: 25px;
             border: 1px solid #f1f3f4;
-            width: 100% !important;
-            box-sizing: border-box;
-            text-align: left !important;
-            float: none !important;
-            position: relative;
+            margin-bottom: 20px;
+            flex: 1;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
         }
-        .project-details p {
-            margin: 12px 0;
-            color: #495057;
-            font-size: 0.95em;
-            line-height: 1.6;
+        
+        .sustainability-metric-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            min-height: 24px;
+            padding: 12px 0;
+            border-bottom: 1px solid #f8f9fa;
         }
-        .project-details strong {
+        
+        .sustainability-metric-row:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+        
+        .sustainability-metric-row:first-child {
+            padding-top: 0;
+        }
+        
+        .sustainability-metric-label {
             color: #293E4C;
             font-weight: 600;
+            font-size: 0.95em;
         }
-        .sustainability-value {
+        
+        .sustainability-metric-value {
             font-weight: 700;
+            color: #488C9A;
             font-size: 1.1em;
         }
+        
+        .sustainability-project-footer {
+            margin-top: auto;
+            padding-top: 15px;
+            border-top: 1px solid #f1f3f4;
+            text-align: center;
+        }
+        
+        .view-sustainability-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+        }
+        
+        .view-sustainability-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+        /* Removed old project-details styles - using new sustainability-metric-* classes */
         .breadcrumb {
             display: flex;
             margin-bottom: 20px;
@@ -397,10 +544,27 @@ $conn->close();
             margin: 0 8px;
             color: #6c757d;
         }
+        /* Responsive Header */
         @media (max-width: 768px) {
-            .projects-container {
+            .header-content {
+                flex-direction: column;
+                text-align: center;
+                gap: 20px;
+            }
+            
+            /* Removed header stats styles */
+            
+            .header-info h1 {
+                font-size: 2rem;
+            }
+            
+            .header-subtitle {
+                font-size: 1rem;
+            }
+            
+            .sustainability-projects-grid {
                 grid-template-columns: 1fr;
-                gap: 15px;
+                gap: 20px;
             }
             .cost-row {
                 flex-direction: column;
@@ -417,18 +581,28 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Sustainability Overview']); ?>
-    <h1>Sustainability Overview
-        <span class="info-tooltip">?
-            <span class="tooltip-text">
-                <p>Calculations and assumptions:</p>
-                <ul>
-                    <li>6 miles per gallon for heavy-duty freight trucks in the US (US DOE).</li>
-                    <li>Fuel consumption ~ 0.1667 gallons/mile.</li>
-                    <li>Diesel emits ~10.21 kg CO₂/gallon (EPA).</li>
-                </ul>
-            </span>
-        </span>
-    </h1>
+    
+    <div class="sustainability-header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="header-info">
+                    <h1>Sustainability Overview
+                        <span class="info-tooltip">?
+                            <span class="tooltip-text">
+                                <p>Calculations and assumptions:</p>
+                                <ul>
+                                    <li>6 miles per gallon for heavy-duty freight trucks in the US (US DOE).</li>
+                                    <li>Fuel consumption ~ 0.1667 gallons/mile.</li>
+                                    <li>Diesel emits ~10.21 kg CO₂/gallon (EPA).</li>
+                                </ul>
+                            </span>
+                        </span>
+                    </h1>
+                    <p class="header-subtitle">Environmental impact tracking and carbon footprint analysis</p>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Filter form -->
     <form method="GET" id="filter-form" class="filter-form">
@@ -480,41 +654,47 @@ $conn->close();
     </div>
 
     <h2>🌍 Sustainability by Project</h2>
-    <div class="projects-container">
+    <div class="sustainability-projects-grid">
         <?php if (!empty($projects)): ?>
             <?php foreach ($projects as $proj): ?>
-                <div class="project-item" onclick="window.location.href='project_sustainability_details?project_id=<?php echo $proj['id']; ?>'">
-                    <div class="project-title">
-                        <h3>
+                <div class="sustainability-project-card" onclick="window.location.href='project_sustainability_details?project_id=<?php echo $proj['id']; ?>'">
+                    <div class="sustainability-project-header">
+                        <h3 class="sustainability-project-title">
                             <a href="project_sustainability_details?project_id=<?php echo $proj['id']; ?>">
                                 <?php echo htmlspecialchars($proj['project_name']); ?>
                             </a>
                         </h3>
                     </div>
-                    <div class="project-image">
+                    <div class="sustainability-project-image">
                         <img src="<?php echo htmlspecialchars($proj['image_url']); ?>" alt="<?php echo htmlspecialchars($proj['project_name']); ?>">
-                        <div class="project-overlay">
-                            <div class="project-overlay-text">View Sustainability Details</div>
+                        <div class="sustainability-project-overlay">
+                            <div class="sustainability-project-overlay-text">View Sustainability Details</div>
                         </div>
                     </div>
-                    <div class="project-content">
-                        <div class="project-details">
-                            <p>
-                                <strong>🌱 <?php echo ($filter==='ytd')?'YTD ':''; ?>Emissions</strong>
-                                <span class="sustainability-value"><?php echo number_format($proj['total_emissions'], 2); ?> kg CO₂</span>
-                            </p>
-                            <p>
-                                <strong>🚛 <?php echo ($filter==='ytd')?'YTD ':''; ?>Truckloads</strong>
-                                <span class="sustainability-value"><?php echo number_format($proj['total_truckloads'], 0); ?></span>
-                            </p>
-                            <p>
-                                <strong>🛣️ <?php echo ($filter==='ytd')?'YTD ':''; ?>Miles Driven</strong>
-                                <span class="sustainability-value"><?php echo number_format($proj['miles_driven'], 2); ?> mi</span>
-                            </p>
-                            <p>
-                                <strong>⛽ <?php echo ($filter==='ytd')?'YTD ':''; ?>Fuel</strong>
-                                <span class="sustainability-value"><?php echo number_format($proj['fuel_consumption'], 2); ?> gal</span>
-                            </p>
+                    <div class="sustainability-project-body">
+                        <div class="sustainability-metrics-container">
+                            <div class="sustainability-metric-row">
+                                <span class="sustainability-metric-label">🌱 <?php echo ($filter==='ytd')?'YTD ':''; ?>Emissions</span>
+                                <span class="sustainability-metric-value"><?php echo number_format($proj['total_emissions'], 2); ?> kg CO₂</span>
+                            </div>
+                            <div class="sustainability-metric-row">
+                                <span class="sustainability-metric-label">🚛 <?php echo ($filter==='ytd')?'YTD ':''; ?>Truckloads</span>
+                                <span class="sustainability-metric-value"><?php echo number_format($proj['total_truckloads'], 0); ?></span>
+                            </div>
+                            <div class="sustainability-metric-row">
+                                <span class="sustainability-metric-label">🛣️ <?php echo ($filter==='ytd')?'YTD ':''; ?>Miles Driven</span>
+                                <span class="sustainability-metric-value"><?php echo number_format($proj['miles_driven'], 2); ?> mi</span>
+                            </div>
+                            <div class="sustainability-metric-row">
+                                <span class="sustainability-metric-label">⛽ <?php echo ($filter==='ytd')?'YTD ':''; ?>Fuel</span>
+                                <span class="sustainability-metric-value"><?php echo number_format($proj['fuel_consumption'], 2); ?> gal</span>
+                            </div>
+                        </div>
+                        <div class="sustainability-project-footer">
+                            <div class="view-sustainability-btn">
+                                <span>🌱</span>
+                                <span>View Sustainability Details</span>
+                            </div>
                         </div>
                     </div>
                 </div>

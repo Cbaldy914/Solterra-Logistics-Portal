@@ -285,18 +285,20 @@ if(!empty($pallets_entering_w3) || !empty($pallets_leaving_w3) || $in_fee_w3!=0 
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Cost Estimate Results',
+            'extra' => [ ['label' => 'Cost Estimate Calculator', 'url' => 'cost_estimate_calculator.php'] ]
+        ]);
+    ?>
     <!-- Page header with H1 on left, Save Estimate on right -->
     <div class="page-header">
       <h1>Cost Estimate Results</h1>
       <button type="button" class="save-button" onclick="document.getElementById('saveModal').style.display='block'">Save Estimate</button>
     </div>
 
-    <a href="cost_estimate_calculator" class="back-icon">
-        <!-- SVG for Back Arrow -->
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <path d="M10 19c-.39 0-.78-.15-1.06-.44L3.5 13.06a1.5 1.5 0 010-2.12l5.44-5.5a1.5 1.5 0 012.12 2.12L7.12 11H19a1.5 1.5 0 010 3H7.12l3.44 3.44a1.5 1.5 0 01-1.06 2.56z"/>
-        </svg>Back
-    </a>
+    
 
     <?php
     if (isset($success_message)) {
