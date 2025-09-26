@@ -333,14 +333,14 @@ $total_warehousing       = 0;
 $total_solterra_fee      = 0;
 $total_logistics_cost    = 0;
 
-// Step: fetch user's projects differently if admin/global_admin or normal user
-if ($role === 'admin' || $role === 'global_admin') {
-    // All projects
+// Step: fetch user's projects differently if global_admin or normal/admin user
+if ($role === 'global_admin') {
+    // Global admin can see all projects
     $sql_proj = "SELECT p.id, p.project_name, p.image_url FROM projects p";
     $paramTypes = "";
     $params     = [];
 } else {
-    // Only projects from their account
+    // Admins and regular users: only projects from their account(s)
     $sql_proj = "
         SELECT p.id, p.project_name, p.image_url
         FROM projects p
@@ -407,6 +407,62 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
+        /* Header Section - Matching Manage Projects Style */
+        .cost-analysis-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cost-analysis-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+
+        /* Remove header stats - they're redundant */
+        
         h2 {
             margin-top: 50px;
             margin-bottom: 20px;
@@ -506,13 +562,17 @@ $conn->close();
         .filter-form input[type="radio"] {
             margin: 0;
         }
-        .projects-container {
+        /* Remove old project styles - replaced with cost-project-* classes */
+        /* New beautiful project cards - no portal.css conflicts */
+        .cost-projects-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-            gap: 20px;
+            gap: 25px;
             padding: 0;
+            margin-top: 30px;
         }
-        .project-item {
+        
+        .cost-project-card {
             background: #ffffff;
             border-radius: 16px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
@@ -521,42 +581,54 @@ $conn->close();
             transition: all 0.3s ease;
             cursor: pointer;
         }
-        .project-item:hover {
+        
+        .cost-project-card:hover {
             transform: translateY(-8px);
             box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
         }
-        .project-image {
+        .cost-project-header {
+            padding: 25px 25px 20px 25px;
+            background: #ffffff;
+            border-bottom: 1px solid #f1f3f4;
+            text-align: center;
+        }
+        
+        .cost-project-title {
+            margin: 0;
+            font-size: 1.4em;
+            color: #293E4C;
+            font-weight: 600;
+        }
+        
+        .cost-project-title a {
+            text-decoration: none;
+            color: inherit;
+            transition: color 0.3s ease;
+        }
+        
+        .cost-project-title a:hover {
+            color: #488C9A;
+        }
+        
+        .cost-project-image {
             width: 100%;
             height: 200px;
             overflow: hidden;
             position: relative;
         }
-        .project-image img {
+        
+        .cost-project-image img {
             width: 100%;
             height: 100%;
             object-fit: cover;
             transition: transform 0.3s ease;
         }
-        .project-item:hover .project-image img {
+        
+        .cost-project-card:hover .cost-project-image img {
             transform: scale(1.05);
         }
-        .project-title {
-            padding: 20px 20px 15px 20px;
-            background: #ffffff;
-            border-bottom: 1px solid #f1f3f4;
-        }
-        .project-title h3 {
-            margin: 0;
-            font-size: 1.4em;
-            color: #293E4C;
-            font-weight: 600;
-            text-align: center;
-        }
-        .project-title h3 a {
-            text-decoration: none;
-            color: inherit;
-        }
-        .project-overlay {
+        
+        .cost-project-overlay {
             position: absolute;
             top: 0;
             left: 0;
@@ -570,44 +642,92 @@ $conn->close();
             transition: opacity 0.3s ease;
             z-index: 3;
         }
-        .project-item:hover .project-overlay {
+        
+        .cost-project-card:hover .cost-project-overlay {
             opacity: 1;
         }
-        .project-overlay-text {
+        
+        .cost-project-overlay-text {
             color: white;
             font-size: 1.2em;
             font-weight: 600;
             text-align: center;
         }
-        .project-content {
+        
+        .cost-project-body {
+            padding: 25px;
             background: #fafbfc;
-            width: 85%
+            display: flex;
+            flex-direction: column;
         }
-        .project-details {
+        
+        .cost-metrics-container {
             background: #ffffff;
-            border-radius: 8px;
-            margin-bottom: 15px;
+            border-radius: 12px;
+            padding: 25px;
             border: 1px solid #f1f3f4;
+            margin-bottom: 20px;
+            flex: 1;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
         }
-        .project-details p {
-            margin: 12px 0;
-            color: #495057;
-            font-size: 0.95em;
-            line-height: 1.6;
+        
+        .cost-metric-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            min-height: 24px;
+            padding: 12px 0;
+            border-bottom: 1px solid #f8f9fa;
         }
-        .project-details strong {
+        
+        .cost-metric-row:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+        
+        .cost-metric-row:first-child {
+            padding-top: 0;
+        }
+        
+        .cost-metric-label {
             color: #293E4C;
             font-weight: 600;
+            font-size: 0.95em;
         }
-        .cost-value {
+        
+        .cost-metric-value {
             font-weight: 700;
             color: #488C9A;
             font-size: 1.1em;
         }
+        
+        .cost-project-footer {
+            margin-top: auto;
+            padding-top: 15px;
+            border-top: 1px solid #f1f3f4;
+            text-align: center;
+        }
+        
+        .view-details-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+        }
+        
+        .view-details-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+        /* Removed old project-details styles - using new cost-metric-* classes */
         .cost-efficiency-badge {
             display: inline-block;
             padding: 4px 8px;
@@ -643,10 +763,27 @@ $conn->close();
             margin: 0 8px;
             color: #6c757d;
         }
+        /* Responsive Header */
         @media (max-width: 768px) {
-            .projects-container {
+            .header-content {
+                flex-direction: column;
+                text-align: center;
+                gap: 20px;
+            }
+            
+            /* Removed header stats styles */
+            
+            .header-info h1 {
+                font-size: 2rem;
+            }
+            
+            .header-subtitle {
+                font-size: 1rem;
+            }
+            
+            .cost-projects-grid {
                 grid-template-columns: 1fr;
-                gap: 15px;
+                gap: 20px;
             }
             .cost-row {
                 flex-direction: column;
@@ -663,7 +800,17 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Cost Overview']); ?>
-    <h1>Cost Overview</h1>
+    
+    <div class="cost-analysis-header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="header-info">
+                    <h1>Cost Overview</h1>
+                    <p class="header-subtitle">Comprehensive logistics cost analysis and project comparison</p>
+                </div>
+            </div>
+        </div>
+    </div>
     <form method="GET" id="filter-form" class="filter-form">
         <label>
             <input type="radio" name="filter" value="total" onchange="this.form.submit();"
@@ -751,64 +898,65 @@ $conn->close();
     </div>
 
     <h2>💼 Logistics Costs per Project</h2>
-    <div class="projects-container">
+    <div class="cost-projects-grid">
         <?php if (!empty($projects)): ?>
             <?php foreach ($projects as $proj): 
                 // Calculate cost efficiency indicator
                 $avg_cost_per_project = $total_logistics_cost / count($projects);
-                $efficiency_class = 'efficiency-average';
-                $efficiency_text = 'Average';
+                $efficiency_class = 'efficiency-excellent';
+                $efficiency_text = 'Cost Efficient';
                 
-                if ($proj['total_logistics_cost'] < $avg_cost_per_project * 0.8) {
-                    $efficiency_class = 'efficiency-excellent';
-                    $efficiency_text = 'Cost Efficient';
-                } elseif ($proj['total_logistics_cost'] < $avg_cost_per_project * 1.2) {
+                if ($proj['total_logistics_cost'] > $avg_cost_per_project * 1.2) {
+                    $efficiency_class = 'efficiency-average';
+                    $efficiency_text = 'Above Average';
+                } elseif ($proj['total_logistics_cost'] > $avg_cost_per_project * 0.8) {
                     $efficiency_class = 'efficiency-good';
                     $efficiency_text = 'Good Value';
                 }
             ?>
-                <div class="project-item" onclick="window.location.href='project_cost_details?project_id=<?php echo $proj['id']; ?>'">
-                    <div class="project-title">
-                        <h3>
+                <div class="cost-project-card" onclick="window.location.href='project_cost_details?project_id=<?php echo $proj['id']; ?>'">
+                    <div class="cost-project-header">
+                        <h3 class="cost-project-title">
                             <a href="project_cost_details?project_id=<?php echo $proj['id']; ?>">
                                 <?php echo htmlspecialchars($proj['project_name']); ?>
                             </a>
                         </h3>
                     </div>
-                    <div class="project-image">
+                    <div class="cost-project-image">
                         <img src="<?php echo htmlspecialchars($proj['image_url']); ?>" alt="<?php echo htmlspecialchars($proj['project_name']); ?>">
-                        <div class="project-overlay">
-                            <div class="project-overlay-text">View Cost Details</div>
+                        <div class="cost-project-overlay">
+                            <div class="cost-project-overlay-text">View Cost Details</div>
                         </div>
                     </div>
-                    <div class="project-content">
-                        <div class="project-details">
-                            <p>
-                                <strong>💸 <?php echo ($filter==='ytd') ? 'Total Cost (YTD)' : 'Total Logistics Cost'; ?></strong>
-                                <span class="cost-value">$<?php echo number_format($proj['total_logistics_cost'],2); ?></span>
-                            </p>
-                            <p>
-                                <strong>🚛 <?php echo ($filter==='ytd') ? 'Freight (YTD)' : 'Freight Cost'; ?></strong>
-                                <span class="cost-value">$<?php echo number_format($proj['freight_cost'],2); ?></span>
-                            </p>
-                            <p>
-                                <strong>📋 <?php echo ($filter==='ytd') ? 'Accessorial (YTD)' : 'Accessorial Cost'; ?></strong>
-                                <span class="cost-value">$<?php echo number_format($proj['accessorial_costs'],2); ?></span>
-                            </p>
-                            <p>
-                                <strong>🏢 <?php echo ($filter==='ytd') ? 'Warehousing (YTD)' : 'Warehousing Cost'; ?></strong>
-                                <span class="cost-value">$<?php echo number_format($proj['warehousing_cost'],2); ?></span>
-                            </p>
-                            <p>
-                                <strong>⚡ <?php echo ($filter==='ytd') ? 'Solterra Fee (YTD)' : 'Solterra Fee'; ?></strong>
-                                <span class="cost-value">$<?php echo number_format($proj['solterra_fee'],2); ?></span>
-                            </p>
-                        </div>
-                        <?php if (count($projects) > 1): ?>
-                            <div class="cost-efficiency-badge <?php echo $efficiency_class; ?>">
-                                <?php echo $efficiency_text; ?>
+                    <div class="cost-project-body">
+                        <div class="cost-metrics-container">
+                            <div class="cost-metric-row">
+                                <span class="cost-metric-label">💸 <?php echo ($filter==='ytd') ? 'Total Cost (YTD)' : 'Total Logistics Cost'; ?></span>
+                                <span class="cost-metric-value">$<?php echo number_format($proj['total_logistics_cost'],2); ?></span>
                             </div>
-                        <?php endif; ?>
+                            <div class="cost-metric-row">
+                                <span class="cost-metric-label">🚛 <?php echo ($filter==='ytd') ? 'Freight (YTD)' : 'Freight Cost'; ?></span>
+                                <span class="cost-metric-value">$<?php echo number_format($proj['freight_cost'],2); ?></span>
+                            </div>
+                            <div class="cost-metric-row">
+                                <span class="cost-metric-label">📋 <?php echo ($filter==='ytd') ? 'Accessorial (YTD)' : 'Accessorial Cost'; ?></span>
+                                <span class="cost-metric-value">$<?php echo number_format($proj['accessorial_costs'],2); ?></span>
+                            </div>
+                            <div class="cost-metric-row">
+                                <span class="cost-metric-label">🏢 <?php echo ($filter==='ytd') ? 'Warehousing (YTD)' : 'Warehousing Cost'; ?></span>
+                                <span class="cost-metric-value">$<?php echo number_format($proj['warehousing_cost'],2); ?></span>
+                            </div>
+                            <div class="cost-metric-row">
+                                <span class="cost-metric-label">⚡ <?php echo ($filter==='ytd') ? 'Solterra Fee (YTD)' : 'Solterra Fee'; ?></span>
+                                <span class="cost-metric-value">$<?php echo number_format($proj['solterra_fee'],2); ?></span>
+                            </div>
+                        </div>
+                        <div class="cost-project-footer">
+                            <div class="view-details-btn">
+                                <span>📊</span>
+                                <span>View Cost Details</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             <?php endforeach; ?>
