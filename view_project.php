@@ -21,7 +21,7 @@ $conn = getDBConnection();
 if (!$conn) die("Connection failed");
 
 $page_title_info  = "Delivery Tracker";
-$breadcrumbs      = [];
+// (Use shared breadcrumbs in template)
 $source_vendor_name_for_batch = null;
 
 /* -------------------- context by project_id -----------------------------*/
@@ -43,9 +43,7 @@ if ($project_id) {
     $stmt->close();
 
     $page_title_info = htmlspecialchars($project['project_name']);
-    $breadcrumbs[]   = ['href'=>'dashboard.php',                               'text'=>'Dashboard'];
-    $breadcrumbs[]   = ['href'=>"project_overview.php?project_id=$project_id", 'text'=>'Project Overview'];
-    $breadcrumbs[]   = ['text'=>'Delivery Tracker'];
+    // For project context, template will render: Dashboard » Project Overview » Delivery Tracker
 
 /* -------------------- context by origin_batch_id ------------------------*/
 } elseif ($origin_batch_id) {
@@ -70,9 +68,7 @@ if ($project_id) {
     $page_title_info = "Unassigned Deliveries from Batch: "
                      . htmlspecialchars($source_vendor_name_for_batch)
                      . " (ID: $origin_batch_id)";
-    $breadcrumbs[]   = ['href'=>'modules.php',                              'text'=>'Modules'];
-    $breadcrumbs[]   = ['href'=>"module_overview.php?batch_id=$origin_batch_id", 'text'=>'Batch Details'];
-    $breadcrumbs[]   = ['text'=>'Unassigned Deliveries from Batch'];
+    // For batch context, template will render: Dashboard » Modules » Batch Details » Unassigned Deliveries from Batch
 }
 
 /* ---------- FILTER LOGIC -------------------------------------------------*/
@@ -83,7 +79,13 @@ $ref_date     = $_GET['ref_date']     ?? date('Y-m-d');
 $baseWhere = [];  $paramTypes = '';  $params = [];
 
 /* context filters */
-$selectClause = "SELECT d.*, ss.id as appointment_id FROM deliveries d";
+$selectClause = "SELECT d.*, ss.id as appointment_id,
+       (SELECT COUNT(*) FROM project_documents pd 
+        WHERE pd.delivery_id = d.id 
+        AND pd.document_type = 'pods' 
+        AND (pd.document_sub_type = 'Project POD' OR pd.document_sub_type = 'Warehouse POD')
+       ) AS has_pod_in_documents
+FROM deliveries d";
 $joinClause   = " LEFT JOIN site_scheduling ss ON d.id = ss.delivery_id";
 if ($project_id) {
     $baseWhere[] = "d.project_id = ?";
@@ -232,17 +234,18 @@ $stmt->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- ---------------- BREADCRUMB ------------------ -->
-    <div class="breadcrumb">
-        <?php foreach($breadcrumbs as $i=>$crumb): ?>
-            <?php if(isset($crumb['href'])): ?>
-                <a href="<?php echo $crumb['href']; ?>"><?php echo htmlspecialchars($crumb['text']); ?></a>
-            <?php else: ?>
-                <span><?php echo htmlspecialchars($crumb['text']); ?></span>
-            <?php endif; ?>
-            <?php if($i<count($breadcrumbs)-1): ?><span class="separator">&raquo;</span><?php endif; ?>
-        <?php endforeach; ?>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        $extra = [];
+        if ($project_id) {
+            $extra[] = ['label' => 'Project Overview', 'url' => 'project_overview.php?project_id='.(int)$project_id];
+            echo slp_render_breadcrumbs(['current_label' => 'Delivery Tracker', 'extra' => $extra]);
+        } else {
+            $extra[] = ['label' => 'Modules', 'url' => 'modules.php'];
+            $extra[] = ['label' => 'Batch Details', 'url' => 'module_overview.php?batch_id='.(int)$origin_batch_id];
+            echo slp_render_breadcrumbs(['current_label' => 'Unassigned Deliveries from Batch', 'extra' => $extra]);
+        }
+    ?>
 
     <div class="container">
         <h1><?php echo $page_title_info; ?></h1>
@@ -433,11 +436,15 @@ $stmt->close();
                                 <?php endif; ?>
                             </td>
                             <td class="pod-column">
-                                <?php if($delivery['proof_of_delivery']): ?>
-                                    <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank">View POD</a>
-                                <?php elseif($role==='global_admin'): ?>
-                                    <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>">Upload POD</a>
-                                <?php else: ?>N/A<?php endif; ?>
+                                <?php if (!empty($delivery['proof_of_delivery']) || !empty($delivery['has_pod_in_documents'])): ?>
+                                    <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank" class="pod-link">View POD</a>
+                                <?php else: ?>
+                                    <?php if (in_array($_SESSION['role'], ['global_admin', 'admin'])): ?>
+                                        <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>" class="upload-pod-btn">Upload POD</a>
+                                    <?php else: ?>
+                                        N/A
+                                    <?php endif; ?>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>

@@ -749,17 +749,16 @@ foreach ($folders_structure as $key => $meta) {
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <div class="breadcrumb">
-        <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Overview</a>
-        <span class="separator">&raquo;</span>
-        <?php if (!$folder_key): ?>
-            <span>Documents</span>
-        <?php else: ?>
-            <a href="project_documents.php?project_id=<?php echo $project_id; ?>">Documents</a>
-            <span class="separator">&raquo;</span>
-            <span><?php echo htmlspecialchars($folders_structure[$folder_key]['label'] ?? ''); ?></span>
-        <?php endif; ?>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        $extra = [];
+        if ($folder_key) { $extra[] = ['label' => 'Documents', 'url' => 'project_documents.php?project_id='.(int)$project_id]; }
+        echo slp_render_breadcrumbs([
+            'current_label' => $folder_key ? ($folders_structure[$folder_key]['label'] ?? 'Documents') : 'Documents',
+            'extra' => $extra,
+            'project_id' => (int)$project_id
+        ]);
+    ?>
 
     <div class="project-header">
         <div class="project-info-container">

@@ -178,21 +178,14 @@ $csrf = $_SESSION['csrf_token'];
 <body>
 <?php include 'header.php'; ?>
 <main class="page">
-    <div class="breadcrumb" style="margin: 10px 20px;">
-        <a href="dashboard.php">Dashboard</a>
-        <?php if ($selectedProjectId > 0): ?>
-            <span class="separator">&raquo;</span>
-            <?php 
-                $selName = '';
-                foreach ($projects as $p) { if ((int)$p['id'] === $selectedProjectId) { $selName = (string)$p['project_name']; break; } }
-            ?>
-            <a href="project_overview.php?project_id=<?php echo (int)$selectedProjectId; ?>">Project: <?php echo htmlspecialchars($selName); ?></a>
-        <?php endif; ?>
-        <span class="separator">&raquo;</span>
-        <a href="warranty.php<?php echo $selectedProjectId?('?project_id='.(int)$selectedProjectId):''; ?>">Exceptions Report</a>
-        <span class="separator">&raquo;</span>
-        <span>Create Ticket</span>
-    </div>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Create Ticket',
+            'project_id' => (int)$selectedProjectId,
+            'extra' => [ ['label' => 'Exceptions Report', 'url' => 'warranty.php'.($selectedProjectId?('?project_id='.(int)$selectedProjectId):'') ] ]
+        ]);
+    ?>
 
     <h1>Create Exception Ticket</h1>
 

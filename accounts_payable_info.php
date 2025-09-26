@@ -339,7 +339,7 @@ $conn->close();
     </form>
 
     <p style="margin-top:20px;">
-      <a href="accounts_payable.php?project_id=<?php echo $project_id; ?>">&larr; Back to Payable List</a>
+      
     </p>
 </div>
 
