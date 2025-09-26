@@ -116,6 +116,64 @@ $forecasted_freight     = $forecasted_costs['freight']     ?? 0;
 $forecasted_warehousing = $forecasted_costs['warehousing'] ?? 0; 
 $forecasted_accessorial = $forecasted_costs['accessorial'] ?? 0;
 
+// Ensure project_wattage_orders reflects all module batches assigned to this project
+// We compare against actual batch items, and if mismatched, we rebuild the totals.
+try {
+    $actual_totals = [];
+    if ($stmtA = $conn->prepare("\n        SELECT umi.wattage, SUM(umi.quantity) AS total_qty\n        FROM unassigned_module_items umi\n        JOIN modules m ON umi.unassigned_module_id = m.id\n        WHERE m.project_id = ?\n        GROUP BY umi.wattage\n    ")) {
+        $stmtA->bind_param("i", $project_id);
+        $stmtA->execute();
+        $resA = $stmtA->get_result();
+        while ($row = $resA->fetch_assoc()) {
+            $w = (int)$row['wattage'];
+            $q = (int)$row['total_qty'];
+            if ($w > 0 && $q > 0) { $actual_totals[$w] = $q; }
+        }
+        $stmtA->close();
+    }
+
+    $pwo_totals = [];
+    if ($stmtP = $conn->prepare("SELECT wattage, total_order FROM project_wattage_orders WHERE project_id = ?")) {
+        $stmtP->bind_param("i", $project_id);
+        $stmtP->execute();
+        $resP = $stmtP->get_result();
+        while ($row = $resP->fetch_assoc()) {
+            $pwo_totals[(int)$row['wattage']] = (int)$row['total_order'];
+        }
+        $stmtP->close();
+    }
+
+    $needs_sync = false;
+    if (count($actual_totals) !== count($pwo_totals)) {
+        $needs_sync = true;
+    } else {
+        foreach ($actual_totals as $w => $q) {
+            if (!isset($pwo_totals[$w]) || $pwo_totals[$w] !== $q) { $needs_sync = true; break; }
+        }
+    }
+
+    if ($needs_sync) {
+        $conn->begin_transaction();
+        if ($stmtDel = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ?")) {
+            $stmtDel->bind_param("i", $project_id);
+            $stmtDel->execute();
+            $stmtDel->close();
+        }
+        if (!empty($actual_totals)) {
+            if ($stmtIns = $conn->prepare("INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)")) {
+                foreach ($actual_totals as $w => $q) {
+                    $stmtIns->bind_param("iii", $project_id, $w, $q);
+                    $stmtIns->execute();
+                }
+                $stmtIns->close();
+            }
+        }
+        $conn->commit();
+    }
+} catch (Exception $e) {
+    // If anything fails, do not block page rendering; leave existing data in place
+}
+
 // Fetch total orders
 $stmt = $conn->prepare("
     SELECT wattage, total_order
@@ -1068,8 +1126,19 @@ $stmt_palletized->bind_result($actual_palletized_count);
 $stmt_palletized->fetch();
 $stmt_palletized->close();
 
-// Calculate total expected pallets (modules / 30)
-$expected_pallets = ceil($total_raw_modules / 30);
+// Calculate total expected pallets using actual pallet rows, not an average per pallet
+$stmt_expected = $conn->prepare("
+    SELECT COUNT(*) as expected
+    FROM inventory_pallets ip
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
+");
+$stmt_expected->bind_param("iii", $project_id, $project_id, $project_id);
+$stmt_expected->execute();
+$stmt_expected->bind_result($expected_pallets);
+$stmt_expected->fetch();
+$stmt_expected->close();
 
 // Get delivered modules breakdown for JavaScript (using inventory_pallets for accuracy)
 $delivered_by_wattage = [];
