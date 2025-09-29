@@ -3722,9 +3722,13 @@ document.addEventListener('DOMContentLoaded', function() {
             <!-- Admin View Buttons -->
             <div id="admin-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: flex;"' : 'style="display: none;"'; ?>>
                 <div class="dropdown">
-                    <button class="dropdown-btn" onclick="window.location.href='module_overview.php?project_id=<?php echo $project_id; ?>'">
-                        Modules
+                    <button class="dropdown-btn" onclick="toggleModulesDropdown()">
+                        Modules <span class="dropdown-arrow">▼</span>
                     </button>
+                    <div class="dropdown-content" id="modulesDropdown">
+                        <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Module Overview</a>
+                        <a href="create_shipment.php?project_id=<?php echo $project_id; ?>">Manage Pallets</a>
+                    </div>
                 </div>
                 <div class="dropdown">
                     <button class="dropdown-btn" onclick="toggleAdminDeliveriesDropdown()">
