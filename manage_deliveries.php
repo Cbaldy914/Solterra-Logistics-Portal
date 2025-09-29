@@ -35,6 +35,23 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// If a specific delivery was requested, switch to single-delivery view and infer project context
+$breadcrumb_project_id = 0;
+if (!empty($highlight_delivery_id)) {
+    if ($stmtDelivProj = $conn->prepare("SELECT project_id FROM deliveries WHERE id = ?")) {
+        $stmtDelivProj->bind_param('i', $highlight_delivery_id);
+        $stmtDelivProj->execute();
+        $stmtDelivProj->bind_result($projIdForDelivery);
+        if ($stmtDelivProj->fetch()) {
+            if (!is_null($projIdForDelivery) && (int)$projIdForDelivery > 0) {
+                $filter_project_id = (int)$projIdForDelivery; // ensure the page context is the delivery's project
+                $breadcrumb_project_id = (int)$projIdForDelivery; // for breadcrumbs
+            }
+        }
+        $stmtDelivProj->close();
+    }
+}
+
 /**
  * Returns pallets to their origin based on delivery's origin_type and origin_id
  * @param mysqli $conn Database connection
@@ -249,6 +266,13 @@ if (is_numeric($filter_project_id)) {
     } else {
         $wattage_query_condition = " AND 1=0"; // Prevent admin without account from seeing anything
     }
+}
+
+// If a specific delivery is highlighted, restrict wattage list to that delivery
+if (!empty($highlight_delivery_id)) {
+    $wattage_query_condition .= " AND d.id = ?";
+    $wattage_param_types .= 'i';
+    $wattage_params[] = $highlight_delivery_id;
 }
 
 // Use consistent query structure - always join with projects for account filtering when needed
@@ -1157,6 +1181,14 @@ if (is_numeric($filter_project_id)) {
 }
 // If $filter_project_id is 'all', $projectConditionSQL remains empty, showing all projects.
 
+// If a specific delivery is requested, restrict to that delivery ID
+$deliveryIdCondition = '';
+if (!empty($highlight_delivery_id)) {
+    $deliveryIdCondition = ' AND d.id = ?';
+    $paramTypes .= 'i';
+    $params[] = $highlight_delivery_id;
+}
+
 if ($time_filter === 'day') {
     $dateCondition .= " AND DATE($filterColumn) = ?";
     $paramTypes .= "s";
@@ -1256,6 +1288,7 @@ $sql = "
     $statusCondition
     $wattageCondition
     $deliveryTypeCondition
+    $deliveryIdCondition
     GROUP BY d.id, p.project_name, ss.id
     ORDER BY $filterColumn DESC
 ";
@@ -1326,6 +1359,13 @@ $sql_costs = "
 
 $stmt = $conn->prepare($sql_costs);
 if ($stmt) {
+    // If a specific delivery is selected, restrict costs to it for consistency
+    if (!empty($highlight_delivery_id)) {
+        $sql_costs .= ' AND d.id = ?';
+        $stmt = $conn->prepare($sql_costs);
+        $costParamTypes .= 'i';
+        $costParams[] = $highlight_delivery_id;
+    }
     $stmt->bind_param($costParamTypes, ...$costParams);
     $stmt->execute();
     $stmt->bind_result($total_freight_cost, $total_accessorial_costs, $total_customer_cost);
@@ -1393,10 +1433,19 @@ $count_sql = "
     $statusCondition
 ";
 
-$count_stmt = $conn->prepare($count_sql);
+$count_sql_extra = '';
+if (!empty($highlight_delivery_id)) { $count_sql_extra = ' AND d.id = ?'; }
+$count_stmt = $conn->prepare($count_sql . $count_sql_extra);
 if ($count_stmt) {
-    if (!empty($count_params)) {
-        $count_stmt->bind_param($count_types, ...$count_params);
+    // Build final types/params including optional delivery_id
+    $final_count_types = $count_types;
+    $final_count_params = $count_params;
+    if (!empty($highlight_delivery_id)) {
+        $final_count_types .= 'i';
+        $final_count_params[] = $highlight_delivery_id;
+    }
+    if (!empty($final_count_params)) {
+        $count_stmt->bind_param($final_count_types, ...$final_count_params);
     }
     $count_stmt->execute();
     $count_stmt->bind_result($project_count, $warehouse_count, $total_count);
@@ -1536,7 +1585,13 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         GROUP BY d.id, p.project_name, ss.id
         ORDER BY $filterColumn DESC
     ";
-    
+    // If a specific delivery is highlighted, restrict to it
+    $export_delivery_id_condition = '';
+    if (!empty($highlight_delivery_id)) {
+        $export_sql = str_replace('WHERE 1=1', 'WHERE 1=1 AND d.id = ?', $export_sql);
+        $export_param_types .= 'i';
+        $export_params[] = $highlight_delivery_id;
+    }
     $export_stmt = $conn->prepare($export_sql);
     if ($export_stmt) {
         $export_stmt->bind_param($export_param_types, ...$export_params);
@@ -2543,7 +2598,32 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
 <main>
     <?php
         require_once 'components/breadcrumbs.php';
-        echo slp_render_breadcrumbs(['current_label' => 'Manage Deliveries']);
+        $crumb_opts = ['current_label' => 'Manage Deliveries'];
+        // Prefer explicit project context when known (e.g., when opened from a specific project's BOL link)
+        $project_for_breadcrumb = null;
+        if (is_numeric($filter_project_id)) {
+            $crumb_opts['project_id'] = (int)$filter_project_id;
+            $project_for_breadcrumb = (int)$filter_project_id;
+        } elseif (!empty($breadcrumb_project_id)) {
+            $crumb_opts['project_id'] = (int)$breadcrumb_project_id;
+            $project_for_breadcrumb = (int)$breadcrumb_project_id;
+        }
+
+        // If user came from Manage Pallets, add an extra crumb back to it
+        $referer = $_SERVER['HTTP_REFERER'] ?? '';
+        $from_flag = isset($_GET['from']) ? $_GET['from'] : '';
+        $came_from_manage_pallets = (stripos($referer, 'create_shipment') !== false) || ($from_flag === 'manage_pallets');
+        if ($came_from_manage_pallets) {
+            $manage_pallets_url = 'create_shipment.php';
+            if (!empty($project_for_breadcrumb)) {
+                $manage_pallets_url .= '?project_id=' . (int)$project_for_breadcrumb;
+            }
+            $crumb_opts['extra'] = [
+                ['label' => 'Manage Pallets', 'url' => $manage_pallets_url]
+            ];
+        }
+
+        echo slp_render_breadcrumbs($crumb_opts);
     ?>
 
     <h1>Manage Deliveries: <?php echo htmlspecialchars($project_name); ?></h1>

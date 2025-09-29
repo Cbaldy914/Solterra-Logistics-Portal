@@ -1653,9 +1653,6 @@ if (!empty($bolCompletionMessage)) {
     <div class="manage-pallets-header">
         <div class="header-content">
             <div class="header-left">
-                <div class="header-icon">
-                    <i class="fas fa-pallet"></i>
-                </div>
                 <div class="header-info">
                     <h1>Manage Pallets</h1>
                     <p class="header-subtitle">Manage pallets and create shipments</p>
@@ -1818,7 +1815,7 @@ if (!empty($bolCompletionMessage)) {
                                                 $parts = explode(':', $deliveries[0]);
                                                 $deliveryId = $parts[0];
                                                 $bolNumber = $parts[1];
-                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
+                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '&from=manage_pallets" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
                                             } else {
                                                 echo '<div class="delivery-dropdown">';
                                                 echo '<button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (' . count($deliveries) . ')</button>';
@@ -1827,7 +1824,7 @@ if (!empty($bolCompletionMessage)) {
                                                     $parts = explode(':', $delivery);
                                                     $deliveryId = $parts[0];
                                                     $bolNumber = $parts[1];
-                                                    echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
+                                                    echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '&from=manage_pallets" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
                                                 }
                                                 echo '</div>';
                                                 echo '</div>';
