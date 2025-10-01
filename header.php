@@ -108,6 +108,20 @@ if ($role === null) {
 .slp-link--primary { background: var(--slp-accent); color: #fff; }
 .slp-link--primary:hover { background: var(--slp-accent-dark); color: #fff; }
 
+/* Sign out button in dropdown menus */
+.slp-submenu .slp-signout {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--slp-border);
+  color: #dc2626;
+  font-weight: 600;
+  text-align: center;
+}
+.slp-submenu .slp-signout:hover {
+  background: rgba(220, 38, 38, 0.06);
+  color: #b91c1c;
+}
+
 /* Profile pill */
 .slp-profile {
   width: 40px; height: 40px; border-radius: 999px;
@@ -197,7 +211,6 @@ if ($role === null) {
               <a href="module_movements" role="menuitem">Module Movements</a>
               
               <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
-              <a href="link_pallet_deliveries" role="menuitem">Link Pallets to Deliveries</a>
             </div>
           </li>
 
@@ -266,8 +279,6 @@ if ($role === null) {
             <div class="slp-submenu" role="menu">
               <a href="modules" role="menuitem">Manage Modules</a>
               <a href="module_movements" role="menuitem">Module Movements</a>
-              
-              <a href="link_pallet_deliveries" role="menuitem">Link Pallets to Deliveries</a>
             </div>
           </li>
 
@@ -316,7 +327,7 @@ if ($role === null) {
               <a href="account_settings" role="menuitem">Account Settings</a>
               <a href="questions" role="menuitem">Questions & Support</a>
               <a href="invoices_all" role="menuitem">Invoices</a>
-              <a class="slp-link slp-link--primary" href="logout" role="menuitem" style="display:block;text-align:center;">Sign Out</a>
+              <a class="slp-signout" href="logout" role="menuitem">Sign Out</a>
             </div>
           </li>
 
@@ -393,7 +404,7 @@ if ($role === null) {
               <a href="account_settings" role="menuitem">Account Settings</a>
               <a href="questions" role="menuitem">Questions & Support</a>
               <a href="invoices_all" role="menuitem">Invoices</a>
-              <a class="slp-link slp-link--primary" href="logout" role="menuitem" style="display:block;text-align:center;">Sign Out</a>
+              <a class="slp-signout" href="logout" role="menuitem">Sign Out</a>
             </div>
           </li>
         <?php endif; ?>
