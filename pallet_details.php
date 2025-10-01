@@ -23,6 +23,7 @@ $pallet_id = (int)$_GET['pallet_id'];
 $pallet_data = null;
 $associated_deliveries = [];
 $errorMessage = '';
+$breadcrumbProjectId = 0;
 
 try {
     // 1. Fetch Pallet Master Data
@@ -65,6 +66,21 @@ try {
 
     if ($result_pallet->num_rows > 0) {
         $pallet_data = $result_pallet->fetch_assoc();
+        // Determine project context for breadcrumbs
+        if ($pallet_data) {
+            $breadcrumbProjectId = (int)($pallet_data['current_project_id'] ?? 0);
+            if ($breadcrumbProjectId <= 0) {
+                // Try to infer via any associated delivery's project
+                $stmtProj = $conn->prepare("SELECT d.project_id FROM deliveries d JOIN delivery_pallets dp ON d.id = dp.delivery_id WHERE dp.inventory_pallet_id = ? AND d.project_id IS NOT NULL ORDER BY d.id DESC LIMIT 1");
+                if ($stmtProj) {
+                    $stmtProj->bind_param("i", $pallet_id);
+                    $stmtProj->execute();
+                    $stmtProj->bind_result($projIdTmp);
+                    if ($stmtProj->fetch()) { $breadcrumbProjectId = (int)$projIdTmp; }
+                    $stmtProj->close();
+                }
+            }
+        }
     } else {
         throw new Exception("Pallet with ID {$pallet_id} not found.");
     }
@@ -426,7 +442,15 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Pallet Details', 'extra' => [ ['label' => 'Manage Pallets', 'url' => 'manage_pallets.php'] ]]); ?>
+    <?php 
+        require_once 'components/breadcrumbs.php'; 
+        $mpUrl = 'create_shipment.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Pallet Details',
+            'project_id' => (int)$breadcrumbProjectId,
+            'extra' => [ ['label' => 'Manage Pallets', 'url' => $mpUrl] ]
+        ]);
+    ?>
 
     <div class="main-content">
         <h1>Pallet Details - ID: <?php echo $pallet_id; ?></h1>

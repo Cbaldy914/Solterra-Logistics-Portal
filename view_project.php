@@ -72,11 +72,8 @@ if ($project_id) {
 }
 
 /* ---------- FILTER LOGIC -------------------------------------------------*/
-$filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)";
-$time_filter  = $_GET['time_filter'] ?? 'all';
-$ref_date     = $_GET['ref_date']     ?? date('Y-m-d');
-
 $baseWhere = [];  $paramTypes = '';  $params = [];
+$filterColumn = "COALESCE(actual_delivery_date, anticipated_delivery_date)";
 
 /* context filters */
 $selectClause = "SELECT d.*, ss.id as appointment_id,
@@ -99,37 +96,56 @@ if ($project_id) {
     $baseWhere[]  = "d.project_id IS NULL";
 }
 
-/* time filters */
-$dateLabel="All Deliveries"; $prev_date=""; $next_date="";
-if ($time_filter === 'day') {
-    $baseWhere[] = "DATE($filterColumn)=?";
-    $paramTypes .="s"; $params[]=$ref_date;
-    $dateLabel = date('F j, Y',strtotime($ref_date));
-    $prev_date = date('Y-m-d',strtotime("$ref_date -1 day"));
-    $next_date = date('Y-m-d',strtotime("$ref_date +1 day"));
-} elseif ($time_filter === 'week') {
-    $ts=strtotime($ref_date); $start=date('Y-m-d',strtotime("-".date('w',$ts)." days",$ts));
-    $end=date('Y-m-d',strtotime("$start +6 days"));
-    $baseWhere[]="DATE($filterColumn) BETWEEN ? AND ?";
-    $paramTypes.="ss"; array_push($params,$start,$end);
-    $dateLabel = date('M j',strtotime($start))." - ".date('M j, Y',strtotime($end));
-    $prev_date = date('Y-m-d',strtotime("$start -7 days"));
-    $next_date = date('Y-m-d',strtotime("$start +7 days"));
-} elseif ($time_filter === 'month') {
-    $start=date('Y-m-01',strtotime($ref_date));
-    $end  =date('Y-m-t', strtotime($ref_date));
-    $baseWhere[]="DATE($filterColumn) BETWEEN ? AND ?";
-    $paramTypes.="ss"; array_push($params,$start,$end);
-    $dateLabel = date('F Y',strtotime($ref_date));
-    $prev_date = date('Y-m-d',strtotime("$start -1 month"));
-    $next_date = date('Y-m-d',strtotime("$start +1 month"));
+/* NEW: Advanced filters from query params */
+$start_date = $_GET['start_date'] ?? '';
+$end_date = $_GET['end_date'] ?? '';
+$wattage_filter = $_GET['wattage'] ?? '';
+$status_filter = $_GET['status'] ?? '';
+$supplier_filter = $_GET['supplier'] ?? '';
+$search_query = $_GET['search'] ?? '';
+
+// Date range filter
+if ($start_date && $end_date) {
+    $baseWhere[] = "DATE($filterColumn) BETWEEN ? AND ?";
+    $paramTypes .= "ss";
+    array_push($params, $start_date, $end_date);
+} elseif ($start_date) {
+    $baseWhere[] = "DATE($filterColumn) >= ?";
+    $paramTypes .= "s";
+    $params[] = $start_date;
+} elseif ($end_date) {
+    $baseWhere[] = "DATE($filterColumn) <= ?";
+    $paramTypes .= "s";
+    $params[] = $end_date;
 }
 
-/* status filter */
-$status_filter=$_GET['status_filter']??'';
-if($status_filter!==''){
-    $baseWhere[]="status_of_delivery = ?";
-    $paramTypes.="s"; $params[]=$status_filter;
+// Wattage filter
+if ($wattage_filter !== '') {
+    $baseWhere[] = "d.wattage = ?";
+    $paramTypes .= "s";
+    $params[] = $wattage_filter;
+}
+
+// Status filter
+if ($status_filter !== '') {
+    $baseWhere[] = "d.status_of_delivery = ?";
+    $paramTypes .= "s";
+    $params[] = $status_filter;
+}
+
+// Supplier filter
+if ($supplier_filter !== '') {
+    $baseWhere[] = "d.supplier = ?";
+    $paramTypes .= "s";
+    $params[] = $supplier_filter;
+}
+
+// Search filter
+if ($search_query !== '') {
+    $baseWhere[] = "(d.bol_number LIKE ? OR d.supplier LIKE ? OR d.status_of_delivery LIKE ?)";
+    $paramTypes .= "sss";
+    $search_param = "%$search_query%";
+    array_push($params, $search_param, $search_param, $search_param);
 }
 $whereClause="WHERE 1=1".($baseWhere?" AND ".implode(" AND ",$baseWhere):"");
 
@@ -167,6 +183,33 @@ if($paramTypes) $stmt->bind_param($paramTypes,...$params);
 $stmt->execute();
 $deliveries=$stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
+
+// Calculate stats for each actual status
+$total_deliveries = count($deliveries);
+$status_counts = [
+    'Pending' => 0,
+    'In Transit to Warehouse' => 0,
+    'Delivered to Warehouse' => 0,
+    'In Transit to Project' => 0,
+    'Delivered to Project' => 0,
+    'Canceled' => 0
+];
+
+foreach ($deliveries as $delivery) {
+    $status = $delivery['status_of_delivery'];
+    if (isset($status_counts[$status])) {
+        $status_counts[$status]++;
+    }
+}
+
+// Filter out zero counts
+$active_status_counts = array_filter($status_counts, fn($count) => $count > 0);
+
+// Get unique wattages and suppliers for filters
+$unique_wattages = array_unique(array_column($deliveries, 'wattage'));
+sort($unique_wattages);
+$unique_suppliers = array_unique(array_column($deliveries, 'supplier'));
+sort($unique_suppliers);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -176,10 +219,786 @@ $stmt->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        /* ======  original inline CSS (unchanged) ====== */
-        .container{margin:0px;} /* … (omitted for brevity) … */
+        body {
+            background: #f8f9fa;
+            font-family: 'Poppins', sans-serif;
+        }
+
+
         .column-hidden{display:none !important;}
+
+        /* Header Section */
+        .delivery-tracker-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .delivery-tracker-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            text-align: center;
+            background: rgba(72, 140, 154, 0.08);
+            padding: 16px 20px;
+            border-radius: 16px;
+            min-width: 100px;
+            transition: all 0.3s ease;
+        }
+
+        .stat-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.2);
+        }
+
+        /* Different stat item colors based on status */
+        .stat-item-total {
+            background: linear-gradient(135deg, rgba(72, 140, 154, 0.15) 0%, rgba(72, 140, 154, 0.2) 100%);
+        }
+
+        .stat-item-pending {
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(251, 191, 36, 0.2) 100%);
+        }
+
+        .stat-item-pending .stat-number {
+            color: #d97706;
+        }
+
+        .stat-item-transit {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.2) 100%);
+        }
+
+        .stat-item-transit .stat-number {
+            color: #2563eb;
+        }
+
+        .stat-item-delivered {
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(34, 197, 94, 0.2) 100%);
+        }
+
+        .stat-item-delivered .stat-number {
+            color: #16a34a;
+        }
+
+        .stat-item-canceled {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(239, 68, 68, 0.2) 100%);
+        }
+
+        .stat-item-canceled .stat-number {
+            color: #dc2626;
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: 700;
+            color: #488C9A;
+            margin: 0;
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin: 4px 0 0 0;
+            font-weight: 500;
+        }
+
+        /* Filter Section */
+        .filter-section {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            padding: 28px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+
+        .filter-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .filter-title {
+            font-size: 1.4em;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .filter-title i {
+            color: #488C9A;
+        }
+
+        .filter-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .btn-clear, .btn-apply, .btn-export, .btn-calendar, .btn-columns {
+            padding: 10px 18px;
+            border-radius: 12px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .btn-clear {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.15) 100%);
+            color: #dc2626;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .btn-clear:hover {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.2) 100%);
+            transform: translateY(-1px);
+        }
+
+        .btn-apply {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(72, 140, 154, 0.3);
+        }
+
+        .btn-apply:hover {
+            background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
+        }
+
+        .btn-export {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.3);
+        }
+
+        .btn-export:hover {
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(34, 197, 94, 0.4);
+        }
+
+        .btn-calendar {
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
+        }
+
+        .btn-calendar:hover {
+            background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+        }
+
+        .btn-columns {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);
+        }
+
+        .btn-columns:hover {
+            background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+        }
+
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            align-items: start;
+        }
+
+        .filter-group {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Make date range span two columns to prevent overlap */
+        .filter-group:has(.date-range-group) {
+            grid-column: span 2;
+        }
+
+        .filter-label {
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 0.95em;
+            margin-bottom: 8px;
+        }
+
+        .filter-select, .filter-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid rgba(72, 140, 154, 0.15);
+            border-radius: 12px;
+            background: white;
+            font-size: 0.95em;
+            transition: all 0.3s ease;
+            font-family: 'Poppins', sans-serif;
+            box-sizing: border-box;
+        }
+
+        .filter-select:focus, .filter-input:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 4px 15px rgba(72, 140, 154, 0.2);
+        }
+
+        .date-range-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        /* Table Container */
+        .deliveries-container {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+
+        .table-header {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 20px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .table-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: white;
+        }
+
+        .table-header-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .btn-export-header, .btn-calendar-header, .btn-columns-header {
+            padding: 8px 14px;
+            border-radius: 10px;
+            font-size: 0.85em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-family: 'Poppins', sans-serif;
+            white-space: nowrap;
+        }
+
+        .btn-export-header {
+            background: rgba(255, 255, 255, 0.95);
+            color: #16a34a;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-export-header:hover {
+            background: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-calendar-header {
+            background: rgba(255, 255, 255, 0.95);
+            color: #7c3aed;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-calendar-header:hover {
+            background: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-columns-header {
+            background: rgba(255, 255, 255, 0.95);
+            color: #d97706;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-columns-header:hover {
+            background: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .table-responsive {
+            width: 100%;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0;
+        }
+
+        table thead {
+            background: white;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        table th {
+            padding: 16px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid rgba(72, 140, 154, 0.1);
+            border: none;
+            background: white;
+        }
+
+        table td {
+            padding: 16px;
+            border-bottom: 1px solid rgba(72, 140, 154, 0.08);
+            vertical-align: middle;
+            border: none;
+        }
+
+        table tbody tr {
+            transition: all 0.3s ease;
+        }
+
+        table tbody tr:hover {
+            background: rgba(72, 140, 154, 0.05);
+            transform: translateX(4px);
+        }
+
+        /* Action Buttons - NEW UNIFIED STYLE */
+        .action-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 10px;
+            font-size: 0.85em;
+            font-weight: 600;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            font-family: 'Poppins', sans-serif;
+            white-space: nowrap;
+        }
+
+        .action-btn-primary {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            box-shadow: 0 2px 8px rgba(72, 140, 154, 0.25);
+        }
+
+        .action-btn-primary:hover {
+            background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.35);
+            color: white;
+        }
+
+        .action-btn-success {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+            box-shadow: 0 2px 8px rgba(34, 197, 94, 0.25);
+        }
+
+        .action-btn-success:hover {
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.35);
+            color: white;
+        }
+
+        .action-btn-warning {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.25);
+        }
+
+        .action-btn-warning:hover {
+            background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.35);
+            color: white;
+        }
+
+        .action-btn-outline {
+            background: white;
+            color: #488C9A;
+            border: 2px solid #488C9A;
+            box-shadow: 0 2px 8px rgba(72, 140, 154, 0.15);
+        }
+
+        .action-btn-outline:hover {
+            background: #488C9A;
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.25);
+        }
+
+        .action-btn i {
+            font-size: 0.9em;
+        }
+
+        /* Status Badge */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .status-pending {
+            background: rgba(251, 191, 36, 0.15);
+            color: #d97706;
+        }
+
+        .status-transit {
+            background: rgba(59, 130, 246, 0.15);
+            color: #2563eb;
+        }
+
+        .status-delivered {
+            background: rgba(34, 197, 94, 0.15);
+            color: #16a34a;
+        }
+
+        .status-canceled {
+            background: rgba(239, 68, 68, 0.15);
+            color: #dc2626;
+        }
+
+        /* Highlighted Delivery */
+        .highlighted-delivery {
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%) !important;
+            border-left: 4px solid #488C9A !important;
+            animation: highlightPulse 2s ease-in-out;
+        }
+
+        @keyframes highlightPulse {
+            0%, 100% {
+                transform: scale(1);
+                box-shadow: 0 0 0 rgba(72, 140, 154, 0);
+            }
+            50% {
+                transform: scale(1.01);
+                box-shadow: 0 0 20px rgba(72, 140, 154, 0.3);
+            }
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 9999;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background: white;
+            margin: 5% auto;
+            padding: 0;
+            width: 90%;
+            max-width: 600px;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+            overflow: hidden;
+        }
+
+        .modal-header {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 24px;
+            position: relative;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            font-size: 1.5em;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 24px;
+            font-size: 28px;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+
+        .modal-close:hover {
+            transform: scale(1.1);
+        }
+
+        .modal-body {
+            padding: 24px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .pallet-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 16px;
+        }
+
+        .pallet-table th {
+            background: #f8f9fa;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #293E4C;
+            border-bottom: 2px solid rgba(72, 140, 154, 0.2);
+        }
+
+        .pallet-table td {
+            padding: 12px;
+            border-bottom: 1px solid rgba(72, 140, 154, 0.1);
+        }
+
+        .pallet-table tr:hover {
+            background: rgba(72, 140, 154, 0.05);
+        }
+
+        /* Column Chooser Dropdown */
+        .column-chooser-dropdown {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            background: white;
+            border: 1px solid rgba(72, 140, 154, 0.2);
+            border-radius: 12px;
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+            z-index: 10000;
+            min-width: 250px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .column-chooser-header {
+            padding: 16px;
+            background: #f8f9fa;
+            border-bottom: 1px solid rgba(72, 140, 154, 0.2);
+            font-weight: 600;
+            color: #293E4C;
+        }
+
+        .column-chooser-options {
+            padding: 8px 0;
+        }
+
+        .column-option {
+            display: flex;
+            align-items: center;
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .column-option:hover {
+            background-color: rgba(72, 140, 154, 0.08);
+        }
+
+        .column-option input[type=checkbox] {
+            margin-right: 10px;
+            cursor: pointer;
+            width: 18px;
+            height: 18px;
+            accent-color: #488C9A;
+        }
+
+        .column-chooser-footer {
+            padding: 12px 16px;
+            border-top: 1px solid rgba(72, 140, 154, 0.2);
+            background: #f8f9fa;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+        }
+
+        .empty-state i {
+            font-size: 4em;
+            color: #d1d5db;
+            margin-bottom: 16px;
+        }
+
+        .empty-state h3 {
+            font-size: 1.5em;
+            color: #6c757d;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .empty-state p {
+            color: #9ca3af;
+            margin: 0;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .header-stats {
+                justify-content: space-between;
+            }
+
+            .stat-item {
+                flex: 1;
+                min-width: 80px;
+            }
+
+            .filter-grid {
+                grid-template-columns: 1fr;
+            }
+
+            /* Reset date range span on mobile */
+            .filter-group:has(.date-range-group) {
+                grid-column: span 1;
+            }
+
+            .date-range-group {
+                grid-template-columns: 1fr;
+            }
+
+            .filter-actions {
+                width: 100%;
+                flex-direction: column;
+            }
+
+            .filter-actions button {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .table-header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 12px;
+            }
+
+            .table-header-actions {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .btn-export-header, .btn-calendar-header, .btn-columns-header {
+                flex: 1;
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .delivery-tracker-header {
+                padding: 20px;
+            }
+
+            .header-info h1 {
+                font-size: 1.8em;
+            }
+
+            .stat-number {
+                font-size: 1.5em;
+            }
+
+            .filter-section {
+                padding: 20px;
+            }
+        }
+
         .time-filter-header{display:flex;justify-content:space-between;align-items:center;margin-top:30px;margin-bottom:10px;flex-wrap:wrap;}
         .time-filters{display:flex;gap:10px;}
         .time-filters a{text-decoration:none;padding:6px 12px;background:#eee;border-radius:4px;color:#333;}
@@ -247,142 +1066,218 @@ $stmt->close();
         }
     ?>
 
-    <div class="container">
+    <!-- Header Section -->
+    <div class="delivery-tracker-header">
+        <div class="header-content">
+            <div class="header-info">
         <h1><?php echo $page_title_info; ?></h1>
-
-        <!-- ------------- TIME FILTER HEADER ------------ -->
-        <div class="time-filter-header">
-            <div class="time-filters">
-                <a href="?<?php echo http_build_query(array_merge($_GET,['time_filter'=>'all'])); ?>"
-                   class="<?php echo $time_filter==='all'?'active':''; ?>">All</a>
-                <a href="?<?php echo http_build_query(array_merge($_GET,['time_filter'=>'day','ref_date'=>$ref_date])); ?>"
-                   class="<?php echo $time_filter==='day'?'active':''; ?>">Day</a>
-                <a href="?<?php echo http_build_query(array_merge($_GET,['time_filter'=>'week','ref_date'=>$ref_date])); ?>"
-                   class="<?php echo $time_filter==='week'?'active':''; ?>">Week</a>
-                <a href="?<?php echo http_build_query(array_merge($_GET,['time_filter'=>'month','ref_date'=>$ref_date])); ?>"
-                   class="<?php echo $time_filter==='month'?'active':''; ?>">Month</a>
+                <p class="header-subtitle">Track and manage all deliveries for this project</p>
             </div>
-
-            <div class="date-navigation">
-                <?php if($time_filter!=='all'): ?>
-                    <button class="nav-arrow" onclick="location.href='?<?php echo http_build_query(array_merge($_GET,['ref_date'=>$prev_date])); ?>'">&larr;</button>
-                <?php endif; ?>
-                <span class="date-label"><?php echo $dateLabel; ?></span>
-                <?php if($time_filter!=='all'): ?>
-                    <button class="nav-arrow" onclick="location.href='?<?php echo http_build_query(array_merge($_GET,['ref_date'=>$next_date])); ?>'">&rarr;</button>
-                <?php endif; ?>
+            <div class="header-stats">
+                <div class="stat-item stat-item-total">
+                    <p class="stat-number"><?php echo $total_deliveries; ?></p>
+                    <p class="stat-label">Total Deliveries</p>
             </div>
-
-            <!-- Right‑side buttons -->
-            <div class="right-filters">
-                <div style="display:flex;gap:10px;align-items:center;">
-                    <div class="filters-dropdown-container">
-                        <!-- REMOVED inline onclick -->
-                        <button id="filtersDropdownBtn" class="filters-dropdown-btn">🔽 Filters</button>
-                        <div id="filtersDropdown" class="filters-dropdown-content" style="display:none;" onclick="preventDropdownClose(event)">
-                            <div class="filters-dropdown-header">Filter Options:</div>
-
-                            <div class="filter-item">
-                                <label>Search in Table:</label>
-                                <input type="text" id="searchInput" placeholder="Type to filter..." onkeyup="searchTable()">
+                <?php foreach ($active_status_counts as $status => $count): ?>
+                    <?php
+                    // Determine status badge color class
+                    $status_badge_class = 'stat-item-default';
+                    if ($status === 'Pending') {
+                        $status_badge_class = 'stat-item-pending';
+                    } elseif (strpos($status, 'In Transit') !== false) {
+                        $status_badge_class = 'stat-item-transit';
+                    } elseif (strpos($status, 'Delivered') !== false) {
+                        $status_badge_class = 'stat-item-delivered';
+                    } elseif ($status === 'Canceled') {
+                        $status_badge_class = 'stat-item-canceled';
+                    }
+                    ?>
+                    <div class="stat-item <?php echo $status_badge_class; ?>">
+                        <p class="stat-number"><?php echo $count; ?></p>
+                        <p class="stat-label"><?php echo htmlspecialchars($status); ?></p>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
                             </div>
 
+    <!-- Filter Section -->
+    <div class="filter-section">
                             <form id="filterForm" method="get">
-                                <?php if($project_id): ?>
+            <?php if ($project_id): ?>
                                     <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-                                <?php elseif($origin_batch_id): ?>
+            <?php elseif ($origin_batch_id): ?>
                                     <input type="hidden" name="origin_batch_id" value="<?php echo $origin_batch_id; ?>">
                                 <?php endif; ?>
-                                <input type="hidden" name="time_filter"   value="<?php echo htmlspecialchars($time_filter); ?>">
-                                <input type="hidden" name="ref_date"     value="<?php echo htmlspecialchars($ref_date); ?>">
+            
+        <div class="filter-header">
+            <h2 class="filter-title">
+                <i class="fas fa-filter"></i>
+                Filter Deliveries
+            </h2>
+            <div class="filter-actions">
+                <button type="button" class="btn-clear" onclick="clearFilters()">
+                    <i class="fas fa-times"></i>
+                    Clear
+                </button>
+                <button type="submit" class="btn-apply">
+                    <i class="fas fa-search"></i>
+                    Apply Filters
+                </button>
+            </div>
+        </div>
 
-                                <div class="filter-item">
-                                    <label for="status_filter">Filter by Status:</label>
-                                    <select id="status_filter" name="status_filter" onchange="this.form.submit()">
-                                        <?php
-                                        $statuses = [''=> 'All',
-                                            'Pending'=>'Pending',
-                                            'In Transit to Warehouse'=>'In Transit to Warehouse',
-                                            'Delivered to Warehouse'=>'Delivered to Warehouse',
-                                            'In Transit to Project'=>'In Transit to Project',
-                                            'Delivered to Project'=>'Delivered to Project',
-                                            'Canceled'=>'Canceled'];
-                                        foreach($statuses as $val=>$text){
-                                            $sel = $status_filter===$val?'selected':'';
-                                            echo "<option value=\"$val\" $sel>$text</option>";
-                                        }
-                                        ?>
+        <div class="filter-grid">
+                <div class="filter-group">
+                    <label class="filter-label">Delivery Date Range</label>
+                    <div class="date-range-group">
+                        <input type="date" name="start_date" class="filter-input" placeholder="Start Date" value="<?php echo htmlspecialchars($start_date); ?>">
+                        <input type="date" name="end_date" class="filter-input" placeholder="End Date" value="<?php echo htmlspecialchars($end_date); ?>">
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <label class="filter-label" for="wattageFilter">Wattage</label>
+                    <select name="wattage" id="wattageFilter" class="filter-select">
+                        <option value="">All Wattages</option>
+                        <?php foreach ($unique_wattages as $wattage): ?>
+                            <option value="<?php echo htmlspecialchars($wattage); ?>" <?php echo $wattage_filter == $wattage ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($wattage); ?>W
+                            </option>
+                        <?php endforeach; ?>
                                     </select>
                                 </div>
 
-                                <div class="filter-item">
-                                    <span class="mobile-hide">
-                                        <button type="submit" name="export" value="1" style="background:#488C9A;color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Export to CSV</button>
-                                    </span>
+                <div class="filter-group">
+                    <label class="filter-label" for="statusFilter">Status</label>
+                    <select name="status" id="statusFilter" class="filter-select">
+                        <option value="">All Statuses</option>
+                        <option value="Pending" <?php echo $status_filter == 'Pending' ? 'selected' : ''; ?>>Pending</option>
+                        <option value="In Transit to Warehouse" <?php echo $status_filter == 'In Transit to Warehouse' ? 'selected' : ''; ?>>In Transit to Warehouse</option>
+                        <option value="Delivered to Warehouse" <?php echo $status_filter == 'Delivered to Warehouse' ? 'selected' : ''; ?>>Delivered to Warehouse</option>
+                        <option value="In Transit to Project" <?php echo $status_filter == 'In Transit to Project' ? 'selected' : ''; ?>>In Transit to Project</option>
+                        <option value="Delivered to Project" <?php echo $status_filter == 'Delivered to Project' ? 'selected' : ''; ?>>Delivered to Project</option>
+                        <option value="Canceled" <?php echo $status_filter == 'Canceled' ? 'selected' : ''; ?>>Canceled</option>
+                    </select>
                                 </div>
-                            </form>
+
+                <?php if ($project_id): ?>
+                <div class="filter-group">
+                    <label class="filter-label" for="supplierFilter">Supplier</label>
+                    <select name="supplier" id="supplierFilter" class="filter-select">
+                        <option value="">All Suppliers</option>
+                        <?php foreach ($unique_suppliers as $supplier): ?>
+                            <option value="<?php echo htmlspecialchars($supplier); ?>" <?php echo $supplier_filter == $supplier ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($supplier); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                        </div>
+                <?php endif; ?>
+
+            <div class="filter-group">
+                <label class="filter-label" for="searchFilter">Search</label>
+                <input type="text" name="search" id="searchFilter" class="filter-input" placeholder="Search BOL, supplier, status..." value="<?php echo htmlspecialchars($search_query); ?>">
+            </div>
+        </div>
+    </form>
+</div>
+
+    <!-- Deliveries Table -->
+    <div class="deliveries-container">
+        <div class="table-header">
+            <h3 class="table-title">
+                <i class="fas fa-truck"></i>
+                Deliveries
+            </h3>
+            <div class="table-header-actions">
+                <button type="submit" form="filterForm" name="export" value="1" class="btn-export-header">
+                    <i class="fas fa-download"></i>
+                    Export CSV
+                </button>
+                <?php if ($project_id): ?>
+                <button type="button" class="btn-calendar-header" onclick="window.location.href='scheduling.php?project_id=<?php echo $project_id; ?>'">
+                    <i class="fas fa-calendar"></i>
+                    Calendar View
+                </button>
+                <?php endif; ?>
+                <div style="position: relative;">
+                    <button type="button" class="btn-columns-header" onclick="toggleColumnChooser()">
+                        <i class="fas fa-columns"></i>
+                        Columns
+                    </button>
+                    <div id="columnChooserDropdown" class="column-chooser-dropdown" style="display:none;">
+                        <div class="column-chooser-header">Select Columns to Show:</div>
+                        <div class="column-chooser-options">
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="supplier-column" checked>
+                                Supplier
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="wattage-column" checked>
+                                Wattage
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="status-column" checked>
+                                Status
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="quantity-column" checked>
+                                Quantity
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="bol-column" checked>
+                                BOL Number
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="anticipated-column" checked>
+                                Anticipated Date
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="actual-column" checked>
+                                Actual Date
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="pallets-column" checked>
+                                Pallets
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="scheduled-column" checked>
+                                Scheduled
+                            </label>
+                            <label class="column-option">
+                                <input type="checkbox" class="column-toggle" data-column="pod-column" checked>
+                                Proof of Delivery
+                            </label>
+                        </div>
+                        <div class="column-chooser-footer">
+                            <button type="button" onclick="resetColumns()" class="btn-clear" style="width: 100%;">
+                                Reset to Default
+                            </button>
                         </div>
                     </div>
-
-                    <div class="column-chooser-container">
-                        <!-- REMOVED inline onclick -->
-                        <button id="columnChooserBtn" class="column-chooser-btn">📋 Choose Columns</button>
-                        <div id="columnChooserDropdown" class="column-chooser-dropdown" style="display:none;">
-                            <div class="column-chooser-header">Select Columns to Show:</div>
-                            <div class="column-chooser-options">
-                                <?php
-                                $cols = [
-                                    'supplier-column'=>"Supplier",
-                                    'wattage-column'=>"Wattage",
-                                    'status-column'=>"Status of Delivery",
-                                    'quantity-column'=>"Quantity",
-                                    'bol-column'=>"BOL Number",
-                                    'anticipated-column'=>"Anticipated Delivery Date",
-                                    'actual-column'=>"Actual Delivery Date",
-                                    'pallets-column'=>"Associated Pallets",
-                                    'scheduled-column'=>"Scheduled",
-                                    'pod-column'=>"Proof of Delivery"];
-                                foreach($cols as $cls=>$label){
-                                    echo "<label class=\"column-option\"><input type=\"checkbox\" class=\"column-toggle\" data-column=\"$cls\" checked> $label</label>";
-                                }
-                                ?>
-                            </div>
-                            <div class="column-chooser-footer">
-                                <button type="button" onclick="resetColumns()" class="reset-columns-btn">Reset to Default</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <?php if ($project_id): ?>
-                    <div class="calendar-view-container">
-                        <button type="button" class="calendar-view-btn" onclick="window.location.href='scheduling.php?project_id=<?php echo $project_id; ?>'">
-                            📅 Calendar View
-                        </button>
-                    </div>
-                    <?php endif; ?>
                 </div>
             </div>
         </div>
 
-        <!-- ----------------- TABLE -------------------- -->
         <div class="table-responsive">
+            <?php if ($deliveries): ?>
             <table id="deliveriesTable">
                 <thead>
                     <tr>
                         <th class="supplier-column">Supplier</th>
                         <th class="wattage-column">Wattage</th>
-                        <th class="status-column">Status of Delivery</th>
+                        <th class="status-column">Status</th>
                         <th class="quantity-column">Quantity</th>
                         <th class="bol-column">BOL Number</th>
-                        <th class="anticipated-column">Anticipated Delivery Date</th>
-                        <th class="actual-column">Actual Delivery Date</th>
-                        <th class="pallets-column">Associated Pallets</th>
+                        <th class="anticipated-column">Anticipated Date</th>
+                        <th class="actual-column">Actual Date</th>
+                        <th class="pallets-column">Pallets</th>
                         <th class="scheduled-column">Scheduled</th>
                         <th class="pod-column">Proof of Delivery</th>
                     </tr>
                 </thead>
                 <tbody>
-                <?php if($deliveries): ?>
                     <?php
                     $palletConn=getDBConnection();
                     $stmtPallets=$palletConn->prepare("
@@ -392,216 +1287,277 @@ $stmt->close();
                         WHERE dp.delivery_id = ?
                         ORDER BY ip.id");
                     ?>
-                    <?php foreach($deliveries as $delivery): ?>
+                <?php foreach ($deliveries as $delivery): ?>
                         <?php
-                        $stmtPallets->bind_param("i",$delivery['id']);
+                    $stmtPallets->bind_param("i", $delivery['id']);
                         $stmtPallets->execute();
-                        $palletRows=$stmtPallets->get_result()->fetch_all(MYSQLI_ASSOC);
-                        $count=count($palletRows);
-                        $palletData=json_encode($palletRows,JSON_HEX_APOS|JSON_HEX_AMP|JSON_HEX_TAG|JSON_UNESCAPED_UNICODE);
-                        ?>
-                        <tr <?php if($highlight_delivery_id==$delivery['id']) echo 'class="highlighted-delivery" id="highlighted-delivery"'; ?> data-delivery-id="<?php echo $delivery['id']; ?>">
+                    $palletRows = $stmtPallets->get_result()->fetch_all(MYSQLI_ASSOC);
+                    $count = count($palletRows);
+                    $palletData = json_encode($palletRows, JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_TAG | JSON_UNESCAPED_UNICODE);
+                    
+                    // Determine status class
+                    $status_class = 'status-badge ';
+                    if ($delivery['status_of_delivery'] === 'Pending') {
+                        $status_class .= 'status-pending';
+                    } elseif (strpos($delivery['status_of_delivery'], 'In Transit') !== false) {
+                        $status_class .= 'status-transit';
+                    } elseif (strpos($delivery['status_of_delivery'], 'Delivered') !== false) {
+                        $status_class .= 'status-delivered';
+                    } elseif ($delivery['status_of_delivery'] === 'Canceled') {
+                        $status_class .= 'status-canceled';
+                    }
+                    ?>
+                    <tr <?php if ($highlight_delivery_id == $delivery['id']) echo 'class="highlighted-delivery" id="highlighted-delivery"'; ?> data-delivery-id="<?php echo $delivery['id']; ?>">
                             <td class="supplier-column"><?php echo htmlspecialchars($delivery['supplier']); ?></td>
-                            <td class="wattage-column"><?php echo htmlspecialchars($delivery['wattage']); ?></td>
-                            <td class="status-column"><?php echo htmlspecialchars($delivery['status_of_delivery']); ?></td>
+                        <td class="wattage-column"><?php echo htmlspecialchars($delivery['wattage']); ?>W</td>
+                        <td class="status-column">
+                            <span class="<?php echo $status_class; ?>">
+                                <?php echo htmlspecialchars($delivery['status_of_delivery']); ?>
+                            </span>
+                        </td>
                             <td class="quantity-column"><?php echo htmlspecialchars($delivery['quantity']); ?></td>
                             <td class="bol-column"><?php echo htmlspecialchars($delivery['bol_number']); ?></td>
-                            <td class="anticipated-column"><?php echo $delivery['anticipated_delivery_date']?date('m-d-Y',strtotime($delivery['anticipated_delivery_date'])):''; ?></td>
-                            <td class="actual-column"><?php echo $delivery['actual_delivery_date']?date('m-d-Y',strtotime($delivery['actual_delivery_date'])):''; ?></td>
+                        <td class="anticipated-column"><?php echo $delivery['anticipated_delivery_date'] ? date('m/d/Y', strtotime($delivery['anticipated_delivery_date'])) : '—'; ?></td>
+                        <td class="actual-column"><?php echo $delivery['actual_delivery_date'] ? date('m/d/Y', strtotime($delivery['actual_delivery_date'])) : '—'; ?></td>
                             <td class="pallets-column">
-                                <?php if($count): ?>
-                                    <!-- REMOVED inline onclick -->
-                                    <button type="button" class="action-buttons view-pallets-btn"
-                                            data-pallets='<?php echo htmlspecialchars($palletData,ENT_QUOTES); ?>'
-                                            style="background:#488C9A;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">
+                            <?php if ($count): ?>
+                                <button type="button" class="action-btn action-btn-primary view-pallets-btn"
+                                        data-pallets='<?php echo htmlspecialchars($palletData, ENT_QUOTES); ?>'>
+                                    <i class="fas fa-boxes"></i>
                                         View Pallets (<?php echo $count; ?>)
                                     </button>
-                                <?php else: ?>N/A<?php endif; ?>
+                            <?php else: ?>
+                                —
+                            <?php endif; ?>
                             </td>
                             <td class="scheduled-column">
                                 <?php if ($delivery['scheduled'] == 1): ?>
                                     <?php if (!empty($delivery['project_id']) && !empty($delivery['appointment_id'])): ?>
                                         <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>&appointment_id=<?php echo $delivery['appointment_id']; ?>&auto_edit=1" 
-                                           style="color: #488C9A; text-decoration: underline;">View Appointment</a>
+                                       class="action-btn action-btn-success">
+                                        <i class="fas fa-calendar-check"></i>
+                                        View Appointment
+                                    </a>
                                     <?php else: ?>
-                                        <span style="color: #28a745;">Scheduled</span>
+                                    <span class="status-badge status-delivered">
+                                        <i class="fas fa-check-circle"></i>
+                                        Scheduled
+                                    </span>
                                     <?php endif; ?>
                                 <?php else: ?>
                                     <?php if (!empty($delivery['project_id']) && $delivery['status_of_delivery'] === 'In Transit to Project'): ?>
                                         <a href="scheduling.php?project_id=<?php echo $delivery['project_id']; ?>&delivery_id=<?php echo $delivery['id']; ?>" 
-                                           style="color: #fbb040; text-decoration: underline;">Schedule Delivery</a>
+                                       class="action-btn action-btn-warning">
+                                        <i class="fas fa-calendar-plus"></i>
+                                        Schedule
+                                    </a>
                                     <?php else: ?>
-                                        <span style="color: #666;">N/A</span>
+                                    —
                                     <?php endif; ?>
                                 <?php endif; ?>
                             </td>
                             <td class="pod-column">
                                 <?php if (!empty($delivery['proof_of_delivery']) || !empty($delivery['has_pod_in_documents'])): ?>
-                                    <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank" class="pod-link">View POD</a>
+                                <a href="view_pod?delivery_id=<?php echo $delivery['id']; ?>" target="_blank" class="action-btn action-btn-primary">
+                                    <i class="fas fa-file-pdf"></i>
+                                    View POD
+                                </a>
                                 <?php else: ?>
                                     <?php if (in_array($_SESSION['role'], ['global_admin', 'admin'])): ?>
-                                        <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>" class="upload-pod-btn">Upload POD</a>
+                                    <a href="upload_pod?delivery_id=<?php echo $delivery['id']; ?>" class="action-btn action-btn-outline">
+                                        <i class="fas fa-upload"></i>
+                                        Upload POD
+                                    </a>
                                     <?php else: ?>
-                                        N/A
+                                    —
                                     <?php endif; ?>
                                 <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
                     <?php $stmtPallets->close(); $palletConn->close(); ?>
-                <?php else: ?>
-                    <tr id="no-entries-row"><td colspan="9">No delivery entries found.</td></tr>
-                <?php endif; ?>
                 </tbody>
             </table>
+            <?php else: ?>
+            <div class="empty-state">
+                <i class="fas fa-inbox"></i>
+                <h3>No Deliveries Found</h3>
+                <p>No deliveries match your current filter criteria. Try adjusting your filters.</p>
+            </div>
+            <?php endif; ?>
         </div>
     </div>
 
-    <!-- -------- Modal -------- -->
-    <div id="associatedPalletsModal" style="display:none;position:fixed;z-index:9999;left:0;top:0;width:100%;height:100%;overflow:auto;background:rgba(0,0,0,.5);">
-        <div style="background:#fff;margin:5% auto;padding:20px;width:500px;max-width:90%;border-radius:8px;box-shadow:0 4px 8px rgba(0,0,0,.2);position:relative;">
-            <!-- REMOVED inline onclick -->
-            <span id="closePalletModalBtn" style="position:absolute;top:15px;right:20px;font-size:24px;font-weight:bold;color:#aaa;cursor:pointer;">&times;</span>
+    <!-- Pallets Modal -->
+    <div id="associatedPalletsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
             <h2>Associated Pallets</h2>
-            <div id="palletList" style="max-height:300px;overflow-y:auto;border:1px solid #eee;"></div>
+                <span class="modal-close" id="closePalletModalBtn">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="palletList"></div>
+            </div>
         </div>
     </div>
 </main>
 
 <script>
-/* ======= simple utilities & state =======*/
+// Global variables
 var associatedPalletsModal, palletListDiv;
 
-/* --------------- search -----------------*/
-function searchTable(){
-    var input=document.getElementById('searchInput');
-    if(!input) return;
-    var fl=input.value.toLowerCase();
-    Array.from(document.querySelectorAll('#deliveriesTable tbody tr')).forEach((tr,i)=>{
-        if(i===0) return; // skip header
-        var show=false;
-        tr.querySelectorAll('td').forEach(td=>{
-            if(td.textContent.toLowerCase().indexOf(fl)>-1) show=true;
-        });
-        tr.style.display=show?'':'none';
+// Clear filters
+function clearFilters() {
+    document.getElementById('filterForm').reset();
+    const url = new URL(window.location.href);
+    <?php if ($project_id): ?>
+    url.search = '?project_id=<?php echo $project_id; ?>';
+    <?php elseif ($origin_batch_id): ?>
+    url.search = '?origin_batch_id=<?php echo $origin_batch_id; ?>';
+    <?php endif; ?>
+    window.location.href = url.toString();
+}
+
+// Column chooser
+function toggleColumnChooser() {
+    const dropdown = document.getElementById('columnChooserDropdown');
+    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+}
+function toggleColumn(col, show) {
+    document.querySelectorAll('.' + col).forEach(el => {
+        show ? el.classList.remove('column-hidden') : el.classList.add('column-hidden');
     });
 }
 
-/* --------------- dropdowns --------------*/
-function toggleFiltersDropdown(){
-    const f=document.getElementById('filtersDropdown');
-    f.style.display=f.style.display==='none'?'block':'none';
-    document.getElementById('columnChooserDropdown').style.display='none';
-}
-function toggleColumnChooser(){
-    const c=document.getElementById('columnChooserDropdown');
-    c.style.display=c.style.display==='none'?'block':'none';
-    document.getElementById('filtersDropdown').style.display='none';
-}
-function toggleColumn(col,show){
-    document.querySelectorAll('.'+col).forEach(el=>{
-        show?el.classList.remove('column-hidden'):el.classList.add('column-hidden');
-    });
-    const row=document.getElementById('no-entries-row');
-    if(row){
-        row.querySelector('td').colSpan=document.querySelectorAll('th:not(.column-hidden)').length;
-    }
-}
-function resetColumns(){
-    document.querySelectorAll('.column-toggle').forEach(cb=>{
-        cb.checked=true; toggleColumn(cb.dataset.column,true);
+function resetColumns() {
+    document.querySelectorAll('.column-toggle').forEach(cb => {
+        cb.checked = true;
+        toggleColumn(cb.dataset.column, true);
     });
     saveColumnPreferences();
 }
-function saveColumnPreferences(){
-    var prefs={};
-    document.querySelectorAll('.column-toggle').forEach(cb=>{
-        prefs[cb.dataset.column]=cb.checked;
+
+function saveColumnPreferences() {
+    var prefs = {};
+    document.querySelectorAll('.column-toggle').forEach(cb => {
+        prefs[cb.dataset.column] = cb.checked;
     });
-    localStorage.setItem('viewProjectColumnPreferences',JSON.stringify(prefs));
+    localStorage.setItem('viewProjectColumnPreferences', JSON.stringify(prefs));
 }
-function loadColumnPreferences(){
-    var p=localStorage.getItem('viewProjectColumnPreferences');
-    if(!p) return;
-    p=JSON.parse(p);
-    document.querySelectorAll('.column-toggle').forEach(cb=>{
-        if(p.hasOwnProperty(cb.dataset.column)){
-            cb.checked=p[cb.dataset.column];
-            toggleColumn(cb.dataset.column,cb.checked);
+
+function loadColumnPreferences() {
+    var p = localStorage.getItem('viewProjectColumnPreferences');
+    if (!p) return;
+    p = JSON.parse(p);
+    document.querySelectorAll('.column-toggle').forEach(cb => {
+        if (p.hasOwnProperty(cb.dataset.column)) {
+            cb.checked = p[cb.dataset.column];
+            toggleColumn(cb.dataset.column, cb.checked);
         }
     });
 }
-function preventDropdownClose(e){e.stopPropagation();}
 
-/* ---------------- Modal -----------------*/
-function showPalletModal(btn){
-    if(!associatedPalletsModal){
-        associatedPalletsModal=document.getElementById('associatedPalletsModal');
-        palletListDiv=document.getElementById('palletList');
+// Pallet modal
+function showPalletModal(btn) {
+    if (!associatedPalletsModal) {
+        associatedPalletsModal = document.getElementById('associatedPalletsModal');
+        palletListDiv = document.getElementById('palletList');
     }
-    palletListDiv.innerHTML='';
-    const pallets=JSON.parse(btn.dataset.pallets||'[]');
-    if(!pallets.length){palletListDiv.textContent='No pallets found.';}
-    else{
-        const tbl=document.createElement('table'); tbl.style.width='100%'; tbl.style.borderCollapse='collapse';
-        const head=tbl.createTHead().insertRow();
-        ['Identifier','Wattage','Quantity','Actions'].forEach(h=>{
-            const th=document.createElement('th');
-            th.textContent=h; th.style.border='1px solid #ddd'; th.style.padding='8px'; th.style.textAlign='center';
-            th.style.background='#293E4C'; th.style.color='#fff'; head.appendChild(th);
+    palletListDiv.innerHTML = '';
+    const pallets = JSON.parse(btn.dataset.pallets || '[]');
+    
+    if (!pallets.length) {
+        palletListDiv.innerHTML = '<p style="text-align: center; color: #6c757d;">No pallets found.</p>';
+    } else {
+        const tbl = document.createElement('table');
+        tbl.className = 'pallet-table';
+        
+        const head = tbl.createTHead().insertRow();
+        ['Identifier', 'Wattage', 'Quantity', 'Actions'].forEach(h => {
+            const th = document.createElement('th');
+            th.textContent = h;
+            head.appendChild(th);
         });
-        const body=tbl.createTBody();
-        pallets.forEach(p=>{
-            const r=body.insertRow();
-            const id  =r.insertCell(); id.textContent=p.pallet_identifier||`ID: ${p.id}`;
-            const wat =r.insertCell(); wat.textContent=p.wattage?`${p.wattage}W`:'N/A';
-            const qty =r.insertCell(); qty.textContent=p.quantity||'N/A';
-            [id,wat,qty].forEach(c=>{c.style.border='1px solid #ddd'; c.style.padding='8px';});
-            const act =r.insertCell(); act.style.border='1px solid #ddd'; act.style.padding='8px'; act.style.textAlign='center';
-            const a=document.createElement('a'); a.href=`pallet_details.php?pallet_id=${p.id}`; a.textContent='View Details';
-            a.style.color='#488C9A'; a.style.textDecoration='none'; act.appendChild(a);
+        
+        const body = tbl.createTBody();
+        pallets.forEach(p => {
+            const r = body.insertRow();
+            const id = r.insertCell();
+            id.textContent = p.pallet_identifier || `ID: ${p.id}`;
+            
+            const wat = r.insertCell();
+            wat.textContent = p.wattage ? `${p.wattage}W` : '—';
+            
+            const qty = r.insertCell();
+            qty.textContent = p.quantity || '—';
+            
+            const act = r.insertCell();
+            const a = document.createElement('a');
+            a.href = `pallet_details.php?pallet_id=${p.id}`;
+            a.className = 'action-btn action-btn-primary';
+            a.innerHTML = '<i class="fas fa-eye"></i> View Details';
+            act.appendChild(a);
         });
+        
         palletListDiv.appendChild(tbl);
     }
-    associatedPalletsModal.style.display='block';
-}
-function closeAssociatedPalletModal(){
-    associatedPalletsModal.style.display='none';
-    palletListDiv.innerHTML='';
+    
+    associatedPalletsModal.style.display = 'block';
 }
 
-/* --------------- DOM ready --------------*/
-document.addEventListener('DOMContentLoaded',()=>{
+function closeAssociatedPalletModal() {
+    if (associatedPalletsModal) {
+        associatedPalletsModal.style.display = 'none';
+        palletListDiv.innerHTML = '';
+    }
+}
+
+// DOM ready
+document.addEventListener('DOMContentLoaded', () => {
     loadColumnPreferences();
-    document.getElementById('filtersDropdownBtn')?.addEventListener('click',toggleFiltersDropdown);
-    document.getElementById('columnChooserBtn')?.addEventListener('click',toggleColumnChooser);
-    document.querySelectorAll('.view-pallets-btn').forEach(btn=>{
-        btn.addEventListener('click',function(){showPalletModal(this);});
+    
+    // View pallets buttons
+    document.querySelectorAll('.view-pallets-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            showPalletModal(this);
+        });
     });
-    document.getElementById('closePalletModalBtn')?.addEventListener('click',closeAssociatedPalletModal);
-
-    document.querySelectorAll('.column-toggle').forEach(cb=>{
-        cb.addEventListener('change',()=>{toggleColumn(cb.dataset.column,cb.checked); saveColumnPreferences();});
+    
+    // Close modal
+    document.getElementById('closePalletModalBtn')?.addEventListener('click', closeAssociatedPalletModal);
+    
+    // Column toggles
+    document.querySelectorAll('.column-toggle').forEach(cb => {
+        cb.addEventListener('change', () => {
+            toggleColumn(cb.dataset.column, cb.checked);
+            saveColumnPreferences();
+        });
     });
-    document.addEventListener('click',e=>{
-        if(!document.querySelector('.column-chooser-container').contains(e.target))
-            document.getElementById('columnChooserDropdown').style.display='none';
-        if(!document.querySelector('.filters-dropdown-container').contains(e.target))
-            document.getElementById('filtersDropdown').style.display='none';
+    
+    // Close dropdowns on outside click
+    document.addEventListener('click', e => {
+        const columnChooser = document.getElementById('columnChooserDropdown');
+        if (columnChooser && !e.target.closest('.btn-columns-header') && !columnChooser.contains(e.target)) {
+            columnChooser.style.display = 'none';
+        }
     });
-    window.addEventListener('click',e=>{
-        if(e.target===associatedPalletsModal) closeAssociatedPalletModal();
+    
+    // Close modal on outside click
+    window.addEventListener('click', e => {
+        if (e.target === associatedPalletsModal) {
+            closeAssociatedPalletModal();
+        }
     });
-
-    const hi=document.getElementById('highlighted-delivery');
-    if(hi){
-        setTimeout(()=>{
-            hi.scrollIntoView({behavior:'smooth',block:'center'});
-            hi.style.animation='highlightPulse 3s ease-in-out 2';
-            setTimeout(()=>{hi.style.animation='fadeOutHighlight 2s ease-in-out forwards';},12000);
-        },800);
+    
+    // Highlight delivery if specified
+    const hi = document.getElementById('highlighted-delivery');
+    if (hi) {
+        setTimeout(() => {
+            hi.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 500);
     }
 });
 </script>
 </body>
 </html>
+
