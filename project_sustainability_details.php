@@ -59,66 +59,57 @@ if (!$project_name) {
 }
 
 // --------------------------------------------------------------------------
-// Additional filters: (time_filter => all/day/week/month) & (status_filter)
+// NEW FILTER PARAMETERS - Modern approach like view_project.php
 // --------------------------------------------------------------------------
 $filterColumn  = "COALESCE(actual_delivery_date, anticipated_delivery_date)";
-$time_filter   = $_GET['time_filter']   ?? 'all';
-$ref_date      = $_GET['ref_date']      ?? date('Y-m-d');
+$start_date = $_GET['start_date'] ?? '';
+$end_date = $_GET['end_date'] ?? '';
+$manufacturer_filter = $_GET['manufacturer'] ?? '';
 $status_filter = $_GET['status_filter'] ?? '';
+$search_query = $_GET['search'] ?? '';
 
 $dateCondition = "";
 $paramTypes    = "i"; 
 $params        = [$project_id];
 
-$dateLabel = "All Deliveries";
-$prev_date = "";
-$next_date = "";
-
-// Build time range conditions
-if ($time_filter === 'day') {
-    $dateCondition = " AND DATE($filterColumn) = ?";
-    $paramTypes   .= "s";
-    $params[]      = $ref_date;
-
-    $dateLabel = date('F j, Y', strtotime($ref_date));
-    $prev_date = date('Y-m-d', strtotime("$ref_date -1 day"));
-    $next_date = date('Y-m-d', strtotime("$ref_date +1 day"));
-}
-elseif ($time_filter === 'week') {
-    $timestamp   = strtotime($ref_date);
-    $dayOfWeek   = date('w', $timestamp);
-    $startOfWeek = date('Y-m-d', strtotime("-{$dayOfWeek} days", $timestamp));
-    $endOfWeek   = date('Y-m-d', strtotime("+".(6-$dayOfWeek)." days", $timestamp));
-
+// Date range filter
+if ($start_date && $end_date) {
     $dateCondition = " AND DATE($filterColumn) BETWEEN ? AND ?";
-    $paramTypes   .= "ss";
-    $params[]      = $startOfWeek;
-    $params[]      = $endOfWeek;
-
-    $dateLabel = date('M j', strtotime($startOfWeek)) . " - " . date('M j, Y', strtotime($endOfWeek));
-    $prev_date = date('Y-m-d', strtotime("$startOfWeek -7 days"));
-    $next_date = date('Y-m-d', strtotime("$startOfWeek +7 days"));
-}
-elseif ($time_filter === 'month') {
-    $startOfMonth = date('Y-m-01', strtotime($ref_date));
-    $endOfMonth   = date('Y-m-t', strtotime($ref_date));
-
-    $dateCondition = " AND DATE($filterColumn) BETWEEN ? AND ?";
-    $paramTypes   .= "ss";
-    $params[]      = $startOfMonth;
-    $params[]      = $endOfMonth;
-
-    $dateLabel = date('F Y', strtotime($ref_date));
-    $prev_date = date('Y-m-d', strtotime("$startOfMonth -1 month"));
-    $next_date = date('Y-m-d', strtotime("$startOfMonth +1 month"));
+    $paramTypes .= "ss";
+    array_push($params, $start_date, $end_date);
+} elseif ($start_date) {
+    $dateCondition = " AND DATE($filterColumn) >= ?";
+    $paramTypes .= "s";
+    $params[] = $start_date;
+} elseif ($end_date) {
+    $dateCondition = " AND DATE($filterColumn) <= ?";
+    $paramTypes .= "s";
+    $params[] = $end_date;
 }
 
-// Build status condition
+// Status filter
 $statusCondition = "";
 if (!empty($status_filter)) {
     $statusCondition = " AND status_of_delivery = ?";
-    $paramTypes     .= "s";
-    $params[]        = $status_filter;
+    $paramTypes .= "s";
+    $params[] = $status_filter;
+}
+
+// Manufacturer filter
+$manufacturerCondition = "";
+if ($manufacturer_filter !== '') {
+    $manufacturerCondition = " AND supplier = ?";
+    $paramTypes .= "s";
+    $params[] = $manufacturer_filter;
+}
+
+// Search filter
+$searchCondition = "";
+if ($search_query !== '') {
+    $searchCondition = " AND (bol_number LIKE ? OR supplier LIKE ?)";
+    $paramTypes .= "ss";
+    $search_param = "%$search_query%";
+    array_push($params, $search_param, $search_param);
 }
 
 // "filter" selection (total, ytd, etc.)
@@ -133,7 +124,7 @@ if ($filter === 'ytd') {
     $params[]     = $current_year;
 }
 
-// Build final deliveries query with time range + status + ytd
+// Build final deliveries query with all filters
 $sql_deliveries = "
     SELECT *
     FROM deliveries
@@ -141,6 +132,8 @@ $sql_deliveries = "
           $ytdCondition
           $dateCondition
           $statusCondition
+          $manufacturerCondition
+          $searchCondition
     ORDER BY $filterColumn DESC
 ";
 $stmt_deliveries = $conn->prepare($sql_deliveries);
@@ -298,13 +291,424 @@ $conn->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        .cost-overview {
+        body {
+            background: #f8f9fa;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        /* Header Section */
+        .sustainability-tracker-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .sustainability-tracker-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            text-align: center;
+            background: rgba(72, 140, 154, 0.08);
+            padding: 16px 20px;
+            border-radius: 16px;
+            min-width: 140px;
+            transition: all 0.3s ease;
+        }
+
+        .stat-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.2);
+        }
+
+        .stat-item-total {
+            background: linear-gradient(135deg, rgba(72, 140, 154, 0.15) 0%, rgba(72, 140, 154, 0.2) 100%);
+        }
+
+        .stat-item-emissions {
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(34, 197, 94, 0.2) 100%);
+        }
+
+        .stat-item-emissions .stat-number {
+            color: #16a34a;
+        }
+
+        .stat-item-miles {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.2) 100%);
+        }
+
+        .stat-item-miles .stat-number {
+            color: #2563eb;
+        }
+
+        .stat-item-fuel {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(245, 158, 11, 0.2) 100%);
+        }
+
+        .stat-item-fuel .stat-number {
+            color: #d97706;
+        }
+
+        .stat-item-truckloads {
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(139, 92, 246, 0.2) 100%);
+        }
+
+        .stat-item-truckloads .stat-number {
+            color: #7c3aed;
+        }
+
+        .stat-number {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #488C9A;
+            margin: 0;
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin: 4px 0 0 0;
+            font-weight: 500;
+        }
+
+        /* Filter Section */
+        .filter-section {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            padding: 28px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+
+        .filter-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .filter-title {
+            font-size: 1.4em;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .filter-title i {
+            color: #488C9A;
+        }
+
+        .filter-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .btn-clear, .btn-apply {
+            padding: 10px 18px;
+            border-radius: 12px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .btn-clear {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.15) 100%);
+            color: #dc2626;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .btn-clear:hover {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.2) 100%);
+            transform: translateY(-1px);
+        }
+
+        .btn-apply {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(72, 140, 154, 0.3);
+        }
+
+        .btn-apply:hover {
+            background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
+        }
+
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            align-items: start;
+        }
+
+        .filter-group {
+            position: relative;
             display: flex;
             flex-direction: column;
-            align-items: center;
+        }
+
+        .filter-group:has(.date-range-group) {
+            grid-column: span 2;
+        }
+
+        .filter-label {
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 0.95em;
+            margin-bottom: 8px;
+        }
+
+        .filter-select, .filter-input {
             width: 100%;
-            margin-bottom: 30px;
+            padding: 12px 16px;
+            border: 2px solid rgba(72, 140, 154, 0.15);
+            border-radius: 12px;
+            background: white;
+            font-size: 0.95em;
+            transition: all 0.3s ease;
+            font-family: 'Poppins', sans-serif;
+            box-sizing: border-box;
+        }
+
+        .filter-select:focus, .filter-input:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 4px 15px rgba(72, 140, 154, 0.2);
+        }
+
+        .date-range-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        /* Table Container */
+        .table-container {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+
+        .table-header {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 20px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .table-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: white;
+        }
+
+        .table-header-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .btn-export-header, .btn-columns-header {
+            padding: 8px 14px;
+            border-radius: 10px;
+            font-size: 0.85em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-family: 'Poppins', sans-serif;
+            white-space: nowrap;
+        }
+
+        .btn-export-header {
+            background: rgba(255, 255, 255, 0.95);
+            color: #16a34a;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-export-header:hover {
+            background: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-columns-header {
+            background: rgba(255, 255, 255, 0.95);
+            color: #d97706;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-columns-header:hover {
+            background: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0;
+        }
+
+        table thead {
+            background: white;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        table th {
+            padding: 16px;
+            text-align: left;
+            font-weight: 600;
+            border: none;
+            background: white;
+        }
+
+        table td {
+            padding: 16px;
+            border-bottom: 1px solid rgba(72, 140, 154, 0.08);
+            vertical-align: middle;
+        }
+
+        table tbody tr {
+            transition: all 0.3s ease;
+        }
+
+        table tbody tr:hover {
+            background: rgba(72, 140, 154, 0.05);
+            transform: translateX(4px);
+        }
+
+        /* Column Chooser */
+        .column-chooser-content {
+            display: none;
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            background: white;
+            border: 1px solid rgba(72, 140, 154, 0.2);
+            border-radius: 12px;
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+            z-index: 10000;
+            min-width: 250px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .column-chooser-header {
+            padding: 16px;
+            background: #f8f9fa;
+            border-bottom: 1px solid rgba(72, 140, 154, 0.2);
+            font-weight: 600;
+            color: #293E4C;
+        }
+
+        .column-chooser-options {
+            padding: 8px 0;
+        }
+
+        .column-item {
+            display: flex;
+            align-items: center;
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .column-item:hover {
+            background-color: rgba(72, 140, 154, 0.08);
+        }
+
+        .column-item label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            color: #293E4C;
+            font-size: 0.9em;
+            width: 100%;
+        }
+
+        .column-item input[type=checkbox] {
+            margin-right: 10px;
+            cursor: pointer;
+            width: 18px;
+            height: 18px;
+            accent-color: #488C9A;
         }
         .cost-row {
             display: flex;
@@ -585,8 +989,76 @@ $conn->close();
         .column-hidden {
             display: none !important;
         }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+        }
+
+        .empty-state i {
+            font-size: 4em;
+            color: #d1d5db;
+            margin-bottom: 16px;
+        }
+
+        .empty-state h3 {
+            font-size: 1.5em;
+            color: #6c757d;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .empty-state p {
+            color: #9ca3af;
+            margin: 0;
+        }
     </style>
     <script>
+        // Clear filters
+        function clearFilters() {
+            document.getElementById('filterForm').reset();
+            window.location.href = '?project_id=<?php echo $project_id; ?>';
+        }
+
+        // Toggle column chooser
+        function toggleColumnChooser() {
+            const dropdown = document.getElementById('columnChooser');
+            dropdown.style.display = dropdown.style.display === 'none' || dropdown.style.display === '' ? 'block' : 'none';
+        }
+
+        // Column visibility toggle
+        function toggleColumn(columnClass, isVisible) {
+            const elements = document.querySelectorAll('.' + columnClass);
+            elements.forEach(element => {
+                if (isVisible) {
+                    element.classList.remove('column-hidden');
+                } else {
+                    element.classList.add('column-hidden');
+                }
+            });
+        }
+
+        // Initialize column chooser functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const columnToggles = document.querySelectorAll('.column-toggle');
+            columnToggles.forEach(toggle => {
+                toggle.addEventListener('change', function() {
+                    const columnClass = this.dataset.column;
+                    const isVisible = this.checked;
+                    toggleColumn(columnClass, isVisible);
+                });
+            });
+
+            // Close column chooser on outside click
+            document.addEventListener('click', function(e) {
+                const columnChooser = document.getElementById('columnChooser');
+                if (columnChooser && !e.target.closest('.btn-columns-header') && !columnChooser.contains(e.target)) {
+                    columnChooser.style.display = 'none';
+                }
+            });
+        });
+
         (function() {
             var referrer = document.referrer;
             if (!referrer) return;
@@ -615,178 +1087,156 @@ $conn->close();
         ]);
     ?>
 
-    <h1>Sustainability Details for <?php echo htmlspecialchars($project_name); ?></h1>
-
-    <!-- Filter form (radio) -->
-    <form method="GET" class="legacy-filter-form">
-        <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-        <input type="hidden" name="time_filter" value="<?php echo htmlspecialchars($time_filter); ?>">
-        <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
-        <input type="hidden" name="status_filter" value="<?php echo htmlspecialchars($status_filter); ?>">
-
-        <label>
-            <input type="radio" name="filter" value="total"
-                   onchange="this.form.submit();"
-                   <?php if ($filter === 'total') echo 'checked'; ?>>
-            📊 Total
-        </label>
-        <label>
-            <input type="radio" name="filter" value="ytd"
-                   onchange="this.form.submit();"
-                   <?php if ($filter === 'ytd') echo 'checked'; ?>>
-            📅 YTD
-        </label>
-        <label>
-            <input type="radio" name="filter" value="emissions_per_mw"
-                   onchange="this.form.submit();"
-                   <?php if ($filter === 'emissions_per_mw') echo 'checked'; ?>>
-            🌱 Emissions per MW
-        </label>
-        <label>
-            <input type="radio" name="filter" value="emissions_vs_average"
-                   onchange="this.form.submit();"
-                   <?php if ($filter === 'emissions_vs_average') echo 'checked'; ?>>
-            📈 Project vs Average
-        </label>
-    </form>
-
-    <!-- Key metrics row -->
-    <div class="cost-overview">
-        <?php if ($filter === 'emissions_per_mw'): ?>
-            <div class="cost-row">
-                <div class="cost-metric">
-                    <h3>🌱 Emissions per MW</h3>
-                    <p><?php echo number_format($emissions_per_mw ?? 0, 2); ?> kg CO₂ / MW</p>
-                </div>
+    <!-- Header Section -->
+    <div class="sustainability-tracker-header">
+        <div class="header-content">
+            <div class="header-info">
+                <h1>Sustainability Details: <?php echo htmlspecialchars($project_name); ?></h1>
+                <p class="header-subtitle">Environmental impact analysis and carbon footprint tracking</p>
             </div>
-        <?php elseif ($filter === 'emissions_vs_average'): ?>
-            <div class="cost-row">
-                <div class="cost-metric">
-                    <h3>📈 Project Emissions vs Average</h3>
-                    <p><?php echo number_format($difference ?? 0, 2); ?> kg CO₂ / MW</p>
+            <div class="header-stats">
+                <div class="stat-item stat-item-total">
+                    <p class="stat-number"><?php echo count($deliveries); ?></p>
+                    <p class="stat-label">Total Deliveries</p>
                 </div>
-            </div>
-        <?php else: ?>
-            <div class="cost-row">
-                <div class="cost-metric">
-                    <h3>🌱 Total Emissions<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
-                    <p><?php echo number_format($total_emissions, 2); ?> kg CO₂</p>
+                <div class="stat-item stat-item-emissions">
+                    <p class="stat-number"><?php echo number_format($total_emissions, 2); ?></p>
+                    <p class="stat-label">Total Emissions (kg CO₂)</p>
                 </div>
-                <div class="cost-metric">
-                    <h3>🚛 Total Truckloads<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
-                    <p><?php echo number_format($total_truckloads); ?></p>
+                <div class="stat-item stat-item-miles">
+                    <p class="stat-number"><?php echo number_format($total_miles_driven, 2); ?></p>
+                    <p class="stat-label">Miles Driven</p>
                 </div>
-                <div class="cost-metric">
-                    <h3>🛣️ Miles Driven<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
-                    <p><?php echo number_format($total_miles_driven, 2); ?> mi</p>
-                </div>
-                <div class="cost-metric">
-                    <h3>⛽ Fuel Consumption<?php echo ($filter==='ytd')?' (YTD)':''; ?></h3>
-                    <p><?php echo number_format($total_fuel_consumption, 2); ?> gal</p>
-                </div>
-            </div>
-        <?php endif; ?>
-    </div>
-
-    <!-- TIME FILTER HEADER -->
-    <div class="time-filter-header">
-        <div class="time-filters">
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=all&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>"
-               class="<?php echo ($time_filter==='all')?'active':''; ?>">All</a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=day&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>"
-               class="<?php echo ($time_filter==='day')?'active':''; ?>">Day</a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=week&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>"
-               class="<?php echo ($time_filter==='week')?'active':''; ?>">Week</a>
-            <a href="?project_id=<?php echo $project_id; ?>&time_filter=month&ref_date=<?php echo urlencode($ref_date); ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>"
-               class="<?php echo ($time_filter==='month')?'active':''; ?>">Month</a>
-        </div>
-
-        <div class="date-navigation">
-            <?php if ($time_filter !== 'all'): ?>
-                <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $prev_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>'">
-                    &larr;
-                </button>
-            <?php endif; ?>
-            <span class="date-label"><?php echo $dateLabel; ?></span>
-            <?php if ($time_filter !== 'all'): ?>
-                <button type="button" class="nav-arrow"
-                        onclick="window.location.href='?project_id=<?php echo $project_id; ?>&time_filter=<?php echo $time_filter; ?>&ref_date=<?php echo $next_date; ?>&status_filter=<?php echo urlencode($status_filter); ?>&filter=<?php echo urlencode($filter); ?>'">
-                    &rarr;
-                </button>
-            <?php endif; ?>
-        </div>
-
-        <div class="right-filters">
-            <!-- Filters Dropdown -->
-            <div class="filters-dropdown">
-                <button type="button" class="filters-btn" onclick="toggleFilters()">
-                    🔧 Filters <span id="filter-arrow">▼</span>
-                </button>
-                <div class="filters-content" id="filtersDropdown">
-                    <div class="filter-item">
-                        <label for="searchInput">🔍 Search:</label>
-                        <input type="text" id="searchInput" placeholder="Search deliveries..." onkeyup="searchTable()">
-                    </div>
-                    
-                    <form method="get" action="" id="filterForm">
-                        <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
-                        <input type="hidden" name="time_filter" value="<?php echo $time_filter; ?>">
-                        <input type="hidden" name="ref_date" value="<?php echo htmlspecialchars($ref_date); ?>">
-                        <input type="hidden" name="filter" value="<?php echo htmlspecialchars($filter); ?>">
-
-                        <div class="filter-item">
-                            <label for="status_filter">Status:</label>
-                            <select name="status_filter" id="status_filter" onchange="this.form.submit()">
-                                <option value="">All Statuses</option>
-                                <option value="Pending"     <?php if($status_filter==='Pending')    echo 'selected'; ?>>Pending</option>
-                                <option value="In Transit"  <?php if($status_filter==='In Transit') echo 'selected'; ?>>In Transit</option>
-                                <option value="Delivered"   <?php if($status_filter==='Delivered')  echo 'selected'; ?>>Delivered</option>
-                                <option value="Complete"    <?php if($status_filter==='Complete')   echo 'selected'; ?>>Complete</option>
-                            </select>
-                        </div>
-
-                        <div class="filter-item">
-                            <button type="submit" name="export" value="1" class="export-btn">📥 Export CSV</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-
-            <!-- Column Chooser for All Roles -->
-            <div class="column-chooser">
-                <button type="button" class="columns-btn" onclick="toggleColumnChooser()">
-                    📋 Columns <span id="column-arrow">▼</span>
-                </button>
-                <div class="column-chooser-content" id="columnChooser">
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-supplier" checked> Supplier</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-wattage" checked> Wattage</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-quantity" checked> Quantity</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-bol" checked> BOL Number</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-status" checked> Status of Delivery</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-miles" checked> Miles Driven</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-fuel" checked> Fuel Consumption</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-emissions" checked> Emissions</label>
-                    </div>
+                <div class="stat-item stat-item-fuel">
+                    <p class="stat-number"><?php echo number_format($total_fuel_consumption, 2); ?></p>
+                    <p class="stat-label">Fuel (gal)</p>
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- Filter Section -->
+    <div class="filter-section">
+        <form id="filterForm" method="get">
+            <input type="hidden" name="project_id" value="<?php echo $project_id; ?>">
+            
+            <div class="filter-header">
+                <h2 class="filter-title">
+                    <i class="fas fa-filter"></i>
+                    Filter Deliveries
+                </h2>
+                <div class="filter-actions">
+                    <button type="button" class="btn-clear" onclick="clearFilters()">
+                        <i class="fas fa-times"></i>
+                        Clear
+                    </button>
+                    <button type="submit" class="btn-apply">
+                        <i class="fas fa-search"></i>
+                        Apply Filters
+                    </button>
+                </div>
+            </div>
+
+            <div class="filter-grid">
+                <div class="filter-group">
+                    <label class="filter-label">Delivery Date Range</label>
+                    <div class="date-range-group">
+                        <input type="date" name="start_date" class="filter-input" placeholder="Start Date" value="<?php echo htmlspecialchars($start_date); ?>">
+                        <input type="date" name="end_date" class="filter-input" placeholder="End Date" value="<?php echo htmlspecialchars($end_date); ?>">
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <label class="filter-label" for="manufacturerFilter">Manufacturer</label>
+                    <select name="manufacturer" id="manufacturerFilter" class="filter-select">
+                        <option value="">All Manufacturers</option>
+                        <?php
+                        $unique_manufacturers = array_unique(array_column($deliveries, 'supplier'));
+                        sort($unique_manufacturers);
+                        foreach ($unique_manufacturers as $manufacturer):
+                            if (!empty($manufacturer)):
+                        ?>
+                            <option value="<?php echo htmlspecialchars($manufacturer); ?>" <?php echo $manufacturer_filter == $manufacturer ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($manufacturer); ?>
+                            </option>
+                        <?php
+                            endif;
+                        endforeach;
+                        ?>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label class="filter-label" for="statusFilter">Status</label>
+                    <select name="status_filter" id="statusFilter" class="filter-select">
+                        <option value="">All Statuses</option>
+                        <option value="On Water" <?php echo $status_filter == 'On Water' ? 'selected' : ''; ?>>On Water</option>
+                        <option value="Cleared Customs" <?php echo $status_filter == 'Cleared Customs' ? 'selected' : ''; ?>>Cleared Customs</option>
+                        <option value="In Transit to Warehouse" <?php echo $status_filter == 'In Transit to Warehouse' ? 'selected' : ''; ?>>In Transit to Warehouse</option>
+                        <option value="Delivered to Warehouse" <?php echo $status_filter == 'Delivered to Warehouse' ? 'selected' : ''; ?>>Delivered to Warehouse</option>
+                        <option value="In Transit to Project" <?php echo $status_filter == 'In Transit to Project' ? 'selected' : ''; ?>>In Transit to Project</option>
+                        <option value="Delivered to Project" <?php echo $status_filter == 'Delivered to Project' ? 'selected' : ''; ?>>Delivered to Project</option>
+                        <option value="Canceled" <?php echo $status_filter == 'Canceled' ? 'selected' : ''; ?>>Canceled</option>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label class="filter-label" for="searchFilter">Search</label>
+                    <input type="text" name="search" id="searchFilter" class="filter-input" placeholder="Search BOL, manufacturer..." value="<?php echo htmlspecialchars($search_query); ?>">
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Sustainability Table -->
+    <div class="table-container">
+        <div class="table-header">
+            <h3 class="table-title">
+                <i class="fas fa-leaf"></i>
+                Environmental Impact
+            </h3>
+            <div class="table-header-actions">
+                <button type="submit" form="filterForm" name="export" value="1" class="btn-export-header">
+                    <i class="fas fa-download"></i>
+                    Export CSV
+                </button>
+                <div style="position: relative;">
+                    <button type="button" class="btn-columns-header" onclick="toggleColumnChooser()">
+                        <i class="fas fa-columns"></i>
+                        Columns
+                    </button>
+                    <div class="column-chooser-content" id="columnChooser">
+                        <div class="column-chooser-header">Select Columns to Show:</div>
+                        <div class="column-chooser-options">
+                            <div class="column-item">
+                                <label><input type="checkbox" class="column-toggle" data-column="col-supplier" checked> Supplier</label>
+                            </div>
+                            <div class="column-item">
+                                <label><input type="checkbox" class="column-toggle" data-column="col-wattage" checked> Wattage</label>
+                            </div>
+                            <div class="column-item">
+                                <label><input type="checkbox" class="column-toggle" data-column="col-quantity" checked> Quantity</label>
+                            </div>
+                            <div class="column-item">
+                                <label><input type="checkbox" class="column-toggle" data-column="col-bol" checked> BOL Number</label>
+                            </div>
+                            <div class="column-item">
+                                <label><input type="checkbox" class="column-toggle" data-column="col-status" checked> Status</label>
+                            </div>
+                            <div class="column-item">
+                                <label><input type="checkbox" class="column-toggle" data-column="col-miles" checked> Miles Driven</label>
+                            </div>
+                            <div class="column-item">
+                                <label><input type="checkbox" class="column-toggle" data-column="col-fuel" checked> Fuel Consumption</label>
+                            </div>
+                            <div class="column-item">
+                                <label><input type="checkbox" class="column-toggle" data-column="col-emissions" checked> Emissions</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
     <!-- Deliveries Table -->
     <div class="table-responsive">
@@ -902,21 +1352,11 @@ $conn->close();
 
     // Click outside handler
     document.addEventListener('click', function(e) {
-        // Close filters dropdown
-        if (!e.target.closest('.filters-dropdown')) {
-            const filtersDropdown = document.getElementById('filtersDropdown');
-            if (filtersDropdown && filtersDropdown.classList.contains('show')) {
-                filtersDropdown.classList.remove('show');
-                document.getElementById('filter-arrow').textContent = '▼';
-            }
-        }
-        
         // Close column chooser
-        if (!e.target.closest('.column-chooser')) {
+        if (!e.target.closest('.btn-columns-header') && !e.target.closest('.column-chooser-content')) {
             const columnChooser = document.getElementById('columnChooser');
             if (columnChooser && columnChooser.classList.contains('show')) {
                 columnChooser.classList.remove('show');
-                document.getElementById('column-arrow').textContent = '▼';
             }
         }
     });
@@ -936,3 +1376,4 @@ $conn->close();
 </main>
 </body>
 </html>
+
