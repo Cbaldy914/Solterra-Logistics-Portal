@@ -1470,9 +1470,9 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 }
 
 .toggle-buttons button.active {
-    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    background: #293E4C;
     color: #fff;
-    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+    box-shadow: 0 4px 12px rgba(41, 62, 76, 0.3);
     transform: translateY(-1px);
 }
 
@@ -3756,6 +3756,15 @@ document.addEventListener('DOMContentLoaded', function() {
             <!-- Customer View Buttons -->
             <div id="customer-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: none;"' : 'style="display: flex;"';?> >
                 <div class="dropdown">
+                    <button class="dropdown-btn" onclick="toggleCustomerModulesDropdown()">
+                        Modules <span class="dropdown-arrow">▼</span>
+                    </button>
+                    <div class="dropdown-content" id="customerModulesDropdown">
+                        <a href="module_overview.php?project_id=<?php echo $project_id; ?>">📦 Module Overview</a>
+                        <a href="manage_pallets.php?project_id=<?php echo $project_id; ?>">📋 View Pallets</a>
+                    </div>
+                </div>
+                <div class="dropdown">
                     <button class="dropdown-btn" onclick="toggleCustomerDeliveriesDropdown()">
                         Deliveries <span class="dropdown-arrow">▼</span>
                     </button>
@@ -3772,6 +3781,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <div class="dropdown-content" id="customerReportsDropdown">
                         <a href="project_cost_details?project_id=<?php echo $project_id; ?>">💰 Cost Report</a>
                         <a href="project_sustainability_details?project_id=<?php echo $project_id; ?>">🌱 Sustainability Report</a>
+                        <a href="warranty.php?project_id=<?php echo $project_id; ?>">⚠️ Exceptions</a>
                     </div>
                 </div>
                 <div class="dropdown">
@@ -3783,7 +3793,6 @@ document.addEventListener('DOMContentLoaded', function() {
                         <a href="global_documents.php?project_id=<?php echo $project_id; ?>&from=project_overview">🌐 Global Documents</a>
                     </div>
                 </div>
-                <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">Exceptions</button>
             </div>
         </div>
     </div>
@@ -6666,9 +6675,17 @@ function updateTimelineRemainingTextAdmin() {
 <?php endif; ?>
 
 // Dropdown functionality
+function toggleCustomerModulesDropdown() {
+    var dropdown = document.getElementById("customerModulesDropdown");
+    var dropdownBtn = document.querySelector("#customer-buttons .dropdown:first-child .dropdown-btn");
+    
+    dropdown.classList.toggle("show");
+    dropdownBtn.classList.toggle("active");
+}
+
 function toggleCustomerDeliveriesDropdown() {
     var dropdown = document.getElementById("customerDeliveriesDropdown");
-    var dropdownBtn = document.querySelector("#customer-buttons .dropdown:first-child .dropdown-btn");
+    var dropdownBtn = document.querySelector("#customer-buttons .dropdown:nth-child(2) .dropdown-btn");
     
     dropdown.classList.toggle("show");
     dropdownBtn.classList.toggle("active");
@@ -6676,7 +6693,7 @@ function toggleCustomerDeliveriesDropdown() {
 
 function toggleCustomerReportsDropdown() {
     var dropdown = document.getElementById("customerReportsDropdown");
-    var dropdownBtn = document.querySelector("#customer-buttons .dropdown:nth-child(3) .dropdown-btn");
+    var dropdownBtn = document.querySelector("#customer-buttons .dropdown:nth-child(4) .dropdown-btn");
     
     dropdown.classList.toggle("show");
     dropdownBtn.classList.toggle("active");
@@ -6684,7 +6701,7 @@ function toggleCustomerReportsDropdown() {
 
 function toggleCustomerDocumentsDropdown() {
     var dropdown = document.getElementById("customerDocumentsDropdown");
-    var dropdownBtn = document.querySelector("#customer-buttons .dropdown:nth-child(4) .dropdown-btn");
+    var dropdownBtn = document.querySelector("#customer-buttons .dropdown:nth-child(5) .dropdown-btn");
     
     dropdown.classList.toggle("show");
     dropdownBtn.classList.toggle("active");

@@ -27,6 +27,7 @@ if (!$conn) die("Connection failed");
 $pallet = null;
 $errorMessage = '';
 $successMessage = '';
+$breadcrumbProjectId = 0;
 
 /* ───────────────── FETCH CURRENT PALLET DETAILS ───────────────── */
 try {
@@ -43,6 +44,22 @@ try {
         throw new Exception("Pallet with ID {$pallet_id} not found.");
     }
     $pallet = $result->fetch_assoc();
+    // Derive project id for breadcrumbs
+    if ($pallet) {
+        $breadcrumbProjectId = (int)($pallet['current_project_id'] ?? 0);
+        if ($breadcrumbProjectId <= 0) { $breadcrumbProjectId = (int)($pallet['assigned_project_id'] ?? 0); }
+        if ($breadcrumbProjectId <= 0 && !empty($pallet['unassigned_module_id'])) {
+            $stmtProj = $conn->prepare("SELECT project_id FROM modules WHERE id = ? LIMIT 1");
+            if ($stmtProj) {
+                $unassignedModuleId = (int)$pallet['unassigned_module_id'];
+                $stmtProj->bind_param("i", $unassignedModuleId);
+                $stmtProj->execute();
+                $stmtProj->bind_result($projIdTmp);
+                if ($stmtProj->fetch()) { $breadcrumbProjectId = (int)$projIdTmp; }
+                $stmtProj->close();
+            }
+        }
+    }
     $stmt->close();
 } catch (Exception $e) {
     $errorMessage = $e->getMessage();
@@ -243,6 +260,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_pallet'])) {
 <?php include 'header.php'; ?>
 
 <main>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        $mpUrl = 'create_shipment.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Edit Pallet',
+            'project_id' => (int)$breadcrumbProjectId,
+            'extra' => [ ['label' => 'Manage Pallets', 'url' => $mpUrl] ]
+        ]);
+    ?>
     <h1>Edit Pallet <?php echo $pallet ? '- ' . htmlspecialchars($pallet['pallet_identifier']) : ''; ?></h1>
 
     <?php if (!empty($errorMessage)): ?>
