@@ -187,7 +187,8 @@ $stmt->close();
 // Calculate stats for each actual status
 $total_deliveries = count($deliveries);
 $status_counts = [
-    'Pending' => 0,
+    'On Water' => 0,
+    'Cleared Customs' => 0,
     'In Transit to Warehouse' => 0,
     'Delivered to Warehouse' => 0,
     'In Transit to Project' => 0,
@@ -801,6 +802,7 @@ sort($unique_suppliers);
             margin: 0;
             font-size: 1.5em;
             font-weight: 600;
+            color: white;
         }
 
         .modal-close {
@@ -819,15 +821,23 @@ sort($unique_suppliers);
         }
 
         .modal-body {
-            padding: 24px;
+            padding: 0;
             max-height: 400px;
             overflow-y: auto;
+            position: relative;
         }
 
         .pallet-table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 16px;
+            margin: 0;
+        }
+
+        .pallet-table thead {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #f8f9fa;
         }
 
         .pallet-table th {
@@ -881,6 +891,8 @@ sort($unique_suppliers);
             padding: 10px 16px;
             cursor: pointer;
             transition: background-color 0.2s ease;
+            color: #293E4C;
+            font-size: 0.9em;
         }
 
         .column-option:hover {
@@ -1082,7 +1094,9 @@ sort($unique_suppliers);
                     <?php
                     // Determine status badge color class
                     $status_badge_class = 'stat-item-default';
-                    if ($status === 'Pending') {
+                    if ($status === 'On Water') {
+                        $status_badge_class = 'stat-item-transit';
+                    } elseif ($status === 'Cleared Customs') {
                         $status_badge_class = 'stat-item-pending';
                     } elseif (strpos($status, 'In Transit') !== false) {
                         $status_badge_class = 'stat-item-transit';
@@ -1152,7 +1166,8 @@ sort($unique_suppliers);
                     <label class="filter-label" for="statusFilter">Status</label>
                     <select name="status" id="statusFilter" class="filter-select">
                         <option value="">All Statuses</option>
-                        <option value="Pending" <?php echo $status_filter == 'Pending' ? 'selected' : ''; ?>>Pending</option>
+                        <option value="On Water" <?php echo $status_filter == 'On Water' ? 'selected' : ''; ?>>On Water</option>
+                        <option value="Cleared Customs" <?php echo $status_filter == 'Cleared Customs' ? 'selected' : ''; ?>>Cleared Customs</option>
                         <option value="In Transit to Warehouse" <?php echo $status_filter == 'In Transit to Warehouse' ? 'selected' : ''; ?>>In Transit to Warehouse</option>
                         <option value="Delivered to Warehouse" <?php echo $status_filter == 'Delivered to Warehouse' ? 'selected' : ''; ?>>Delivered to Warehouse</option>
                         <option value="In Transit to Project" <?php echo $status_filter == 'In Transit to Project' ? 'selected' : ''; ?>>In Transit to Project</option>
@@ -1297,7 +1312,9 @@ sort($unique_suppliers);
                     
                     // Determine status class
                     $status_class = 'status-badge ';
-                    if ($delivery['status_of_delivery'] === 'Pending') {
+                    if ($delivery['status_of_delivery'] === 'On Water') {
+                        $status_class .= 'status-transit';
+                    } elseif ($delivery['status_of_delivery'] === 'Cleared Customs') {
                         $status_class .= 'status-pending';
                     } elseif (strpos($delivery['status_of_delivery'], 'In Transit') !== false) {
                         $status_class .= 'status-transit';
