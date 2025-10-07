@@ -1576,9 +1576,10 @@ $conn->close();
             <div class="wattage-blocks-container">
                 <?php if ($view_mode === 'project' && !empty($batch_wattage_summary)): ?>
                     <?php foreach ($module_batches as $batch): $bId = (int)$batch['id']; ?>
-                        <div class="wattage-summary-block" style="grid-column: 1 / -1; background:#f7fbfc; border:1px solid #e2ecef; padding:12px; border-radius:8px;">
+                        <div style="width: 100%; background:#f7fbfc; border:1px solid #e2ecef; padding:12px; border-radius:8px; margin-bottom: 20px;">
                             <h3 style="margin-top:0; color:#293E4C;">Batch #<?php echo $bId; ?> — <?php echo htmlspecialchars($batch['vendor_name'] ?? ''); ?></h3>
                             <?php if (!empty($batch_wattage_summary[$bId])): ?>
+                                <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-top: 15px;">
                                 <?php foreach ($batch_wattage_summary[$bId] as $wattage => $data): ?>
                                     <div class="wattage-summary-block">
                                         <h4><?php echo htmlspecialchars($wattage); ?>W Modules</h4>
@@ -1633,6 +1634,7 @@ $conn->close();
                                         <?php endif; ?>
                                     </div>
                                 <?php endforeach; ?>
+                                </div>
                             <?php else: ?>
                                 <p style="margin:0; color:#6c757d;">No module items in this batch.</p>
                             <?php endif; ?>
