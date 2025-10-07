@@ -21,6 +21,7 @@ $project_id = intval($_GET['project_id']);
 
 // Database connection
 require_once '../config.php';
+require_once 'anticipated_schedule_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -248,28 +249,58 @@ function fetchDeliveriesByDate($conn, $project_id, $date_field) {
     return $stmt->get_result();
 }
 
-$anticipated_res = fetchDeliveriesByDate($conn, $project_id, 'anticipated_delivery_date');
-$actual_res      = fetchDeliveriesByDate($conn, $project_id, 'actual_delivery_date');
-
+// NEW: Check if anticipated delivery schedule exists - use it if available
+$schedule_data = generateAnticipatedDeliveriesFromSchedule($conn, $project_id);
 $anticipated_deliveries = [];
-$actual_deliveries = [];
 $date_labels = [];
 
-while ($r = $anticipated_res->fetch_assoc()) {
-    $w = (float)$r['wattage'];
-    $dOriginal = $r['delivery_date'];
-    $d = getWeekEndingSunday($dOriginal);
-    $q_raw = (int)$r['quantity'];
-    $q_calc = calculateQuantity($q_raw, $w, $view_mode);
-
-    if (!isset($anticipated_deliveries[$d])) {
-        $anticipated_deliveries[$d] = 0;
+if ($schedule_data && !empty($schedule_data['dates'])) {
+    // Use schedule data - convert cumulative MW to non-cumulative (delta) values
+    $prev_cumulative = 0;
+    foreach ($schedule_data['dates'] as $idx => $date) {
+        $cumulative_mw = $schedule_data['cumulative_mw'][$idx];
+        $delta_mw = $cumulative_mw - $prev_cumulative;
+        
+        // Convert delta MW to view mode
+        if ($view_mode === 'modules') {
+            // Convert MW to modules using average wattage
+            $avg_wattage = getProjectAverageWattage($conn, $project_id);
+            $anticipated_deliveries[$date] = ($delta_mw * 1000000) / $avg_wattage;
+        } else {
+            // Keep as MW
+            $anticipated_deliveries[$date] = $delta_mw;
+        }
+        
+        if (!in_array($date, $date_labels)) {
+            $date_labels[] = $date;
+        }
+        
+        $prev_cumulative = $cumulative_mw;
     }
-    $anticipated_deliveries[$d] += $q_calc;
-    if (!in_array($d, $date_labels)) {
-        $date_labels[] = $d;
+} else {
+    // Fallback to old method - fetch from deliveries table
+    $anticipated_res = fetchDeliveriesByDate($conn, $project_id, 'anticipated_delivery_date');
+    
+    while ($r = $anticipated_res->fetch_assoc()) {
+        $w = (float)$r['wattage'];
+        $dOriginal = $r['delivery_date'];
+        $d = getWeekEndingSunday($dOriginal);
+        $q_raw = (int)$r['quantity'];
+        $q_calc = calculateQuantity($q_raw, $w, $view_mode);
+
+        if (!isset($anticipated_deliveries[$d])) {
+            $anticipated_deliveries[$d] = 0;
+        }
+        $anticipated_deliveries[$d] += $q_calc;
+        if (!in_array($d, $date_labels)) {
+            $date_labels[] = $d;
+        }
     }
 }
+
+// Fetch actual deliveries (unchanged)
+$actual_res = fetchDeliveriesByDate($conn, $project_id, 'actual_delivery_date');
+$actual_deliveries = [];
 while ($r = $actual_res->fetch_assoc()) {
     $w = (float)$r['wattage'];
     $dOriginal = $r['delivery_date'];
@@ -1126,19 +1157,33 @@ $stmt_palletized->bind_result($actual_palletized_count);
 $stmt_palletized->fetch();
 $stmt_palletized->close();
 
-// Calculate total expected pallets using actual pallet rows, not an average per pallet
-$stmt_expected = $conn->prepare("
-    SELECT COUNT(*) as expected
+// Calculate total EXPECTED pallets based on total modules / modules per pallet
+// This shows what SHOULD be palletized, not what IS palletized
+$modules_per_pallet = 30; // Default
+
+// Try to get project-specific modules_per_pallet if column exists
+if (isset($project['modules_per_pallet']) && $project['modules_per_pallet'] > 0) {
+    $modules_per_pallet = (int)$project['modules_per_pallet'];
+}
+
+$expected_pallets = 0;
+if ($total_raw_modules > 0) {
+    $expected_pallets = ceil($total_raw_modules / $modules_per_pallet);
+}
+
+// Also get the actual count of existing pallets (for comparison)
+$stmt_existing_pallets = $conn->prepare("
+    SELECT COUNT(*) as existing
     FROM inventory_pallets ip
     LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
     LEFT JOIN modules m ON umi.unassigned_module_id = m.id
     WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
 ");
-$stmt_expected->bind_param("iii", $project_id, $project_id, $project_id);
-$stmt_expected->execute();
-$stmt_expected->bind_result($expected_pallets);
-$stmt_expected->fetch();
-$stmt_expected->close();
+$stmt_existing_pallets->bind_param("iii", $project_id, $project_id, $project_id);
+$stmt_existing_pallets->execute();
+$stmt_existing_pallets->bind_result($existing_pallet_count);
+$stmt_existing_pallets->fetch();
+$stmt_existing_pallets->close();
 
 // Get delivered modules breakdown for JavaScript (using inventory_pallets for accuracy)
 $delivered_by_wattage = [];
@@ -3738,6 +3783,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <a href="create_shipment.php?project_id=<?php echo $project_id; ?>">Create Shipments</a>
                         <a href="manage_deliveries.php?project_id=<?php echo $project_id; ?>">Manage Deliveries</a>
                         <a href="scheduling.php?project_id=<?php echo $project_id; ?>">Scheduling</a>
+                        <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>">Anticipated Schedule</a>
                     </div>
                 </div>
                 <div class="dropdown">
