@@ -789,55 +789,68 @@ $conn->close();
         </div>
         <?php endif; ?>
 
-        <!-- Existing Schedule Display -->
+        <!-- Existing Schedule Display (Saved View styled like Quick Schedule) -->
         <?php if ($existing_schedule): ?>
-        <div class="schedule-display">
-            <div class="schedule-header">
-                <div class="schedule-info">
-                    <div class="schedule-title">
-                        <?php echo $existing_schedule['schedule_type'] === 'quick' ? '⚡ Quick Schedule' : '📋 Detailed Schedule'; ?>
-                    </div>
-                    <div class="schedule-meta">
-                        <strong>Created by:</strong> <?php echo htmlspecialchars($existing_schedule['created_by_name']); ?><br>
-                        <strong>Created:</strong> <?php echo date('F j, Y', strtotime($existing_schedule['created_at'])); ?><br>
-                        <strong>Last updated:</strong> <?php echo date('F j, Y g:i A', strtotime($existing_schedule['updated_at'])); ?><br>
-                        <strong>Start date:</strong> <?php echo date('F j, Y', strtotime($existing_schedule['delivery_start_date'])); ?>
+        <div class="main-content" id="savedScheduleView">
+            <?php if ($can_edit): ?>
+            <div class="schedule-actions" style="display:flex; gap:10px; justify-content:flex-end; margin-bottom: 10px;">
+                <button class="btn btn-secondary btn-icon" onclick="editSchedule()">✏️ Edit</button>
+                <button class="btn btn-danger btn-icon" onclick="deleteSchedule()">🗑️ Delete</button>
+            </div>
+            <?php endif; ?>
+
+            <div class="form-row-inline" style="margin-bottom: 30px;">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label class="form-label">📅 Delivery Start Date</label>
+                    <input type="text" 
+                           class="form-input" 
+                           id="savedStartDate" 
+                           value="<?php echo htmlspecialchars($existing_schedule['delivery_start_date']); ?>" 
+                           disabled>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label class="form-label">📦 Delivery Rate</label>
+                    <div class="rate-inputs">
+                        <input type="number" 
+                               class="form-input" 
+                               id="savedRateValue" 
+                               value="<?php echo ($existing_schedule['schedule_type'] === 'quick' ? htmlspecialchars(number_format($existing_schedule['quick_rate_value'], 3, '.', '')) : ''); ?>" 
+                               disabled>
+                        
+                        <select class="form-input" id="savedRateUnit" disabled style="width: 150px;">
+                            <option value="mw" <?php echo ($existing_schedule['schedule_type'] === 'quick' && $existing_schedule['quick_rate_unit'] === 'mw') ? 'selected' : ''; ?>>MW</option>
+                            <option value="modules" <?php echo ($existing_schedule['schedule_type'] === 'quick' && $existing_schedule['quick_rate_unit'] === 'modules') ? 'selected' : ''; ?>>Modules</option>
+                            <option value="pallets" <?php echo ($existing_schedule['schedule_type'] === 'quick' && $existing_schedule['quick_rate_unit'] === 'pallets') ? 'selected' : ''; ?>>Pallets</option>
+                            <option value="trucks" <?php echo ($existing_schedule['schedule_type'] === 'quick' && $existing_schedule['quick_rate_unit'] === 'trucks') ? 'selected' : ''; ?>>Trucks</option>
+                        </select>
+
+                        <select class="form-input" id="savedRateFrequency" disabled style="width: 150px;">
+                            <option value="per_week" <?php echo ($existing_schedule['schedule_type'] === 'quick' && $existing_schedule['quick_rate_frequency'] === 'per_week') ? 'selected' : ''; ?>>Per Week</option>
+                            <option value="per_month" <?php echo ($existing_schedule['schedule_type'] === 'quick' && $existing_schedule['quick_rate_frequency'] === 'per_month') ? 'selected' : ''; ?>>Per Month</option>
+                        </select>
                     </div>
                 </div>
-                <?php if ($can_edit): ?>
-                <div class="schedule-actions">
-                    <button class="btn btn-secondary btn-icon" onclick="editSchedule()">✏️ Edit</button>
-                    <button class="btn btn-danger btn-icon" onclick="deleteSchedule()">🗑️ Delete</button>
+            </div>
+
+            <div class="preview-box">
+                <div class="preview-content-wrapper">
+                    <div class="preview-content" id="savedPreviewContent"></div>
+                    <div class="preview-chart-container">
+                        <div class="preview-chart-title">📈 Anticipated Delivery Timeline</div>
+                        <canvas id="mainScheduleChart" height="120"></canvas>
+                    </div>
                 </div>
-                <?php endif; ?>
             </div>
 
-            <div class="schedule-details">
-                <?php if ($existing_schedule['schedule_type'] === 'quick'): ?>
-                    <div class="detail-row">
-                        <span class="detail-label">Delivery Rate:</span>
-                        <span class="detail-value">
-                            <?php 
-                            echo number_format($existing_schedule['quick_rate_value'], 2) . ' ';
-                            echo strtoupper($existing_schedule['quick_rate_unit']) . ' ';
-                            echo str_replace('_', ' ', $existing_schedule['quick_rate_frequency']);
-                            ?>
-                        </span>
-                    </div>
-                <?php else: ?>
-                    <div class="detail-row">
-                        <span class="detail-label">Number of Weeks:</span>
-                        <span class="detail-value"><?php echo count($existing_schedule['details']); ?> weeks</span>
-                    </div>
-                <?php endif; ?>
-
-                <?php if ($existing_schedule['notes']): ?>
-                    <div class="detail-row">
-                        <span class="detail-label">Notes:</span>
-                        <span class="detail-value"><?php echo htmlspecialchars($existing_schedule['notes']); ?></span>
-                    </div>
-                <?php endif; ?>
+            <?php if (!empty($existing_schedule['notes'])): ?>
+            <div class="form-group" style="margin-top: 20px;">
+                <label class="form-label">📝 Notes</label>
+                <div class="form-input" style="padding: 16px 18px; background: #fff;">
+                    <?php echo nl2br(htmlspecialchars($existing_schedule['notes'])); ?>
+                </div>
             </div>
+            <?php endif; ?>
         </div>
         <?php endif; ?>
 
@@ -1015,17 +1028,7 @@ $conn->close();
         </div>
         <?php endif; ?>
 
-        <!-- Visualization Chart - Only show if schedule exists and not in edit mode -->
-        <?php if ($existing_schedule): ?>
-        <div class="preview-box">
-            <div class="preview-title">
-                📈 Anticipated Delivery Timeline
-            </div>
-            <div style="background: white; padding: 20px; border-radius: 12px;">
-                <canvas id="mainScheduleChart" height="120"></canvas>
-            </div>
-        </div>
-        <?php endif; ?>
+        <!-- Visualization chart is included inside the saved preview-box above -->
     </main>
 
     <script>
@@ -1386,6 +1389,9 @@ $conn->close();
         // ==================== SCHEDULE MANAGEMENT ====================
         function editSchedule() {
             document.getElementById('scheduleEditor').style.display = 'block';
+            // Hide the saved read-only view while editing to avoid duplication
+            var savedView = document.getElementById('savedScheduleView');
+            if (savedView) { savedView.style.display = 'none'; }
             
             // Populate form with existing data
             if (existingSchedule.schedule_type === 'quick') {
@@ -1414,6 +1420,9 @@ $conn->close();
 
         function cancelEdit() {
             document.getElementById('scheduleEditor').style.display = 'none';
+            // Restore the saved read-only view if it exists
+            var savedView = document.getElementById('savedScheduleView');
+            if (savedView) { savedView.style.display = 'block'; }
             
             // Reset forms
             document.getElementById('quickScheduleForm').reset();
@@ -1463,6 +1472,22 @@ $conn->close();
                     .then(data => {
                         if (data.success && data.chart_data) {
                             createMainChart(data.chart_data);
+                            // Populate saved preview summary if present
+                            const savedContent = document.getElementById('savedPreviewContent');
+                            if (savedContent) {
+                                const dates = data.chart_data.dates || [];
+                                const last = dates.length ? new Date(dates[dates.length - 1]) : null;
+                                const durationWeeks = dates.length;
+                                const completion = last ? last.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : '-';
+                                const totalDeliveries = durationWeeks; // one point per week
+
+                                savedContent.innerHTML = `
+                                    With this delivery rate, the project will be completed in:<br>
+                                    <span class="preview-highlight">${durationWeeks} weeks</span><br>
+                                    Estimated completion: <span class="preview-highlight">${completion}</span><br>
+                                    <small style=\"color: #6c757d;\">Total: ${totalDeliveries} deliveries</small>
+                                `;
+                            }
                         }
                     })
                     .catch(() => console.error('Failed to load chart data'));

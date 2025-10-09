@@ -236,15 +236,22 @@ function getWeekEndingSunday($dateStr) {
 }
 
 // --------------- Anticipated vs Actual Deliveries (line chart) ---------------
-function fetchDeliveriesByDate($conn, $project_id, $date_field) {
-    $stmt = $conn->prepare("
-        SELECT wattage, $date_field AS delivery_date, SUM(quantity) AS quantity
-        FROM deliveries
-        WHERE project_id = ? AND $date_field IS NOT NULL
-        GROUP BY wattage, $date_field
-        ORDER BY $date_field ASC
-    ");
-    $stmt->bind_param("i", $project_id);
+function fetchDeliveriesByDate($conn, $project_id, $date_field, $status_filter = null) {
+    // Build dynamic SQL allowing optional status filtering
+    $sql = "SELECT wattage, $date_field AS delivery_date, SUM(quantity) AS quantity
+            FROM deliveries
+            WHERE project_id = ? AND $date_field IS NOT NULL";
+    if ($status_filter !== null) {
+        $sql .= " AND status_of_delivery = ?";
+    }
+    $sql .= " GROUP BY wattage, $date_field ORDER BY $date_field ASC";
+
+    $stmt = $conn->prepare($sql);
+    if ($status_filter !== null) {
+        $stmt->bind_param("is", $project_id, $status_filter);
+    } else {
+        $stmt->bind_param("i", $project_id);
+    }
     $stmt->execute();
     return $stmt->get_result();
 }
@@ -298,8 +305,8 @@ if ($schedule_data && !empty($schedule_data['dates'])) {
     }
 }
 
-// Fetch actual deliveries (unchanged)
-$actual_res = fetchDeliveriesByDate($conn, $project_id, 'actual_delivery_date');
+// Fetch actual deliveries: include all with status Delivered to Project (even if future-dated)
+$actual_res = fetchDeliveriesByDate($conn, $project_id, 'actual_delivery_date', 'Delivered to Project');
 $actual_deliveries = [];
 while ($r = $actual_res->fetch_assoc()) {
     $w = (float)$r['wattage'];
@@ -332,13 +339,10 @@ foreach ($date_labels as $dt) {
     $cumulative_ant += $val_ant;
     $lineChartData_anticipated[] = $cumulative_ant;
 
-    if ($dt <= $today_str) {
-        $val_act = $actual_deliveries[$dt] ?? 0;
-        $cumulative_act += $val_act;
-        $lineChartData_actual[] = $cumulative_act;
-    } else {
-        $lineChartData_actual[] = null;
-    }
+    // Always include actuals that have been marked Delivered to Project, even for future weeks
+    $val_act = $actual_deliveries[$dt] ?? 0;
+    $cumulative_act += $val_act;
+    $lineChartData_actual[] = $cumulative_act;
 }
 
 $lineChartData = [
@@ -1485,6 +1489,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
 <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 <style>
 /* Modern Toggle Buttons */
 .toggle-buttons {
@@ -3773,6 +3778,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <div class="dropdown-content" id="modulesDropdown">
                         <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Module Overview</a>
                         <a href="create_shipment.php?project_id=<?php echo $project_id; ?>">Manage Pallets</a>
+                        <a href="module_movements.php?project_id=<?php echo $project_id; ?>">Module Movements</a>
                     </div>
                 </div>
                 <div class="dropdown">
@@ -3808,6 +3814,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <div class="dropdown-content" id="customerModulesDropdown">
                         <a href="module_overview.php?project_id=<?php echo $project_id; ?>">📦 Module Overview</a>
                         <a href="manage_pallets.php?project_id=<?php echo $project_id; ?>">📋 View Pallets</a>
+                        <a href="module_movements.php?project_id=<?php echo $project_id; ?>">📍 Module Movements</a>
                     </div>
                 </div>
                 <div class="dropdown">
@@ -3816,7 +3823,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </button>
                     <div class="dropdown-content" id="customerDeliveriesDropdown">
                         <a href="<?php echo $deliveriesLink; ?>">📋 Delivery Schedule</a>
-                        <a href="module_movements.php?project_id=<?php echo $project_id; ?>">📍 Module Movements</a>
+                        <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>">📅 Anticipated Schedule</a>
                     </div>
                 </div>
                 <button onclick="window.location.href='warehouse_info?project_id=<?php echo $project_id; ?>'">Warehousing</button>
@@ -5000,6 +5007,8 @@ var lineData   = <?php echo $lineChartDataJSON; ?>;
 var ctxLineEl  = document.getElementById('lineChart');
 if(ctxLineEl){
 var ctxLine    = ctxLineEl.getContext('2d');
+// Force a layout refresh to ensure tick rotation takes effect in some browsers
+setTimeout(function(){ try { window.dispatchEvent(new Event('resize')); } catch(e){} }, 0);
 var lineChart = new Chart(ctxLine, {
     type: 'line',
     data: {
@@ -5026,26 +5035,38 @@ var lineChart = new Chart(ctxLine, {
         ]
     },
     options: {
-        tooltips: { mode:'index', intersect:false },
-        hover:     { mode:'index', intersect:false },
+        interaction: { mode: 'index', intersect: false },
+        responsive: true,
+        animation: false,
         scales: {
-            xAxes: [{
-                type:'time',
-                time:{
-                    parser:'YYYY-MM-DD',
-                    tooltipFormat:'ll',
-                    unit:'month',
-                    displayFormats:{month:'MMM YYYY'}
+            x: {
+                type: 'time',
+                time: {
+                    parser: 'yyyy-MM-dd',
+                    tooltipFormat: 'PP',
+                    unit: 'week',
+                    displayFormats: { week: 'MMM d' }
                 },
-                scaleLabel:{display:true, labelString:'Date'}
-            }],
-            yAxes: [{
-                ticks:{beginAtZero:true, precision:0},
-                scaleLabel:{
-                    display:true,
-                    labelString:'<?php echo ($view_mode=="mw") ? "MWs" : "Number of Modules";?>'
+                title: { display: true, text: 'Date' },
+                ticks: {
+                    maxRotation: 70,
+                    minRotation: 70,
+                    autoSkip: true,
+                    autoSkipPadding: 12
                 }
-            }]
+            },
+            y: {
+                beginAtZero: true,
+                ticks: { precision: 0 },
+                title: {
+                    display: true,
+                    text: '<?php echo ($view_mode=="mw") ? "MWs" : "Number of Modules";?>'
+                }
+            }
+        },
+        plugins: {
+            tooltip: { mode: 'index', intersect: false },
+            legend: { display: true, position: 'top' }
         }
     }
 });
@@ -6487,34 +6508,37 @@ function initializeFinancialCharts(){
             ]
         },
         options:{
-            tooltips:{
-                mode:'index',
-                intersect:false,
-                callbacks:{
-                    label:function(ti, data){
-                        return data.datasets[ti.datasetIndex].label+': $'+ parseFloat(ti.value).toFixed(2);
-                    }
-                }
-            },
-            hover:{mode:'index', intersect:false},
+            interaction:{ mode:'index', intersect:false },
+            responsive:true,
+            animation:false,
             scales:{
-                xAxes:[{
+                x:{
                     type:'time',
                     time:{
-                        parser:'YYYY-MM-DD',
-                        tooltipFormat:'ll',
+                        parser:'yyyy-MM-dd',
+                        tooltipFormat:'PP',
                         unit:'month',
-                        displayFormats:{month:'MMM YYYY'}
+                        displayFormats:{month:'MMM yyyy'}
                     },
-                    scaleLabel:{display:true, labelString:'Date'}
-                }],
-                yAxes:[{
-                    ticks:{
-                        beginAtZero:true,
-                        callback:function(val){return '$'+val.toFixed(2);}
-                    },
-                    scaleLabel:{display:true, labelString:'Cost (USD)'}
-                }]
+                    title:{display:true, text:'Date'},
+                    ticks:{ maxRotation:70, minRotation:70, autoSkip:true, autoSkipPadding:12 }
+                },
+                y:{
+                    beginAtZero:true,
+                    ticks:{ callback:function(val){return '$'+Number(val).toFixed(2);} },
+                    title:{display:true, text:'Cost (USD)'}
+                }
+            },
+            plugins:{
+                tooltip:{
+                    callbacks:{
+                        label:function(context){
+                            var label = context.dataset.label || '';
+                            var val = context.parsed.y || 0;
+                            return label+': $'+ Number(val).toFixed(2);
+                        }
+                    }
+                }
             }
         }
     });
