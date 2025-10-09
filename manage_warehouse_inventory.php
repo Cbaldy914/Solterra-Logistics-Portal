@@ -1024,6 +1024,17 @@ $conn->close();
                         }
                         ?>
                     </select>
+                    <label>Project:</label>
+                    <select id="storedProjectFilter">
+                        <option value="">All</option>
+                        <?php
+                        if (!empty($all_projects)) {
+                            foreach ($all_projects as $proj) {
+                                echo '<option value="' . htmlspecialchars($proj['project_name']) . '">' . htmlspecialchars($proj['project_name']) . '</option>';
+                            }
+                        }
+                        ?>
+                    </select>
                 </div>
                 <div class="page-actions">
                     <?php if (!$is_port): ?>
@@ -1665,6 +1676,7 @@ const warehousesData = <?php echo json_encode($other_warehouses); ?>;
 // Keep old names for backward compatibility
 const allProjectsData = projectsData;
 const otherWarehousesData = warehousesData;
+const fromProjectId = <?php echo (int)$from_project_id; ?>;
 
 // ========== TAB MANAGEMENT ==========
 function showMainTab(tabName) {
@@ -1785,17 +1797,48 @@ function updateReceiveTruckloadButton() {
 function filterStoredTable() {
     const textFilter = document.getElementById('storedSearch').value.toLowerCase();
     const wattageFilter = document.getElementById('storedWattageFilter').value;
+    const projectFilter = document.getElementById('storedProjectFilter')?.value || '';
     const rows = document.querySelectorAll('#storedTable tbody tr');
+
+    // Determine column indices dynamically from header labels
+    const headerCells = document.querySelectorAll('#storedTable thead th');
+    let projectColIndex = -1;
+    let wattageColIndex = -1;
+    headerCells.forEach((th, idx) => {
+        const label = (th.textContent || '').trim().toLowerCase();
+        if (projectColIndex === -1 && (label === 'project' || label === 'project(s)')) {
+            projectColIndex = idx;
+        }
+        if (wattageColIndex === -1 && label.startsWith('wattage')) {
+            wattageColIndex = idx; // 'Wattage' or 'Wattage Breakdown'
+        }
+    });
 
     rows.forEach(row => {
         let show = true;
+        // Text search across all cells
+        if (textFilter) {
         let rowText = '';
         for (let i = 0; i < row.cells.length; i++) {
-            rowText += row.cells[i].textContent.toLowerCase() + ' ';
+                rowText += (row.cells[i].textContent || '').toLowerCase() + ' ';
+            }
+            if (!rowText.includes(textFilter)) show = false;
         }
-        if (textFilter && !rowText.includes(textFilter)) show = false;
-        let wattageText = row.cells[2]?.textContent.replace('W','').trim() || '';
-        if (wattageFilter && wattageText !== wattageFilter) show = false;
+
+        // Wattage filter: match numeric wattage; for 'Wattage Breakdown' use substring match
+        if (wattageFilter && wattageColIndex >= 0) {
+            const cell = row.cells[wattageColIndex];
+            const cellText = (cell ? cell.textContent : '').toString();
+            const normalized = cellText.replace(/\s+/g, '');
+            if (!normalized.includes(wattageFilter)) show = false;
+        }
+
+        // Project filter: match if cell contains the project name (handles 'Project(s)')
+        if (projectFilter && projectColIndex >= 0) {
+            const cell = row.cells[projectColIndex];
+            const projText = (cell ? cell.textContent : '').toString().trim();
+            if (!projText || projText.indexOf(projectFilter) === -1) show = false;
+        }
 
         row.style.display = show ? '' : 'none';
     });
@@ -2146,6 +2189,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Filter event listeners
     document.getElementById('storedSearch')?.addEventListener('keyup', filterStoredTable);
     document.getElementById('storedWattageFilter')?.addEventListener('change', filterStoredTable);
+    document.getElementById('storedProjectFilter')?.addEventListener('change', filterStoredTable);
     document.getElementById('transitSearch')?.addEventListener('keyup', filterTransitTable);
     document.getElementById('transitWattageFilter')?.addEventListener('change', filterTransitTable);
 
@@ -2242,6 +2286,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initial states
     updateReceiveTruckloadButton();
+
+    // Auto-apply project filter if arriving from a specific project
+    try {
+        if (fromProjectId && projectsData && Array.isArray(projectsData)) {
+            const proj = projectsData.find(p => String(p.id) === String(fromProjectId));
+            if (proj) {
+                const pf = document.getElementById('storedProjectFilter');
+                if (pf) {
+                    pf.value = proj.project_name;
+                    filterStoredTable();
+                }
+            }
+        }
+    } catch (e) { console.warn('Project prefilter not applied:', e); }
 });
 
 // Toggle inbound delivery details

@@ -33,6 +33,27 @@ $successMessage = "";
 $errorMessage   = "";
 $manufacturer = null;
 
+// Normalize country input so US variants persist as 'USA'
+function slp_normalize_country($country) {
+    $trimmed = trim((string)$country);
+    $upper = strtoupper($trimmed);
+    $mapToUsa = [
+        'US',
+        'U.S.',
+        'U.S.A.',
+        'UNITED STATES',
+        'UNITED STATES OF AMERICA',
+        'AMERICA'
+    ];
+    if ($upper === '' || $upper === 'USA') {
+        return 'USA';
+    }
+    if (in_array($upper, $mapToUsa, true)) {
+        return 'USA';
+    }
+    return $trimmed;
+}
+
 // Fetch manufacturer info
 try {
     $stmt = $conn->prepare("SELECT name, short_name FROM manufacturers WHERE id = ?");
@@ -60,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $city = trim($_POST['city'] ?? '');
         $state = trim($_POST['state'] ?? '');
         $zip_code = trim($_POST['zip_code'] ?? '');
-        $country = trim($_POST['country'] ?? 'USA');
+        $country = slp_normalize_country($_POST['country'] ?? 'USA');
         $is_primary = isset($_POST['is_primary']) ? 1 : 0;
         $is_active = isset($_POST['is_active']) ? 1 : 0;
         $notes = trim($_POST['notes'] ?? '');
@@ -69,8 +90,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($location_name === '') {
             throw new Exception("Location Name is required.");
         }
-        if ($street_address === '' && $city === '' && $state === '' && $zip_code === '') {
-            throw new Exception("At least one address field is required.");
+        if ($street_address === '' || $city === '') {
+            throw new Exception("Street address and city are required.");
+        }
+        if ($country === '') {
+            throw new Exception("Country is required.");
+        }
+        if (strtoupper($country) === 'USA') {
+            if ($state === '' || $zip_code === '') {
+                throw new Exception("State and ZIP code are required for USA addresses.");
+            }
         }
 
         // If this is set as primary, we need to handle existing primary location
@@ -355,6 +384,7 @@ function initializeAddressAutocomplete() {
     const cityInput = document.getElementById('city');
     const stateInput = document.getElementById('state');
     const zipInput = document.getElementById('zip_code');
+    const countryInput = document.getElementById('country');
     
     // Create the autocomplete object for international addresses
     const autocomplete = new google.maps.places.Autocomplete(streetAddressInput, {
@@ -371,6 +401,7 @@ function initializeAddressAutocomplete() {
         cityInput.value = '';
         stateInput.value = '';
         zipInput.value = '';
+        if (countryInput) countryInput.value = '';
         
         if (!place.geometry) {
             // User entered the name of a Place that was not suggested and pressed Enter
@@ -381,8 +412,6 @@ function initializeAddressAutocomplete() {
         // Get the address components and populate the form fields
         let streetNumber = '';
         let route = '';
-        const countryInput = document.getElementById('country');
-        
         for (let i = 0; i < place.address_components.length; i++) {
             const addressType = place.address_components[i].types[0];
             const val = place.address_components[i].long_name;
@@ -411,7 +440,8 @@ function initializeAddressAutocomplete() {
                     break;
                 case 'country':
                     if (countryInput) {
-                        countryInput.value = val; // Full country name (e.g., "India", "United States")
+                        const shortName = place.address_components[i].short_name;
+                        countryInput.value = (shortName === 'US') ? 'USA' : val; // Normalize US to 'USA'
                     }
                     break;
             }

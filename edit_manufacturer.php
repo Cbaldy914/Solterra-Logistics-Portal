@@ -14,11 +14,35 @@ if (!$conn) {
     die("Database connection failed.");
 }
 
+// Get Google Maps API key from config
+$google_maps_api_key = getGoogleMapsApiKey();
+
 // Check if we have a manufacturer_id (for both GET and POST)
 if (!isset($_REQUEST['id'])) {
     die("Manufacturer ID is missing.");
 }
 $manufacturer_id = intval($_REQUEST['id']);
+
+// Normalize country input so US variants persist as 'USA'
+function slp_normalize_country($country) {
+    $trimmed = trim((string)$country);
+    $upper = strtoupper($trimmed);
+    $mapToUsa = [
+        'US',
+        'U.S.',
+        'U.S.A.',
+        'UNITED STATES',
+        'UNITED STATES OF AMERICA',
+        'AMERICA'
+    ];
+    if ($upper === '' || $upper === 'USA') {
+        return 'USA';
+    }
+    if (in_array($upper, $mapToUsa, true)) {
+        return 'USA';
+    }
+    return $trimmed;
+}
 
 // If POST, process form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -34,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $city = trim($_POST['city'] ?? '');
         $state = trim($_POST['state'] ?? '');
         $zip_code = trim($_POST['zip_code'] ?? '');
-        $country = trim($_POST['country'] ?? 'USA');
+        $country = slp_normalize_country($_POST['country'] ?? 'USA');
         $is_active = isset($_POST['is_active']) ? 1 : 0;
         $notes = trim($_POST['notes'] ?? '');
 
@@ -42,8 +66,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($name === '') {
             throw new Exception("Manufacturer Name is required.");
         }
-        if ($street_address === '' && $city === '' && $state === '' && $zip_code === '') {
-            throw new Exception("At least one address field is required.");
+        if ($street_address === '' || $city === '') {
+            throw new Exception("Street address and city are required.");
+        }
+        if ($country === '') {
+            throw new Exception("Country is required.");
+        }
+        if (strtoupper($country) === 'USA') {
+            if ($state === '' || $zip_code === '') {
+                throw new Exception("State and ZIP code are required for USA addresses.");
+            }
         }
 
         // Fetch existing logo URL to see if we need to replace it
@@ -394,7 +426,7 @@ $conn->close();
 </main>
 
 <!-- Load the Google Maps JavaScript API with Places library -->
-<script src="https://maps.googleapis.com/maps/api/js?key=REDACTED_GOOGLE_MAPS_KEY&libraries=places"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
 
 <script>
 function initializeAddressAutocomplete() {
@@ -403,6 +435,7 @@ function initializeAddressAutocomplete() {
     const cityInput = document.getElementById('city');
     const stateInput = document.getElementById('state');
     const zipInput = document.getElementById('zip_code');
+    const countryInput = document.getElementById('country');
     
     // Create the autocomplete object, restricting the search to addresses
     const autocomplete = new google.maps.places.Autocomplete(streetAddressInput, {
@@ -419,6 +452,7 @@ function initializeAddressAutocomplete() {
         cityInput.value = '';
         stateInput.value = '';
         zipInput.value = '';
+        if (countryInput) countryInput.value = '';
         
         if (!place.geometry) {
             // User entered the name of a Place that was not suggested and pressed Enter
@@ -450,6 +484,12 @@ function initializeAddressAutocomplete() {
                     break;
                 case 'postal_code':
                     zipInput.value = val;
+                    break;
+                case 'country':
+                    if (countryInput) {
+                        const shortName = place.address_components[i].short_name;
+                        countryInput.value = (shortName === 'US') ? 'USA' : val; // Normalize US to 'USA'
+                    }
                     break;
             }
         }
