@@ -462,6 +462,10 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>
 
 <?php
-// Include Sunny Chat Assistant Component
-include_once __DIR__ . '/ai-assistant/components/sunny-chat.php';
+// Include AI assistant: AgentBuilder ChatKit for global_admin; Sunny for others
+if ($role === 'global_admin') {
+    include_once __DIR__ . '/ai-assistant/components/agentbuilder-chat.php';
+} else {
+    include_once __DIR__ . '/ai-assistant/components/sunny-chat.php';
+}
 ?>
