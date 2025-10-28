@@ -109,6 +109,23 @@ if ($openai_api_key === '' && defined('OPENAI_API_KEY')) {
           if (!res.ok || !data?.client_secret) throw new Error(data?.message || 'Failed to get client_secret');
           return data.client_secret;
         }
+      },
+      // Client tool implementation: forwards to our backend endpoint (session-auth)
+      tools: {
+        async getProjectSummary({ projectName, projectId, limit }) {
+          const payload = { limit: (limit ?? 10) };
+          if (projectName) payload.projectName = projectName;
+          if (projectId) payload.project_id = projectId;
+          const res = await fetch('./ai-assistant/api/tool-project-summary.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const out = await res.json();
+          if (!res.ok || !out?.success) throw new Error(out?.message || 'Tool failed');
+          // Return JSON string so the agent can read structured data
+          return JSON.stringify(out.data);
+        }
       }
     });
     return createElement(ChatKit, { control, className: 'ab-chatkit', style: { height: '100%', width: '100%' } });
