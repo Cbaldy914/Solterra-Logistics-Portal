@@ -1,6 +1,9 @@
 <?php
-session_name("logistics_session");
-session_start();
+// Initialize session only if not already active
+if (session_status() === PHP_SESSION_NONE) {
+    session_name('logistics_session');
+    session_start();
+}
 
 // Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
