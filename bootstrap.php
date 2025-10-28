@@ -16,5 +16,22 @@ if (file_exists($vendorAutoload)) {
 }
 
 /* 3. Other global setup you already have */
-session_start();            // example
+// Start session once, with consistent name and cookie params
+if (session_status() === PHP_SESSION_NONE) {
+    session_name('logistics_session');
+    // Align cookie parameters with the portal's login settings
+    if (function_exists('session_set_cookie_params')) {
+        $isHttps = (
+            (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
+            (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') ||
+            (isset($_SERVER['SERVER_PORT']) && (int)$_SERVER['SERVER_PORT'] === 443)
+        );
+        session_set_cookie_params([
+            'secure' => $isHttps,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+    }
+    session_start();
+}
 date_default_timezone_set('America/New_York'); // example

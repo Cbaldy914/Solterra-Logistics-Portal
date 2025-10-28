@@ -1,13 +1,16 @@
 <?php
-// Set a unique session name for the logistics portal
-session_name("logistics_session");
-// Ensure session cookies are sent only over HTTPS and are not accessible via JavaScript
-session_set_cookie_params([
-    'secure' => true,
-    'httponly' => true,
-    'samesite' => 'Lax',
-]);
-session_start();
+// Initialize session only if not already active
+if (session_status() === PHP_SESSION_NONE) {
+    // Set a unique session name for the logistics portal
+    session_name('logistics_session');
+    // Ensure session cookies are sent only over HTTPS and are not accessible via JavaScript
+    session_set_cookie_params([
+        'secure' => true,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    session_start();
+}
 
 // Initialize variables
 $error_message = '';
