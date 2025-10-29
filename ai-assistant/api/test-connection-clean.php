@@ -8,8 +8,9 @@
 header('Content-Type: application/json');
 header('Cache-Control: no-cache');
 
-// Use existing session from portal
+// Use existing session from portal (ensure correct session name)
 if (session_status() === PHP_SESSION_NONE) {
+    session_name('logistics_session');
     session_start();
 }
 
