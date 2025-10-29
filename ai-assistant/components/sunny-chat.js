@@ -421,12 +421,6 @@ class SunnyChat {
                         </div>
                     </div>
                     <div class="item-actions">
-                        <button class="action-btn open" title="Open conversation">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                <circle cx="12" cy="12" r="3"></circle>
-                            </svg>
-                        </button>
                         <button class="action-btn rename" title="Rename">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -440,7 +434,12 @@ class SunnyChat {
                             </svg>
                         </button>
                     </div>`;
-                el.querySelector('.open').addEventListener('click', async () => {
+                
+                // Make entire item clickable to open conversation
+                el.addEventListener('click', async (e) => {
+                    // Don't trigger if clicking on action buttons
+                    if (e.target.closest('.item-actions')) return;
+                    
                     await fetch('./ai-assistant/api/conversations.php?action=set-active', {
                         method: 'POST',
                         credentials: 'same-origin',
@@ -453,11 +452,36 @@ class SunnyChat {
                     if (data.success) {
                         const container = document.getElementById('sunny-messages');
                         container.innerHTML = '';
+                        // Add welcome message and quick actions
+                        const welcomeDiv = document.createElement('div');
+                        welcomeDiv.className = 'sunny-welcome-message';
+                        welcomeDiv.innerHTML = `
+                            <h4>Hi ${window.SunnyConfig?.username || 'there'}! 👋</h4>
+                            <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
+                        `;
+                        container.appendChild(welcomeDiv);
+                        
+                        // Add quick actions
+                        const qaContainer = document.getElementById('sunny-quick-actions');
+                        if (qaContainer) {
+                            const qaClone = qaContainer.cloneNode(true);
+                            container.appendChild(qaClone);
+                            // Re-bind quick action clicks
+                            qaClone.querySelectorAll('.quick-action-btn').forEach(btn => {
+                                btn.addEventListener('click', () => {
+                                    const action = btn.getAttribute('data-action');
+                                    this.sendMessage(action);
+                                });
+                            });
+                        }
+                        
+                        // Add conversation messages
                         (data.data || []).forEach(m => this.addMessage(m.role, m.content));
                     }
                     close();
                 });
-                el.querySelector('.rename').addEventListener('click', async () => {
+                el.querySelector('.rename').addEventListener('click', async (e) => {
+                    e.stopPropagation(); // Prevent opening conversation
                     const title = prompt('Rename conversation', item.title);
                     if (!title) return;
                     await fetch('./ai-assistant/api/conversations.php?action=rename', {
@@ -468,7 +492,8 @@ class SunnyChat {
                     });
                     load();
                 });
-                el.querySelector('.delete').addEventListener('click', async () => {
+                el.querySelector('.delete').addEventListener('click', async (e) => {
+                    e.stopPropagation(); // Prevent opening conversation
                     if (!confirm('Delete this conversation?')) return;
                     await fetch('./ai-assistant/api/conversations.php?action=delete', {
                         method: 'POST',
@@ -491,6 +516,7 @@ class SunnyChat {
 
         drawer.querySelector('.history-new').addEventListener('click', async () => {
             const title = prompt('Name this chat', 'New chat');
+            if (!title) return;
             const res = await fetch('./ai-assistant/api/conversations.php?action=create', {
                 method: 'POST',
                 credentials: 'same-origin',
@@ -499,9 +525,33 @@ class SunnyChat {
             });
             const data = await res.json();
             if (data.success) {
-                // Clear current window for new chat
+                // Clear current window and add welcome message + quick actions for new chat
                 const container = document.getElementById('sunny-messages');
                 container.innerHTML = '';
+                
+                // Add welcome message
+                const welcomeDiv = document.createElement('div');
+                welcomeDiv.className = 'sunny-welcome-message';
+                welcomeDiv.innerHTML = `
+                    <h4>Hi ${window.SunnyConfig?.username || 'there'}! 👋</h4>
+                    <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
+                `;
+                container.appendChild(welcomeDiv);
+                
+                // Add quick actions
+                const qaContainer = document.getElementById('sunny-quick-actions');
+                if (qaContainer) {
+                    const qaClone = qaContainer.cloneNode(true);
+                    container.appendChild(qaClone);
+                    // Re-bind quick action clicks
+                    qaClone.querySelectorAll('.quick-action-btn').forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            const action = btn.getAttribute('data-action');
+                            this.sendMessage(action);
+                        });
+                    });
+                }
+                
                 close();
             }
         });
