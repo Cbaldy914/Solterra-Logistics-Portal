@@ -46,7 +46,12 @@ class SunnyChat {
                     <div class="connection-indicator"></div>
                 </div>
                 <div class="sunny-header-buttons">
-                    <button class="sunny-history-btn" id="sunny-history-btn" title="Conversation history">🕘</button>
+                    <button class="sunny-history-btn" id="sunny-history-btn" title="Conversation history">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polyline points="12 6 12 12 16 14"></polyline>
+                        </svg>
+                    </button>
                     <button class="sunny-expand-btn" id="sunny-expand-btn" title="Expand to fullscreen">
                         <svg class="expand-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
@@ -69,7 +74,12 @@ class SunnyChat {
                     <button class="quick-action-btn" data-action="Show my recent deliveries">Recent Deliveries</button>
                     <button class="quick-action-btn" data-action="Show the status of my active projects">Project Status</button>
                     <button class="quick-action-btn" data-action="Show my inventory summary">Inventory Summary</button>
-                    <button class="quick-action-manage" id="sunny-manage-qa" title="Manage quick actions">⚙</button>
+                    <button class="quick-action-manage" id="sunny-manage-qa" title="Manage quick actions">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"></path>
+                        </svg>
+                    </button>
                 </div>
             </div>
             <div class="sunny-attachments" id="sunny-attachments"></div>
@@ -228,15 +238,33 @@ class SunnyChat {
         modal.innerHTML = `
             <div class="sunny-modal">
                 <div class="sunny-modal-header">
-                    <h3>Manage Quick Actions</h3>
+                    <div class="modal-header-content">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"></path>
+                        </svg>
+                        <h3>Manage Quick Actions</h3>
+                    </div>
                     <button class="sunny-modal-close" aria-label="Close">×</button>
                 </div>
                 <div class="sunny-modal-body">
+                    <p class="modal-description">Customize up to 5 quick actions for easy access to your most common requests.</p>
                     <div id="qa-list" class="qa-list"></div>
-                    <button id="qa-add" class="qa-add">+ Add</button>
+                    <button id="qa-add" class="qa-add">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        Add Action
+                    </button>
                 </div>
                 <div class="sunny-modal-footer">
-                    <button class="qa-save-all">Save</button>
+                    <button class="qa-save-all">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        Save Changes
+                    </button>
                 </div>
             </div>`;
         document.body.appendChild(modal);
@@ -253,22 +281,37 @@ class SunnyChat {
             const row = document.createElement('div');
             row.className = 'qa-row';
             row.innerHTML = `
-                <input class="qa-label" maxlength="20" placeholder="Label (≤20)" value="${item.label || ''}" />
-                <textarea class="qa-message" placeholder="Message to send">${item.message || ''}</textarea>
-                <div class="qa-row-actions">
-                    <button class="qa-delete">Delete</button>
-                </div>`;
+                <div class="qa-row-content">
+                    <div class="qa-input-group">
+                        <label class="qa-input-label">Button Label</label>
+                        <input class="qa-label" maxlength="20" placeholder="e.g., Recent Deliveries" value="${item.label || ''}" />
+                    </div>
+                    <div class="qa-input-group">
+                        <label class="qa-input-label">Message to Send</label>
+                        <textarea class="qa-message" placeholder="e.g., Show my recent deliveries" rows="2">${item.message || ''}</textarea>
+                    </div>
+                </div>
+                <button class="qa-delete" title="Delete">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                </button>`;
             row.dataset.id = item.id || '';
             row.dataset.position = idx;
             row.querySelector('.qa-delete').addEventListener('click', async () => {
-                if (!row.dataset.id) { row.remove(); return; }
-                await fetch('./ai-assistant/api/quick-actions.php?action=delete', {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: parseInt(row.dataset.id, 10) })
-                });
-                row.remove();
+                row.style.animation = 'slideOutRight 0.3s ease';
+                setTimeout(async () => {
+                    if (row.dataset.id) {
+                        await fetch('./ai-assistant/api/quick-actions.php?action=delete', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: parseInt(row.dataset.id, 10) })
+                        });
+                    }
+                    row.remove();
+                }, 250);
             });
             listEl.appendChild(row);
         };
@@ -314,9 +357,21 @@ class SunnyChat {
         drawer.innerHTML = `
             <div class="sunny-history-drawer">
                 <div class="sunny-history-header">
-                    <h3>Conversations</h3>
+                    <div class="history-header-content">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polyline points="12 6 12 12 16 14"></polyline>
+                        </svg>
+                        <h3>Conversations</h3>
+                    </div>
                     <div class="actions">
-                        <button class="history-new">New Chat</button>
+                        <button class="history-new">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"></line>
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                            New
+                        </button>
                         <button class="history-close">×</button>
                     </div>
                 </div>
@@ -332,19 +387,58 @@ class SunnyChat {
         const renderList = (items) => {
             listEl.innerHTML = '';
             if (!items || items.length === 0) {
-                listEl.innerHTML = '<div class="empty">No conversations yet.</div>';
+                listEl.innerHTML = `
+                    <div class="empty-state">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        <p>No conversations yet</p>
+                        <span>Start chatting with Sunny to create your first conversation</span>
+                    </div>`;
                 return;
             }
             items.forEach(item => {
                 const el = document.createElement('div');
                 el.className = 'history-item';
+                const date = new Date(item.last_message_at);
+                const now = new Date();
+                const isToday = date.toDateString() === now.toDateString();
+                const isYesterday = date.toDateString() === new Date(now.setDate(now.getDate() - 1)).toDateString();
+                let timeStr = date.toLocaleString();
+                if (isToday) timeStr = 'Today, ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                else if (isYesterday) timeStr = 'Yesterday, ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                
                 el.innerHTML = `
-                    <div class="title">${item.title}</div>
-                    <div class="meta">${new Date(item.last_message_at).toLocaleString()}</div>
+                    <div class="history-item-content">
+                        <div class="history-item-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                        </div>
+                        <div class="history-item-text">
+                            <div class="title">${item.title}</div>
+                            <div class="meta">${timeStr}</div>
+                        </div>
+                    </div>
                     <div class="item-actions">
-                        <button class="open">Open</button>
-                        <button class="rename">Rename</button>
-                        <button class="delete">Delete</button>
+                        <button class="action-btn open" title="Open conversation">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                        </button>
+                        <button class="action-btn rename" title="Rename">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                        <button class="action-btn delete" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
                     </div>`;
                 el.querySelector('.open').addEventListener('click', async () => {
                     await fetch('./ai-assistant/api/conversations.php?action=set-active', {
@@ -726,8 +820,15 @@ class SunnyChat {
         if (sender === 'assistant') {
             const up = messageDiv.querySelector('.thumb-up');
             const down = messageDiv.querySelector('.thumb-down');
-            const sendFeedback = async (rating, comment) => {
+            const sendFeedback = async (rating, comment, button) => {
                 try {
+                    // Disable both buttons
+                    up.disabled = true;
+                    down.disabled = true;
+                    
+                    // Add active state and animation
+                    button.classList.add('feedback-active');
+                    
                     const cidRes = await fetch('./ai-assistant/api/conversations.php?action=get-active', { credentials: 'same-origin' });
                     const cidData = await cidRes.json();
                     const conversation_id = cidData.conversation_id || null;
@@ -737,12 +838,23 @@ class SunnyChat {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ rating, comment, conversation_id, frontend_message_id: messageId })
                     });
-                } catch (e) { /* ignore */ }
+                    
+                    // Show success state
+                    setTimeout(() => {
+                        button.classList.add('feedback-submitted');
+                        button.classList.remove('feedback-active');
+                    }, 300);
+                } catch (e) { 
+                    // Re-enable on error
+                    up.disabled = false;
+                    down.disabled = false;
+                    button.classList.remove('feedback-active');
+                }
             };
-            if (up) up.addEventListener('click', () => sendFeedback(1, ''));
+            if (up) up.addEventListener('click', () => sendFeedback(1, '', up));
             if (down) down.addEventListener('click', async () => {
                 const comment = prompt('What would have been better? (optional)') || '';
-                await sendFeedback(-1, comment);
+                await sendFeedback(-1, comment, down);
             });
         }
 
