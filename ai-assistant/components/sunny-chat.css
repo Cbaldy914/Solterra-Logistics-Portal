@@ -533,12 +533,22 @@
         gap: 4px;
     }
     
-    .sunny-history-btn,
+    .sunny-settings-btn,
     .sunny-expand-btn,
     .sunny-chat-close-btn {
         width: 32px;
         height: 32px;
         padding: 6px;
+    }
+
+    .sunny-settings-panel {
+        width: 100%;
+        max-width: 100vw;
+    }
+
+    .settings-tab {
+        font-size: 13px;
+        padding: 12px 12px;
     }
 }
 
@@ -818,7 +828,7 @@
     margin-left: 8px;
 }
 
-.sunny-history-btn,
+.sunny-settings-btn,
 .sunny-expand-btn,
 .sunny-chat-close-btn {
     background: rgba(255, 255, 255, 0.1);
@@ -835,7 +845,7 @@
     height: 34px;
 }
 
-.sunny-history-btn:hover,
+.sunny-settings-btn:hover,
 .sunny-expand-btn:hover,
 .sunny-chat-close-btn:hover {
     background: rgba(255, 255, 255, 0.2);
@@ -905,8 +915,8 @@
     flex-shrink: 0;
 }
 
-/* History drawer */
-.sunny-history-overlay { 
+/* Settings panel (replaces history drawer) */
+.sunny-settings-overlay { 
     position: fixed; 
     inset: 0; 
     background: rgba(0,0,0,0.4); 
@@ -921,7 +931,7 @@
     to { opacity: 1; }
 }
 
-.sunny-history-drawer { 
+.sunny-settings-panel { 
     width: 380px; 
     max-width: 90vw; 
     background: #fff; 
@@ -941,7 +951,7 @@
     }
 }
 
-.sunny-history-header { 
+.sunny-settings-header { 
     display: flex; 
     align-items: center; 
     justify-content: space-between; 
@@ -951,19 +961,240 @@
     color: white;
 }
 
-.history-header-content {
+.settings-header-content {
     display: flex;
     align-items: center;
     gap: 12px;
 }
 
-.history-header-content h3 {
+.settings-header-content h3 {
     margin: 0;
     font-size: 18px;
     font-weight: 600;
     color: white;
 }
 
+.settings-close {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: white;
+    font-size: 20px;
+    padding: 4px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.settings-close:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Settings tabs */
+.sunny-settings-tabs {
+    display: flex;
+    border-bottom: 2px solid #e8eaed;
+    background: #f8f9fa;
+}
+
+.settings-tab {
+    flex: 1;
+    padding: 14px 16px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: #6c757d;
+    transition: all 0.2s ease;
+    position: relative;
+    font-family: 'Poppins', sans-serif;
+}
+
+.settings-tab:hover {
+    color: var(--secondary-blue);
+    background: rgba(72, 140, 154, 0.05);
+}
+
+.settings-tab.active {
+    color: var(--secondary-blue);
+}
+
+.settings-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--secondary-blue);
+}
+
+.sunny-settings-content {
+    flex: 1;
+    overflow: auto;
+    padding: 16px;
+}
+
+.settings-tab-content {
+    display: none;
+}
+
+.settings-tab-content.active {
+    display: block;
+}
+
+.tab-actions {
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.tab-actions button {
+    background: var(--secondary-blue);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+}
+
+.tab-actions button:hover {
+    background: var(--primary-blue);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+}
+
+.coming-soon {
+    text-align: center;
+    padding: 40px 20px;
+    color: #6c757d;
+    font-size: 14px;
+}
+
+/* Memory items */
+.memory-item {
+    border: 1px solid #e8eaed;
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    transition: all 0.2s ease;
+    background: white;
+}
+
+.memory-item:hover {
+    border-color: var(--secondary-blue);
+    box-shadow: 0 2px 8px rgba(72, 140, 154, 0.15);
+}
+
+.memory-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.memory-title {
+    font-weight: 600;
+    color: var(--primary-blue);
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.memory-text {
+    color: #6c757d;
+    font-size: 13px;
+    line-height: 1.4;
+    margin-bottom: 8px;
+}
+
+.memory-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: #999;
+}
+
+.memory-actions {
+    display: flex;
+    gap: 4px;
+    align-items: flex-start;
+}
+
+/* Form groups for memory modals */
+.form-group {
+    margin-bottom: 16px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary-blue);
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    background: white;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--secondary-blue);
+    box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+/* Memory modal save button */
+.memory-save {
+    background: linear-gradient(135deg, var(--secondary-blue) 0%, var(--primary-blue) 100%);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 24px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.2);
+}
+
+.memory-save:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
+}
+
+.memory-save:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(72, 140, 154, 0.3);
+}
+
+/* Keep old history header actions for backwards compatibility */
 .sunny-history-header .actions { 
     display: flex; 
     align-items: center; 
