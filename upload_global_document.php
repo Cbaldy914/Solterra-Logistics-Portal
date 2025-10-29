@@ -30,6 +30,7 @@ if (!$conn) {
 
 // Include helper functions
 require_once 'document_helpers.php';
+require_once 'notification_helpers.php';
 
 try {
     // Validate required fields
@@ -227,6 +228,21 @@ try {
         ];
     }
 
+    // Send notifications to project users
+    if (!empty($uploaded_documents)) {
+        $docCount = count($uploaded_documents);
+        $docType = $document_sub_type;
+        $projectName = $project['project_name'];
+        
+        notify_project_users(
+            $project_id,
+            'document_upload',
+            "New {$docType} uploaded",
+            "{$docCount} document(s) uploaded to {$projectName}",
+            "project_documents?project_id={$project_id}"
+        );
+    }
+    
     $response = [
         'success' => true,
         'message' => count($uploaded_documents) . ' document(s) uploaded successfully',

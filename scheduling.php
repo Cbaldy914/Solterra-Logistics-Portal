@@ -25,6 +25,7 @@ if (!$is_admin && !$is_user) {
 // Database connection
 require_once '../config.php';
 require_once 'document_helpers.php';
+require_once 'delivery_notification_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
@@ -973,6 +974,21 @@ if ($action) {
                     $get_all_deliveries_stmt->close();
                     
                     if (!empty($delivery_ids_to_update)) {
+                        // Fetch old delivery statuses before updating (for notifications)
+                        $old_delivery_statuses_scheduling = [];
+                        $placeholders_status = implode(',', array_fill(0, count($delivery_ids_to_update), '?'));
+                        $stmt_old_statuses = $conn->prepare("SELECT id, status_of_delivery FROM deliveries WHERE id IN ($placeholders_status)");
+                        if ($stmt_old_statuses) {
+                            $types_status = str_repeat('i', count($delivery_ids_to_update));
+                            $stmt_old_statuses->bind_param($types_status, ...$delivery_ids_to_update);
+                            $stmt_old_statuses->execute();
+                            $result_old_statuses = $stmt_old_statuses->get_result();
+                            while ($row_old_status = $result_old_statuses->fetch_assoc()) {
+                                $old_delivery_statuses_scheduling[$row_old_status['id']] = $row_old_status['status_of_delivery'];
+                            }
+                            $stmt_old_statuses->close();
+                        }
+                        
                         // Update ALL delivery records for this grouped shipment (removed POD update since we use project_documents now)
                         $placeholders = implode(',', array_fill(0, count($delivery_ids_to_update), '?'));
                         $update_delivery_sql = "
@@ -997,6 +1013,13 @@ if ($action) {
                             error_log("Failed to update delivery statuses: " . $update_delivery_stmt->error);
                         } else {
                             $updated_delivery_count = $update_delivery_stmt->affected_rows;
+                            
+                            // Send notifications for delivery status changes
+                            foreach ($delivery_ids_to_update as $delivery_id_notif) {
+                                if (isset($old_delivery_statuses_scheduling[$delivery_id_notif]) && $old_delivery_statuses_scheduling[$delivery_id_notif] !== 'Delivered to Project') {
+                                    notify_delivery_status_change($delivery_id_notif, $old_delivery_statuses_scheduling[$delivery_id_notif], 'Delivered to Project');
+                                }
+                            }
                             
                             // Update associated pallet statuses to "Delivered to Project" for ALL deliveries
                             $pallet_status_update_count = 0;
@@ -1081,6 +1104,21 @@ if ($action) {
                     $get_all_deliveries_stmt->close();
                     
                     if (!empty($delivery_ids_to_revert)) {
+                        // Fetch old delivery statuses before reverting (for notifications)
+                        $old_delivery_statuses_revert = [];
+                        $placeholders_status_revert = implode(',', array_fill(0, count($delivery_ids_to_revert), '?'));
+                        $stmt_old_statuses_revert = $conn->prepare("SELECT id, status_of_delivery FROM deliveries WHERE id IN ($placeholders_status_revert)");
+                        if ($stmt_old_statuses_revert) {
+                            $types_status_revert = str_repeat('i', count($delivery_ids_to_revert));
+                            $stmt_old_statuses_revert->bind_param($types_status_revert, ...$delivery_ids_to_revert);
+                            $stmt_old_statuses_revert->execute();
+                            $result_old_statuses_revert = $stmt_old_statuses_revert->get_result();
+                            while ($row_old_status_revert = $result_old_statuses_revert->fetch_assoc()) {
+                                $old_delivery_statuses_revert[$row_old_status_revert['id']] = $row_old_status_revert['status_of_delivery'];
+                            }
+                            $stmt_old_statuses_revert->close();
+                        }
+                        
                         // Revert ALL delivery records for this grouped shipment back to "In Transit to Project"
                         $placeholders = implode(',', array_fill(0, count($delivery_ids_to_revert), '?'));
                         $revert_delivery_sql = "
@@ -1097,6 +1135,13 @@ if ($action) {
                             error_log("Failed to revert delivery statuses: " . $revert_delivery_stmt->error);
                         } else {
                             $reverted_delivery_count = $revert_delivery_stmt->affected_rows;
+                            
+                            // Send notifications for delivery status reverts
+                            foreach ($delivery_ids_to_revert as $delivery_id_revert_notif) {
+                                if (isset($old_delivery_statuses_revert[$delivery_id_revert_notif]) && $old_delivery_statuses_revert[$delivery_id_revert_notif] !== 'In Transit to Project') {
+                                    notify_delivery_status_change($delivery_id_revert_notif, $old_delivery_statuses_revert[$delivery_id_revert_notif], 'In Transit to Project');
+                                }
+                            }
                             
                             // Revert associated pallet statuses back to "In Transit to Project" for ALL deliveries
                             $pallet_revert_count = 0;
@@ -1322,6 +1367,21 @@ if ($action) {
             
             // Update all related deliveries to mark as unscheduled AND revert delivery status
             if (!empty($all_delivery_ids)) {
+                // Fetch old delivery statuses before updating (for notifications)
+                $old_delivery_statuses_delete = [];
+                $placeholders_status_delete = implode(',', array_fill(0, count($all_delivery_ids), '?'));
+                $stmt_old_statuses_delete = $conn->prepare("SELECT id, status_of_delivery FROM deliveries WHERE id IN ($placeholders_status_delete)");
+                if ($stmt_old_statuses_delete) {
+                    $types_status_delete = str_repeat('i', count($all_delivery_ids));
+                    $stmt_old_statuses_delete->bind_param($types_status_delete, ...$all_delivery_ids);
+                    $stmt_old_statuses_delete->execute();
+                    $result_old_statuses_delete = $stmt_old_statuses_delete->get_result();
+                    while ($row_old_status_delete = $result_old_statuses_delete->fetch_assoc()) {
+                        $old_delivery_statuses_delete[$row_old_status_delete['id']] = $row_old_status_delete['status_of_delivery'];
+                    }
+                    $stmt_old_statuses_delete->close();
+                }
+                
                 $placeholders_deliveries = implode(',', array_fill(0, count($all_delivery_ids), '?'));
                 
                 // Mark as unscheduled and revert delivery status to "In Transit to Project"
@@ -1336,6 +1396,13 @@ if ($action) {
                 $update_delivery->execute();
                 $delivery_revert_count = $update_delivery->affected_rows;
                 $update_delivery->close();
+                
+                // Send notifications for delivery status reverts (appointment deletion)
+                foreach ($all_delivery_ids as $delivery_id_delete_notif) {
+                    if (isset($old_delivery_statuses_delete[$delivery_id_delete_notif]) && $old_delivery_statuses_delete[$delivery_id_delete_notif] !== 'In Transit to Project') {
+                        notify_delivery_status_change($delivery_id_delete_notif, $old_delivery_statuses_delete[$delivery_id_delete_notif], 'In Transit to Project');
+                    }
+                }
                 
                 // Also revert associated pallet statuses back to "In Transit to Project"
                 $pallet_revert_count = 0;

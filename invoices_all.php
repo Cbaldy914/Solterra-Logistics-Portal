@@ -109,8 +109,110 @@ sort($statuses);
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 
     <style>
+        /* Header Section - Matching global_documents.php */
+        .global-documents-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .global-documents-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 32px;
+            box-shadow: 0 12px 24px rgba(72, 140, 154, 0.3);
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            text-align: center;
+            background: rgba(72, 140, 154, 0.08);
+            padding: 16px 20px;
+            border-radius: 16px;
+            min-width: 140px;
+        }
+
+        .stat-number {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #488C9A;
+            margin: 0;
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin: 4px 0 0 0;
+            font-weight: 500;
+        }
+
+        .stat-item.danger .stat-number {
+            color: #dc2626;
+        }
+        
+
         .invoice-summary, #invoices-table {
             border-collapse: collapse;
         }
@@ -186,22 +288,32 @@ sort($statuses);
             ]);
         ?>
 
-        <div class="page-header">
-            <h1>All Invoices for Your Account</h1>
-        </div>
-
-        <!-- Summary Table for the entire account -->
-        <div class="table-responsive">
-            <table class="invoice-summary">
-                <tr>
-                    <th>Total Open Invoices</th>
-                    <th>Total Amount Past Due</th>
-                </tr>
-                <tr>
-                    <td><?php echo number_format($total_open ?: 0, 2); ?></td>
-                    <td><?php echo number_format($total_past_due ?: 0, 2); ?></td>
-                </tr>
-            </table>
+        <div class="global-documents-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="header-icon">
+                        <i class="fas fa-file-invoice-dollar"></i>
+                    </div>
+                    <div class="header-info">
+                        <h1>All Invoices</h1>
+                        <p class="header-subtitle">Manage invoices across all your projects</p>
+                    </div>
+                </div>
+                <div class="header-stats">
+                    <div class="stat-item">
+                        <p class="stat-number"><?php echo count($invoices); ?></p>
+                        <p class="stat-label">Total Invoices</p>
+                    </div>
+                    <div class="stat-item">
+                        <p class="stat-number">$<?php echo number_format($total_open ?: 0, 2); ?></p>
+                        <p class="stat-label">Open Amount</p>
+                    </div>
+                    <div class="stat-item danger">
+                        <p class="stat-number">$<?php echo number_format($total_past_due ?: 0, 2); ?></p>
+                        <p class="stat-label">Past Due</p>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <?php if (count($invoices) > 0): ?>
