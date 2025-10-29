@@ -23,6 +23,10 @@ if ($role === null) {
     header("Location: login");
     exit();
 }
+
+// Get unread notification count
+require_once __DIR__ . '/notification_helpers.php';
+$unread_notifications = unread_notification_count($_SESSION['user_id']);
 ?>
 
 <!-- Scoped, self-contained header styles (independent from portal.css) -->
@@ -129,6 +133,33 @@ if ($role === null) {
   color: #fff; display: inline-flex; align-items: center; justify-content: center;
   font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
   box-shadow: 0 2px 10px rgba(72,140,154,0.28);
+  position: relative;
+}
+
+/* Notification badge on profile */
+.slp-profile-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
+  animation: pulse-badge 2s ease-in-out infinite;
+  border: 2px solid var(--slp-bg);
+}
+
+@keyframes pulse-badge {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
 }
 
 /* Dropdown panel */
@@ -260,7 +291,26 @@ if ($role === null) {
             </div>
           </li>
 
-          <li class="slp-item" role="none"><a class="slp-link slp-link--primary" href="logout" role="menuitem">Sign Out</a></li>
+          <li class="slp-item slp-has-dropdown slp-align-right" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">
+              <span class="slp-profile">
+                <?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?>
+                <?php if ($unread_notifications > 0): ?>
+                  <span class="slp-profile-badge"><?php echo $unread_notifications; ?></span>
+                <?php endif; ?>
+              </span>
+            </a>
+            <div class="slp-submenu" role="menu">
+              <a href="notifications" role="menuitem">
+                Notifications 
+                <?php if ($unread_notifications > 0): ?>
+                  <span style="color: #ef4444; font-weight: 700;">(<?php echo $unread_notifications; ?>)</span>
+                <?php endif; ?>
+              </a>
+              <a href="account_settings" role="menuitem">Profile</a>
+              <a class="slp-signout" href="logout" role="menuitem">Sign Out</a>
+            </div>
+          </li>
 
         <?php elseif ($role === 'admin'): ?>
           <li class="slp-item slp-has-dropdown" role="none">
@@ -321,10 +371,21 @@ if ($role === null) {
 
           <li class="slp-item slp-has-dropdown slp-align-right" role="none">
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">
-              <span class="slp-profile"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></span>
+              <span class="slp-profile">
+                <?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?>
+                <?php if ($unread_notifications > 0): ?>
+                  <span class="slp-profile-badge"><?php echo $unread_notifications; ?></span>
+                <?php endif; ?>
+              </span>
             </a>
             <div class="slp-submenu" role="menu">
-              <a href="account_settings" role="menuitem">Account Settings</a>
+              <a href="notifications" role="menuitem">
+                Notifications 
+                <?php if ($unread_notifications > 0): ?>
+                  <span style="color: #ef4444; font-weight: 700;">(<?php echo $unread_notifications; ?>)</span>
+                <?php endif; ?>
+              </a>
+              <a href="account_settings" role="menuitem">Profile</a>
               <a href="questions" role="menuitem">Questions & Support</a>
               <a href="invoices_all" role="menuitem">Invoices</a>
               <a class="slp-signout" href="logout" role="menuitem">Sign Out</a>
@@ -358,8 +419,27 @@ if ($role === null) {
               <a href="global_documents" role="menuitem">Global Documents</a>
             </div>
           </li>
-          <li class="slp-item" role="none"><a class="slp-link" href="questions" role="menuitem">Questions</a></li>
-          <li class="slp-item" role="none"><a class="slp-link slp-link--primary" href="logout" role="menuitem">Sign Out</a></li>
+          <li class="slp-item slp-has-dropdown slp-align-right" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">
+              <span class="slp-profile">
+                <?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?>
+                <?php if ($unread_notifications > 0): ?>
+                  <span class="slp-profile-badge"><?php echo $unread_notifications; ?></span>
+                <?php endif; ?>
+              </span>
+            </a>
+            <div class="slp-submenu" role="menu">
+              <a href="notifications" role="menuitem">
+                Notifications 
+                <?php if ($unread_notifications > 0): ?>
+                  <span style="color: #ef4444; font-weight: 700;">(<?php echo $unread_notifications; ?>)</span>
+                <?php endif; ?>
+              </a>
+              <a href="account_settings" role="menuitem">Profile</a>
+              <a href="questions" role="menuitem">Questions & Support</a>
+              <a class="slp-signout" href="logout" role="menuitem">Sign Out</a>
+            </div>
+          </li>
 
         <?php else: ?>
           <li class="slp-item slp-has-dropdown" role="none">
@@ -398,10 +478,21 @@ if ($role === null) {
           </li>
           <li class="slp-item slp-has-dropdown slp-align-right" role="none">
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">
-              <span class="slp-profile"><?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?></span>
+              <span class="slp-profile">
+                <?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?>
+                <?php if ($unread_notifications > 0): ?>
+                  <span class="slp-profile-badge"><?php echo $unread_notifications; ?></span>
+                <?php endif; ?>
+              </span>
             </a>
             <div class="slp-submenu" role="menu">
-              <a href="account_settings" role="menuitem">Account Settings</a>
+              <a href="notifications" role="menuitem">
+                Notifications 
+                <?php if ($unread_notifications > 0): ?>
+                  <span style="color: #ef4444; font-weight: 700;">(<?php echo $unread_notifications; ?>)</span>
+                <?php endif; ?>
+              </a>
+              <a href="account_settings" role="menuitem">Profile</a>
               <a href="questions" role="menuitem">Questions & Support</a>
               <a href="invoices_all" role="menuitem">Invoices</a>
               <a class="slp-signout" href="logout" role="menuitem">Sign Out</a>

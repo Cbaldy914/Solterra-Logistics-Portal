@@ -160,6 +160,16 @@ if (isset($_POST['new_wattages']) && isset($_POST['new_total_orders'])) {
     }
 }
 
+// Send notification to project users about the update
+require_once 'notification_helpers.php';
+notify_project_users(
+    $project_id,
+    'project_update',
+    "Project Updated: {$project_name}",
+    "The project details have been updated by an administrator.",
+    "project_overview.php?project_id={$project_id}"
+);
+
 // Close the database connection
 $conn->close();
 
