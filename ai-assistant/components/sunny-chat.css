@@ -961,6 +961,7 @@
     margin: 0;
     font-size: 18px;
     font-weight: 600;
+    color: white;
 }
 
 .sunny-history-header .actions { 
@@ -1042,6 +1043,7 @@
     transition: all 0.2s ease;
     cursor: pointer;
     background: white;
+    user-select: none;
 }
 
 .history-item:hover { 
@@ -1186,6 +1188,7 @@
     margin: 0;
     font-size: 18px;
     font-weight: 600;
+    color: white;
 }
 
 .sunny-modal-close {
