@@ -28,6 +28,19 @@ if (!$conn) {
 $user_id = $_SESSION['user_id'];
 $accountIds = [];
 
+// Get user's display name (first name + last name, or username if not set)
+$displayName = $_SESSION['username']; // default to username
+$stmtUser = $conn->prepare("SELECT first_name, last_name FROM users WHERE id = ?");
+$stmtUser->bind_param("i", $user_id);
+$stmtUser->execute();
+$stmtUser->bind_result($firstName, $lastName);
+$stmtUser->fetch();
+$stmtUser->close();
+
+if (!empty($firstName) || !empty($lastName)) {
+    $displayName = trim($firstName . ' ' . $lastName);
+}
+
 if ($role === 'global_admin') {
     // Global admins can view all accounts
     $resultAccts = $conn->query("SELECT id FROM customer_accounts");
@@ -557,7 +570,7 @@ $conn->close();
 <main>
     <!-- Enhanced Welcome Header -->
     <div class="dashboard-header">
-        <h1>Welcome back, <?php echo htmlspecialchars($_SESSION['username']); ?>!</h1>
+        <h1>Welcome back, <?php echo htmlspecialchars($displayName); ?>!</h1>
         <p>Here's an overview of your projects and recent activity</p>
     </div>
 

@@ -11,6 +11,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 
 require_once '../config.php';
 require_once 'document_helpers.php';
+require_once 'delivery_notification_helpers.php';
 
 // Check the action to determine what type of receiving we're doing
 $action = $_POST['action'] ?? '';
@@ -71,11 +72,22 @@ if ($action === 'receive_truckload') {
     $conn->begin_transaction();
     
     try {
+        // Get delivery info including old status for notifications (before any updates)
+        $stmt_get_delivery = $conn->prepare("SELECT project_id, status_of_delivery FROM deliveries WHERE id = ?");
+        if (!$stmt_get_delivery) {
+            throw new Exception("Failed to prepare delivery info query: " . $conn->error);
+        }
+        $stmt_get_delivery->bind_param("i", $delivery_id);
+        $stmt_get_delivery->execute();
+        $stmt_get_delivery->bind_result($project_id_for_notif, $old_delivery_status);
+        $stmt_get_delivery->fetch();
+        $stmt_get_delivery->close();
+        
         // Handle POD file upload using new document management system
         $pod_path = null;
         if (isset($_FILES['pod_file']) && $_FILES['pod_file']['error'] === UPLOAD_ERR_OK) {
             try {
-                // Get delivery info
+                // Get delivery info for POD upload
                 $stmt_delivery = $conn->prepare("SELECT project_id FROM deliveries WHERE id = ?");
                 if (!$stmt_delivery) {
                     throw new Exception("Failed to prepare delivery info query: " . $conn->error);
@@ -206,6 +218,12 @@ if ($action === 'receive_truckload') {
         }
         
         $conn->commit();
+        
+        // Send notification about delivery status change
+        if ($old_delivery_status !== $delivery_status) {
+            notify_delivery_status_change($delivery_id, $old_delivery_status, $delivery_status);
+        }
+        
         $_SESSION['move_pallet_message'] = "Successfully received truckload with $updated_count pallets. Delivery updated with arrival date: $actual_arrival_date.";
         
     } catch (Exception $e) {
@@ -287,6 +305,22 @@ if ($action === 'receive_truckload') {
         $total_pallets_updated = 0;
         $successful_deliveries = [];
         $errors = [];
+        $old_delivery_statuses = []; // Store old statuses for notifications
+        
+        // Fetch old delivery statuses before updates for notifications
+        foreach ($delivery_ids as $del_id) {
+            $del_id_int = intval($del_id);
+            $stmt_old_status = $conn->prepare("SELECT status_of_delivery FROM deliveries WHERE id = ?");
+            if ($stmt_old_status) {
+                $stmt_old_status->bind_param("i", $del_id_int);
+                $stmt_old_status->execute();
+                $stmt_old_status->bind_result($old_status);
+                if ($stmt_old_status->fetch()) {
+                    $old_delivery_statuses[$del_id_int] = $old_status;
+                }
+                $stmt_old_status->close();
+            }
+        }
         
         foreach ($delivery_ids as $delivery_id) {
             $delivery_id = intval($delivery_id);
@@ -419,6 +453,14 @@ if ($action === 'receive_truckload') {
         
         if (!empty($successful_deliveries)) {
             $conn->commit();
+            
+            // Send notifications for each successfully updated delivery
+            foreach ($successful_deliveries as $delivery_id_success) {
+                if (isset($old_delivery_statuses[$delivery_id_success]) && $old_delivery_statuses[$delivery_id_success] !== $delivery_status) {
+                    notify_delivery_status_change($delivery_id_success, $old_delivery_statuses[$delivery_id_success], $delivery_status);
+                }
+            }
+            
             $success_message = "Successfully received " . count($successful_deliveries) . " truckload(s) with $total_pallets_updated total pallets. ";
             $success_message .= "Deliveries: " . implode(", ", $successful_deliveries) . ". ";
             $success_message .= "Arrival date: $actual_arrival_date.";
@@ -460,6 +502,8 @@ if ($action === 'receive_truckload') {
     $current_date = date('Y-m-d');
     $new_pallet_status = $received_pallet_status;
     $new_delivery_status = $delivery_status;
+    $old_delivery_statuses_pallets = []; // Track old statuses for notifications
+    $updated_deliveries = []; // Track which deliveries were updated
     
     try {
         foreach ($pallet_ids as $pallet_id) {
@@ -474,6 +518,21 @@ if ($action === 'receive_truckload') {
                 $errors[] = "Missing delivery ID for pallet $pallet_id.";
                 continue;
             }
+            
+            // Fetch old delivery status before updating (for notifications)
+            if (!isset($old_delivery_statuses_pallets[$delivery_id])) {
+                $stmt_old_status = $conn->prepare("SELECT status_of_delivery FROM deliveries WHERE id = ?");
+                if ($stmt_old_status) {
+                    $stmt_old_status->bind_param("i", $delivery_id);
+                    $stmt_old_status->execute();
+                    $stmt_old_status->bind_result($old_status);
+                    if ($stmt_old_status->fetch()) {
+                        $old_delivery_statuses_pallets[$delivery_id] = $old_status;
+                    }
+                    $stmt_old_status->close();
+                }
+            }
+            
             // 1. Update inventory_pallets table (handle overseas statuses too)
             $sql_update_pallet = "UPDATE inventory_pallets SET status = ?, current_warehouse_id = ?, arrival_date = ? WHERE id = ? AND status IN ('In Transit to Warehouse', 'On Water', 'Cleared Customs')";
             $stmt_update_pallet = $conn->prepare($sql_update_pallet);
@@ -500,6 +559,11 @@ if ($action === 'receive_truckload') {
                 $stmt_update_delivery->bind_param("ssi", $new_delivery_status, $current_timestamp, $delivery_id);
                 if (!$stmt_update_delivery->execute()) {
                     error_log("Warning: Failed to update delivery status for ID $delivery_id: " . $stmt_update_delivery->error);
+                } else {
+                    // Track this delivery for notifications
+                    if (!in_array($delivery_id, $updated_deliveries)) {
+                        $updated_deliveries[] = $delivery_id;
+                    }
                 }
                 $stmt_update_delivery->close();
             }
@@ -518,6 +582,14 @@ if ($action === 'receive_truckload') {
             $successes[] = $pallet_id;
         }
         $conn->commit();
+        
+        // Send notifications for each updated delivery
+        foreach ($updated_deliveries as $updated_delivery_id) {
+            if (isset($old_delivery_statuses_pallets[$updated_delivery_id]) && $old_delivery_statuses_pallets[$updated_delivery_id] !== $new_delivery_status) {
+                notify_delivery_status_change($updated_delivery_id, $old_delivery_statuses_pallets[$updated_delivery_id], $new_delivery_status);
+            }
+        }
+        
         $msg = '';
         if (!empty($successes)) {
             $msg .= "Successfully received Pallet ID(s): " . implode(", ", $successes) . ". ";

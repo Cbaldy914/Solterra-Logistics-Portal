@@ -70,16 +70,145 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* Header Section - Matching global_documents.php */
+        .global-documents-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .global-documents-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 32px;
+            box-shadow: 0 12px 24px rgba(72, 140, 154, 0.3);
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+
+        .contact-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .info-card {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+            border: 1px solid #e9ecef;
+        }
+
+        .info-card i {
+            font-size: 2em;
+            color: #488C9A;
+            margin-bottom: 12px;
+        }
+
+        .info-card h3 {
+            margin: 0 0 8px 0;
+            color: #293E4C;
+        }
+
+        .info-card a {
+            color: #488C9A;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .info-card a:hover {
+            color: #3A6E7F;
+        }
+    </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
     <main>
-        <h1>Questions & Support</h1>
-        <div class="contact-info">
-            <h2>We're here to help!</h2>
-            <p>If you have any questions, need assistance, or want to report an error, please use the form below or contact us directly.</p>
-            <p><strong>Email:</strong> <a href="mailto:info@solterrasol.com">info@solterrasol.com</a></p>
-            <p><strong>Phone:</strong> <a href="tel:9196378842">(919) 637-8842</a></p>
+        <div class="global-documents-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="header-icon">
+                        <i class="fas fa-question-circle"></i>
+                    </div>
+                    <div class="header-info">
+                        <h1>Questions & Support</h1>
+                        <p class="header-subtitle">We're here to help with any questions or concerns</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="contact-info-grid">
+            <div class="info-card">
+                <i class="fas fa-envelope"></i>
+                <h3>Email Us</h3>
+                <p><a href="mailto:info@solterrasol.com">info@solterrasol.com</a></p>
+            </div>
+            <div class="info-card">
+                <i class="fas fa-phone"></i>
+                <h3>Call Us</h3>
+                <p><a href="tel:9196378842">(919) 637-8842</a></p>
+            </div>
+            <div class="info-card">
+                <i class="fas fa-clock"></i>
+                <h3>Business Hours</h3>
+                <p>Monday - Friday<br>9:00 AM - 5:00 PM EST</p>
+            </div>
         </div>
 
         <div class="contact-form">

@@ -5,8 +5,8 @@ session_start();
 if (!isset($_SESSION['user_id'])) { header('Location: login'); exit(); }
 
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/warranty_notification_helpers.php';
 require_once __DIR__ . '/warranty_helpers.php';
-require_once __DIR__ . '/notifications.php';
 
 $userId = (int)($_SESSION['user_id'] ?? 0);
 $role = (string)($_SESSION['role'] ?? 'user');

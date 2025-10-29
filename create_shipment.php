@@ -9,6 +9,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 }
 
 require_once '../config.php';
+require_once 'delivery_notification_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
@@ -727,10 +728,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
             $container_number_for_update = $_POST['container_number'] ?? '';
             
             if (is_array($drayage_container_ids) && !empty($drayage_container_ids) && !empty($container_number_for_update)) {
-                // Update original container deliveries to mark them as "Departed Port"
+                // Fetch old delivery statuses before updating (for notifications)
+                $old_container_statuses = [];
                 $placeholders = implode(',', array_fill(0, count($drayage_container_ids), '?'));
                 $types = str_repeat('i', count($drayage_container_ids));
+                $stmt_old_container_status = $conn->prepare("SELECT id, status_of_delivery FROM deliveries WHERE id IN ($placeholders)");
+                if ($stmt_old_container_status) {
+                    $stmt_old_container_status->bind_param($types, ...$drayage_container_ids);
+                    $stmt_old_container_status->execute();
+                    $result_old_container = $stmt_old_container_status->get_result();
+                    while ($row_old_container = $result_old_container->fetch_assoc()) {
+                        $old_container_statuses[$row_old_container['id']] = $row_old_container['status_of_delivery'];
+                    }
+                    $stmt_old_container_status->close();
+                }
                 
+                // Update original container deliveries to mark them as "Departed Port"
                 // Remove pallet associations from original container deliveries
                 $sql_unlink = "DELETE FROM delivery_pallets WHERE delivery_id IN ($placeholders)";
                 $stmt_unlink = $conn->prepare($sql_unlink);
@@ -747,6 +760,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                     $stmt_update->bind_param($types, ...$drayage_container_ids);
                     $stmt_update->execute();
                     $stmt_update->close();
+                    
+                    // Send notifications for container departure
+                    foreach ($drayage_container_ids as $container_id) {
+                        if (isset($old_container_statuses[$container_id]) && $old_container_statuses[$container_id] !== 'Departed Port') {
+                            notify_delivery_status_change($container_id, $old_container_statuses[$container_id], 'Departed Port');
+                        }
+                    }
                 }
             }
         }

@@ -23,6 +23,7 @@ $project_id_from_url = isset($_GET['project_id']) ? (int)$_GET['project_id'] : n
 
 require_once '../config.php';
 require_once 'document_helpers.php';
+require_once 'delivery_notification_helpers.php';
 $conn = getDBConnection();
 if (!$conn) die("Connection failed");
 
@@ -102,6 +103,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
 
     $conn->begin_transaction();
     try {
+        /* Store old values for change detection */
+        $old_status = $delivery['status_of_delivery'] ?? '';
+        $old_anticipated_date = $delivery['anticipated_delivery_date'];
+        $old_warehouse_arrival = $delivery['warehouse_arrival_date'];
+        $old_actual_date = $delivery['actual_delivery_date'];
+        $old_left_wh_date = $delivery['left_warehouse_date'];
+        
         /* Collect inputs */
         $supplier           = $_POST['manufacturer']          ?? ''; // Map manufacturer to supplier for backward compatibility
         $wattage            = $delivery['wattage']; // Keep original wattage, not editable here
@@ -260,6 +268,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
         }
 
         $conn->commit();
+        
+        // Send notifications for any changes
+        if ($old_status !== $status) {
+            notify_delivery_status_change($delivery_id, $old_status, $status);
+        }
+        if ($old_anticipated_date !== $anticipated_date) {
+            notify_delivery_date_change($delivery_id, 'anticipated_delivery', $old_anticipated_date, $anticipated_date);
+        }
+        if ($old_warehouse_arrival !== $warehouse_arrival) {
+            notify_delivery_date_change($delivery_id, 'warehouse_arrival', $old_warehouse_arrival, $warehouse_arrival);
+        }
+        if ($old_actual_date !== $actual_date) {
+            notify_delivery_date_change($delivery_id, 'actual_delivery', $old_actual_date, $actual_date);
+        }
+        if ($old_left_wh_date !== $left_wh_date) {
+            notify_delivery_date_change($delivery_id, 'left_warehouse', $old_left_wh_date, $left_wh_date);
+        }
         
         $success_msg = "Delivery details updated successfully.";
         if ($pallet_status_update_count > 0) {

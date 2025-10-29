@@ -200,6 +200,27 @@ $stmt->bind_param(
 
 if ($stmt->execute()) {
     $document_id = $conn->insert_id;
+    
+    // Send notifications to project users
+    require_once 'notification_helpers.php';
+    
+    // Get project name for notification
+    $stmtProj = $conn->prepare("SELECT project_name FROM projects WHERE id = ?");
+    $stmtProj->bind_param("i", $project_id);
+    $stmtProj->execute();
+    $stmtProj->bind_result($projectName);
+    $stmtProj->fetch();
+    $stmtProj->close();
+    
+    $documentTypeFormatted = ucfirst(str_replace('_', ' ', $document_type));
+    notify_project_users(
+        $project_id,
+        'document_upload',
+        "New Document Uploaded: {$projectName}",
+        "A new {$documentTypeFormatted} document has been uploaded: {$original_filename}",
+        "project_documents.php?project_id={$project_id}"
+    );
+    
     echo json_encode([
         'success' => true,
         'message' => 'Document uploaded successfully',

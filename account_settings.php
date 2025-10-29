@@ -8,22 +8,19 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// Optional: get the user's role from the session if needed
-$role = $_SESSION['role'] ?? 'user';
-
-// Enable error reporting for debugging (remove in production)
-
-
-// Include configuration file and get database connection
 require_once '../config.php';
+require_once 'notification_helpers.php';
+
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
 }
 
-// Fetch the current user's record
 $user_id = $_SESSION['user_id'];
-$sqlSelect = "SELECT username, email, password FROM users WHERE id = ? LIMIT 1";
+$role = $_SESSION['role'] ?? 'user';
+
+// Fetch the current user's record
+$sqlSelect = "SELECT username, email, password, first_name, last_name FROM users WHERE id = ? LIMIT 1";
 $stmt = $conn->prepare($sqlSelect);
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
@@ -32,27 +29,60 @@ $userData = $result->fetch_assoc();
 $stmt->close();
 
 if (!$userData) {
-    // If no user found, redirect or log out
     header("Location: logout");
     exit();
 }
 
+// Get notification settings
+ensure_notification_settings($user_id);
+$notif_settings = notification_settings_for($user_id);
+
 // Pre-fill from database
 $existingUsername = $userData['username'] ?? '';
-$existingEmail    = $userData['email'] ?? '';    // may be NULL in DB
-$dbPass           = $userData['password'] ?? '';
+$existingEmail = $userData['email'] ?? '';
+$existingFirstName = $userData['first_name'] ?? '';
+$existingLastName = $userData['last_name'] ?? '';
+$dbPass = $userData['password'] ?? '';
+
+// Get user stats
+$projectCount = 0;
+
+// Count projects user has access to
+if ($role === 'global_admin') {
+    $stmt = $conn->prepare("SELECT COUNT(*) FROM projects");
+    $stmt->execute();
+    $stmt->bind_result($projectCount);
+    $stmt->fetch();
+    $stmt->close();
+} else {
+    $stmt = $conn->prepare("
+        SELECT COUNT(DISTINCT p.id)
+        FROM projects p
+        JOIN customer_account_users cau ON p.account_id = cau.account_id
+        WHERE cau.user_id = ?
+    ");
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $stmt->bind_result($projectCount);
+    $stmt->fetch();
+    $stmt->close();
+}
+
+// Document count removed - no longer displayed
 
 $errors = [];
 $successMessage = "";
 
 // Check if the form has been submitted
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Collect form inputs
-    $username       = trim($_POST['username'] ?? '');
-    $email          = trim($_POST['email'] ?? '');
-    $currentPass    = $_POST['current_password'] ?? '';
-    $newPass        = $_POST['new_password'] ?? '';
-    $confirmNewPass = $_POST['confirm_new_password'] ?? '';
+    // Check which form was submitted
+    if (isset($_POST['form_type'])) {
+        if ($_POST['form_type'] === 'profile') {
+            // Profile Information Update
+            $firstName = trim($_POST['first_name'] ?? '');
+            $lastName = trim($_POST['last_name'] ?? '');
+            $username = trim($_POST['username'] ?? '');
+            $email = trim($_POST['email'] ?? '');
 
     // Validate username
     if (empty($username)) {
@@ -60,380 +90,824 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // Handle email (optional)
-    // If provided, validate format; if left blank, we set it to NULL.
     $finalEmail = null;
     if ($email !== "") {
-        // Validate the email format
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors[] = "Invalid email format.";
         } else {
-            $finalEmail = $email; // valid email
-        }
-    }
-    // If blank, $finalEmail remains NULL
-
-    // Check if user is attempting a password change
-    $changePassword = (!empty($newPass) || !empty($confirmNewPass));
-    if ($changePassword) {
-        // Must provide current password
-        if (empty($currentPass)) {
-            $errors[] = "You must enter your current password to change it.";
-        }
-        // Check that new password and confirmation match
-        if ($newPass !== $confirmNewPass) {
-            $errors[] = "New password and confirmation do not match.";
-        }
-    }
-
-    // If no validation errors, proceed
+                    $finalEmail = $email;
+                }
+            }
+            
     if (empty($errors)) {
-        // If changing password, verify current password
-        if ($changePassword) {
-            if (!password_verify($currentPass, $dbPass)) {
+                $sqlUpdate = "UPDATE users SET username = ?, email = ?, first_name = ?, last_name = ? WHERE id = ?";
+                $stmtUpdate = $conn->prepare($sqlUpdate);
+                $stmtUpdate->bind_param("ssssi", $username, $finalEmail, $firstName, $lastName, $user_id);
+                
+                if ($stmtUpdate->execute()) {
+                    $successMessage = "Profile updated successfully!";
+                    $existingUsername = $username;
+                    $existingEmail = $finalEmail;
+                    $existingFirstName = $firstName;
+                    $existingLastName = $lastName;
+                    $_SESSION['username'] = $username; // Update session
+                } else {
+                    $errors[] = "Update failed: " . $stmtUpdate->error;
+                }
+                $stmtUpdate->close();
+            }
+        } elseif ($_POST['form_type'] === 'password') {
+            // Password Change
+            $currentPass = $_POST['current_password'] ?? '';
+            $newPass = $_POST['new_password'] ?? '';
+            $confirmNewPass = $_POST['confirm_new_password'] ?? '';
+            
+            if (empty($currentPass)) {
+                $errors[] = "You must enter your current password.";
+            } elseif (!password_verify($currentPass, $dbPass)) {
                 $errors[] = "Current password is incorrect.";
             }
-        }
-
-        // If still no errors, update the record
+            
+            if ($newPass !== $confirmNewPass) {
+                $errors[] = "New password and confirmation do not match.";
+            }
+            
+            if (strlen($newPass) < 8) {
+                $errors[] = "New password must be at least 8 characters long.";
+            }
+            
         if (empty($errors)) {
-            // Build update query
-            if ($changePassword && !empty($newPass)) {
-                // Hash new password
                 $hashedNewPass = password_hash($newPass, PASSWORD_DEFAULT);
-
-                // UPDATE with new password
-                $sqlUpdate = "UPDATE users
-                              SET username = ?, email = ?, password = ?
-                              WHERE id = ?";
+                $sqlUpdate = "UPDATE users SET password = ? WHERE id = ?";
                 $stmtUpdate = $conn->prepare($sqlUpdate);
-                // 'sssi' => string, string, string, integer
-                $stmtUpdate->bind_param("sssi", 
-                    $username, 
-                    $finalEmail, 
-                    $hashedNewPass, 
-                    $user_id
-                );
+                $stmtUpdate->bind_param("si", $hashedNewPass, $user_id);
+                
+                if ($stmtUpdate->execute()) {
+                    $successMessage = "Password changed successfully!";
+                    $dbPass = $hashedNewPass;
             } else {
-                // UPDATE without changing password
-                $sqlUpdate = "UPDATE users
-                              SET username = ?, email = ?
-                              WHERE id = ?";
-                $stmtUpdate = $conn->prepare($sqlUpdate);
-                // 'ssi' => string, string, integer
-                $stmtUpdate->bind_param("ssi", 
-                    $username, 
-                    $finalEmail, 
-                    $user_id
-                );
+                    $errors[] = "Password update failed: " . $stmtUpdate->error;
+                }
+                $stmtUpdate->close();
             }
-
-            // Execute update
-            if ($stmtUpdate->execute()) {
-                $successMessage = "Account settings have been updated!";
-                // Update the local variables so the form is updated on refresh
-                $existingUsername = $username;
-                $existingEmail    = $finalEmail;
+        } elseif ($_POST['form_type'] === 'notifications') {
+            // Notification Settings Update
+            $in_app_document_upload = isset($_POST['in_app_document_upload']) ? 1 : 0;
+            $in_app_project_update = isset($_POST['in_app_project_update']) ? 1 : 0;
+            $in_app_delivery_status = isset($_POST['in_app_delivery_status']) ? 1 : 0;
+            $in_app_warranty_claim = isset($_POST['in_app_warranty_claim']) ? 1 : 0;
+            
+            $email_enabled = isset($_POST['email_enabled']) ? 1 : 0;
+            $email_document_upload = ($email_enabled && isset($_POST['email_document_upload'])) ? 1 : 0;
+            $email_project_update = ($email_enabled && isset($_POST['email_project_update'])) ? 1 : 0;
+            $email_delivery_status = ($email_enabled && isset($_POST['email_delivery_status'])) ? 1 : 0;
+            $email_warranty_claim = ($email_enabled && isset($_POST['email_warranty_claim'])) ? 1 : 0;
+            
+            $stmt = $conn->prepare("
+                UPDATE notification_settings 
+                SET in_app_document_upload = ?,
+                    in_app_project_update = ?,
+                    in_app_delivery_status = ?,
+                    in_app_warranty_claim = ?,
+                    email_enabled = ?,
+                    email_document_upload = ?,
+                    email_project_update = ?,
+                    email_delivery_status = ?,
+                    email_warranty_claim = ?
+                WHERE user_id = ?
+            ");
+            
+            $stmt->bind_param('iiiiiiiiii',
+                $in_app_document_upload,
+                $in_app_project_update,
+                $in_app_delivery_status,
+                $in_app_warranty_claim,
+                $email_enabled,
+                $email_document_upload,
+                $email_project_update,
+                $email_delivery_status,
+                $email_warranty_claim,
+                $user_id
+            );
+            
+            if ($stmt->execute()) {
+                $successMessage = "Notification settings saved successfully!";
+                $notif_settings = notification_settings_for($user_id); // Refresh
             } else {
-                $errors[] = "Update failed: " . $stmtUpdate->error;
+                $errors[] = "Failed to save notification settings.";
             }
-            $stmtUpdate->close();
+            $stmt->close();
         }
     }
 }
 
-// Close the database connection
 $conn->close();
+
+// Build display name for hero section
+$displayName = trim($existingFirstName . ' ' . $existingLastName);
+if (empty($displayName)) {
+    $displayName = $existingUsername;
+}
 ?>
 
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Account Settings</title>
+    <title>Profile - Solterra Logistics</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        .settings-container {
-            max-width: 600px;
-            margin: 40px auto;
-            padding: 30px;
-            background-color: #fff;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        body {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+        }
+        
+        .profile-container {
+            padding: 30px 20px;
+        }
+        
+        /* Header Section - Matching global_documents.php */
+        .global-documents-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
         }
 
-        .settings-container h1 {
-            color: #293E4C;
-            margin-bottom: 30px;
-            font-size: 24px;
+        .global-documents-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
         }
 
-        .info-group {
+        .header-content {
             display: flex;
             align-items: center;
-            margin-bottom: 20px;
-            padding: 15px;
-            background-color: #f9f9f9;
-            border-radius: 6px;
-            border: 1px solid #eee;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
         }
 
-        .info-group label {
-            flex: 1;
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .header-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 32px;
+            box-shadow: 0 12px 24px rgba(72, 140, 154, 0.3);
+        }
+
+        .header-info h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
             font-weight: 500;
-            color: #293E4C;
+            margin: 0;
         }
 
-        .info-group .value {
-            flex: 2;
-            color: #666;
+        .header-stats {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
         }
 
-        .info-group .edit-icon {
+        .stat-item {
+            text-align: center;
+            background: rgba(72, 140, 154, 0.08);
+            padding: 16px 20px;
+            border-radius: 16px;
+            min-width: 120px;
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: 700;
             color: #488C9A;
-            cursor: pointer;
-            padding: 5px;
-            margin-left: 10px;
-            transition: color 0.3s;
+            margin: 0;
+            line-height: 1;
         }
 
-        .info-group .edit-icon:hover {
+        .stat-label {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin: 4px 0 0 0;
+            font-weight: 500;
+        }
+        
+        /* Content Grid */
+        .profile-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+        }
+        
+        @media (max-width: 968px) {
+            .profile-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .hero-content {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .hero-stats {
+                justify-content: center;
+            }
+        }
+        
+        /* Card Styles */
+        .profile-card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+            border: 1px solid #e9ecef;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .profile-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12);
+        }
+        
+        .card-header {
+            padding: 25px 30px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .card-header h2 {
+            margin: 0;
+            font-size: 1.4em;
+            font-weight: 600;
             color: #293E4C;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .card-body {
+            padding: 30px;
         }
 
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 25px;
         }
 
         .form-group label {
             display: block;
             margin-bottom: 8px;
-            font-weight: 500;
+            font-weight: 600;
             color: #293E4C;
+            font-size: 0.95em;
         }
 
         .form-group input {
             width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
+            padding: 14px 18px;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            font-size: 1em;
+            font-family: 'Poppins', sans-serif;
+            transition: all 0.3s ease;
+            background: #f8f9fa;
         }
 
         .form-group input:focus {
             border-color: #488C9A;
             outline: none;
-            box-shadow: 0 0 0 2px rgba(72, 140, 154, 0.1);
+            background: white;
+            box-shadow: 0 0 0 4px rgba(72, 140, 154, 0.1);
         }
-
-        .password-section {
-            display: none;
+        
+        .form-group input:disabled {
+            background: #e9ecef;
+            cursor: not-allowed;
+            color: #6c757d;
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        @media (max-width: 600px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .btn {
+            padding: 14px 28px;
+            border-radius: 12px;
+            border: none;
+            font-weight: 600;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'Poppins', sans-serif;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(72, 140, 154, 0.3);
+        }
+        
+        .btn-secondary {
+            background: #f8f9fa;
+            color: #293E4C;
+            border: 2px solid #e9ecef;
+        }
+        
+        .btn-secondary:hover {
+            background: #e9ecef;
+        }
+        
+        /* Collapsible Section */
+        .collapsible-trigger {
+            width: 100%;
+            padding: 18px 30px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 1em;
+            color: #293E4C;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: all 0.3s ease;
+            font-family: 'Poppins', sans-serif;
+        }
+        
+        .collapsible-trigger:hover {
+            background: linear-gradient(135deg, #e9ecef 0%, #f8f9fa 100%);
+            border-color: #488C9A;
+        }
+        
+        .collapsible-trigger.active {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            border-color: #488C9A;
+        }
+        
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease, margin 0.4s ease;
+        }
+        
+        .collapsible-content.active {
+            max-height: 600px;
             margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #eee;
         }
-
-        .password-section.show {
-            display: block;
+        
+        /* Notification Settings */
+        .form-check {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 10px;
+            transition: background 0.3s ease;
         }
-
-        .error-messages {
-            background-color: #fff3f3;
-            border: 1px solid #ffcdd2;
-            border-radius: 4px;
-            padding: 15px;
-            margin-bottom: 20px;
+        
+        .form-check:hover {
+            background: #f8f9fa;
         }
-
-        .error-messages ul {
+        
+        .form-check input[type="checkbox"] {
+            width: 22px;
+            height: 22px;
+            margin-right: 12px;
+            cursor: pointer;
+            accent-color: #488C9A;
+        }
+        
+        .form-check label {
+            flex: 1;
+            cursor: pointer;
+            color: #293E4C;
+            font-weight: 500;
             margin: 0;
-            padding-left: 20px;
-            color: #d32f2f;
         }
-
-        .success-message {
-            background-color: #e8f5e9;
-            border: 1px solid #c8e6c9;
-            border-radius: 4px;
+        
+        .form-check.sub-option {
+            margin-left: 34px;
+            background: #f8f9fa;
+        }
+        
+        .form-check.sub-option:hover {
+            background: #e9ecef;
+        }
+        
+        .settings-section {
+            margin-bottom: 25px;
+        }
+        
+        .settings-section-title {
+            font-size: 0.85em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #9ca3af;
+            margin: 0 0 15px 0;
+        }
+        
+        .form-note {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin-top: 15px;
             padding: 15px;
-            margin-bottom: 20px;
-            color: #2e7d32;
+            background: #f0f8fa;
+            border-radius: 10px;
+            border-left: 4px solid #488C9A;
         }
-
-        button[type="submit"] {
-            background-color: #488C9A;
-            color: white;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
+        
+        /* Messages */
+        .alert {
+            padding: 18px 24px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
             font-weight: 500;
-            transition: background-color 0.3s;
+            animation: slideInDown 0.4s ease;
         }
-
-        button[type="submit"]:hover {
-            background-color: #367480;
+        
+        @keyframes slideInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
-
-        .cancel-edit {
-            background-color: #f5f5f5;
-            color: #666;
-            padding: 12px 24px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: 500;
-            margin-left: 10px;
-            transition: all 0.3s;
+        
+        .alert-success {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            color: #155724;
+            border: 2px solid #c3e6cb;
         }
-
-        .cancel-edit:hover {
-            background-color: #e0e0e0;
+        
+        .alert-error {
+            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+            color: #721c24;
+            border: 2px solid #f5c6cb;
         }
-
-        .add-email-btn {
-            background-color: #488C9A;
-            color: white;
-            padding: 6px 12px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-            transition: background-color 0.3s;
-            margin-left: 10px;
+        
+        /* Password Strength Indicator */
+        .password-strength {
+            height: 6px;
+            background: #e9ecef;
+            border-radius: 3px;
+            margin-top: 8px;
+            overflow: hidden;
         }
-
-        .add-email-btn:hover {
-            background-color: #367480;
+        
+        .password-strength-bar {
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease, background-color 0.3s ease;
+            border-radius: 3px;
+        }
+        
+        .password-strength-bar.weak { background: #dc3545; width: 33%; }
+        .password-strength-bar.medium { background: #ffc107; width: 66%; }
+        .password-strength-bar.strong { background: #28a745; width: 100%; }
+        
+        /* Full Width Card */
+        .full-width {
+            grid-column: 1 / -1;
         }
     </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 
-<div class="settings-container">
-    <h1>Account Settings</h1>
-    
+<div class="profile-container">
+    <!-- Messages -->
     <?php if (!empty($errors)): ?>
-        <div class="error-messages">
-            <ul>
+        <div class="alert alert-error">
+            <span style="font-size: 1.5em;">❌</span>
+            <div>
+                <strong>Error!</strong>
+                <ul style="margin: 5px 0 0 0; padding-left: 20px;">
                 <?php foreach ($errors as $err): ?>
                     <li><?php echo htmlspecialchars($err); ?></li>
                 <?php endforeach; ?>
             </ul>
+            </div>
         </div>
     <?php endif; ?>
 
     <?php if (!empty($successMessage)): ?>
-        <div class="success-message">
-            <?php echo htmlspecialchars($successMessage); ?>
+        <div class="alert alert-success">
+            <span style="font-size: 1.5em;">✅</span>
+            <strong><?php echo htmlspecialchars($successMessage); ?></strong>
         </div>
     <?php endif; ?>
 
-    <form action="" method="post" id="accountForm">
-        <div class="info-group">
-            <label for="username">Username</label>
-            <div class="value" id="usernameDisplay"><?php echo htmlspecialchars($existingUsername); ?></div>
-            <input type="text" name="username" id="username" value="<?php echo htmlspecialchars($existingUsername); ?>" style="display: none;" required>
-            <span class="edit-icon" onclick="toggleEdit('username')">✎</span>
+    <!-- Hero Section -->
+    <div class="global-documents-header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="header-icon">
+                    <i class="fas fa-user-circle"></i>
+                </div>
+                <div class="header-info">
+                    <h1><?php echo htmlspecialchars($displayName); ?></h1>
+                    <p class="header-subtitle"><?php echo ucfirst(htmlspecialchars($role)); ?> • Manage your profile and preferences</p>
+                </div>
+            </div>
+            <div class="header-stats">
+                <div class="stat-item">
+                    <p class="stat-number"><?php echo $projectCount; ?></p>
+                    <p class="stat-label">Projects</p>
+                </div>
+                <div class="stat-item">
+                    <p class="stat-number"><?php echo unread_notification_count($user_id); ?></p>
+                    <p class="stat-label">Notifications</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Profile Content Grid -->
+    <div class="profile-grid">
+        <!-- Profile Information -->
+        <div class="profile-card">
+            <div class="card-header">
+                <h2>👤 Profile Information</h2>
+            </div>
+            <div class="card-body">
+                <form method="post" action="">
+                    <input type="hidden" name="form_type" value="profile">
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="first_name">First Name</label>
+                            <input type="text" id="first_name" name="first_name" 
+                                   value="<?php echo htmlspecialchars($existingFirstName); ?>" 
+                                   placeholder="Your first name">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="last_name">Last Name</label>
+                            <input type="text" id="last_name" name="last_name" 
+                                   value="<?php echo htmlspecialchars($existingLastName); ?>" 
+                                   placeholder="Your last name">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" name="username" 
+                               value="<?php echo htmlspecialchars($existingUsername); ?>" 
+                               required>
         </div>
 
-        <div class="info-group">
-            <label>Password</label>
-            <div class="value">••••••••</div>
-            <span class="edit-icon" onclick="togglePasswordSection()">✎</span>
+                    <div class="form-group">
+                        <label for="email">Email Address</label>
+                        <input type="email" id="email" name="email" 
+                               value="<?php echo htmlspecialchars($existingEmail); ?>" 
+                               placeholder="your.email@example.com">
+                        <div class="form-note">
+                            📧 Email is required for email notifications
+                        </div>
         </div>
 
-        <div class="info-group">
-            <label for="email">Email</label>
-            <div class="value" id="emailDisplay"><?php echo htmlspecialchars($existingEmail ?? 'Not set'); ?></div>
-            <input type="email" name="email" id="email" value="<?php echo htmlspecialchars($existingEmail ?? ''); ?>" style="display: none;" placeholder="Enter email or leave blank">
-            <?php if (empty($existingEmail)): ?>
-                <button type="button" class="add-email-btn" onclick="toggleEdit('email')">Add Email</button>
-            <?php else: ?>
-                <span class="edit-icon" onclick="toggleEdit('email')">✎</span>
-            <?php endif; ?>
+                    <button type="submit" class="btn btn-primary">
+                        💾 Save Changes
+                    </button>
+                </form>
+            </div>
         </div>
 
-        <div class="password-section" id="passwordSection">
-            <div class="form-group">
-                <label for="current_password">Current Password</label>
-                <input type="password" name="current_password" id="current_password" required>
+        <!-- Security Card -->
+        <div class="profile-card">
+            <div class="card-header">
+                <h2>🔒 Security</h2>
+            </div>
+            <div class="card-body">
+                <button type="button" class="collapsible-trigger" onclick="togglePasswordSection()">
+                    <span>Change Password</span>
+                    <span id="passwordToggleIcon">▼</span>
+                </button>
+                
+                <div class="collapsible-content" id="passwordSection">
+                    <form method="post" action="">
+                        <input type="hidden" name="form_type" value="password">
+                        
+                        <div class="form-group">
+                            <label for="current_password">Current Password</label>
+                            <input type="password" id="current_password" name="current_password" required>
             </div>
 
             <div class="form-group">
                 <label for="new_password">New Password</label>
-                <input type="password" name="new_password" id="new_password" required>
+                            <input type="password" id="new_password" name="new_password" required>
+                            <div class="password-strength">
+                                <div class="password-strength-bar" id="strengthBar"></div>
+                            </div>
             </div>
 
             <div class="form-group">
                 <label for="confirm_new_password">Confirm New Password</label>
-                <input type="password" name="confirm_new_password" id="confirm_new_password" required>
+                            <input type="password" id="confirm_new_password" name="confirm_new_password" required>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary">
+                            🔐 Update Password
+                        </button>
+                    </form>
+                </div>
             </div>
         </div>
 
-        <div class="form-group" style="margin-top: 30px;">
-            <button type="submit">Save Changes</button>
-            <button type="button" class="cancel-edit" onclick="cancelEdit()" style="display: none;">Cancel</button>
+        <!-- Notification Preferences -->
+        <div class="profile-card full-width">
+            <div class="card-header">
+                <h2>🔔 Notification Preferences</h2>
+            </div>
+            <div class="card-body">
+                <form method="post" action="">
+                    <input type="hidden" name="form_type" value="notifications">
+                    
+                    <div class="profile-grid">
+                        <div class="settings-section">
+                            <div class="settings-section-title">In-App Notifications</div>
+                            
+                            <div class="form-check">
+                                <input type="checkbox" id="in_app_document_upload" name="in_app_document_upload" value="1" 
+                                       <?php echo !empty($notif_settings['in_app_document_upload']) ? 'checked' : ''; ?>>
+                                <label for="in_app_document_upload">📄 Document Uploads</label>
+                            </div>
+                            
+                            <div class="form-check">
+                                <input type="checkbox" id="in_app_project_update" name="in_app_project_update" value="1"
+                                       <?php echo !empty($notif_settings['in_app_project_update']) ? 'checked' : ''; ?>>
+                                <label for="in_app_project_update">🏗️ Project Updates</label>
+                            </div>
+                            
+                            <div class="form-check">
+                                <input type="checkbox" id="in_app_delivery_status" name="in_app_delivery_status" value="1"
+                                       <?php echo !empty($notif_settings['in_app_delivery_status']) ? 'checked' : ''; ?>>
+                                <label for="in_app_delivery_status">🚚 Delivery Status Changes</label>
+                            </div>
+                            
+                            <div class="form-check">
+                                <input type="checkbox" id="in_app_warranty_claim" name="in_app_warranty_claim" value="1"
+                                       <?php echo !empty($notif_settings['in_app_warranty_claim']) ? 'checked' : ''; ?>>
+                                <label for="in_app_warranty_claim">⚠️ Warranty Claims</label>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-section">
+                            <div class="settings-section-title">Email Notifications</div>
+                            
+                            <div class="form-check">
+                                <input type="checkbox" id="email_enabled" name="email_enabled" value="1"
+                                       <?php echo !empty($notif_settings['email_enabled']) ? 'checked' : ''; ?>>
+                                <label for="email_enabled">✉️ Enable Email Notifications</label>
+                            </div>
+                            
+                            <div class="form-check sub-option">
+                                <input type="checkbox" id="email_document_upload" name="email_document_upload" value="1"
+                                       <?php echo !empty($notif_settings['email_document_upload']) ? 'checked' : ''; ?>
+                                       <?php echo empty($notif_settings['email_enabled']) ? 'disabled' : ''; ?>>
+                                <label for="email_document_upload">Document Uploads</label>
+                            </div>
+                            
+                            <div class="form-check sub-option">
+                                <input type="checkbox" id="email_project_update" name="email_project_update" value="1"
+                                       <?php echo !empty($notif_settings['email_project_update']) ? 'checked' : ''; ?>
+                                       <?php echo empty($notif_settings['email_enabled']) ? 'disabled' : ''; ?>>
+                                <label for="email_project_update">Project Updates</label>
+                            </div>
+                            
+                            <div class="form-check sub-option">
+                                <input type="checkbox" id="email_delivery_status" name="email_delivery_status" value="1"
+                                       <?php echo !empty($notif_settings['email_delivery_status']) ? 'checked' : ''; ?>
+                                       <?php echo empty($notif_settings['email_enabled']) ? 'disabled' : ''; ?>>
+                                <label for="email_delivery_status">Delivery Status Changes</label>
+                            </div>
+                            
+                            <div class="form-check sub-option">
+                                <input type="checkbox" id="email_warranty_claim" name="email_warranty_claim" value="1"
+                                       <?php echo !empty($notif_settings['email_warranty_claim']) ? 'checked' : ''; ?>
+                                       <?php echo empty($notif_settings['email_enabled']) ? 'disabled' : ''; ?>>
+                                <label for="email_warranty_claim">Warranty Claims</label>
+                            </div>
+                            
+                            <div class="form-note">
+                                💡 <strong>Tip:</strong> Email notifications require a valid email address in your profile above.
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">
+                        💾 Save Notification Settings
+                    </button>
+                </form>
+            </div>
         </div>
-    </form>
+    </div>
 </div>
 
 <script>
-function toggleEdit(field) {
-    const display = document.getElementById(field + 'Display');
-    const input = document.getElementById(field);
-    const cancelButton = document.querySelector('.cancel-edit');
-    
-    if (display.style.display !== 'none') {
-        display.style.display = 'none';
-        input.style.display = 'block';
-        cancelButton.style.display = 'inline-block';
-    } else {
-        display.style.display = 'block';
-        input.style.display = 'none';
-        cancelButton.style.display = 'none';
-    }
-}
-
+// Toggle password section
 function togglePasswordSection() {
     const section = document.getElementById('passwordSection');
-    const cancelButton = document.querySelector('.cancel-edit');
+    const trigger = document.querySelector('.collapsible-trigger');
+    const icon = document.getElementById('passwordToggleIcon');
     
-    if (section.classList.contains('show')) {
-        section.classList.remove('show');
-        cancelButton.style.display = 'none';
+    if (section.classList.contains('active')) {
+        section.classList.remove('active');
+        trigger.classList.remove('active');
+        icon.textContent = '▼';
     } else {
-        section.classList.add('show');
-        cancelButton.style.display = 'inline-block';
+        section.classList.add('active');
+        trigger.classList.add('active');
+        icon.textContent = '▲';
     }
 }
 
-function cancelEdit() {
-    // Reset all fields to display mode
-    document.querySelectorAll('.info-group').forEach(group => {
-        const display = group.querySelector('.value');
-        const input = group.querySelector('input');
-        if (display && input) {
-            display.style.display = 'block';
-            input.style.display = 'none';
-        }
-    });
+// Password strength indicator
+document.getElementById('new_password')?.addEventListener('input', function(e) {
+    const password = e.target.value;
+    const strengthBar = document.getElementById('strengthBar');
     
-    // Hide password section
-    document.getElementById('passwordSection').classList.remove('show');
+    let strength = 0;
+    if (password.length >= 8) strength++;
+    if (password.match(/[a-z]/) && password.match(/[A-Z]/)) strength++;
+    if (password.match(/\d/)) strength++;
+    if (password.match(/[^a-zA-Z\d]/)) strength++;
     
-    // Hide cancel button
-    document.querySelector('.cancel-edit').style.display = 'none';
-    
-    // Reset form
-    document.getElementById('accountForm').reset();
-}
+    strengthBar.className = 'password-strength-bar';
+    if (strength <= 2) {
+        strengthBar.classList.add('weak');
+    } else if (strength === 3) {
+        strengthBar.classList.add('medium');
+    } else {
+        strengthBar.classList.add('strong');
+    }
+});
+
+// Enable/disable email sub-options based on master toggle
+document.getElementById('email_enabled').addEventListener('change', function() {
+    const enabled = this.checked;
+    document.getElementById('email_document_upload').disabled = !enabled;
+    document.getElementById('email_project_update').disabled = !enabled;
+    document.getElementById('email_delivery_status').disabled = !enabled;
+    document.getElementById('email_warranty_claim').disabled = !enabled;
+});
 </script>
 </body>
 </html>
