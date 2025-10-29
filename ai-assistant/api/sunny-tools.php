@@ -461,37 +461,184 @@ class SunnyTools {
     }
     
     /**
-     * Get flash test data for projects within date range
+     * Get warranty claims / exceptions reports
+     * Includes damages, exceptions, and incident tickets with full details
      */
-    public function getFlashTestData($projectId = null, $days = 30, $limit = 50) {
+    public function getWarrantyClaims($projectId = null, $status = null, $days = 90, $limit = 50) {
         try {
             $sql = "
                 SELECT 
-                    ftd.id,
-                    ftd.module_id,
-                    ftd.flash_date,
-                    ftd.flash_result,
+                    w.id as claim_id,
+                    w.status,
+                    w.issue_type,
+                    w.bol_number,
+                    w.delivery_date,
+                    w.expected_quantity,
+                    w.actual_quantity,
+                    w.damaged_quantity,
+                    w.accepted_quantity,
+                    w.responsible_party,
+                    w.resolution_type,
+                    w.estimated_delivery_date,
+                    w.credit_amount,
+                    w.replacement_tracking,
+                    w.public_notes,
+                    w.created_at,
+                    w.updated_at,
+                    w.last_public_update_at,
+                    ss.project_id,
                     p.project_name,
-                    p.id as project_id
-                FROM flash_test_data ftd
-                LEFT JOIN projects p ON ftd.project_id = p.id
-                WHERE ftd.flash_date >= DATE_SUB(NOW(), INTERVAL ? DAY)
+                    p.city,
+                    p.state,
+                    d.supplier as manufacturer,
+                    d.wattage,
+                    -- Count linked replacement pallets
+                    (SELECT COUNT(*) FROM warranty_claim_replacements wcr WHERE wcr.claim_id = w.id) as replacement_pallet_count
+                FROM warranty_claims w
+                JOIN site_scheduling ss ON w.scheduling_id = ss.id
+                JOIN projects p ON ss.project_id = p.id
+                LEFT JOIN deliveries d ON w.bol_number = d.bol_number AND d.project_id = ss.project_id
+                WHERE w.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
             ";
             
             $params = [$days];
             
             if ($projectId) {
-                $sql .= " AND ftd.project_id = ?";
+                $sql .= " AND ss.project_id = ?";
                 $params[] = $projectId;
             }
+            
+            if ($status) {
+                $sql .= " AND w.status = ?";
+                $params[] = $status;
+            }
+            
+            // Tenant scoping
             if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
                 $sql .= " AND p.account_id = ?";
                 $params[] = $this->userAccountId;
             }
 
-            $sql .= " ORDER BY ftd.flash_date DESC LIMIT {$limit}";
+            $sql .= " ORDER BY w.created_at DESC LIMIT {$limit}";
             
-            return $this->queryExecutor->executeQuery($sql, $params);
+            $result = $this->queryExecutor->executeQuery($sql, $params);
+            
+            // Post-process to add useful derived fields
+            if ($result['success'] && !empty($result['data'])) {
+                foreach ($result['data'] as &$claim) {
+                    // Calculate damage/loss percentage
+                    $expected = intval($claim['expected_quantity'] ?? 0);
+                    $damaged = intval($claim['damaged_quantity'] ?? 0);
+                    $claim['damage_percentage'] = $expected > 0 ? round(($damaged / $expected) * 100, 1) : 0;
+                    
+                    // Generate detail URL
+                    $claim['detail_url'] = 'warranty_detail.php?id=' . $claim['claim_id'];
+                    
+                    // Format status for display
+                    $claim['status_display'] = $claim['status'];
+                    
+                    // Add resolution summary
+                    if ($claim['resolution_type'] === 'Replacement' && $claim['replacement_pallet_count'] > 0) {
+                        $claim['resolution_summary'] = "Replacement: {$claim['replacement_pallet_count']} pallet(s) linked";
+                    } elseif ($claim['resolution_type'] === 'Credit' && !empty($claim['credit_amount'])) {
+                        $claim['resolution_summary'] = "Credit: $" . number_format($claim['credit_amount'], 2);
+                    } else {
+                        $claim['resolution_summary'] = $claim['resolution_type'] ?? 'Pending';
+                    }
+                }
+            }
+            
+            return $result;
+            
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+    
+    /**
+     * Get replacement pallet details for warranty claims
+     * Tracks the status and location of replacement modules
+     */
+    public function getWarrantyReplacements($claimId = null, $projectId = null) {
+        try {
+            $sql = "
+                SELECT 
+                    wcr.id as replacement_id,
+                    wcr.claim_id,
+                    wcr.pallet_id,
+                    ip.pallet_identifier,
+                    ip.wattage,
+                    ip.quantity,
+                    ip.status as pallet_status,
+                    ip.arrival_date,
+                    ip.updated_at as pallet_updated_at,
+                    w.status as claim_status,
+                    w.issue_type,
+                    w.estimated_delivery_date,
+                    ss.project_id,
+                    p.project_name,
+                    wh.name as current_warehouse,
+                    wh.city as warehouse_city,
+                    wh.state as warehouse_state,
+                    -- Calculate MW for this replacement pallet
+                    (ip.wattage * ip.quantity) / 1000000 as replacement_mw
+                FROM warranty_claim_replacements wcr
+                JOIN inventory_pallets ip ON wcr.pallet_id = ip.id
+                JOIN warranty_claims w ON wcr.claim_id = w.id
+                JOIN site_scheduling ss ON w.scheduling_id = ss.id
+                JOIN projects p ON ss.project_id = p.id
+                LEFT JOIN warehouses wh ON ip.current_warehouse_id = wh.id
+                WHERE 1=1
+            ";
+            
+            $params = [];
+            
+            if ($claimId) {
+                $sql .= " AND wcr.claim_id = ?";
+                $params[] = $claimId;
+            }
+            
+            if ($projectId) {
+                $sql .= " AND ss.project_id = ?";
+                $params[] = $projectId;
+            }
+            
+            // Tenant scoping
+            if ($this->userAccountId !== null && $this->userRole !== 'global_admin') {
+                $sql .= " AND p.account_id = ?";
+                $params[] = $this->userAccountId;
+            }
+
+            $sql .= " ORDER BY wcr.id DESC LIMIT 100";
+            
+            $result = $this->queryExecutor->executeQuery($sql, $params);
+            
+            // Post-process to add useful information
+            if ($result['success'] && !empty($result['data'])) {
+                foreach ($result['data'] as &$replacement) {
+                    // Add claim detail URL
+                    $replacement['claim_detail_url'] = 'warranty_detail.php?id=' . $replacement['claim_id'];
+                    
+                    // Add pallet detail URL
+                    $replacement['pallet_detail_url'] = 'pallet_details.php?id=' . $replacement['pallet_id'];
+                    
+                    // Calculate days since creation/arrival
+                    if (!empty($replacement['arrival_date'])) {
+                        $arrival = strtotime($replacement['arrival_date']);
+                        $now = time();
+                        $replacement['days_since_arrival'] = floor(($now - $arrival) / 86400);
+                    }
+                    
+                    // Status summary
+                    $replacement['tracking_summary'] = "{$replacement['pallet_status']} - " . 
+                        ($replacement['current_warehouse'] ?? 'Location unknown');
+                }
+            }
+            
+            return $result;
             
         } catch (Exception $e) {
             return [
@@ -996,13 +1143,28 @@ class SunnyTools {
                     $weeks = $this->extractWeeks($message) ?? 4;
                     return $this->getUpcomingDeliveries($projectId, $weeks);
                     
-                // Flash test and POD tools
-                case 'getflashtestdata':
-                case 'flash_test_data':
-                case 'flashtestdata':
+                // Warranty claims and exceptions reporting
+                case 'getwarrantyclaims':
+                case 'warranty_claims':
+                case 'warrantyclaims':
+                case 'exceptions':
+                case 'exception_reports':
+                case 'damages':
+                case 'incident_tickets':
                     $projectId = $this->extractProjectId($message);
-                    return $this->getFlashTestData($projectId);
+                    $status = $this->extractWarrantyStatus($message);
+                    $days = $this->extractDays($message) ?? 90;
+                    return $this->getWarrantyClaims($projectId, $status, $days);
+                
+                case 'getwarrantyreplacements':
+                case 'warranty_replacements':
+                case 'replacements':
+                case 'replacement_pallets':
+                    $claimId = $this->extractClaimId($message);
+                    $projectId = $claimId ? null : $this->extractProjectId($message);
+                    return $this->getWarrantyReplacements($claimId, $projectId);
                     
+                // POD tools
                 case 'getpodstatus':
                 case 'pod_status':
                 case 'podstatus':
@@ -1447,7 +1609,7 @@ class SunnyTools {
     }
 
     private function extractDays($message) {
-        $normalized = strtolower(str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message));
+        $normalized = strtolower(str_replace(["\u{201C}","\u{201D}","\u{2018}","\u{2019}"], ['"','"',"'","'"], $message));
         // explicit: "last 14 days" or "past 14 days"
         if (preg_match('/(?:last|past)\s+(\d+)\s*days?/i', $normalized, $m)) {
             return intval($m[1]);
@@ -1459,6 +1621,47 @@ class SunnyTools {
         // explicit months -> days (approx)
         if (preg_match('/(?:last|past)\s+(\d+)\s*months?/i', $normalized, $m)) {
             return intval($m[1]) * 30;
+        }
+        return null;
+    }
+    
+    private function extractClaimId($message) {
+        $normalized = str_replace(["\u{201C}","\u{201D}","\u{2018}","\u{2019}"], ['"','"',"'","'"], $message);
+        // Try patterns like "claim 123", "ticket 123", "claim ID 123"
+        if (preg_match('/(?:claim|ticket|exception)\s+(?:id[:\s]*)?["\']?(\d+)["\']?/i', $normalized, $matches)) {
+            return intval($matches[1]);
+        }
+        // Try hashtag pattern "#123"
+        if (preg_match('/#(\d+)/', $normalized, $matches)) {
+            return intval($matches[1]);
+        }
+        return null;
+    }
+    
+    private function extractWarrantyStatus($message) {
+        $normalized = strtolower($message);
+        // Map common status phrases to database statuses
+        $statusMap = [
+            'submitted' => 'Submitted',
+            'in review' => 'In Review',
+            'pending' => 'Pending Manufacturer',
+            'pending manufacturer' => 'Pending Manufacturer',
+            'pending epc' => 'Pending EPC',
+            'pending carrier' => 'Pending Carrier',
+            'approved' => 'Approved - Replacement', // Default to replacement
+            'approved credit' => 'Approved - Credit',
+            'approved replacement' => 'Approved - Replacement',
+            'replacement shipped' => 'Replacement Shipped',
+            'shipped' => 'Replacement Shipped',
+            'closed' => 'Closed',
+            'rejected' => 'Rejected',
+            'draft' => 'Draft'
+        ];
+        
+        foreach ($statusMap as $key => $value) {
+            if (strpos($normalized, $key) !== false) {
+                return $value;
+            }
         }
         return null;
     }
@@ -1583,6 +1786,7 @@ class SunnyTools {
         $normalized = strtolower(str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message));
 
         // Map common keywords to document_type used in project_documents
+        // Now includes all document types for comprehensive access
         $typeMap = [
             'pod' => 'pods',
             'pods' => 'pods',
@@ -1590,11 +1794,21 @@ class SunnyTools {
             'invoices' => 'invoices',
             'shipment' => 'shipments',
             'shipments' => 'shipments',
+            'bill of lading' => 'shipments',
+            'bol document' => 'shipments',
             'warehous' => 'warehousing',
+            'warehouse doc' => 'warehousing',
+            'inventory report' => 'warehousing',
             'exception' => 'exception_reports',
-            'flash test' => 'modules',
+            'incident' => 'exception_reports',
+            'damage' => 'exception_reports',
+            'warranty' => 'exception_reports',
+            'module' => 'modules',
+            'modules' => 'modules',
             'spec sheet' => 'modules',
-            'safe harbor' => 'safe_harbor_evidence'
+            'safe harbor' => 'safe_harbor_evidence',
+            'delivery packet' => 'delivery_packet',
+            'other' => 'other'
         ];
         foreach ($typeMap as $k => $val) {
             if (strpos($normalized, $k) !== false) {
