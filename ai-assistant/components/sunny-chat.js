@@ -13,6 +13,7 @@ class SunnyChat {
         this.createChatInterface();
         this.bindEvents();
         this.testConnection();
+        this.loadQuickActions();
     }
 
     createChatInterface() {
@@ -45,6 +46,7 @@ class SunnyChat {
                     <div class="connection-indicator"></div>
                 </div>
                 <div class="sunny-header-buttons">
+                    <button class="sunny-history-btn" id="sunny-history-btn" title="Conversation history">🕘</button>
                     <button class="sunny-expand-btn" id="sunny-expand-btn" title="Expand to fullscreen">
                         <svg class="expand-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
@@ -63,10 +65,11 @@ class SunnyChat {
                     <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
                 </div>
                 
-                <div class="sunny-quick-actions">
-                    <button class="quick-action-btn" data-action="Recent Deliveries">Recent Deliveries</button>
-                    <button class="quick-action-btn" data-action="Project Status">Project Status</button>
-                    <button class="quick-action-btn" data-action="Inventory Summary">Inventory Summary</button>
+                <div class="sunny-quick-actions" id="sunny-quick-actions">
+                    <button class="quick-action-btn" data-action="Show my recent deliveries">Recent Deliveries</button>
+                    <button class="quick-action-btn" data-action="Show the status of my active projects">Project Status</button>
+                    <button class="quick-action-btn" data-action="Show my inventory summary">Inventory Summary</button>
+                    <button class="quick-action-manage" id="sunny-manage-qa" title="Manage quick actions">⚙</button>
                 </div>
             </div>
             <div class="sunny-attachments" id="sunny-attachments"></div>
@@ -98,6 +101,8 @@ class SunnyChat {
         const attachLabel = document.getElementById('sunny-attach-label');
         const quickActionBtns = document.querySelectorAll('.quick-action-btn');
         const expandBtn = document.getElementById('sunny-expand-btn');
+        const historyBtn = document.getElementById('sunny-history-btn');
+        const manageBtn = document.getElementById('sunny-manage-qa');
 
         chatButton.addEventListener('click', (e) => {
             if (e.target.id === 'sunny-close-btn') {
@@ -122,6 +127,11 @@ class SunnyChat {
             this.toggleFullscreen();
         });
 
+        historyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.openHistoryDrawer();
+        });
+
         sendBtn.addEventListener('click', () => this.sendMessage());
         
         input.addEventListener('keypress', (e) => {
@@ -135,12 +145,14 @@ class SunnyChat {
             sendBtn.disabled = !input.value.trim() || !this.isConnected;
         });
 
-        quickActionBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const action = btn.getAttribute('data-action');
-                this.sendMessage(action);
+        this.bindQuickActionClicks();
+
+        if (manageBtn) {
+            manageBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.openQuickActionsManager();
             });
-        });
+        }
 
         // Handle file attachment
         fileInput.addEventListener('change', async () => {
@@ -169,6 +181,234 @@ class SunnyChat {
             } finally {
                 // reset input so re-selecting same file triggers change
                 fileInput.value = '';
+            }
+        });
+    }
+
+    bindQuickActionClicks() {
+        const container = document.getElementById('sunny-quick-actions');
+        if (!container) return;
+        container.querySelectorAll('.quick-action-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const action = btn.getAttribute('data-action');
+                this.sendMessage(action);
+            });
+        });
+    }
+
+    async loadQuickActions() {
+        try {
+            const res = await fetch('./ai-assistant/api/quick-actions.php?action=list', { credentials: 'same-origin' });
+            const data = await res.json();
+            if (!data.success) return;
+            const actions = data.data || [];
+            if (actions.length === 0) return; // keep defaults
+            const container = document.getElementById('sunny-quick-actions');
+            if (!container) return;
+            // Keep the manage button
+            const manage = container.querySelector('#sunny-manage-qa');
+            container.innerHTML = '';
+            actions.slice(0, 5).forEach(a => {
+                const btn = document.createElement('button');
+                btn.className = 'quick-action-btn';
+                btn.textContent = a.label;
+                btn.setAttribute('data-action', a.message);
+                container.appendChild(btn);
+            });
+            if (manage) container.appendChild(manage);
+            this.bindQuickActionClicks();
+        } catch (e) {
+            // ignore, keep defaults
+        }
+    }
+
+    openQuickActionsManager() {
+        const modal = document.createElement('div');
+        modal.className = 'sunny-modal-overlay';
+        modal.innerHTML = `
+            <div class="sunny-modal">
+                <div class="sunny-modal-header">
+                    <h3>Manage Quick Actions</h3>
+                    <button class="sunny-modal-close" aria-label="Close">×</button>
+                </div>
+                <div class="sunny-modal-body">
+                    <div id="qa-list" class="qa-list"></div>
+                    <button id="qa-add" class="qa-add">+ Add</button>
+                </div>
+                <div class="sunny-modal-footer">
+                    <button class="qa-save-all">Save</button>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+
+        const close = () => modal.remove();
+        modal.querySelector('.sunny-modal-close').addEventListener('click', close);
+        modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+        const listEl = modal.querySelector('#qa-list');
+        const addBtn = modal.querySelector('#qa-add');
+        const saveAllBtn = modal.querySelector('.qa-save-all');
+
+        const renderRow = (item, idx) => {
+            const row = document.createElement('div');
+            row.className = 'qa-row';
+            row.innerHTML = `
+                <input class="qa-label" maxlength="20" placeholder="Label (≤20)" value="${item.label || ''}" />
+                <textarea class="qa-message" placeholder="Message to send">${item.message || ''}</textarea>
+                <div class="qa-row-actions">
+                    <button class="qa-delete">Delete</button>
+                </div>`;
+            row.dataset.id = item.id || '';
+            row.dataset.position = idx;
+            row.querySelector('.qa-delete').addEventListener('click', async () => {
+                if (!row.dataset.id) { row.remove(); return; }
+                await fetch('./ai-assistant/api/quick-actions.php?action=delete', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: parseInt(row.dataset.id, 10) })
+                });
+                row.remove();
+            });
+            listEl.appendChild(row);
+        };
+
+        // initial load
+        fetch('./ai-assistant/api/quick-actions.php?action=list', { credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(data => {
+                const actions = (data && data.data) ? data.data.slice(0, 5) : [];
+                actions.forEach((a, i) => renderRow(a, i));
+            });
+
+        addBtn.addEventListener('click', () => {
+            if (listEl.querySelectorAll('.qa-row').length >= 5) return;
+            renderRow({ label: '', message: '', position: listEl.children.length }, listEl.children.length);
+        });
+
+        saveAllBtn.addEventListener('click', async () => {
+            const rows = Array.from(listEl.querySelectorAll('.qa-row'));
+            const saves = [];
+            rows.forEach((row, idx) => {
+                const id = row.dataset.id ? parseInt(row.dataset.id, 10) : null;
+                const label = row.querySelector('.qa-label').value.trim();
+                const message = row.querySelector('.qa-message').value.trim();
+                const position = idx;
+                if (!label || !message) return; // skip blanks
+                saves.push(fetch('./ai-assistant/api/quick-actions.php?action=save', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, label, message, position })
+                }));
+            });
+            await Promise.all(saves);
+            close();
+            this.loadQuickActions();
+        });
+    }
+
+    openHistoryDrawer() {
+        const drawer = document.createElement('div');
+        drawer.className = 'sunny-history-overlay';
+        drawer.innerHTML = `
+            <div class="sunny-history-drawer">
+                <div class="sunny-history-header">
+                    <h3>Conversations</h3>
+                    <div class="actions">
+                        <button class="history-new">New Chat</button>
+                        <button class="history-close">×</button>
+                    </div>
+                </div>
+                <div class="sunny-history-list"></div>
+            </div>`;
+        document.body.appendChild(drawer);
+
+        const close = () => drawer.remove();
+        drawer.querySelector('.history-close').addEventListener('click', close);
+        drawer.addEventListener('click', (e) => { if (e.target === drawer) close(); });
+
+        const listEl = drawer.querySelector('.sunny-history-list');
+        const renderList = (items) => {
+            listEl.innerHTML = '';
+            if (!items || items.length === 0) {
+                listEl.innerHTML = '<div class="empty">No conversations yet.</div>';
+                return;
+            }
+            items.forEach(item => {
+                const el = document.createElement('div');
+                el.className = 'history-item';
+                el.innerHTML = `
+                    <div class="title">${item.title}</div>
+                    <div class="meta">${new Date(item.last_message_at).toLocaleString()}</div>
+                    <div class="item-actions">
+                        <button class="open">Open</button>
+                        <button class="rename">Rename</button>
+                        <button class="delete">Delete</button>
+                    </div>`;
+                el.querySelector('.open').addEventListener('click', async () => {
+                    await fetch('./ai-assistant/api/conversations.php?action=set-active', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ conversation_id: item.id })
+                    });
+                    // Load messages and render
+                    const res = await fetch(`./ai-assistant/api/conversations.php?action=messages&conversation_id=${item.id}`, { credentials: 'same-origin' });
+                    const data = await res.json();
+                    if (data.success) {
+                        const container = document.getElementById('sunny-messages');
+                        container.innerHTML = '';
+                        (data.data || []).forEach(m => this.addMessage(m.role, m.content));
+                    }
+                    close();
+                });
+                el.querySelector('.rename').addEventListener('click', async () => {
+                    const title = prompt('Rename conversation', item.title);
+                    if (!title) return;
+                    await fetch('./ai-assistant/api/conversations.php?action=rename', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ conversation_id: item.id, title })
+                    });
+                    load();
+                });
+                el.querySelector('.delete').addEventListener('click', async () => {
+                    if (!confirm('Delete this conversation?')) return;
+                    await fetch('./ai-assistant/api/conversations.php?action=delete', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ conversation_id: item.id })
+                    });
+                    load();
+                });
+                listEl.appendChild(el);
+            });
+        };
+
+        const load = async () => {
+            const res = await fetch('./ai-assistant/api/conversations.php?action=list', { credentials: 'same-origin' });
+            const data = await res.json();
+            if (data.success) renderList(data.data);
+        };
+        load();
+
+        drawer.querySelector('.history-new').addEventListener('click', async () => {
+            const title = prompt('Name this chat', 'New chat');
+            const res = await fetch('./ai-assistant/api/conversations.php?action=create', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title })
+            });
+            const data = await res.json();
+            if (data.success) {
+                // Clear current window for new chat
+                const container = document.getElementById('sunny-messages');
+                container.innerHTML = '';
+                close();
             }
         });
     }
@@ -468,6 +708,7 @@ class SunnyChat {
             <div class="message-content">
                 <div class="message-text">${this.formatMessage(content)}</div>
                 <div class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                ${sender === 'assistant' ? '<div class="message-actions"><button class="thumb-up" title="Helpful">👍</button><button class="thumb-down" title="Not helpful">👎</button></div>' : ''}
             </div>
         `;
         
@@ -482,6 +723,29 @@ class SunnyChat {
             timestamp: new Date()
         });
         
+        if (sender === 'assistant') {
+            const up = messageDiv.querySelector('.thumb-up');
+            const down = messageDiv.querySelector('.thumb-down');
+            const sendFeedback = async (rating, comment) => {
+                try {
+                    const cidRes = await fetch('./ai-assistant/api/conversations.php?action=get-active', { credentials: 'same-origin' });
+                    const cidData = await cidRes.json();
+                    const conversation_id = cidData.conversation_id || null;
+                    await fetch('./ai-assistant/api/feedback.php', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rating, comment, conversation_id, frontend_message_id: messageId })
+                    });
+                } catch (e) { /* ignore */ }
+            };
+            if (up) up.addEventListener('click', () => sendFeedback(1, ''));
+            if (down) down.addEventListener('click', async () => {
+                const comment = prompt('What would have been better? (optional)') || '';
+                await sendFeedback(-1, comment);
+            });
+        }
+
         return messageId;
     }
 

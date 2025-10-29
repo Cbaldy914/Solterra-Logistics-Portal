@@ -73,6 +73,8 @@ try {
     $user_role = $_SESSION['role'] ?? 'user';
     $account_id = $_SESSION['account_id'] ?? null;
     $user_name = $_SESSION['username'] ?? 'User';
+    // Ensure we have an active conversation id for this user
+    $conversationId = $_SESSION['sunny_active_conversation_id'] ?? null;
     
     // Load existing chat history from session (max 10 messages)
     $chatHistory = $_SESSION['sunny_chat_history'] ?? [];
@@ -95,6 +97,26 @@ try {
         } catch (Exception $e) {
             error_log("Failed to get account_id for user {$user_id}: " . $e->getMessage());
         }
+    }
+
+    // Create a conversation if none exists
+    try {
+        if (!$conversationId) {
+            $connTmp = getDBConnection();
+            if ($connTmp) {
+                $title = 'Chat on ' . date('Y-m-d H:i');
+                $stmt = $connTmp->prepare("INSERT INTO sunny_conversations (user_id, title) VALUES (?, ?)");
+                $stmt->bind_param('is', $user_id, $title);
+                if ($stmt->execute()) {
+                    $conversationId = $connTmp->insert_id;
+                    $_SESSION['sunny_active_conversation_id'] = $conversationId;
+                }
+                $stmt->close();
+                $connTmp->close();
+            }
+        }
+    } catch (Exception $e) {
+        // Ignore; non-fatal for chat
     }
 
     // Load tools if needed (carefully)
@@ -299,10 +321,6 @@ try {
         exit;
     }
 
-    // Send completion signal
-    echo "data: " . json_encode(['type' => 'complete']) . "\n\n";
-    flush();
-
     // ---- Persist chat history ----
     if (!empty($assistantResponseBuffer)) {
         // Append new user & assistant messages
@@ -313,7 +331,41 @@ try {
             $chatHistory = array_slice($chatHistory, -1 * $maxHistory);
         }
         $_SESSION['sunny_chat_history'] = $chatHistory;
+
+        // Also persist to DB conversation (best effort)
+        try {
+            if (!empty($_SESSION['sunny_active_conversation_id'])) {
+                $cid = intval($_SESSION['sunny_active_conversation_id']);
+                $conn2 = getDBConnection();
+                if ($conn2) {
+                    $stmt1 = $conn2->prepare("INSERT INTO sunny_messages (conversation_id, role, content) VALUES (?,?,?)");
+                    $roleUser = 'user';
+                    $stmt1->bind_param('iss', $cid, $roleUser, $message);
+                    $stmt1->execute();
+                    $stmt1->close();
+
+                    $stmt2 = $conn2->prepare("INSERT INTO sunny_messages (conversation_id, role, content) VALUES (?,?,?)");
+                    $roleAsst = 'assistant';
+                    $stmt2->bind_param('iss', $cid, $roleAsst, $assistantResponseBuffer);
+                    $stmt2->execute();
+                    $stmt2->close();
+
+                    $stmt3 = $conn2->prepare("UPDATE sunny_conversations SET last_message_at = NOW() WHERE id = ?");
+                    $stmt3->bind_param('i', $cid);
+                    $stmt3->execute();
+                    $stmt3->close();
+
+                    $conn2->close();
+                }
+            }
+        } catch (Exception $e) {
+            // Swallow persistence errors, don't break SSE
+        }
     }
+
+    // Send completion signal (after persistence)
+    echo "data: " . json_encode(['type' => 'complete', 'conversation_id' => ($_SESSION['sunny_active_conversation_id'] ?? null)]) . "\n\n";
+    flush();
 
 } catch (Exception $e) {
     error_log("Chat stream error: " . $e->getMessage() . " | File: " . $e->getFile() . " | Line: " . $e->getLine());
