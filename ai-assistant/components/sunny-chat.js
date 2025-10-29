@@ -46,10 +46,10 @@ class SunnyChat {
                     <div class="connection-indicator"></div>
                 </div>
                 <div class="sunny-header-buttons">
-                    <button class="sunny-history-btn" id="sunny-history-btn" title="Conversation history">
+                    <button class="sunny-settings-btn" id="sunny-settings-btn" title="Settings">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <polyline points="12 6 12 12 16 14"></polyline>
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
                         </svg>
                     </button>
                     <button class="sunny-expand-btn" id="sunny-expand-btn" title="Expand to fullscreen">
@@ -77,7 +77,7 @@ class SunnyChat {
                     <button class="quick-action-manage" id="sunny-manage-qa" title="Manage quick actions">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="3"></circle>
-                            <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"></path>
+                            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
                         </svg>
                     </button>
                 </div>
@@ -111,7 +111,7 @@ class SunnyChat {
         const attachLabel = document.getElementById('sunny-attach-label');
         const quickActionBtns = document.querySelectorAll('.quick-action-btn');
         const expandBtn = document.getElementById('sunny-expand-btn');
-        const historyBtn = document.getElementById('sunny-history-btn');
+        const settingsBtn = document.getElementById('sunny-settings-btn');
         const manageBtn = document.getElementById('sunny-manage-qa');
 
         chatButton.addEventListener('click', (e) => {
@@ -137,9 +137,9 @@ class SunnyChat {
             this.toggleFullscreen();
         });
 
-        historyBtn.addEventListener('click', (e) => {
+        settingsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.openHistoryDrawer();
+            this.openSettingsPanel();
         });
 
         sendBtn.addEventListener('click', () => this.sendMessage());
@@ -351,39 +351,77 @@ class SunnyChat {
         });
     }
 
-    openHistoryDrawer() {
-        const drawer = document.createElement('div');
-        drawer.className = 'sunny-history-overlay';
-        drawer.innerHTML = `
-            <div class="sunny-history-drawer">
-                <div class="sunny-history-header">
-                    <div class="history-header-content">
+    openSettingsPanel() {
+        const panel = document.createElement('div');
+        panel.className = 'sunny-settings-overlay';
+        panel.innerHTML = `
+            <div class="sunny-settings-panel">
+                <div class="sunny-settings-header">
+                    <div class="settings-header-content">
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <polyline points="12 6 12 12 16 14"></polyline>
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
                         </svg>
-                        <h3>Conversations</h3>
+                        <h3>Settings</h3>
                     </div>
-                    <div class="actions">
-                        <button class="history-new">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="12" y1="5" x2="12" y2="19"></line>
-                                <line x1="5" y1="12" x2="19" y2="12"></line>
-                            </svg>
-                            New
-                        </button>
-                        <button class="history-close">×</button>
+                    <button class="settings-close">×</button>
+                </div>
+                
+                <div class="sunny-settings-tabs">
+                    <button class="settings-tab active" data-tab="conversations">Conversations</button>
+                    <button class="settings-tab" data-tab="memory">Memory</button>
+                    <button class="settings-tab" data-tab="preferences">Preferences</button>
+                </div>
+                
+                <div class="sunny-settings-content">
+                    <div class="settings-tab-content active" id="tab-conversations">
+                        <div class="tab-actions">
+                            <button class="history-new">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                New Chat
+                            </button>
+                        </div>
+                        <div class="sunny-history-list"></div>
+                    </div>
+                    
+                    <div class="settings-tab-content" id="tab-memory">
+                        <div class="tab-actions">
+                            <button class="memory-add">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                Add Memory
+                            </button>
+                        </div>
+                        <div class="sunny-memory-list"></div>
+                    </div>
+                    
+                    <div class="settings-tab-content" id="tab-preferences">
+                        <p class="coming-soon">Additional settings coming soon...</p>
                     </div>
                 </div>
-                <div class="sunny-history-list"></div>
             </div>`;
-        document.body.appendChild(drawer);
+        document.body.appendChild(panel);
 
-        const close = () => drawer.remove();
-        drawer.querySelector('.history-close').addEventListener('click', close);
-        drawer.addEventListener('click', (e) => { if (e.target === drawer) close(); });
+        const close = () => panel.remove();
+        panel.querySelector('.settings-close').addEventListener('click', close);
+        panel.addEventListener('click', (e) => { if (e.target === panel) close(); });
 
-        const listEl = drawer.querySelector('.sunny-history-list');
+        // Tab switching
+        panel.querySelectorAll('.settings-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                panel.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+                panel.querySelectorAll('.settings-tab-content').forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                panel.querySelector(`#tab-${tab.dataset.tab}`).classList.add('active');
+            });
+        });
+
+        const listEl = panel.querySelector('.sunny-history-list');
         const renderList = (items) => {
             listEl.innerHTML = '';
             if (!items || items.length === 0) {
@@ -461,18 +499,24 @@ class SunnyChat {
                         `;
                         container.appendChild(welcomeDiv);
                         
-                        // Add quick actions
+                        // Add quick actions (clone only buttons, not manage button)
                         const qaContainer = document.getElementById('sunny-quick-actions');
                         if (qaContainer) {
-                            const qaClone = qaContainer.cloneNode(true);
-                            container.appendChild(qaClone);
-                            // Re-bind quick action clicks
-                            qaClone.querySelectorAll('.quick-action-btn').forEach(btn => {
-                                btn.addEventListener('click', () => {
-                                    const action = btn.getAttribute('data-action');
+                            const qaClone = document.createElement('div');
+                            qaClone.className = 'sunny-quick-actions';
+                            qaClone.id = 'sunny-quick-actions-loaded';
+                            
+                            // Clone only the action buttons, not the manage button
+                            qaContainer.querySelectorAll('.quick-action-btn').forEach(btn => {
+                                const btnClone = btn.cloneNode(true);
+                                btnClone.addEventListener('click', () => {
+                                    const action = btnClone.getAttribute('data-action');
                                     this.sendMessage(action);
                                 });
+                                qaClone.appendChild(btnClone);
                             });
+                            
+                            container.appendChild(qaClone);
                         }
                         
                         // Add conversation messages
@@ -514,7 +558,11 @@ class SunnyChat {
         };
         load();
 
-        drawer.querySelector('.history-new').addEventListener('click', async () => {
+        // Load memories
+        this.loadMemoriesList(panel.querySelector('.sunny-memory-list'));
+
+        // Bind actions
+        panel.querySelector('.history-new').addEventListener('click', async () => {
             const title = prompt('Name this chat', 'New chat');
             if (!title) return;
             const res = await fetch('./ai-assistant/api/conversations.php?action=create', {
@@ -538,23 +586,31 @@ class SunnyChat {
                 `;
                 container.appendChild(welcomeDiv);
                 
-                // Add quick actions
+                // Add quick actions (clone only buttons, not manage button)
                 const qaContainer = document.getElementById('sunny-quick-actions');
                 if (qaContainer) {
-                    const qaClone = qaContainer.cloneNode(true);
-                    container.appendChild(qaClone);
-                    // Re-bind quick action clicks
-                    qaClone.querySelectorAll('.quick-action-btn').forEach(btn => {
-                        btn.addEventListener('click', () => {
-                            const action = btn.getAttribute('data-action');
+                    const qaClone = document.createElement('div');
+                    qaClone.className = 'sunny-quick-actions';
+                    qaClone.id = 'sunny-quick-actions-loaded';
+                    
+                    // Clone only the action buttons, not the manage button
+                    qaContainer.querySelectorAll('.quick-action-btn').forEach(btn => {
+                        const btnClone = btn.cloneNode(true);
+                        btnClone.addEventListener('click', () => {
+                            const action = btnClone.getAttribute('data-action');
                             this.sendMessage(action);
                         });
+                        qaClone.appendChild(btnClone);
                     });
+                    
+                    container.appendChild(qaClone);
                 }
                 
                 close();
             }
         });
+
+        panel.querySelector('.memory-add').addEventListener('click', () => this.addMemoryModal());
     }
 
     showAttachmentChip(filename, size) {
@@ -966,6 +1022,254 @@ class SunnyChat {
             .replace(/\*(.*?)\*/g, '<em>$1</em>')
             .replace(/\n/g, '<br>')
             .replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>');
+    }
+
+    async loadMemoriesList(container) {
+        try {
+            const res = await fetch('./ai-assistant/api/memory.php?action=list', { credentials: 'same-origin' });
+            const data = await res.json();
+            
+            if (!data.success || !data.data || data.data.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                            <path d="M2 17l10 5 10-5M2 12l10 5 10-5"></path>
+                        </svg>
+                        <p>No memories yet</p>
+                        <span>Sunny will remember important details as you chat</span>
+                    </div>`;
+                return;
+            }
+            
+            container.innerHTML = '';
+            data.data.forEach(memory => {
+                const item = document.createElement('div');
+                item.className = 'memory-item';
+                item.innerHTML = `
+                    <div class="memory-content">
+                        <div class="memory-title">${this.escapeHtml(memory.title)}</div>
+                        <div class="memory-text">${this.escapeHtml(memory.content)}</div>
+                        <div class="memory-meta">
+                            <span class="memory-importance">Importance: ${memory.importance}/3</span>
+                            <span class="memory-date">${new Date(memory.created_at).toLocaleDateString()}</span>
+                        </div>
+                    </div>
+                    <div class="memory-actions">
+                        <button class="action-btn edit" data-id="${memory.id}" title="Edit">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                        <button class="action-btn delete" data-id="${memory.id}" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                    </div>`;
+                
+                item.querySelector('.edit').addEventListener('click', () => this.editMemoryModal(memory, container));
+                item.querySelector('.delete').addEventListener('click', () => this.deleteMemory(memory.id, container));
+                
+                container.appendChild(item);
+            });
+        } catch (e) {
+            console.error('Failed to load memories:', e);
+            container.innerHTML = '<div class="empty-state"><p>Failed to load memories</p></div>';
+        }
+    }
+
+    addMemoryModal() {
+        const modal = document.createElement('div');
+        modal.className = 'sunny-modal-overlay';
+        modal.innerHTML = `
+            <div class="sunny-modal sunny-memory-modal">
+                <div class="sunny-modal-header">
+                    <div class="modal-header-content">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                            <path d="M2 17l10 5 10-5M2 12l10 5 10-5"></path>
+                        </svg>
+                        <h3>Add Memory</h3>
+                    </div>
+                    <button class="sunny-modal-close" aria-label="Close">×</button>
+                </div>
+                <div class="sunny-modal-body">
+                    <div class="form-group">
+                        <label>Title</label>
+                        <input type="text" id="memory-title" placeholder="e.g., User prefers email updates" maxlength="100">
+                    </div>
+                    <div class="form-group">
+                        <label>Content</label>
+                        <textarea id="memory-content" rows="4" placeholder="Detailed information..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Importance (1-3)</label>
+                        <select id="memory-importance">
+                            <option value="1">1 - Low</option>
+                            <option value="2" selected>2 - Medium</option>
+                            <option value="3">3 - High</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="sunny-modal-footer">
+                    <button class="memory-save">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        Save Memory
+                    </button>
+                </div>
+            </div>`;
+        
+        document.body.appendChild(modal);
+        
+        const close = () => modal.remove();
+        modal.querySelector('.sunny-modal-close').addEventListener('click', close);
+        modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+        
+        modal.querySelector('.memory-save').addEventListener('click', async () => {
+            const title = modal.querySelector('#memory-title').value.trim();
+            const content = modal.querySelector('#memory-content').value.trim();
+            const importance = parseInt(modal.querySelector('#memory-importance').value);
+            
+            if (!title || !content) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            try {
+                const res = await fetch('./ai-assistant/api/memory.php?action=create', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, content, importance })
+                });
+                
+                const data = await res.json();
+                if (data.success) {
+                    close();
+                    // Reload memory list
+                    const memoryList = document.querySelector('.sunny-memory-list');
+                    if (memoryList) this.loadMemoriesList(memoryList);
+                } else {
+                    alert('Failed to save memory: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Failed to save memory: ' + e.message);
+            }
+        });
+    }
+
+    editMemoryModal(memory, container) {
+        const modal = document.createElement('div');
+        modal.className = 'sunny-modal-overlay';
+        modal.innerHTML = `
+            <div class="sunny-modal sunny-memory-modal">
+                <div class="sunny-modal-header">
+                    <div class="modal-header-content">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                        <h3>Edit Memory</h3>
+                    </div>
+                    <button class="sunny-modal-close" aria-label="Close">×</button>
+                </div>
+                <div class="sunny-modal-body">
+                    <div class="form-group">
+                        <label>Title</label>
+                        <input type="text" id="memory-title" placeholder="e.g., User prefers email updates" maxlength="100" value="${this.escapeHtml(memory.title)}">
+                    </div>
+                    <div class="form-group">
+                        <label>Content</label>
+                        <textarea id="memory-content" rows="4" placeholder="Detailed information...">${this.escapeHtml(memory.content)}</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Importance (1-3)</label>
+                        <select id="memory-importance">
+                            <option value="1" ${memory.importance === 1 ? 'selected' : ''}>1 - Low</option>
+                            <option value="2" ${memory.importance === 2 ? 'selected' : ''}>2 - Medium</option>
+                            <option value="3" ${memory.importance === 3 ? 'selected' : ''}>3 - High</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="sunny-modal-footer">
+                    <button class="memory-save">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        Update Memory
+                    </button>
+                </div>
+            </div>`;
+        
+        document.body.appendChild(modal);
+        
+        const close = () => modal.remove();
+        modal.querySelector('.sunny-modal-close').addEventListener('click', close);
+        modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+        
+        modal.querySelector('.memory-save').addEventListener('click', async () => {
+            const title = modal.querySelector('#memory-title').value.trim();
+            const content = modal.querySelector('#memory-content').value.trim();
+            const importance = parseInt(modal.querySelector('#memory-importance').value);
+            
+            if (!title || !content) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            try {
+                const res = await fetch('./ai-assistant/api/memory.php?action=update', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: memory.id, title, content, importance })
+                });
+                
+                const data = await res.json();
+                if (data.success) {
+                    close();
+                    // Reload memory list
+                    this.loadMemoriesList(container);
+                } else {
+                    alert('Failed to update memory: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Failed to update memory: ' + e.message);
+            }
+        });
+    }
+
+    async deleteMemory(id, container) {
+        if (!confirm('Delete this memory? This action cannot be undone.')) return;
+        
+        try {
+            const res = await fetch('./ai-assistant/api/memory.php?action=delete', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id })
+            });
+            
+            const data = await res.json();
+            if (data.success) {
+                this.loadMemoriesList(container);
+            } else {
+                alert('Failed to delete memory: ' + (data.error || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Failed to delete memory: ' + e.message);
+        }
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 }
 
