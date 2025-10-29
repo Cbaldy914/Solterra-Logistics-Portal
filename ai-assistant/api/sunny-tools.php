@@ -1363,17 +1363,25 @@ class SunnyTools {
         // Normalize fancy quotes to straight quotes
         $message = str_replace(["“","”","‘","’"], ['"','"','\'','\''], $message);
 
+        // Helper to ignore generic descriptors like "status" that can appear in quick actions
+        $isGenericWord = function($name) {
+            $generic = ['status','summary','overview','info','information'];
+            return in_array(strtolower(trim($name)), $generic, true);
+        };
+
         // 1) Try explicit quoted name after the word project (named/called optional)
         if (preg_match('/project\s*(?:named|called|=)?\s*["\']([^"\']+)["\']/i', $message, $m)) {
             $name = trim($m[1]);
-            return $name !== '' ? $name : null;
+            if ($name === '' || $isGenericWord($name)) { return null; }
+            return $name;
         }
 
         // 2) Try label-style: project: <name>
         if (preg_match('/project\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9 .&_()\-]{0,100})/i', $message, $m)) {
             $name = trim($m[1]);
             $name = rtrim($name, ".,!?\s");
-            return $name !== '' ? $name : null;
+            if ($name === '' || $isGenericWord($name)) { return null; }
+            return $name;
         }
 
         // 3) Try simple: about the project <name>
@@ -1382,21 +1390,24 @@ class SunnyTools {
             // Stop at sentence-ending punctuation
             $name = preg_split('/[.!?,]/', $name)[0];
             $name = trim($name);
-            return $name !== '' ? $name : null;
+            if ($name === '' || $isGenericWord($name)) { return null; }
+            return $name;
         }
 
         // 4) Handle trailing pattern: <name> Project (e.g., "Morgan Test Project")
         if (preg_match('/\b([A-Za-z0-9][A-Za-z0-9 .&_()\-]{1,100})\s+project\b/i', $message, $m)) {
             $name = trim($m[1]);
             $name = rtrim($name, ".,!?\s");
-            return $name !== '' ? $name : null;
+            if ($name === '' || $isGenericWord($name)) { return null; }
+            return $name;
         }
 
         // 5) Handle "for <name> project" phrasing
         if (preg_match('/\bfor\s+([A-Za-z0-9][A-Za-z0-9 .&_()\-]{1,100})\s+project\b/i', $message, $m)) {
             $name = trim($m[1]);
             $name = rtrim($name, ".,!?\s");
-            return $name !== '' ? $name : null;
+            if ($name === '' || $isGenericWord($name)) { return null; }
+            return $name;
         }
 
         return null;
