@@ -99,9 +99,9 @@ $request_id = $conn->insert_id;
 $stmt->close();
 $conn->close();
 
-// Send notification email to sales team (optional)
-// Update this email address to your sales team's email
-$sales_email = "info@solterrasolutions.com"; // Change this to your actual sales email
+// Send notification email to sales team
+// Ensure this matches the correct Solterra inbox
+$sales_email = "info@solterrasol.com";
 
 $email_subject = "🎯 New Demo Request from " . $company_name;
 $email_body = "New Demo Request - Request ID #" . $request_id . "
@@ -124,7 +124,10 @@ IP Address: " . $ip_address . "
 This request was submitted via the Solterra Solutions Portal login page.";
 
 try {
-    Mailer::send($sales_email, $email_subject, $email_body);
+    $sent = Mailer::send($sales_email, $email_subject, $email_body);
+    if (!$sent) {
+        error_log("Demo request notification email returned false for: " . $sales_email . " (Request ID #" . $request_id . ")");
+    }
 } catch (Exception $e) {
     // Log error but don't fail the request
     error_log("Demo request notification email failed: " . $e->getMessage());
