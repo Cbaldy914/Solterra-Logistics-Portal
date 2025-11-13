@@ -14,13 +14,28 @@ $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'] ?? 'User';
 $user_initials = strtoupper(substr($username, 0, 2));
 
+// Get user's first name for personalized greeting
+$display_name = $username; // default to username
+require_once dirname(__DIR__, 3) . '/config.php';
+$conn = getDBConnection();
+
 // Determine user's account_id for data filtering
 $user_account_id = null;
-if ($user_role !== 'global_admin') {
+if ($conn) {
+    // Get first name if available
+    $stmt_name = $conn->prepare("SELECT first_name FROM users WHERE id = ?");
+    $stmt_name->bind_param("i", $user_id);
+    $stmt_name->execute();
+    $stmt_name->bind_result($first_name);
+    if ($stmt_name->fetch()) {
+        if (!empty($first_name)) {
+            $display_name = $first_name;
+        }
+    }
+    $stmt_name->close();
+    
     // For non-global admins, get their account_id
-    require_once dirname(__DIR__, 3) . '/config.php';
-    $conn = getDBConnection();
-    if ($conn) {
+    if ($user_role !== 'global_admin') {
         $stmt = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1");
         $stmt->bind_param("i", $user_id);
         $stmt->execute();
@@ -29,8 +44,8 @@ if ($user_role !== 'global_admin') {
             $user_account_id = $account_id;
         }
         $stmt->close();
-        $conn->close();
     }
+    $conn->close();
 }
 ?>
 
@@ -43,6 +58,7 @@ if ($user_role !== 'global_admin') {
 window.SunnyConfig = {
     userId: <?php echo json_encode($user_id); ?>,
     username: <?php echo json_encode($username); ?>,
+    displayName: <?php echo json_encode($display_name); ?>, // First name if available, otherwise username
     userRole: <?php echo json_encode($user_role); ?>,
     userAccountId: <?php echo json_encode($user_account_id); ?>,
     userInitials: <?php echo json_encode($user_initials); ?>,

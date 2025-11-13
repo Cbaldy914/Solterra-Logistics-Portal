@@ -28,17 +28,17 @@ if (!$conn) {
 $user_id = $_SESSION['user_id'];
 $accountIds = [];
 
-// Get user's display name (first name + last name, or username if not set)
+// Get user's display name (first name if available, otherwise username)
 $displayName = $_SESSION['username']; // default to username
-$stmtUser = $conn->prepare("SELECT first_name, last_name FROM users WHERE id = ?");
+$stmtUser = $conn->prepare("SELECT first_name FROM users WHERE id = ?");
 $stmtUser->bind_param("i", $user_id);
 $stmtUser->execute();
-$stmtUser->bind_result($firstName, $lastName);
+$stmtUser->bind_result($firstName);
 $stmtUser->fetch();
 $stmtUser->close();
 
-if (!empty($firstName) || !empty($lastName)) {
-    $displayName = trim($firstName . ' ' . $lastName);
+if (!empty($firstName)) {
+    $displayName = $firstName;
 }
 
 if ($role === 'global_admin') {
