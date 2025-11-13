@@ -50,38 +50,7 @@ if (isset($_SESSION['demo_error'])) {
             overflow-x: hidden;
         }
 
-        /* Subtle animated background elements */
-        body::before,
-        body::after {
-            content: '';
-            position: absolute;
-            border-radius: 50%;
-            opacity: 0.05;
-            pointer-events: none;
-        }
-
-        body::before {
-            width: 600px;
-            height: 600px;
-            background: radial-gradient(circle, #6BB8C7 0%, transparent 70%);
-            top: -200px;
-            right: -200px;
-            animation: float 20s ease-in-out infinite;
-        }
-
-        body::after {
-            width: 800px;
-            height: 800px;
-            background: radial-gradient(circle, #488C9A 0%, transparent 70%);
-            bottom: -300px;
-            left: -300px;
-            animation: float 25s ease-in-out infinite reverse;
-        }
-
-        @keyframes float {
-            0%, 100% { transform: translate(0, 0) scale(1); }
-            50% { transform: translate(30px, 30px) scale(1.1); }
-        }
+        /* Removed background pseudo-elements for better mobile performance */
 
         .demo-container {
             width: 100%;
