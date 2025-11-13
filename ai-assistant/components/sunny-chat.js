@@ -66,7 +66,7 @@ class SunnyChat {
             
             <div class="sunny-messages" id="sunny-messages">
                 <div class="sunny-welcome-message">
-                    <h4>Hi ${window.SunnyConfig?.username || 'there'}! 👋</h4>
+                    <h4>Hi ${window.SunnyConfig?.displayName || window.SunnyConfig?.username || 'there'}! 👋</h4>
                     <p>I'm Sunny, your logistics assistant. I can help you track deliveries, check project status, and answer questions about your shipments.</p>
                 </div>
                 
