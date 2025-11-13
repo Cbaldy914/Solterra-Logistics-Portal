@@ -42,8 +42,15 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
     exit();
 }
 
-// Get user's IP address
+// Get user's IP address (basic X-Forwarded-For support)
 $ip_address = $_SERVER['REMOTE_ADDR'] ?? '';
+if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+    $xff = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+    $candidate = trim($xff[0]);
+    if (filter_var($candidate, FILTER_VALIDATE_IP)) {
+        $ip_address = $candidate;
+    }
+}
 
 $conn = getDBConnection();
 if (!$conn) {
@@ -52,18 +59,30 @@ if (!$conn) {
     exit();
 }
 
-// Check for rate limiting (optional - prevent spam)
-// Allow max 3 requests per IP per day
-$today_start = date('Y-m-d 00:00:00');
-$check_stmt = $conn->prepare("SELECT COUNT(*) as count FROM demo_requests WHERE ip_address = ? AND submitted_at >= ?");
-$check_stmt->bind_param("ss", $ip_address, $today_start);
-$check_stmt->execute();
-$check_result = $check_stmt->get_result();
-$check_data = $check_result->fetch_assoc();
-$check_stmt->close();
+// Rate limiting adjustments: minimize blocking legitimate users
+// 1) Short IP cooldown: 1 request per minute per IP
+$ip_window_stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM demo_requests WHERE ip_address = ? AND submitted_at >= (NOW() - INTERVAL 1 MINUTE)");
+$ip_window_stmt->bind_param("s", $ip_address);
+$ip_window_stmt->execute();
+$ip_window_res = $ip_window_stmt->get_result();
+$ip_window = $ip_window_res->fetch_assoc();
+$ip_window_stmt->close();
+if ((int)($ip_window['cnt'] ?? 0) >= 1) {
+    $_SESSION['demo_error'] = 'Please wait about a minute before submitting another request.';
+    header("Location: request_demo");
+    exit();
+}
 
-if ($check_data['count'] >= 3) {
-    $_SESSION['demo_error'] = 'You have reached the maximum number of requests for today. Please try again tomorrow or contact us directly.';
+// 2) Per-email daily limit: max 5 per day
+$today_start = date('Y-m-d 00:00:00');
+$email_day_stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM demo_requests WHERE email = ? AND submitted_at >= ?");
+$email_day_stmt->bind_param("ss", $email, $today_start);
+$email_day_stmt->execute();
+$email_day_res = $email_day_stmt->get_result();
+$email_day = $email_day_res->fetch_assoc();
+$email_day_stmt->close();
+if ((int)($email_day['cnt'] ?? 0) >= 5) {
+    $_SESSION['demo_error'] = 'You have reached today\'s limit for this email. Please try again tomorrow or contact us directly.';
     header("Location: request_demo");
     exit();
 }
