@@ -162,6 +162,46 @@ if (!empty($document_type)) {
     if ($document_type === 'safe_harbor_evidence') {
         // Show all Safe Harbor docs: either stored in Safe Harbor folder or flagged as safe harbor
         $where_conditions[] = "(pd.document_type = 'safe_harbor_evidence' OR pd.is_safe_harbor = 1)";
+    } elseif ($document_type === 'shipments' && !empty($sub_filters) && is_array($sub_filters)) {
+        // If shipments selected and user includes POD subfilters, include legacy pods, too
+        $selected_pod = false;
+        foreach ($sub_filters as $sf) {
+            if (trim($sf) === 'Project POD' || trim($sf) === 'Warehouse POD') { $selected_pod = true; break; }
+        }
+        if ($selected_pod) {
+            $where_conditions[] = "pd.document_type IN ('shipments','pods')";
+        } else {
+            $where_conditions[] = "pd.document_type = ?";
+            $params[] = $document_type;
+            $param_types .= "s";
+        }
+    } elseif ($document_type === 'photos') {
+        // Virtual Photos aggregator
+        $include_project = true; $include_warehouse = true; $include_damage = true;
+        if (!empty($sub_filters) && is_array($sub_filters)) {
+            $labels = array_map('trim', $sub_filters);
+            $include_project = in_array('Project Photos', $labels);
+            $include_warehouse = in_array('Warehouse Photos', $labels);
+            $include_damage = in_array('Damage Photos', $labels);
+            // If none selected that match, include all (or include none?) — include all for safety
+            if (!$include_project && !$include_warehouse && !$include_damage) {
+                $include_project = $include_warehouse = $include_damage = true;
+            }
+        }
+        $photo_parts = [];
+        if ($include_project) {
+            $photo_parts[] = "(pd.document_type = 'pictures' AND pd.document_sub_type = 'Project Photo')";
+        }
+        if ($include_warehouse) {
+            $photo_parts[] = "(pd.document_type = 'warehousing' AND pd.document_sub_type IN ('Photos','Warehouse Photo','Warehouse Photos'))";
+        }
+        if ($include_damage) {
+            // Accept both singular and plural labels
+            $photo_parts[] = "(pd.document_type = 'exception_reports' AND pd.document_sub_type IN ('Damage Photo','Damage Photos'))";
+        }
+        if (!empty($photo_parts)) {
+            $where_conditions[] = '(' . implode(' OR ', $photo_parts) . ')';
+        }
     } else {
         $where_conditions[] = "pd.document_type = ?";
         $params[] = $document_type;

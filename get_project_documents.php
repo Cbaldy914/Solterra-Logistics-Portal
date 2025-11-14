@@ -31,6 +31,10 @@ if (!$conn) {
 // Get parameters
 $project_id = intval($_GET['project_id'] ?? 0);
 $document_type = trim($_GET['document_type'] ?? '');
+$document_sub_type = trim($_GET['document_sub_type'] ?? '');
+// New: support multi-type and multi-subtype filters (CSV)
+$document_type_in = trim($_GET['document_type_in'] ?? '');
+$document_sub_type_in = trim($_GET['document_sub_type_in'] ?? '');
 $limit = intval($_GET['limit'] ?? 0); // 0 means no limit
 
 $user_id = $_SESSION['user_id'];
@@ -114,9 +118,31 @@ try {
         $params = [$project_id];
         $param_types = "i";
 
-        if (!empty($document_type)) {
+        // Apply document_type filters (IN takes precedence)
+        if (!empty($document_type_in)) {
+            $types = array_values(array_filter(array_map('trim', explode(',', $document_type_in))));
+            if (!empty($types)) {
+                $placeholders = implode(',', array_fill(0, count($types), '?'));
+                $sql .= " AND pd.document_type IN ($placeholders)";
+                foreach ($types as $t) { $params[] = $t; $param_types .= 's'; }
+            }
+        } elseif (!empty($document_type)) {
             $sql .= " AND pd.document_type = ?";
             $params[] = $document_type;
+            $param_types .= "s";
+        }
+
+        // Apply sub_type filters (IN takes precedence)
+        if (!empty($document_sub_type_in)) {
+            $subs = array_values(array_filter(array_map('trim', explode(',', $document_sub_type_in))));
+            if (!empty($subs)) {
+                $placeholders = implode(',', array_fill(0, count($subs), '?'));
+                $sql .= " AND pd.document_sub_type IN ($placeholders)";
+                foreach ($subs as $st) { $params[] = $st; $param_types .= 's'; }
+            }
+        } elseif (!empty($document_sub_type)) {
+            $sql .= " AND pd.document_sub_type = ?";
+            $params[] = $document_sub_type;
             $param_types .= "s";
         }
 
@@ -187,9 +213,28 @@ try {
                 $count_params = [$project_id];
                 $count_param_types = "i";
                 
-                if (!empty($document_type)) {
+                if (!empty($document_type_in)) {
+                    $types = array_values(array_filter(array_map('trim', explode(',', $document_type_in))));
+                    if (!empty($types)) {
+                        $placeholders = implode(',', array_fill(0, count($types), '?'));
+                        $count_sql .= " AND pd.document_type IN ($placeholders)";
+                        foreach ($types as $t) { $count_params[] = $t; $count_param_types .= 's'; }
+                    }
+                } elseif (!empty($document_type)) {
                     $count_sql .= " AND pd.document_type = ?";
                     $count_params[] = $document_type;
+                    $count_param_types .= "s";
+                }
+                if (!empty($document_sub_type_in)) {
+                    $subs = array_values(array_filter(array_map('trim', explode(',', $document_sub_type_in))));
+                    if (!empty($subs)) {
+                        $placeholders = implode(',', array_fill(0, count($subs), '?'));
+                        $count_sql .= " AND pd.document_sub_type IN ($placeholders)";
+                        foreach ($subs as $st) { $count_params[] = $st; $count_param_types .= 's'; }
+                    }
+                } elseif (!empty($document_sub_type)) {
+                    $count_sql .= " AND pd.document_sub_type = ?";
+                    $count_params[] = $document_sub_type;
                     $count_param_types .= "s";
                 }
                 
