@@ -225,6 +225,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $project_id = $stmt->insert_id;
         $stmt->close();
 
+        // Handle optional project photos (multi-upload) -> save in project_documents as 'pictures'
+        $cover_image_path = null;
+        if (isset($_FILES['project_images']) && is_array($_FILES['project_images']['name'])) {
+            $names = (array)$_FILES['project_images']['name'];
+            $tmps  = (array)$_FILES['project_images']['tmp_name'];
+            $errs  = (array)$_FILES['project_images']['error'];
+            $sizes = (array)$_FILES['project_images']['size'];
+
+            for ($i = 0; $i < count($names); $i++) {
+                if (!isset($errs[$i]) || $errs[$i] === UPLOAD_ERR_NO_FILE) continue;
+                if ($errs[$i] !== UPLOAD_ERR_OK) { continue; }
+
+                $orig = $names[$i];
+                // Only allow common image types
+                $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
+                if (!in_array($ext, ['jpg','jpeg','png','gif'])) { continue; }
+
+                $tmpName = $tmps[$i];
+                $mime    = mime_content_type($tmpName);
+                if (strpos($mime, 'image/') !== 0) { continue; }
+
+                $doc = [
+                    'project_id' => $project_id,
+                    'document_type' => 'pictures',
+                    'document_sub_type' => 'Project Photo',
+                    'original_name' => $orig,
+                    'file_size' => $sizes[$i],
+                    'mime_type' => $mime,
+                    'uploaded_by' => $user_id,
+                    'tmp_name' => $tmpName,
+                    'description' => 'Project Photo'
+                ];
+                try {
+                    $result = saveDocumentToProjectDocuments($conn, $doc);
+                    if (!$cover_image_path && is_array($result) && isset($result['file_path'])) {
+                        $cover_image_path = $result['file_path'];
+                    }
+                } catch (Exception $e) {
+                    // Ignore individual photo failures; continue with others
+                }
+            }
+        }
+
+        // If we saved any project photo, make the first one the cover image
+        if ($cover_image_path) {
+            $stmtU = $conn->prepare("UPDATE projects SET image_url = ? WHERE id = ?");
+            if ($stmtU) {
+                $stmtU->bind_param("si", $cover_image_path, $project_id);
+                $stmtU->execute();
+                $stmtU->close();
+            }
+        }
+
         // Save Driver Handout to project_documents as Shipments -> Delivery SOP (new format)
         if (isset($_FILES['driver_handout']) && $_FILES['driver_handout']['error'] !== UPLOAD_ERR_NO_FILE) {
             if ($_FILES['driver_handout']['error'] === UPLOAD_ERR_OK) {
@@ -1340,6 +1393,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="input-group">
                         <label for="image_file">Project Image</label>
                         <input type="file" id="image_file" name="image_file" accept="image/*">
+                    </div>
+
+                    <div class="input-group">
+                        <label for="project_images">Project Photos (multiple)</label>
+                        <input type="file" id="project_images" name="project_images[]" accept="image/*" multiple>
+                        <small style="color:#6c757d;display:block;margin-top:6px;">First photo becomes the project cover image.</small>
                     </div>
 
                     <?php if ($role === 'global_admin'): ?>

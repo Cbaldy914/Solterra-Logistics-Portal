@@ -55,17 +55,11 @@ $document_types = [
         'color' => '#22c55e',
         'sub_filters' => ['Solterra Invoices', 'OEM Invoices', 'Warehouse Invoices']
     ],
-    'pods' => [
-        'name' => 'PODs',
-        'icon' => 'fas fa-clipboard-check',
-        'color' => '#3b82f6',
-        'sub_filters' => ['Warehouse POD', 'Project POD']
-    ],
     'shipments' => [
         'name' => 'Shipments',
         'icon' => 'fas fa-shipping-fast',
         'color' => '#8b5cf6',
-        'sub_filters' => ['Arrival Notice', 'Customs Document', 'Delivery SOP']
+        'sub_filters' => ['Arrival Notice', 'Customs Document', 'Delivery SOP', 'Project POD', 'Warehouse POD']
     ],
     'warehousing' => [
         'name' => 'Warehousing',
@@ -78,6 +72,12 @@ $document_types = [
         'icon' => 'fas fa-microchip',
         'color' => '#10b981',
         'sub_filters' => ['Module Invoice', 'Flash Test Data', 'Spec Sheets']
+    ],
+    'photos' => [
+        'name' => 'Photos',
+        'icon' => 'fas fa-camera',
+        'color' => '#f59e0b',
+        'sub_filters' => ['Project Photos','Warehouse Photos','Damage Photos']
     ],
     'exception_reports' => [
         'name' => 'Exception Reports',
@@ -112,10 +112,22 @@ $from_page = isset($_GET['from']) ? trim($_GET['from']) : '';
 // Map folder keys to document types and sub-types
 $folder_mapping = [
     'invoices' => ['document_type' => 'invoices', 'subfolders' => ['freight_invoice' => 'Freight Invoice', 'solterra_invoice' => 'Solterra Invoice', 'module_invoice' => 'Module Invoice']],
-    'pods' => ['document_type' => 'pods', 'subfolders' => ['project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
-    'shipments' => ['document_type' => 'shipments', 'subfolders' => ['arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'delivery_sop' => 'Delivery SOP']],
+    // pods removed; handled under shipments
+    'shipments' => ['document_type' => 'shipments', 'subfolders' => [
+        'project_pod' => 'Project POD',
+        'warehouse_pod' => 'Warehouse POD',
+        'arrival_notice' => 'Arrival Notice',
+        'customs_document' => 'Customs Document',
+        'delivery_sop' => 'Delivery SOP'
+    ]],
     'warehousing' => ['document_type' => 'warehousing', 'subfolders' => ['warehouse_pod' => 'Warehouse POD', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Photos']],
     'modules' => ['document_type' => 'modules', 'subfolders' => ['module_invoice' => 'Module Invoice', 'flash_test_data' => 'Flash Test Data', 'spec_sheet' => 'Spec Sheets']],
+    // Virtual Photos folder routing to appropriate single-type filters
+    'photos' => ['document_type' => 'photos', 'subfolders' => [
+        'project_photo' => 'Project Photos',
+        'warehouse_photo' => 'Warehouse Photos',
+        'damage_photo' => 'Damage Photos'
+    ]],
     'exception_reports' => ['document_type' => 'exception_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'proof_of_completion' => 'Proof of Completion', 'safety_incident' => 'Safety Incident', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
     'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']],
     'other' => ['document_type' => 'other', 'subfolders' => ['general' => 'General']]
@@ -128,7 +140,18 @@ if (!empty($pre_selected_folder) && isset($folder_mapping[$pre_selected_folder])
     $pre_selected_document_type = $folder_mapping[$pre_selected_folder]['document_type'];
     
     if (!empty($pre_selected_subfolder) && isset($folder_mapping[$pre_selected_folder]['subfolders'][$pre_selected_subfolder])) {
-        $pre_selected_document_sub_type = $folder_mapping[$pre_selected_folder]['subfolders'][$pre_selected_subfolder];
+        $sf_val = $folder_mapping[$pre_selected_folder]['subfolders'][$pre_selected_subfolder];
+        if (is_array($sf_val)) {
+            // Allow subfolder-specific overrides of document_type and document_sub_type
+            if (!empty($sf_val['document_type'])) {
+                $pre_selected_document_type = $sf_val['document_type'];
+            }
+            if (!empty($sf_val['document_sub_type'])) {
+                $pre_selected_document_sub_type = $sf_val['document_sub_type'];
+            }
+        } else {
+            $pre_selected_document_sub_type = $sf_val;
+        }
     }
 }
 $is_pods_context = ($pre_selected_folder === 'pods');
@@ -1898,11 +1921,11 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
                             <select id="uploadDocumentType" name="document_type" class="form-select" required onchange="updateSubTypes()">
                                 <option value="">Choose document type...</option>
                                 <option value="invoices">Invoices</option>
-                                <option value="pods">PODs</option>
                                 <option value="shipments">Shipments</option>
                                 <option value="warehousing">Warehousing</option>
                                 <option value="modules">Modules</option>
                                 <option value="exception_reports">Exception Reports</option>
+                                <option value="pictures">Photos</option>
                                 <option value="other">Other</option>
                             </select>
                         </div>
@@ -1981,11 +2004,11 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
  // Document type sub-filters
  const subFilters = {
      'invoices': ['Solterra Invoice', 'Module Invoice'],
-     'pods': ['Warehouse POD', 'Project POD'],
-     'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
+     'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP', 'Project POD', 'Warehouse POD'],
      'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos'],
      'modules': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
      'exception_reports': ['Damage Photo', 'Warranty Document', 'Proof of Completion', 'Safety Incident', 'Project POD', 'Warehouse POD'],
+     'photos': ['Project Photos', 'Warehouse Photos', 'Damage Photos'],
      'safe_harbor_evidence': [],
      'other': []
  };
@@ -3488,7 +3511,7 @@ const documentConfig = {
         }
     },
     'shipments': {
-        'sub_types': ['Arrival Notice', 'Customs Document', 'Delivery SOP'],
+        'sub_types': ['Arrival Notice', 'Customs Document', 'Delivery SOP', 'Project POD', 'Warehouse POD'],
         'fields': {
             'Arrival Notice': [
                 {type: 'container_autocomplete', name: 'container_number', label: 'Container Number', required: true}
@@ -3498,6 +3521,14 @@ const documentConfig = {
             ],
             'Delivery SOP': [
                 // No additional fields required for Delivery SOP - only description
+            ]
+            ,
+            'Project POD': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true}
+            ],
+            'Warehouse POD': [
+                {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true},
+                {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
             ]
         }
     },
@@ -3529,6 +3560,18 @@ const documentConfig = {
             ],
             'Spec Sheets': [
                 {type: 'select', name: 'module_id', label: 'Module Batch #', required: true, data_source: 'module_batches'}
+            ]
+        }
+    },
+    'pictures': {
+        'sub_types': ['Project Photos', 'Warehouse Photos', 'Damage Photos'],
+        'fields': {
+            'Project Photos': [],
+            'Warehouse Photos': [
+                {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
+            ],
+            'Damage Photos': [
+                {type: 'select', name: 'ticket_id', label: 'Ticket Number', required: true, data_source: 'tickets'}
             ]
         }
     },
