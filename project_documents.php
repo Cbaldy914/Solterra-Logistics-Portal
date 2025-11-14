@@ -66,22 +66,14 @@ $folders_structure = [
             'module_invoice' => ['label' => 'Module Invoice', 'icon' => 'fas fa-microchip']
         ]
     ],
-    'pods' => [
-        'label' => 'PODs',
-        'icon' => 'fas fa-clipboard-check',
-        'class' => 'doc-pods',
-        'description' => 'Proof of delivery confirmations',
-        'subfolders' => [
-            'project_pod' => ['label' => 'Project POD', 'icon' => 'fas fa-clipboard'],
-            'warehouse_pod' => ['label' => 'Warehouse POD', 'icon' => 'fas fa-warehouse']
-        ]
-    ],
     'shipments' => [
         'label' => 'Shipments',
         'icon' => 'fas fa-shipping-fast',
         'class' => 'doc-bills',
         'description' => 'Shipping and transport documents',
         'subfolders' => [
+            'project_pod' => ['label' => 'Project PODs', 'icon' => 'fas fa-clipboard-check'],
+            'warehouse_pod' => ['label' => 'Warehouse PODs', 'icon' => 'fas fa-warehouse'],
             'arrival_notice' => ['label' => 'Arrival Notice', 'icon' => 'fas fa-bell'],
             'customs_document' => ['label' => 'Customs Document', 'icon' => 'fas fa-passport'],
             'delivery_sop' => ['label' => 'Delivery SOP', 'icon' => 'fas fa-list-check']
@@ -107,6 +99,17 @@ $folders_structure = [
             'module_invoice' => ['label' => 'Module Invoice', 'icon' => 'fas fa-file-invoice'],
             'flash_test_data' => ['label' => 'Flash Test Data', 'icon' => 'fas fa-bolt'],
             'spec_sheet' => ['label' => 'Spec Sheet', 'icon' => 'fas fa-file']
+        ]
+    ],
+    'photos' => [
+        'label' => 'Photos',
+        'icon' => 'fas fa-camera',
+        'class' => 'doc-photos',
+        'description' => 'All photos related to this project',
+        'subfolders' => [
+            'project_photo' => ['label' => 'Project Photos', 'icon' => 'fas fa-camera'],
+            'warehouse_photo' => ['label' => 'Warehouse Photos', 'icon' => 'fas fa-warehouse'],
+            'damage_photo' => ['label' => 'Damage Photos', 'icon' => 'fas fa-exclamation-triangle']
         ]
     ],
     'exception_reports' => [
@@ -138,6 +141,59 @@ $folders_structure = [
             'warehouse_photo' => ['label' => 'Warehouse Photo', 'icon' => 'fas fa-camera'],
             'flash_test_data' => ['label' => 'Flash Test Data', 'icon' => 'fas fa-bolt']
         ]
+    ],
+];
+
+// Map subfolder key to the document_sub_type value stored in DB
+$subfolder_doc_subtype_map = [
+    'invoices' => [
+        'freight_invoice' => 'Freight Invoice',
+        'solterra_invoice' => 'Solterra Invoice',
+        'module_invoice'  => 'Module Invoice',
+    ],
+    'shipments' => [
+        'project_pod'       => 'Project POD',
+        'warehouse_pod'     => 'Warehouse POD',
+        'arrival_notice'    => 'Arrival Notice',
+        'customs_document'  => 'Customs Document',
+        'delivery_sop'      => 'Delivery SOP',
+    ],
+    'warehousing' => [
+        'warehouse_pod'  => 'Warehouse POD',
+        'inventory_report'=> 'Inventory Report',
+        // Stored as "Photos" in global uploads
+        'warehouse_photo' => 'Photos',
+    ],
+    'modules' => [
+        'module_invoice'  => 'Module Invoice',
+        'flash_test_data' => 'Flash Test Data',
+        // Prefer plural, but allow synonym via JS IN support
+        'spec_sheet'      => 'Spec Sheets',
+    ],
+    // 'photos' is virtual and handled via JS using data-doc-types/data-sub-types
+    'exception_reports' => [
+        'damage_photo'       => 'Damage Photo',
+        'warranty_document'  => 'Warranty Document',
+        'proof_of_completion'=> 'Proof of Completion',
+        'safety_incident'    => 'Safety Incident',
+        'project_pod'        => 'Project POD',
+        'warehouse_pod'      => 'Warehouse POD',
+    ],
+];
+
+// Virtual aggregation mapping for the Photos folder
+$virtual_photos_aggregation = [
+    'project_photo' => [
+        'doc_types' => ['pictures'],
+        'sub_types' => ['Project Photo']
+    ],
+    'warehouse_photo' => [
+        'doc_types' => ['warehousing'],
+        'sub_types' => ['Photos', 'Warehouse Photo', 'Warehouse Photos']
+    ],
+    'damage_photo' => [
+        'doc_types' => ['exception_reports'],
+        'sub_types' => ['Damage Photo']
     ],
 ];
 
@@ -397,6 +453,11 @@ foreach ($folders_structure as $key => $meta) {
         .doc-delivery .document-icon { background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); }
         .doc-incident .document-icon { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
         .doc-safe-harbor .document-icon { background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); }
+        .doc-photos .document-icon { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
+
+        /* Prevent title overlap with count badge */
+        .document-card-header { position: relative; }
+        .document-card-header .document-info { padding-right: 80px; }
 
         .document-info {
             flex: 1;
@@ -804,7 +865,8 @@ foreach ($folders_structure as $key => $meta) {
                 $class = $meta['class'] ?? 'doc-default';
                 $desc = $meta['description'] ?? 'Project documentation';
             ?>
-                <div class="document-type-card <?php echo $class; ?>" data-folder-key="<?php echo htmlspecialchars($folder['key']); ?>">
+                <div class="document-type-card <?php echo $class; ?>" data-folder-key="<?php echo htmlspecialchars($folder['key']); ?>" data-type="<?php echo htmlspecialchars($folder['type']); ?>">
+                    <div class="document-count" data-count="0">0</div>
                     <div class="document-card-header">
                         <div class="document-icon"><i class="<?php echo $icon; ?>"></i></div>
                         <div class="document-info">
@@ -828,9 +890,29 @@ foreach ($folders_structure as $key => $meta) {
                 </div>
             <?php else: ?>
                 <?php foreach ($folders_structure[$folder_key]['subfolders'] as $sub_key => $sub_meta): ?>
-                    <div class="document-type-card" data-subfolder-key="<?php echo htmlspecialchars($sub_key); ?>">
+                    <?php 
+                        $doc_sub_type_value = $subfolder_doc_subtype_map[$folder_key][$sub_key] ?? $sub_meta['label']; 
+                        $extra_attrs = '';
+                        // Add synonyms for Modules Spec Sheets to ensure accurate counts
+                        if ($folder_key === 'modules' && $sub_key === 'spec_sheet') {
+                            $extra_attrs .= ' data-doc-types="modules" data-sub-types="Spec Sheets,Spec Sheet"';
+                        }
+                        // Photos is virtual: attach data-doc-types and data-sub-types from aggregation map
+                        if ($folder_key === 'photos' && isset($virtual_photos_aggregation[$sub_key])) {
+                            $docTypes = htmlspecialchars(implode(',', $virtual_photos_aggregation[$sub_key]['doc_types']));
+                            $subTypes = htmlspecialchars(implode(',', $virtual_photos_aggregation[$sub_key]['sub_types']));
+                            $extra_attrs .= ' data-doc-types="' . $docTypes . '" data-sub-types="' . $subTypes . '"';
+                        }
+                        // Shipments POD subfolders should include legacy pods as well
+                        if ($folder_key === 'shipments' && in_array($sub_key, ['project_pod','warehouse_pod'], true)) {
+                            $extra_attrs .= ' data-doc-types="shipments,pods"';
+                            $labelFor = ($sub_key === 'project_pod') ? 'Project POD' : 'Warehouse POD';
+                            $extra_attrs .= ' data-sub-types="' . htmlspecialchars($labelFor) . '"';
+                        }
+                    ?>
+                    <div class="document-type-card" data-folder-key="<?php echo htmlspecialchars($folder_key); ?>" data-subfolder-key="<?php echo htmlspecialchars($sub_key); ?>" data-subfolder-label="<?php echo htmlspecialchars($sub_meta['label']); ?>" data-document-sub-type="<?php echo htmlspecialchars($doc_sub_type_value); ?>"<?php echo $extra_attrs; ?>>
+                        <div class="document-count" data-count="0">0</div>
                         <div class="document-card-header">
-                            <div class="document-icon"><i class="<?php echo $sub_meta['icon']; ?>"></i></div>
                             <div class="document-info">
                                 <a href="<?php echo 'global_documents.php?project_id=' . $project_id . '&folder=' . urlencode($folder_key) . '&subfolder=' . urlencode($sub_key); ?>" class="document-title">
                                     <?php echo htmlspecialchars($sub_meta['label']); ?>
@@ -996,33 +1078,118 @@ foreach ($folders_structure as $key => $meta) {
             }
         });
 
-        // Function to load document counts
+        // Function to load document counts (top-level folders)
         function loadDocumentCounts() {
-            documentCards.forEach(function(card) {
+            document.querySelectorAll('.document-type-card[data-type]').forEach(function(card) {
                 const documentType = card.getAttribute('data-type');
-                if (documentType) {
-                    fetch(`get_project_documents.php?project_id=${projectId}&document_type=${documentType}`)
-                        .then(response => response.json())
-                        .then(data => {
-                            if (data.success) {
-                                const countBadge = card.querySelector('.document-count');
-                                const count = data.total_count || 0;
-                                countBadge.textContent = count;
-                                countBadge.setAttribute('data-count', count);
-                                
-                                if (count === 0) {
-                                    countBadge.classList.add('zero');
-                                } else {
-                                    countBadge.classList.remove('zero');
-                                }
-                            }
-                        })
-                        .catch(error => {
-                            console.error('Error loading document count:', error);
-                        });
+                if (!documentType) return;
+
+                // Special handling: aggregate Shipments (shipments + pods) and Photos (handled below)
+                let url;
+                if (documentType === 'shipments') {
+                    const params = new URLSearchParams();
+                    params.set('project_id', projectId);
+                    params.set('document_type_in', 'shipments,pods');
+                    url = `get_project_documents.php?${params.toString()}`;
+                } else {
+                    url = `get_project_documents.php?project_id=${projectId}&document_type=${encodeURIComponent(documentType)}`;
                 }
+
+                fetch(url)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            const countBadge = card.querySelector('.document-count');
+                            if (!countBadge) return;
+                            const count = data.total_count || 0;
+                            countBadge.textContent = count;
+                            countBadge.setAttribute('data-count', count);
+                            if (count === 0) {
+                                countBadge.classList.add('zero');
+                            } else {
+                                countBadge.classList.remove('zero');
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error loading document count:', error);
+                    });
             });
         }
+
+        // Function to load counts for subfolder cards
+        function loadSubfolderCounts() {
+            document.querySelectorAll('.document-type-card[data-subfolder-key]').forEach(function(card) {
+                const folderKey = card.getAttribute('data-folder-key');
+                const docSubType = card.getAttribute('data-document-sub-type');
+                const docTypesCSV = card.getAttribute('data-doc-types');
+                const subTypesCSV = card.getAttribute('data-sub-types');
+
+                let url;
+                if (docTypesCSV) {
+                    // Virtual or synonym-aware: use IN filtering
+                    const params = new URLSearchParams();
+                    params.set('project_id', projectId);
+                    params.set('document_type_in', docTypesCSV);
+                    if (subTypesCSV) params.set('document_sub_type_in', subTypesCSV);
+                    url = `get_project_documents.php?${params.toString()}`;
+                } else {
+                    if (!folderKey || !docSubType) return;
+                    url = `get_project_documents.php?project_id=${projectId}&document_type=${encodeURIComponent(folderKey)}&document_sub_type=${encodeURIComponent(docSubType)}`;
+                }
+
+                fetch(url)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            const countBadge = card.querySelector('.document-count');
+                            if (!countBadge) return;
+                            const count = data.total_count || 0;
+                            countBadge.textContent = count;
+                            countBadge.setAttribute('data-count', count);
+                            if (count === 0) {
+                                countBadge.classList.add('zero');
+                            } else {
+                                countBadge.classList.remove('zero');
+                            }
+                        }
+                    })
+                    .catch(err => console.error('Error loading subfolder count:', err));
+            });
+        }
+
+        // Kick off subfolder counts if present
+        loadSubfolderCounts();
+
+        // If we have a virtual Photos folder at top-level, aggregate its count
+        (function aggregateVirtualFolderCounts() {
+            const photosCard = document.querySelector('.document-type-card[data-type="photos"]');
+            if (!photosCard) return;
+            const countBadge = photosCard.querySelector('.document-count');
+            if (!countBadge) return;
+
+            const tasks = [];
+            // Define aggregation for Photos top-level
+            const aggregates = [
+                { docTypes: ['pictures'], subTypes: ['Project Photo'] },
+                { docTypes: ['warehousing'], subTypes: ['Photos','Warehouse Photo','Warehouse Photos'] },
+                { docTypes: ['exception_reports'], subTypes: ['Damage Photo'] }
+            ];
+            aggregates.forEach(ag => {
+                const params = new URLSearchParams();
+                params.set('project_id', projectId);
+                params.set('document_type_in', ag.docTypes.join(','));
+                params.set('document_sub_type_in', ag.subTypes.join(','));
+                tasks.push(fetch(`get_project_documents.php?${params.toString()}`).then(r => r.json()).catch(() => ({success:false,total_count:0})));
+            });
+            Promise.all(tasks).then(results => {
+                let total = 0;
+                results.forEach(res => { if (res && res.success) total += (res.total_count || 0); });
+                countBadge.textContent = total;
+                countBadge.setAttribute('data-count', total);
+                if (total === 0) countBadge.classList.add('zero'); else countBadge.classList.remove('zero');
+            });
+        })();
 
         // Function to load document preview
         function loadDocumentPreview(documentType, dropdown) {
@@ -1124,7 +1291,9 @@ foreach ($folders_structure as $key => $meta) {
                  'modules': 'modules_docs',
                  'delivery_packet': 'delivery_packet',
                  'exception_reports': 'exception_reports',
-                 'safe_harbor_evidence': 'safe_harbor_evidence'
+                 'safe_harbor_evidence': 'safe_harbor_evidence',
+                 // Route Photos (virtual) to global documents filter view
+                 'photos': 'global_documents'
              };
              const page = typeMap[documentType] || documentType;
              return `${page}.php?project_id=${projectId}`;

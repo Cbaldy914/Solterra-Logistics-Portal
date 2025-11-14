@@ -41,6 +41,22 @@ try {
     $project_id = (int)$_POST['project_id'];
     $document_type = trim($_POST['document_type']);
     $document_sub_type = trim($_POST['document_sub_type']);
+    
+    // Normalize Photos virtual sub-types to underlying storage types
+    if ($document_type === 'pictures') {
+        if (strcasecmp($document_sub_type, 'Project Photos') === 0) {
+            // Store as Project Photo (singular) under pictures
+            $document_sub_type = 'Project Photo';
+        } elseif (strcasecmp($document_sub_type, 'Warehouse Photos') === 0) {
+            // Route to Warehousing -> Photos
+            $document_type = 'warehousing';
+            $document_sub_type = 'Photos';
+        } elseif (strcasecmp($document_sub_type, 'Damage Photos') === 0) {
+            // Route to Exception Reports -> Damage Photo
+            $document_type = 'exception_reports';
+            $document_sub_type = 'Damage Photo';
+        }
+    }
     $is_safe_harbor = isset($_POST['is_safe_harbor']) && $_POST['is_safe_harbor'] === '1';
 
     // Verify user has access to this project
@@ -118,25 +134,33 @@ try {
             $document_data['delivery_id'] = (int)$_POST['delivery_id'];
         }
 
-        // For shipments, require container number and lookup delivery_id by project + container
+        // For shipments, support POD uploads (no container required), else require container number
         if ($document_type === 'shipments') {
-            $container_number = isset($_POST['container_number']) ? trim($_POST['container_number']) : '';
-            if ($container_number === '') {
-                throw new Exception('Container number is required for shipments.');
-            }
-            // Find matching delivery on this project by container number
-            $dlv = null;
-            $stmt = $conn->prepare("SELECT id FROM deliveries WHERE project_id = ? AND container_number = ? LIMIT 1");
-            $stmt->bind_param("is", $project_id, $container_number);
-            $stmt->execute();
-            $res = $stmt->get_result();
-            if ($res && $res->num_rows > 0) {
-                $dlv = $res->fetch_assoc();
-                $document_data['delivery_id'] = (int)$dlv['id'];
+            if (in_array($document_sub_type, ['Project POD','Warehouse POD'], true)) {
+                // Require a delivery_id (set via BOL autocomplete) for PODs
+                if (!isset($_POST['delivery_id']) || empty($_POST['delivery_id'])) {
+                    throw new Exception('BOL/Delivery is required for POD uploads.');
+                }
+                $document_data['delivery_id'] = (int)$_POST['delivery_id'];
             } else {
-                throw new Exception('No delivery found with that container number for the selected project.');
+                $container_number = isset($_POST['container_number']) ? trim($_POST['container_number']) : '';
+                if ($container_number === '') {
+                    throw new Exception('Container number is required for shipments.');
+                }
+                // Find matching delivery on this project by container number
+                $dlv = null;
+                $stmt = $conn->prepare("SELECT id FROM deliveries WHERE project_id = ? AND container_number = ? LIMIT 1");
+                $stmt->bind_param("is", $project_id, $container_number);
+                $stmt->execute();
+                $res = $stmt->get_result();
+                if ($res && $res->num_rows > 0) {
+                    $dlv = $res->fetch_assoc();
+                    $document_data['delivery_id'] = (int)$dlv['id'];
+                } else {
+                    throw new Exception('No delivery found with that container number for the selected project.');
+                }
+                $stmt->close();
             }
-            $stmt->close();
         }
         
         if (isset($_POST['warehouse_id']) && !empty($_POST['warehouse_id'])) {
