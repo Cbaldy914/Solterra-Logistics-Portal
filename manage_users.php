@@ -275,7 +275,10 @@ $conn->close();
         
         <div class="page-header">
             <h1>Manage Users</h1>
-            <a href="add_user.php" class="add-user-btn">Add New User</a>
+            <div>
+                <a href="invite_user.php" class="add-user-btn" style="margin-right:8px;">Invite User</a>
+                <a href="add_user.php" class="add-user-btn">Add New User</a>
+            </div>
         </div>
 
         <?php if (!empty($success_message)): ?>
