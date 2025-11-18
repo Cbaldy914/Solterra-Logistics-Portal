@@ -5230,7 +5230,7 @@ function closeShippingModal(){
     if(modal) modal.style.display = 'none';
 }
 function generateShippingContent(filter){
-    let html='<div style="height:250px;overflow-y:auto;">';
+    let html='<div>';
     let has=false;
     
     // Handle special case for "Delivered" status
@@ -6217,7 +6217,7 @@ function closeCustomerShippingModal() {
 
 function generateCustomerShippingContent(status) {
     const shippingBreakdown = <?php echo json_encode($detailed_breakdown ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
-    let html = '<div style="height:250px;overflow-y:auto;">';
+    let html = '<div>';
     let has = false;
     
     // Handle special case for "Delivered" status
