@@ -635,12 +635,13 @@ sort($unique_suppliers);
         }
 
         table tbody tr {
-            transition: all 0.3s ease;
+            transition: background 0.2s ease, box-shadow 0.2s ease;
         }
 
+        /* Avoid horizontal translate that can trigger scrollbar flicker */
         table tbody tr:hover {
             background: rgba(72, 140, 154, 0.05);
-            transform: translateX(4px);
+            box-shadow: inset 4px 0 0 rgba(72, 140, 154, 0.25);
         }
 
         /* Action Buttons - NEW UNIFIED STYLE */
@@ -1577,4 +1578,3 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
-
