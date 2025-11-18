@@ -787,14 +787,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
 
                     <div class="input-group">
-                        <label for="image_file">Project Image</label>
-                        <?php if (!empty($project['image_url'])): ?>
-                            <div class="current-file">
-                                <span style="color: #666;">Current: </span>
-                                <img src="<?php echo htmlspecialchars($project['image_url']); ?>" alt="Project Image" style="max-width: 100px; vertical-align: middle; margin-left: 8px; border-radius: 4px;">
-                            </div>
-                        <?php endif; ?>
-                        <input type="file" id="image_file" name="image_file" accept="image/*">
+                        <label>Project Photos</label>
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <img src="<?php echo htmlspecialchars($project['image_url'] ?: 'pictures/test.png'); ?>" alt="Project Cover" style="width:120px; height:80px; object-fit:cover; border-radius:8px; border:1px solid rgba(72,140,154,0.15);">
+                            <a href="project_photos.php?project_id=<?php echo $project_id; ?>" class="document-button" style="display:inline-flex; gap:8px; align-items:center; width:auto; padding:10px 14px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:#fff; text-decoration:none; border-radius:10px; box-shadow: 0 4px 15px rgba(72, 140, 154, 0.3);">
+                                <i class="fas fa-camera"></i> Manage Project Photos
+                            </a>
+                        </div>
+                        <small style="color:#6c757d;display:block;margin-top:6px;">Arrange photos and choose the cover by dragging the first photo.</small>
                     </div>
 
                     <div class="input-group required">
