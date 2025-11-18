@@ -8,7 +8,7 @@ if (!isset($_SESSION['user_id'])) {
     die('Unauthorized');
 }
 
-require_once 'config.php';
+require_once '../config.php';
 $conn = getDBConnection();
 if (!$conn) {
     http_response_code(500);

@@ -425,4 +425,107 @@ function deleteProjectDocument($conn, $document_id, $user_id) {
         throw new Exception("Failed to delete document from database.");
     }
 }
+
+/**
+ * Import an existing file on disk into project_documents.
+ * Moves the file into the proper project_documents folder and inserts a DB row.
+ * $document_data keys (required): project_id, document_type, original_name, uploaded_by
+ * Optional: document_sub_type, delivery_id, warehouse_id, pallet_id, module_id, project_invoice_id, entity_context, description
+ */
+function importExistingFileToProjectDocuments($conn, $document_data, $source_path) {
+    if (!isset($document_data['project_id'], $document_data['document_type'], $document_data['original_name'], $document_data['uploaded_by'])) {
+        throw new Exception('Missing required document data for import');
+    }
+    if (!is_file($source_path)) {
+        throw new Exception('Source file does not exist for import');
+    }
+
+    // Determine mime and extension
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime_type = finfo_file($finfo, $source_path);
+    finfo_close($finfo);
+
+    // Fallback extension if unknown
+    $ext = 'bin';
+    if (isset(ALLOWED_DOCUMENT_TYPES[$mime_type])) { $ext = ALLOWED_DOCUMENT_TYPES[$mime_type]; }
+    else {
+        // Try by original name
+        $orig_ext = strtolower(pathinfo($document_data['original_name'], PATHINFO_EXTENSION));
+        if ($orig_ext) { $ext = $orig_ext; }
+    }
+
+    $server_filename = generateSecureFilename($document_data['original_name']);
+    // Ensure extension matches detected ext
+    if (strtolower(pathinfo($server_filename, PATHINFO_EXTENSION)) !== $ext) {
+        $server_filename = preg_replace('/\.[^.]+$/', '', $server_filename) . '.' . $ext;
+    }
+
+    // Build destination path and move
+    $dest_dir = createDocumentPath($document_data['project_id'], $document_data['document_type']);
+    $dest_path = $dest_dir . $server_filename;
+
+    if (!@rename($source_path, $dest_path)) {
+        // Fallback to copy if rename fails
+        if (!@copy($source_path, $dest_path)) {
+            throw new Exception('Failed to move imported file');
+        }
+        @unlink($source_path);
+    }
+
+    // Sizes
+    $file_size = filesize($dest_path);
+    if ($file_size === false) { $file_size = 0; }
+
+    // Insert DB row
+    $stmt = $conn->prepare("
+        INSERT INTO project_documents (
+            project_id, document_type, document_sub_type, delivery_id, warehouse_id,
+            pallet_id, module_id, project_invoice_id, entity_context, file_name, original_file_name,
+            file_path, file_size, mime_type, uploaded_by, description
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ");
+
+    $project_id = $document_data['project_id'];
+    $document_type = $document_data['document_type'];
+    $document_sub_type = $document_data['document_sub_type'] ?? null;
+    $delivery_id = $document_data['delivery_id'] ?? null;
+    $warehouse_id = $document_data['warehouse_id'] ?? null;
+    $pallet_id = $document_data['pallet_id'] ?? null;
+    $module_id = $document_data['module_id'] ?? null;
+    $project_invoice_id = $document_data['project_invoice_id'] ?? null;
+    $entity_context = $document_data['entity_context'] ?? null;
+    $original_name = $document_data['original_name'];
+    $uploaded_by = $document_data['uploaded_by'];
+    $description = $document_data['description'] ?? '';
+
+    $stmt->bind_param(
+        "issiiiiissssisis",
+        $project_id,
+        $document_type,
+        $document_sub_type,
+        $delivery_id,
+        $warehouse_id,
+        $pallet_id,
+        $module_id,
+        $project_invoice_id,
+        $entity_context,
+        $server_filename,
+        $original_name,
+        $dest_path,
+        $file_size,
+        $mime_type,
+        $uploaded_by,
+        $description
+    );
+
+    if (!$stmt->execute()) {
+        // Rollback file if DB insert fails
+        @unlink($dest_path);
+        throw new Exception('Failed to import file: ' . $stmt->error);
+    }
+    $doc_id = $conn->insert_id;
+    $stmt->close();
+
+    return [ 'document_id' => $doc_id, 'file_path' => $dest_path, 'server_filename' => $server_filename ];
+}
 ?>

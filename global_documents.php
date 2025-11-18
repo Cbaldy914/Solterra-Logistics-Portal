@@ -77,7 +77,7 @@ $document_types = [
         'name' => 'Photos',
         'icon' => 'fas fa-camera',
         'color' => '#f59e0b',
-        'sub_filters' => ['Project Photos','Warehouse Photos','Damage Photos']
+        'sub_filters' => ['Project Photo','Warehouse Photo','Damage Photo']
     ],
     'exception_reports' => [
         'name' => 'Exception Reports',
@@ -124,9 +124,9 @@ $folder_mapping = [
     'modules' => ['document_type' => 'modules', 'subfolders' => ['module_invoice' => 'Module Invoice', 'flash_test_data' => 'Flash Test Data', 'spec_sheet' => 'Spec Sheets']],
     // Virtual Photos folder routing to appropriate single-type filters
     'photos' => ['document_type' => 'photos', 'subfolders' => [
-        'project_photo' => 'Project Photos',
-        'warehouse_photo' => 'Warehouse Photos',
-        'damage_photo' => 'Damage Photos'
+        'project_photo' => 'Project Photo',
+        'warehouse_photo' => 'Warehouse Photo',
+        'damage_photo' => 'Damage Photo'
     ]],
     'exception_reports' => ['document_type' => 'exception_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'proof_of_completion' => 'Proof of Completion', 'safety_incident' => 'Safety Incident', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
     'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']],
@@ -2008,7 +2008,7 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
      'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos'],
      'modules': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
      'exception_reports': ['Damage Photo', 'Warranty Document', 'Proof of Completion', 'Safety Incident', 'Project POD', 'Warehouse POD'],
-     'photos': ['Project Photos', 'Warehouse Photos', 'Damage Photos'],
+     'photos': ['Project Photo', 'Warehouse Photo', 'Damage Photo'],
      'safe_harbor_evidence': [],
      'other': []
  };
@@ -3564,13 +3564,13 @@ const documentConfig = {
         }
     },
     'pictures': {
-        'sub_types': ['Project Photos', 'Warehouse Photos', 'Damage Photos'],
+        'sub_types': ['Project Photo', 'Warehouse Photo', 'Damage Photo'],
         'fields': {
-            'Project Photos': [],
-            'Warehouse Photos': [
+            'Project Photo': [],
+            'Warehouse Photo': [
                 {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
             ],
-            'Damage Photos': [
+            'Damage Photo': [
                 {type: 'select', name: 'ticket_id', label: 'Ticket Number', required: true, data_source: 'tickets'}
             ]
         }

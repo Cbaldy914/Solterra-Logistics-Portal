@@ -180,9 +180,9 @@ if (!empty($document_type)) {
         $include_project = true; $include_warehouse = true; $include_damage = true;
         if (!empty($sub_filters) && is_array($sub_filters)) {
             $labels = array_map('trim', $sub_filters);
-            $include_project = in_array('Project Photos', $labels);
-            $include_warehouse = in_array('Warehouse Photos', $labels);
-            $include_damage = in_array('Damage Photos', $labels);
+            $include_project = in_array('Project Photo', $labels) || in_array('Project Photos', $labels);
+            $include_warehouse = in_array('Warehouse Photo', $labels) || in_array('Warehouse Photos', $labels);
+            $include_damage = in_array('Damage Photo', $labels) || in_array('Damage Photos', $labels);
             // If none selected that match, include all (or include none?) — include all for safety
             if (!$include_project && !$include_warehouse && !$include_damage) {
                 $include_project = $include_warehouse = $include_damage = true;

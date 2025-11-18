@@ -144,35 +144,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new Exception("Zip Code is required.");
         }
 
-        // Optional image (default to pictures/test.png if none uploaded)
-        $image_url = "pictures/test.png"; // default
-        if (isset($_FILES['image_file']) && $_FILES['image_file']['error'] !== UPLOAD_ERR_NO_FILE) {
-            if ($_FILES['image_file']['error'] === UPLOAD_ERR_OK) {
-                $allowed_ext = ['jpg','jpeg','png','gif'];
-                $file_name   = $_FILES['image_file']['name'];
-                $file_tmp    = $_FILES['image_file']['tmp_name'];
-                $file_size   = $_FILES['image_file']['size'];
-                $file_ext    = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
-
-                if (!in_array($file_ext, $allowed_ext)) {
-                    throw new Exception("Invalid file type. Only JPG, JPEG, PNG, GIF allowed.");
-                }
-                if ($file_size > 5*1024*1024) {
-                    throw new Exception("File exceeds 5MB limit.");
-                }
-                $unique_name = uniqid('project_', true).'.'.$file_ext;
-                $upload_dir  = 'uploads/';
-                if (!is_dir($upload_dir)) {
-                    mkdir($upload_dir, 0755, true);
-                }
-                if (!move_uploaded_file($file_tmp, $upload_dir.$unique_name)) {
-                    throw new Exception("Error uploading the image file.");
-                }
-                $image_url = $upload_dir.$unique_name;
-            } else {
-                throw new Exception("File upload error code: " . $_FILES['image_file']['error']);
-            }
-        }
+        // Default project image (can be set via Project Photos manager later)
+        $image_url = "pictures/test.png"; // default cover until photos are arranged
 
         // Note: Driver Handout and Module Documentation now save to project_documents
 
@@ -225,57 +198,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $project_id = $stmt->insert_id;
         $stmt->close();
 
-        // Handle optional project photos (multi-upload) -> save in project_documents as 'pictures'
-        $cover_image_path = null;
-        if (isset($_FILES['project_images']) && is_array($_FILES['project_images']['name'])) {
-            $names = (array)$_FILES['project_images']['name'];
-            $tmps  = (array)$_FILES['project_images']['tmp_name'];
-            $errs  = (array)$_FILES['project_images']['error'];
-            $sizes = (array)$_FILES['project_images']['size'];
+        // Project photos are now managed on a dedicated page; cover image is set from the first photo there.
 
-            for ($i = 0; $i < count($names); $i++) {
-                if (!isset($errs[$i]) || $errs[$i] === UPLOAD_ERR_NO_FILE) continue;
-                if ($errs[$i] !== UPLOAD_ERR_OK) { continue; }
-
-                $orig = $names[$i];
-                // Only allow common image types
-                $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
-                if (!in_array($ext, ['jpg','jpeg','png','gif'])) { continue; }
-
-                $tmpName = $tmps[$i];
-                $mime    = mime_content_type($tmpName);
-                if (strpos($mime, 'image/') !== 0) { continue; }
-
-                $doc = [
-                    'project_id' => $project_id,
-                    'document_type' => 'pictures',
-                    'document_sub_type' => 'Project Photo',
-                    'original_name' => $orig,
-                    'file_size' => $sizes[$i],
-                    'mime_type' => $mime,
-                    'uploaded_by' => $user_id,
-                    'tmp_name' => $tmpName,
-                    'description' => 'Project Photo'
-                ];
-                try {
-                    $result = saveDocumentToProjectDocuments($conn, $doc);
-                    if (!$cover_image_path && is_array($result) && isset($result['file_path'])) {
-                        $cover_image_path = $result['file_path'];
+        // Move pre-saved temporary photos into project_documents and set cover image
+        try {
+            $temp_token = trim($_POST['temp_photo_token'] ?? '');
+            if ($temp_token !== '') {
+                $temp_dir = __DIR__ . '/uploads/tmp_photos/' . preg_replace('/[^A-Za-z0-9_-]/','', $temp_token);
+                if (is_dir($temp_dir)) {
+                    require_once 'document_helpers.php';
+                    // Build order from hidden input
+                    $order_csv = trim($_POST['temp_photo_order'] ?? '');
+                    $ordered = array_filter(array_map('trim', explode(',', $order_csv)));
+                    // Gather all files in dir
+                    $files = array_values(array_filter(scandir($temp_dir), function($f){ return $f !== '.' && $f !== '..'; }));
+                    // Reconcile order: first those in ordered list, then the rest
+                    $ordered_set = [];
+                    $queue = [];
+                    foreach ($ordered as $name) { $ordered_set[$name] = true; if (in_array($name, $files)) $queue[] = $name; }
+                    foreach ($files as $name) { if (!isset($ordered_set[$name])) $queue[] = $name; }
+                    $cover_set = false;
+                    foreach ($queue as $name) {
+                        $src = $temp_dir . '/' . $name;
+                        if (!is_file($src)) continue;
+                        $doc = [
+                            'project_id' => $project_id,
+                            'document_type' => 'pictures',
+                            'document_sub_type' => 'Project Photo',
+                            'original_name' => $name,
+                            'uploaded_by' => $user_id,
+                            'description' => 'Project Photo'
+                        ];
+                        $res = importExistingFileToProjectDocuments($conn, $doc, $src);
+                        if (!$cover_set && isset($res['file_path'])) {
+                            $img_path = $res['file_path'];
+                            $u = $conn->prepare('UPDATE projects SET image_url = ? WHERE id = ?');
+                            if ($u) { $u->bind_param('si', $img_path, $project_id); $u->execute(); $u->close(); }
+                            $cover_set = true;
+                        }
                     }
-                } catch (Exception $e) {
-                    // Ignore individual photo failures; continue with others
+                    // Cleanup temp dir
+                    @array_map('unlink', glob($temp_dir.'/*'));
+                    @rmdir($temp_dir);
                 }
             }
-        }
-
-        // If we saved any project photo, make the first one the cover image
-        if ($cover_image_path) {
-            $stmtU = $conn->prepare("UPDATE projects SET image_url = ? WHERE id = ?");
-            if ($stmtU) {
-                $stmtU->bind_param("si", $cover_image_path, $project_id);
-                $stmtU->execute();
-                $stmtU->close();
-            }
+        } catch (Exception $e) {
+            // Non-fatal; continue
         }
 
         // Save Driver Handout to project_documents as Shipments -> Delivery SOP (new format)
@@ -1390,15 +1358,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <input type="date" id="estimated_completion_date" name="estimated_completion_date" required>
                     </div>
 
-                    <div class="input-group">
-                        <label for="image_file">Project Image</label>
-                        <input type="file" id="image_file" name="image_file" accept="image/*">
-                    </div>
-
-                    <div class="input-group">
-                        <label for="project_images">Project Photos (multiple)</label>
-                        <input type="file" id="project_images" name="project_images[]" accept="image/*" multiple>
-                        <small style="color:#6c757d;display:block;margin-top:6px;">First photo becomes the project cover image.</small>
+                    <div class="input-group optional">
+                        <label>Project Photos</label>
+                        <input type="hidden" id="tempPhotoToken" name="temp_photo_token" value="<?php echo htmlspecialchars(uniqid('ppt_', true)); ?>">
+                        <input type="hidden" id="tempPhotoOrder" name="temp_photo_order" value="">
+                        <div id="prePhotoDrop" class="file-upload-area" style="padding:20px; text-align:center; border: 2px dashed rgba(72, 140, 154, 0.3); border-radius: 12px; cursor:pointer;">
+                            <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                            <div class="upload-text">Drop images here or click to browse</div>
+                            <div class="upload-subtext">PNG, JPG, or GIF up to 10MB each</div>
+                        </div>
+                        <input type="file" id="prePhotoInput" accept="image/*" multiple style="display:none;">
+                        <div id="prePhotoGrid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap:12px; margin-top:12px;"></div>
+                        <small style="color:#6c757d;display:block;margin-top:6px;">Drag to reorder; the first photo becomes the project image.</small>
                     </div>
 
                     <?php if ($role === 'global_admin'): ?>
@@ -1638,6 +1609,72 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </form>
 </main>
 
+<script>
+// Pre-save photos gallery
+(function(){
+  const drop = document.getElementById('prePhotoDrop');
+  const input = document.getElementById('prePhotoInput');
+  const grid = document.getElementById('prePhotoGrid');
+  const token = document.getElementById('tempPhotoToken');
+  const orderInput = document.getElementById('tempPhotoOrder');
+
+  function updateOrderInput(){
+    const ids = Array.from(grid.querySelectorAll('.tile')).map(el=>el.dataset.name);
+    orderInput.value = ids.join(',');
+  }
+
+  function addTile(file){
+    const tile = document.createElement('div');
+    tile.className = 'tile';
+    tile.style.cssText = 'position:relative; border-radius:10px; overflow:hidden; background:#f8f9fa; box-shadow: 0 2px 8px rgba(0,0,0,0.06);';
+    tile.setAttribute('draggable','true');
+    tile.dataset.name = file.name;
+    tile.innerHTML = `<img src="${file.path}" style="width:100%; height:120px; object-fit:cover; display:block;">
+      <div style=\"position:absolute; top:6px; right:6px; display:flex; gap:6px;\">
+        <button type=\"button\" class=\"icon-btn\" style=\"background: rgba(0,0,0,0.5); color:#fff; border:none; border-radius:6px; width:28px; height:28px; display:flex; align-items:center; justify-content:center; cursor:pointer;\" title=\"Remove\">&times;</button>
+      </div>`;
+    const btn = tile.querySelector('button');
+    btn.addEventListener('click', ()=>{ tile.remove(); updateOrderInput(); });
+    // Drag
+    tile.addEventListener('dragstart', e=>{ tile.classList.add('dragging'); });
+    tile.addEventListener('dragend', e=>{ tile.classList.remove('dragging'); updateOrderInput(); });
+    grid.appendChild(tile);
+    updateOrderInput();
+  }
+
+  function getAfterElement(container, y){
+    const els = [...container.querySelectorAll('.tile:not(.dragging)')];
+    return els.reduce((closest, child)=>{
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height/2;
+      if (offset < 0 && offset > closest.offset) { return { offset, element: child }; }
+      else { return closest; }
+    }, { offset: Number.NEGATIVE_INFINITY }).element;
+  }
+  grid.addEventListener('dragover', e=>{ e.preventDefault(); const dragging = grid.querySelector('.dragging'); if (!dragging) return; const after = getAfterElement(grid, e.clientY); if (!after) grid.appendChild(dragging); else grid.insertBefore(dragging, after); });
+
+  drop.addEventListener('click', ()=> input.click());
+  drop.addEventListener('dragover', e=>{ e.preventDefault(); drop.classList.add('drag-over'); });
+  drop.addEventListener('dragleave', ()=> drop.classList.remove('drag-over'));
+  drop.addEventListener('drop', async (e)=>{ e.preventDefault(); drop.classList.remove('drag-over'); const files = e.dataTransfer?.files; if (files?.length) await uploadAll(files); });
+  input.addEventListener('change', async ()=>{ if (input.files?.length) await uploadAll(input.files); input.value=''; });
+
+  async function uploadAll(fileList){
+    const t = token.value;
+    for (const f of fileList){
+      const form = new FormData();
+      form.append('token', t);
+      form.append('file', f);
+      try {
+        const res = await fetch('upload_temp_photo.php', { method:'POST', body: form });
+        const data = await res.json();
+        if (data.success) { addTile(data.file); }
+        else { alert(data.message || 'Upload failed'); }
+      } catch(e){ alert('Network error during upload'); }
+    }
+  }
+})();
+</script>
 <!-- Loading Modal for Project Creation -->
 <div id="loadingModal" class="loading-modal">
     <div class="loading-content">
