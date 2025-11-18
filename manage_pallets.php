@@ -584,6 +584,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 
 
         .table-responsive { width: 100%; overflow-x: auto; }
+        #palletsTable { margin-top: 0; border-collapse: collapse; width: 100%; }
         .warning-message { /* For CSV warnings */
             background-color: #fff3cd; border-color: #ffeeba; color: #856404; padding: 10px; 
             margin-bottom: 15px; border: 1px solid; border-radius: 4px;
@@ -715,9 +716,10 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         .table-header{background:linear-gradient(135deg,#488C9A 0%,#3A6E7F 100%);color:#fff;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
         .table-title{font-size:1.2em;font-weight:600;margin:0;display:flex;align-items:center;gap:10px;color:#fff}
         .table-header-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-        .btn-export-header{background:rgba(255,255,255,.95);color:#16a34a;border:none;box-shadow:0 2px 8px rgba(0,0,0,.15);cursor:pointer}
+        .btn-export-header{background:rgba(255,255,255,.95);color:#16a34a;border:none;box-shadow:0 2px 8px rgba(0,0,0,.15);cursor:pointer;padding:8px 14px;border-radius:10px;font-size:.85em;font-weight:600;display:inline-flex;align-items:center;gap:6px;transition:all .2s ease}
         .action-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;font-size:.85em;font-weight:600;text-decoration:none;border:none;cursor:pointer;white-space:nowrap;transition:all .2s ease}
-        .action-btn-warning{background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%);color:#fff}
+        .action-btn-danger{background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);color:#fff;box-shadow:0 2px 8px rgba(239,68,68,.25)}
+        .action-btn-danger:hover:not([disabled]){background:linear-gradient(135deg,#dc2626 0%,#b91c1c 100%);transform:translateY(-2px);box-shadow:0 4px 12px rgba(239,68,68,.35)}
         .action-btn:hover:not([disabled]){transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.15)}
         .btn-export-header:hover{background:#fff;transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.2)}
         .action-btn[disabled]{opacity:.5;cursor:not-allowed;filter:grayscale(20%);box-shadow:none}
@@ -889,7 +891,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                 <h3 class="table-title"><i class="fas fa-boxes"></i> Pallets</h3>
                 <div class="table-header-actions">
                     <?php if (!$is_user): ?>
-                    <button type="button" id="deletePalletsBtn" class="action-btn action-btn-warning" disabled><i class="fas fa-trash"></i> Delete</button>
+                    <button type="button" id="deletePalletsBtn" class="action-btn action-btn-danger" disabled><i class="fas fa-trash"></i> Delete</button>
                     <?php endif; ?>
                     <button type="button" id="exportCsvBtn" class="btn-export-header"><i class="fas fa-download"></i> Export</button>
                 </div>

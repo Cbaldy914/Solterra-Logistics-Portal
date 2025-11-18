@@ -870,7 +870,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 $pallets = [];
 $errorMessage = '';
 // Cap the number of pallets rendered to keep page responsive on huge datasets
-$server_side_limit = 1000;
+$server_side_limit = 1000; // Keep at 1000 for performance
+
+// Apply project filter at SQL level if provided
+$project_filter_sql = '';
+$project_filter_param = null;
+if ($project_id_from_url > 0) {
+    $project_filter_sql = " AND (p_current.id = ? OR p_assigned.id = ?)";
+    $project_filter_param = $project_id_from_url;
+}
 
 try {
     // Comprehensive query to fetch pallet details from ALL projects
@@ -938,11 +946,17 @@ try {
     
     if ($role === 'admin' && $account_id_for_admin) {
         $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?) AND ip.status IN ($status_placeholders)";
+        if ($project_filter_sql) {
+            $sql .= $project_filter_sql;
+        }
         if (!empty($pallet_ids_filter)) {
             $sql .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
         }
     } else {
         $sql .= " WHERE ip.status IN ($status_placeholders)";
+        if ($project_filter_sql) {
+            $sql .= $project_filter_sql;
+        }
         if (!empty($pallet_ids_filter)) {
             $sql .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
         }
@@ -959,6 +973,13 @@ try {
         $stmt = $conn->prepare($sql);
         $params = array_merge([$account_id_for_admin, $account_id_for_admin, $account_id_for_admin], $allowed_statuses);
         $types = 'iii' . str_repeat('s', count($allowed_statuses));
+        
+        // Add project filter params if present
+        if ($project_filter_param) {
+            $params[] = $project_filter_param;
+            $params[] = $project_filter_param;
+            $types .= 'ii';
+        }
         
         // No project-level restriction so switching projects in filter works
         if (!empty($pallet_ids_filter)) {
@@ -989,6 +1010,14 @@ try {
         $count_params = [$account_id_for_admin, $account_id_for_admin, $account_id_for_admin];
         $count_types = 'iii' . str_repeat('s', count($allowed_statuses));
         $count_params = array_merge($count_params, $allowed_statuses);
+
+        // Add project filter if present
+        if ($project_filter_sql) {
+            $count_where .= $project_filter_sql;
+            $count_params[] = $project_filter_param;
+            $count_params[] = $project_filter_param;
+            $count_types .= 'ii';
+        }
 
         // No project-level restriction so switching projects via UI filter works
         if (!empty($pallet_ids_filter)) {
@@ -1025,6 +1054,13 @@ try {
         $params = $allowed_statuses;
         $types = str_repeat('s', count($allowed_statuses));
         
+        // Add project filter params if present
+        if ($project_filter_param) {
+            $params[] = $project_filter_param;
+            $params[] = $project_filter_param;
+            $types .= 'ii';
+        }
+        
         // No project-level restriction so switching projects in filter works
         if (!empty($pallet_ids_filter)) {
             foreach ($pallet_ids_filter as $pid) { $params[] = $pid; $types .= 'i'; }
@@ -1052,6 +1088,14 @@ try {
         $count_where = " WHERE ip.status IN (" . $status_placeholders . ")";
         $count_params = $allowed_statuses;
         $count_types = str_repeat('s', count($allowed_statuses));
+        
+        // Add project filter if present
+        if ($project_filter_sql) {
+            $count_where .= $project_filter_sql;
+            $count_params[] = $project_filter_param;
+            $count_params[] = $project_filter_param;
+            $count_types .= 'ii';
+        }
         
         if (!empty($pallet_ids_filter)) {
             $count_where .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
@@ -1438,16 +1482,18 @@ if (!empty($bolCompletionMessage)) {
         .table-title { font-size:1.2em; font-weight:600; margin:0; display:flex; align-items:center; gap:10px; color:white; }
         .table-header-actions { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
         .action-btn { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:10px; font-size:.85em; font-weight:600; text-decoration:none; border:none; cursor:pointer; white-space:nowrap; transition: all .2s ease; }
-        .action-btn-primary { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:white; }
-        .action-btn-warning { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color:white; }
-        .btn-export-header { background: rgba(255,255,255,.95); color:#16a34a; border:none; box-shadow: 0 2px 8px rgba(0,0,0,.15); cursor: pointer; }
+        .action-btn-primary { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color:white; box-shadow: 0 2px 8px rgba(16,185,129,.25); }
+        .action-btn-primary:hover:not([disabled]) { background: linear-gradient(135deg, #059669 0%, #047857 100%); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(16,185,129,.35); }
+        .action-btn-danger { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color:white; box-shadow: 0 2px 8px rgba(239,68,68,.25); }
+        .action-btn-danger:hover:not([disabled]) { background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(239,68,68,.35); }
+        .btn-export-header { background: rgba(255,255,255,.95); color:#16a34a; border:none; box-shadow: 0 2px 8px rgba(0,0,0,.15); cursor: pointer; padding:8px 14px; border-radius:10px; font-size:.85em; font-weight:600; display:inline-flex; align-items:center; gap:6px; transition: all .2s ease; }
         .action-btn:hover:not([disabled]) { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
         .btn-export-header:hover { background:white; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
         .action-btn[disabled] { opacity: .5; cursor: not-allowed; filter: grayscale(20%); box-shadow: none; }
         table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 15px;
+            margin-top: 0;
         }
         th {
             background-color: #e9ecef;
@@ -1479,80 +1525,136 @@ if (!empty($bolCompletionMessage)) {
             width: 100%; 
             height: 100%; 
             overflow: auto; 
-            background-color: rgba(0,0,0,0.5); 
+            background-color: rgba(0,0,0,0.6);
+            backdrop-filter: blur(4px);
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
         }
         .modal-content {
-            background-color: #fefefe;
-            margin: 5% auto;
-            padding: 30px 30px 20px 30px;
-            border: 1px solid #888;
-            width: 100%;
-            max-width: 600px;
-            border-radius: 8px;
+            background: #fff;
+            margin: 3% auto;
+            padding: 0;
+            border: none;
+            width: 95%;
+            max-width: 850px;
+            border-radius: 20px;
             position: relative;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: slideDown 0.3s ease;
+            overflow: hidden;
+        }
+        @keyframes slideDown {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
         }
         .close-modal-btn {
-            color: #aaa;
+            color: #fff;
             position: absolute;
-            top: 10px;
-            right: 20px;
+            top: 18px;
+            right: 24px;
             font-size: 28px;
             font-weight: bold;
             cursor: pointer;
+            z-index: 10;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            transition: all 0.3s ease;
         }
         .close-modal-btn:hover,
         .close-modal-btn:focus {
-            color: black;
-            text-decoration: none;
+            background: rgba(255,255,255,0.3);
+            transform: rotate(90deg);
+            color: #fff;
+        }
+        .shipment-details-modal-content {
+            padding: 0;
         }
         .shipment-details-modal-content h2 {
-            margin-top: 0;
-            margin-bottom: 20px;
-            color: #293E4C;
-            font-size: 1.3em;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 10px;
+            margin: 0 0 0 0;
+            padding: 24px 36px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
+            font-size: 1.5em;
+            font-weight: 700;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(72,140,154,0.2);
+        }
+        .shipment-details-modal-content form {
+            padding: 36px;
         }
         .form-row {
             display: flex;
             gap: 20px;
-            margin-bottom: 18px;
+            margin-bottom: 20px;
         }
         .form-row > div {
             flex: 1;
             min-width: 150px;
         }
         .shipment-details-modal-content label {
-            font-weight: 500;
-            margin-bottom: 6px;
+            font-weight: 600;
+            margin-bottom: 8px;
             display: block;
+            color: #293E4C;
+            font-size: 0.95em;
         }
         .shipment-details-modal-content input[type="text"],
         .shipment-details-modal-content input[type="date"],
         .shipment-details-modal-content input[type="number"],
         .shipment-details-modal-content select {
             width: 100%;
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            margin-bottom: 8px;
+            padding: 12px 14px;
+            border: 2px solid rgba(72,140,154,0.15);
+            border-radius: 10px;
+            margin-bottom: 0;
             font-size: 1em;
             box-sizing: border-box;
+            transition: all 0.3s ease;
+            background: #fff;
+        }
+        .shipment-details-modal-content input[type="text"]:focus,
+        .shipment-details-modal-content input[type="date"]:focus,
+        .shipment-details-modal-content input[type="number"]:focus,
+        .shipment-details-modal-content select:focus {
+            border-color: #488C9A;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(72,140,154,0.1);
         }
         .radio-label {
-            display: inline-block;
-            margin-right: 20px;
+            display: inline-flex;
+            align-items: center;
+            margin-right: 0;
             font-weight: normal;
+            cursor: pointer;
+            padding: 8px 12px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+        .radio-label:hover {
+            background: rgba(72,140,154,0.08);
         }
         .radio-label input[type=radio] {
-            margin-right: 5px;
-            vertical-align: middle;
+            margin-right: 6px;
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
         }
         
         /* Origin-Destination Layout Styling */
         .origin-destination-section {
-            margin: 20px 0;
+            margin: 24px 0;
+            padding: 20px;
+            background: rgba(72,140,154,0.05);
+            border-radius: 12px;
+            border: 2px dashed rgba(72,140,154,0.2);
         }
         
         .location-container {
@@ -1570,6 +1672,19 @@ if (!empty($bolCompletionMessage)) {
         
         .destination-radio-group {
             flex-wrap: wrap;
+            display: flex;
+            gap: 12px;
+        }
+        
+        #originDisplay, #originDisplayMulti {
+            padding: 14px 16px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border: 2px solid rgba(72,140,154,0.15);
+            border-radius: 10px;
+            min-height: 48px;
+            display: flex;
+            align-items: center;
+            font-size: 0.95em;
         }
         
         @media (max-width: 768px) {
@@ -1614,33 +1729,57 @@ if (!empty($bolCompletionMessage)) {
             color: #000;
         }
         
-        /* Portal-style action buttons */
+        /* Portal-style action buttons - Table row buttons */
         .action-button {
             background: #488C9A !important;
             color: #fff !important;
             border: none !important;
-            padding: 12px 20px !important;
+            padding: 6px 12px !important;
             cursor: pointer !important;
-            border-radius: 4px !important;
+            border-radius: 5px !important;
             font-weight: 600 !important;
-            font-size: 1em !important;
+            font-size: 0.9em !important;
             text-decoration: none !important;
             display: inline-block !important;
-            transition: background-color 0.3s ease !important;
-            margin: 0 !important;
+            transition: all 0.3s ease !important;
+            margin: 0 4px !important;
         }
         .action-button:hover {
-            background: #293E4C !important;
+            background: #3A6E7F !important;
             color: #fff !important;
         }
         .action-button:disabled {
-            background: #cccccc !important;
-            color: #666666 !important;
+            background: #ccc !important;
+            color: #666 !important;
             cursor: not-allowed !important;
         }
         .action-button:disabled:hover {
-            background: #cccccc !important;
-            color: #666666 !important;
+            background: #ccc !important;
+            color: #666 !important;
+        }
+        
+        /* Modal submit buttons */
+        #confirmShipmentBtn, #confirmMultiShipmentBtn {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+            color: #fff !important;
+            border: none !important;
+            padding: 14px 28px !important;
+            cursor: pointer !important;
+            border-radius: 12px !important;
+            font-weight: 600 !important;
+            font-size: 1.05em !important;
+            text-decoration: none !important;
+            display: block !important;
+            transition: all 0.3s ease !important;
+            margin: 0 !important;
+            box-shadow: 0 4px 12px rgba(16,185,129,0.25) !important;
+            width: 100% !important;
+        }
+        #confirmShipmentBtn:hover, #confirmMultiShipmentBtn:hover {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
+            transform: translateY(-2px) !important;
+            box-shadow: 0 6px 20px rgba(16,185,129,0.35) !important;
+            color: #fff !important;
         }
         
         /* Success and error message styling */
@@ -1964,7 +2103,7 @@ if (!empty($bolCompletionMessage)) {
                         <div class="table-header">
                             <h3 class="table-title"><i class="fas fa-boxes"></i> Pallets</h3>
                             <div class="table-header-actions">
-                                <button type="button" id="deletePalletsBtn" class="action-btn action-btn-warning" disabled><i class="fas fa-trash"></i> Delete</button>
+                                <button type="button" id="deletePalletsBtn" class="action-btn action-btn-danger" disabled><i class="fas fa-trash"></i> Delete</button>
                                 <button type="button" id="exportCsvBtn" class="btn-export-header"><i class="fas fa-download"></i> Export</button>
                                 <button type="button" id="openShipModalBtn" class="action-btn action-btn-primary" disabled><i class="fas fa-truck-loading"></i> Create Shipment</button>
                             </div>
@@ -2388,12 +2527,13 @@ function updateHeaderStats() {
         selectedPalletsEl.textContent = selectedCount;
     }
 
-    // Use server totals for total/available counts
+    // Always use server totals from COUNT queries (accurate and not limited by loaded pallets)
     const statsEl = document.getElementById('statsData');
     const totalPalletsEl = document.getElementById('totalPallets');
     const availablePalletsEl = document.getElementById('availablePallets');
     const serverTotal = statsEl ? parseInt(statsEl.dataset.totalPallets || '0') : 0;
     const serverAvailable = statsEl ? parseInt(statsEl.dataset.availablePallets || '0') : 0;
+    
     if (totalPalletsEl) totalPalletsEl.textContent = serverTotal;
     if (availablePalletsEl) availablePalletsEl.textContent = serverAvailable;
 }
@@ -2431,11 +2571,11 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('projectFilter')?.addEventListener('change', saveFilters);
     document.getElementById('wattageFilter')?.addEventListener('change', saveFilters);
     document.getElementById('statusFilter')?.addEventListener('change', saveFilters);
-    // New filter bar listeners (no persistence needed)
-    document.getElementById('cs_search')?.addEventListener('keyup', filterPallets);
-    document.getElementById('cs_project')?.addEventListener('change', filterPallets);
-    document.getElementById('cs_wattage')?.addEventListener('change', filterPallets);
-    document.getElementById('cs_status')?.addEventListener('change', filterPallets);
+    // New filter bar listeners - also need to save filters
+    document.getElementById('cs_search')?.addEventListener('keyup', function() { filterPallets(); saveFilters(); });
+    document.getElementById('cs_project')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
+    document.getElementById('cs_wattage')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
+    document.getElementById('cs_status')?.addEventListener('change', function() { filterPallets(); saveFilters(); });
     document.getElementById('itemsPerPage')?.addEventListener('change', saveFilters);
 
     // Wire up Export and Delete controls
@@ -2634,10 +2774,26 @@ function updatePagination() {
         const showing = Math.min(endIndex, totalItems);
         const displayStart = totalItems > 0 ? startIndex + 1 : 0;
         let suffix = '';
+        
+        // If we're filtering, show filtered count; otherwise show server total
+        const isFiltering = (document.getElementById('cs_search')?.value || document.getElementById('palletSearch')?.value || 
+                           document.getElementById('cs_project')?.value || document.getElementById('projectFilter')?.value || 
+                           document.getElementById('cs_wattage')?.value || document.getElementById('wattageFilter')?.value || 
+                           document.getElementById('cs_status')?.value || document.getElementById('statusFilter')?.value);
+        
+        const displayTotal = isFiltering ? totalItems : serverTotal;
+        
+        // Show limit notice when server total exceeds loaded count
         if (serverTotal > loadedCount && limitCount > 0) {
-            suffix = ` (limited to first ${loadedCount})`;
+            if (isFiltering) {
+                // Filtering in JavaScript from loaded pallets
+                suffix = ` (filtered from ${loadedCount} loaded of ${serverTotal} total)`;
+            } else {
+                // Showing all loaded pallets
+                suffix = ` (showing first ${loadedCount} of ${serverTotal} total)`;
+            }
         }
-        paginationInfo.textContent = `Showing ${displayStart}-${showing} of ${serverTotal} pallets${suffix}`;
+        paginationInfo.textContent = `Showing ${displayStart}-${showing} of ${displayTotal} pallets${suffix}`;
     }
     
     if (pageInfo) {
@@ -2680,11 +2836,16 @@ function filterPallets() {
 // Apply/Clear for new filter bar
 function applyFilterBar() {
     filterPallets();
+    saveFilters();
 }
 function clearFilterBar() {
-    const ids = ['cs_search','cs_project','cs_wattage','cs_status'];
-    ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    // Clear both new and legacy filter inputs
+    const newIds = ['cs_search','cs_project','cs_wattage','cs_status'];
+    const legacyIds = ['palletSearch','projectFilter','wattageFilter','statusFilter'];
+    newIds.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    legacyIds.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     filterPallets();
+    saveFilters();
 }
 
 // ----------------- MODAL LOGIC -----------------
@@ -4230,10 +4391,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Add functions for persistence
 function saveFilters() {
-    localStorage.setItem('createShipment_palletSearch', document.getElementById('palletSearch')?.value || '');
-    localStorage.setItem('createShipment_projectFilter', document.getElementById('projectFilter')?.value || '');
-    localStorage.setItem('createShipment_wattageFilter', document.getElementById('wattageFilter')?.value || '');
-    localStorage.setItem('createShipment_statusFilter', document.getElementById('statusFilter')?.value || '');
+    // Save from the new filter bar (cs_* elements) which are the active ones
+    localStorage.setItem('createShipment_palletSearch', document.getElementById('cs_search')?.value || document.getElementById('palletSearch')?.value || '');
+    localStorage.setItem('createShipment_projectFilter', document.getElementById('cs_project')?.value || document.getElementById('projectFilter')?.value || '');
+    localStorage.setItem('createShipment_wattageFilter', document.getElementById('cs_wattage')?.value || document.getElementById('wattageFilter')?.value || '');
+    localStorage.setItem('createShipment_statusFilter', document.getElementById('cs_status')?.value || document.getElementById('statusFilter')?.value || '');
     localStorage.setItem('createShipment_itemsPerPage', document.getElementById('itemsPerPage')?.value || '100');
     localStorage.setItem('createShipment_currentPage', currentPage);
 }
@@ -4251,7 +4413,9 @@ function loadPersistedFilters() {
         // Coming from project_overview.php - start with clean slate
         // Clear search and non-URL filters to defaults
         document.getElementById('palletSearch').value = '';
+        document.getElementById('cs_search').value = '';
         document.getElementById('wattageFilter').value = '';
+        document.getElementById('cs_wattage').value = '';
         document.getElementById('itemsPerPage').value = '100'; // Default to 100
         itemsPerPage = 100;
         currentPage = 1;
@@ -4260,6 +4424,11 @@ function loadPersistedFilters() {
         // Apply only the URL parameters that might not be set by PHP
         if (statusFromUrl) {
             document.getElementById('statusFilter').value = statusFromUrl;
+            document.getElementById('cs_status').value = statusFromUrl;
+        } else {
+            // Clear status filters to show all statuses
+            document.getElementById('statusFilter').value = '';
+            document.getElementById('cs_status').value = '';
         }
         
         // Project filter should already be correctly set by PHP via the selected attribute
@@ -4273,10 +4442,22 @@ function loadPersistedFilters() {
         const perPage = localStorage.getItem('createShipment_itemsPerPage');
         const page = localStorage.getItem('createShipment_currentPage');
         
-        if (search) document.getElementById('palletSearch').value = search;
-        if (project) document.getElementById('projectFilter').value = project;
-        if (wattage) document.getElementById('wattageFilter').value = wattage;
-        if (status) document.getElementById('statusFilter').value = status;
+        if (search) {
+            document.getElementById('palletSearch').value = search;
+            document.getElementById('cs_search').value = search;
+        }
+        if (project) {
+            document.getElementById('projectFilter').value = project;
+            document.getElementById('cs_project').value = project;
+        }
+        if (wattage) {
+            document.getElementById('wattageFilter').value = wattage;
+            document.getElementById('cs_wattage').value = wattage;
+        }
+        if (status) {
+            document.getElementById('statusFilter').value = status;
+            document.getElementById('cs_status').value = status;
+        }
         
         if (perPage) {
             document.getElementById('itemsPerPage').value = perPage;
