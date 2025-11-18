@@ -1238,45 +1238,57 @@ if ($conn) {
          $back_link = "manage_warehouses.php";
      }
      ?>
-     <?php
+    <?php 
         require_once 'components/breadcrumbs.php';
-        if ($project_id && !$warehouse_id && !$module_batch_id) {
-            echo slp_render_breadcrumbs(['current_label' => 'Warehouse Locations', 'project_id' => (int)$project_id]);
-        } elseif ($warehouse_id && $project_id) {
+        $from = $_GET['from'] ?? '';
+        $backToManagePallets = ($from === 'manage_pallets');
+        $managePalletsUrl = 'manage_pallets.php' . ($project_id ? ('?project_id='.(int)$project_id) : '');
+
+        if ($backToManagePallets) {
+            // Always show a single back breadcrumb to Manage Pallets
             echo slp_render_breadcrumbs([
-                'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
-                'project_id' => (int)$project_id,
-                'extra' => [ ['label' => 'Warehouse Locations', 'url' => 'warehouse_info.php?project_id='.(int)$project_id] ]
-            ]);
-        } elseif ($module_batch_id && !$warehouse_id) {
-            echo slp_render_breadcrumbs([
-                'current_label' => 'Warehouse Locations',
-                'extra' => [
-                    ['label' => 'Modules', 'url' => 'modules.php'],
-                    ['label' => 'Batch '.htmlspecialchars($origin_batch_vendor_name ?? $module_batch_id), 'url' => 'module_overview.php?batch_id='.(int)$module_batch_id]
-                ]
-            ]);
-        } elseif ($warehouse_id && $module_batch_id) {
-            echo slp_render_breadcrumbs([
-                'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
-                'extra' => [
-                    ['label' => 'Modules', 'url' => 'modules.php'],
-                    ['label' => 'Batch '.htmlspecialchars($origin_batch_vendor_name ?? $module_batch_id), 'url' => 'module_overview.php?batch_id='.(int)$module_batch_id],
-                    ['label' => 'Warehouse Locations', 'url' => 'warehouse_info.php?module_batch_id='.(int)$module_batch_id]
-                ]
-            ]);
-        } elseif ($warehouse_id) {
-            echo slp_render_breadcrumbs([
-                'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
-                'extra' => [ ['label' => 'Manage Warehouses', 'url' => 'manage_warehouses.php'] ]
+                'current_label' => ($warehouse_id ? ($warehouse_data['name'] ?? 'Warehouse Details') : 'Warehouse Locations'),
+                'extra' => [ ['label' => 'Manage Pallets', 'url' => $managePalletsUrl] ]
             ]);
         } else {
-            echo slp_render_breadcrumbs([
-                'current_label' => 'Warehouse Information',
-                'extra' => [ ['label' => 'Manage Warehouses', 'url' => 'manage_warehouses.php'] ]
-            ]);
+            if ($project_id && !$warehouse_id && !$module_batch_id) {
+                echo slp_render_breadcrumbs(['current_label' => 'Warehouse Locations', 'project_id' => (int)$project_id]);
+            } elseif ($warehouse_id && $project_id) {
+                echo slp_render_breadcrumbs([
+                    'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
+                    'project_id' => (int)$project_id,
+                    'extra' => [ ['label' => 'Warehouse Locations', 'url' => 'warehouse_info.php?project_id='.(int)$project_id] ]
+                ]);
+            } elseif ($module_batch_id && !$warehouse_id) {
+                echo slp_render_breadcrumbs([
+                    'current_label' => 'Warehouse Locations',
+                    'extra' => [
+                        ['label' => 'Modules', 'url' => 'modules.php'],
+                        ['label' => 'Batch '.htmlspecialchars($origin_batch_vendor_name ?? $module_batch_id), 'url' => 'module_overview.php?batch_id='.(int)$module_batch_id]
+                    ]
+                ]);
+            } elseif ($warehouse_id && $module_batch_id) {
+                echo slp_render_breadcrumbs([
+                    'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
+                    'extra' => [
+                        ['label' => 'Modules', 'url' => 'modules.php'],
+                        ['label' => 'Batch '.htmlspecialchars($origin_batch_vendor_name ?? $module_batch_id), 'url' => 'module_overview.php?batch_id='.(int)$module_batch_id],
+                        ['label' => 'Warehouse Locations', 'url' => 'warehouse_info.php?module_batch_id='.(int)$module_batch_id]
+                    ]
+                ]);
+            } elseif ($warehouse_id) {
+                echo slp_render_breadcrumbs([
+                    'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
+                    'extra' => [ ['label' => 'Manage Warehouses', 'url' => 'manage_warehouses.php'] ]
+                ]);
+            } else {
+                echo slp_render_breadcrumbs([
+                    'current_label' => 'Warehouse Information',
+                    'extra' => [ ['label' => 'Manage Warehouses', 'url' => 'manage_warehouses.php'] ]
+                ]);
+            }
         }
-     ?>
+    ?>
 
     <h1><?php echo $page_title; ?></h1>
 

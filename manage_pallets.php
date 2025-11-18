@@ -25,6 +25,9 @@ $is_global_admin = ($_SESSION['role'] === 'global_admin');
 $is_admin = ($_SESSION['role'] === 'admin');
 $is_user = ($_SESSION['role'] === 'user');
 
+// Optional project context from deep-link (e.g. Project Overview "View Pallets")
+$project_id_from_url = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
+
 if (!$is_global_admin) {
     // For admins and users, get their account_id
     $conn_account = getDBConnection();
@@ -308,6 +311,14 @@ try {
         $conditions[] = "(p_current.account_id = ? OR p_assigned.account_id = ? OR (ip.current_project_id IS NULL AND ip.assigned_project_id IS NULL))";
         $params[] = $account_id_for_user;
         $params[] = $account_id_for_user;
+        $types .= 'ii';
+    }
+
+    // If deep-linked from a project, restrict to that project's pallets (current or assigned)
+    if ($project_id_from_url > 0) {
+        $conditions[] = "(ip.current_project_id = ? OR ip.assigned_project_id = ?)";
+        $params[] = $project_id_from_url;
+        $params[] = $project_id_from_url;
         $types .= 'ii';
     }
 
@@ -735,7 +746,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                 <option value="">All Projects</option>
                                 <option value="Unassigned">Unassigned</option>
                                 <?php foreach ($projects as $proj): ?>
-                                    <option value="<?php echo htmlspecialchars($proj['project_name']); ?>"><?php echo htmlspecialchars($proj['project_name']); ?></option>
+                                    <option value="<?php echo htmlspecialchars($proj['project_name']); ?>" <?php echo ($project_id_from_url > 0 && (int)$proj['id'] === $project_id_from_url) ? 'selected' : ''; ?>><?php echo htmlspecialchars($proj['project_name']); ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -845,7 +856,12 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                     if ($status === 'In Transit to Warehouse' && $pallet['current_warehouse_id']) {
                                         echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
                                     } elseif ($status === 'In Warehouse' && $pallet['current_warehouse_id']) {
-                                        echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                        if ($is_user) {
+                                            $backProjectParam = $project_id_from_url > 0 ? ('&project_id='.(int)$project_id_from_url) : '';
+                                            echo '<a href="warehouse_info.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&from=manage_pallets' . $backProjectParam . '" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                        } else {
+                                            echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . $pallet['current_warehouse_id'] . '&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                        }
                                     } else {
                                         echo $status;
                                     }
@@ -862,7 +878,19 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                             $parts = explode(':', $deliveries[0]);
                                             $deliveryId = $parts[0];
                                             $bolNumber = $parts[1];
-                                            echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
+                                            if ($is_user) {
+                                                // Try to determine a project context for the pallet
+                                                $projIdForLink = 0;
+                                                if (!empty($pallet['current_project_id'])) { $projIdForLink = (int)$pallet['current_project_id']; }
+                                                elseif (!empty($pallet['assigned_project_id'])) { $projIdForLink = (int)$pallet['assigned_project_id']; }
+                                                if ($projIdForLink > 0) {
+                                                    echo '<a href="view_project.php?project_id=' . $projIdForLink . '&delivery_id=' . htmlspecialchars($deliveryId) . '" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
+                                                } else {
+                                                    echo htmlspecialchars($bolNumber);
+                                                }
+                                            } else {
+                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
+                                            }
                                         } else {
                                             echo '<div class="delivery-dropdown">';
                                             echo '<button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (' . count($deliveries) . ')</button>';
@@ -871,7 +899,18 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                                 $parts = explode(':', $delivery);
                                                 $deliveryId = $parts[0];
                                                 $bolNumber = $parts[1];
-                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
+                                                if ($is_user) {
+                                                    $projIdForLink = 0;
+                                                    if (!empty($pallet['current_project_id'])) { $projIdForLink = (int)$pallet['current_project_id']; }
+                                                    elseif (!empty($pallet['assigned_project_id'])) { $projIdForLink = (int)$pallet['assigned_project_id']; }
+                                                    if ($projIdForLink > 0) {
+                                                        echo '<a href="view_project.php?project_id=' . $projIdForLink . '&delivery_id=' . htmlspecialchars($deliveryId) . '" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
+                                                    } else {
+                                                        echo '<span style="display: block; padding: 8px 12px; color: #333; border-bottom: 1px solid #eee;">' . htmlspecialchars($bolNumber) . '</span>';
+                                                    }
+                                                } else {
+                                                    echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
+                                                }
                                             }
                                             echo '</div>';
                                             echo '</div>';
@@ -887,7 +926,8 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button">Pallet Details</a>
+                                    <?php $pdUrl = 'pallet_details.php?pallet_id=' . (int)$pallet['pallet_id'] . ($project_id_from_url > 0 ? ('&project_id='.(int)$project_id_from_url) : ''); ?>
+                                    <a href="<?php echo $pdUrl; ?>" class="action-button">Pallet Details</a>
                                     <?php if (!$is_user): ?>
                                     <button type="button" class="action-button" onclick="window.location.href='edit_pallet.php?pallet_id=<?php echo $pallet['pallet_id']; ?>'" style="background-color:#f0ad4e;">Edit Pallet</button>
                                     <?php endif; ?>

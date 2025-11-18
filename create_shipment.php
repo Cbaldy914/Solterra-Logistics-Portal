@@ -869,6 +869,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 // --- Data Fetching ---
 $pallets = [];
 $errorMessage = '';
+// Cap the number of pallets rendered to keep page responsive on huge datasets
+$server_side_limit = 1000;
 
 try {
     // Comprehensive query to fetch pallet details from ALL projects
@@ -954,8 +956,12 @@ try {
     }
     
     $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.manufacturer_location_id, m.vendor_name, m.account_id, ml.street_address, ml.city, ml.state, ml.zip_code, ml.country, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
-              ORDER BY ip.id ASC";
+              ORDER BY ip.id ASC LIMIT " . (int)$server_side_limit . "";
     
+    // Also compute accurate global counts for header/pagination
+    $total_pallets_count = 0;
+    $available_to_ship_count = 0;
+
     if ($role === 'admin' && $account_id_for_admin) {
         $stmt = $conn->prepare($sql);
         $params = array_merge([$account_id_for_admin, $account_id_for_admin, $account_id_for_admin], $allowed_statuses);
@@ -977,6 +983,58 @@ try {
             $pallets[] = $row;
         }
         $stmt->close();
+
+        // Count total pallets across full dataset (no LIMIT)
+        $count_base = "FROM inventory_pallets ip
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN manufacturer_locations ml ON ip.manufacturer_location_id = ml.id
+            LEFT JOIN manufacturers mfg ON ml.manufacturer_id = mfg.id
+            LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+            LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
+            LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+            LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+            LEFT JOIN deliveries d ON dp.delivery_id = d.id";
+
+        $count_where = " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?) AND ip.status IN (" . $status_placeholders . ")";
+        $count_params = [$account_id_for_admin, $account_id_for_admin, $account_id_for_admin];
+        $count_types = 'iii' . str_repeat('s', count($allowed_statuses));
+        $count_params = array_merge($count_params, $allowed_statuses);
+
+        if ($project_id_from_url > 0) {
+            $count_where .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
+            $count_params[] = $project_id_from_url; $count_params[] = $project_id_from_url;
+            $count_types .= 'ii';
+        }
+        if (!empty($pallet_ids_filter)) {
+            $count_where .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
+            foreach ($pallet_ids_filter as $pid) { $count_params[] = $pid; $count_types .= 'i'; }
+        }
+
+        $stmtCount = $conn->prepare("SELECT COUNT(DISTINCT ip.id) as total " . $count_base . $count_where);
+        if ($stmtCount) {
+            $stmtCount->bind_param($count_types, ...$count_params);
+            $stmtCount->execute();
+            $stmtCount->bind_result($totalTmp);
+            if ($stmtCount->fetch()) { $total_pallets_count = (int)$totalTmp; }
+            $stmtCount->close();
+        }
+
+        // Available to ship count
+        $available_statuses = ['In Warehouse','At Manufacturer','Delivered to Project'];
+        $avail_placeholders = implode(',', array_fill(0, count($available_statuses), '?'));
+        $stmtAvail = $conn->prepare(
+            "SELECT COUNT(DISTINCT ip.id) as total " . $count_base . $count_where . " AND ip.status IN (" . $avail_placeholders . ")"
+        );
+        if ($stmtAvail) {
+            $avail_types = $count_types . str_repeat('s', count($available_statuses));
+            $avail_params = array_merge($count_params, $available_statuses);
+            $stmtAvail->bind_param($avail_types, ...$avail_params);
+            $stmtAvail->execute();
+            $stmtAvail->bind_result($availTmp);
+            if ($stmtAvail->fetch()) { $available_to_ship_count = (int)$availTmp; }
+            $stmtAvail->close();
+        }
     } else {
         $stmt = $conn->prepare($sql);
         $params = $allowed_statuses;
@@ -998,6 +1056,54 @@ try {
             $pallets[] = $row;
         }
         $stmt->close();
+
+        // Count totals for non-admin/global_admin
+        $count_base = "FROM inventory_pallets ip
+            LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+            LEFT JOIN manufacturer_locations ml ON ip.manufacturer_location_id = ml.id
+            LEFT JOIN manufacturers mfg ON ml.manufacturer_id = mfg.id
+            LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+            LEFT JOIN projects p_current ON ip.current_project_id = p_current.id
+            LEFT JOIN projects p_assigned ON ip.assigned_project_id = p_assigned.id
+            LEFT JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+            LEFT JOIN deliveries d ON dp.delivery_id = d.id";
+        $count_where = " WHERE ip.status IN (" . $status_placeholders . ")";
+        $count_params = $allowed_statuses;
+        $count_types = str_repeat('s', count($allowed_statuses));
+        if ($project_id_from_url > 0) {
+            $count_where .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
+            $count_params[] = $project_id_from_url; $count_params[] = $project_id_from_url;
+            $count_types .= 'ii';
+        }
+        if (!empty($pallet_ids_filter)) {
+            $count_where .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
+            foreach ($pallet_ids_filter as $pid) { $count_params[] = $pid; $count_types .= 'i'; }
+        }
+
+        $stmtCount = $conn->prepare("SELECT COUNT(DISTINCT ip.id) as total " . $count_base . $count_where);
+        if ($stmtCount) {
+            $stmtCount->bind_param($count_types, ...$count_params);
+            $stmtCount->execute();
+            $stmtCount->bind_result($totalTmp);
+            if ($stmtCount->fetch()) { $total_pallets_count = (int)$totalTmp; }
+            $stmtCount->close();
+        }
+
+        $available_statuses = ['In Warehouse','At Manufacturer','Delivered to Project'];
+        $avail_placeholders = implode(',', array_fill(0, count($available_statuses), '?'));
+        $stmtAvail = $conn->prepare(
+            "SELECT COUNT(DISTINCT ip.id) as total " . $count_base . $count_where . " AND ip.status IN (" . $avail_placeholders . ")"
+        );
+        if ($stmtAvail) {
+            $avail_types = $count_types . str_repeat('s', count($available_statuses));
+            $avail_params = array_merge($count_params, $available_statuses);
+            $stmtAvail->bind_param($avail_types, ...$avail_params);
+            $stmtAvail->execute();
+            $stmtAvail->bind_result($availTmp);
+            if ($stmtAvail->fetch()) { $available_to_ship_count = (int)$availTmp; }
+            $stmtAvail->close();
+        }
     }
 
     // Add full addresses for pallets
@@ -1805,7 +1911,7 @@ if (!empty($bolCompletionMessage)) {
                     <table id="palletsTable">
                         <thead>
                             <tr>
-                                <th><input type="checkbox" id="selectAllPallets" onclick="toggleAllPalletCheckboxes(this.checked)"></th>
+                                <th><input type="checkbox" id="selectAllPallets" disabled></th>
                                 <th>Identifier</th>
                                 <th>Wattage</th>
                                 <th>Quantity</th>
@@ -1822,7 +1928,18 @@ if (!empty($bolCompletionMessage)) {
                                     <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
                                     <td><?php echo $pallet['wattage']; ?>W</td>
                                     <td><?php echo number_format($pallet['quantity']); ?></td>
-                                    <td><?php echo htmlspecialchars($pallet['status']); ?></td>
+                                    <td>
+                                        <?php 
+                                        $status = htmlspecialchars($pallet['status']);
+                                        if ($pallet['current_warehouse_id'] && $status === 'In Transit to Warehouse') {
+                                            echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . (int)$pallet['current_warehouse_id'] . '&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                        } elseif ($pallet['current_warehouse_id'] && $status === 'In Warehouse') {
+                                            echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . (int)$pallet['current_warehouse_id'] . '&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
+                                        } else {
+                                            echo $status;
+                                        }
+                                        ?>
+                                    </td>
                                     <td><?php echo htmlspecialchars($pallet['display_project_name']); ?></td>
                                     <td>
                                         <?php 
@@ -1853,7 +1970,8 @@ if (!empty($bolCompletionMessage)) {
                                         ?>
                                     </td>
                                     <td>
-                                        <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
+                                        <?php $detailsUrl = 'pallet_details.php?pallet_id=' . (int)$pallet['pallet_id'] . ($project_id_from_url > 0 ? ('&project_id=' . (int)$project_id_from_url) : ''); ?>
+                                        <a href="<?php echo $detailsUrl; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
                                         <a href="edit_pallet.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" style="background-color: #6c757d; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em; margin-left:6px;">Edit</a>
                                     </td>
                                 </tr>
@@ -2141,6 +2259,9 @@ if (!empty($bolCompletionMessage)) {
     </div>
 </div>
 
+<!-- Expose server-side totals for accurate header/pagination info -->
+<div id="statsData" data-total-pallets="<?php echo (int)($total_pallets_count ?? 0); ?>" data-available-pallets="<?php echo (int)($available_to_ship_count ?? 0); ?>" data-loaded="<?php echo (int)count($pallets); ?>" data-limit="<?php echo (int)$server_side_limit; ?>" style="display:none"></div>
+
 <!-- Embed PHP data as JS variables for populating dropdowns -->
 <script>
     const projectsData = <?php echo json_encode($all_projects); ?>;
@@ -2205,26 +2326,23 @@ function updateHeaderStats() {
     if (selectedPalletsEl) {
         selectedPalletsEl.textContent = selectedCount;
     }
-    
-    // Update total pallets count (visible pallets)
-    const totalVisible = document.querySelectorAll('.pallet-checkbox').length;
+
+    // Use server totals for total/available counts
+    const statsEl = document.getElementById('statsData');
     const totalPalletsEl = document.getElementById('totalPallets');
-    if (totalPalletsEl) {
-        totalPalletsEl.textContent = totalVisible;
-    }
-    
-    // Update available pallets count (pallets that can be shipped)
-    const availableCount = document.querySelectorAll('.pallet-checkbox[data-status="In Warehouse"], .pallet-checkbox[data-status="At Manufacturer"], .pallet-checkbox[data-status="Delivered to Project"]').length;
     const availablePalletsEl = document.getElementById('availablePallets');
-    if (availablePalletsEl) {
-        availablePalletsEl.textContent = availableCount;
-    }
+    const serverTotal = statsEl ? parseInt(statsEl.dataset.totalPallets || '0') : 0;
+    const serverAvailable = statsEl ? parseInt(statsEl.dataset.availablePallets || '0') : 0;
+    if (totalPalletsEl) totalPalletsEl.textContent = serverTotal;
+    if (availablePalletsEl) availablePalletsEl.textContent = serverAvailable;
 }
 
 document.addEventListener('DOMContentLoaded', function() {
     const selectAll = document.getElementById('selectAllPallets');
     const palletCheckboxes = document.querySelectorAll('.pallet-checkbox');
     if (selectAll) {
+        // Enable once scripts are ready to avoid inline handler errors on huge pages
+        selectAll.removeAttribute('disabled');
         selectAll.addEventListener('change', function() {
             toggleAllPalletCheckboxes(this.checked);
         });
@@ -2422,6 +2540,10 @@ function getFilteredRows() {
 function updatePagination() {
     const filteredRows = getFilteredRows();
     const totalItems = filteredRows.length;
+    const statsEl = document.getElementById('statsData');
+    const serverTotal = statsEl ? parseInt(statsEl.dataset.totalPallets || '0') : totalItems;
+    const loadedCount = statsEl ? parseInt(statsEl.dataset.loaded || '0') : totalItems;
+    const limitCount = statsEl ? parseInt(statsEl.dataset.limit || '0') : 0;
     const maxPages = Math.ceil(totalItems / itemsPerPage);
     const startIndex = (currentPage - 1) * itemsPerPage;
     const endIndex = startIndex + itemsPerPage;
@@ -2445,7 +2567,11 @@ function updatePagination() {
     if (paginationInfo) {
         const showing = Math.min(endIndex, totalItems);
         const displayStart = totalItems > 0 ? startIndex + 1 : 0;
-        paginationInfo.textContent = `Showing ${displayStart}-${showing} of ${totalItems} pallets`;
+        let suffix = '';
+        if (serverTotal > loadedCount && limitCount > 0) {
+            suffix = ` (limited to first ${loadedCount})`;
+        }
+        paginationInfo.textContent = `Showing ${displayStart}-${showing} of ${serverTotal} pallets${suffix}`;
     }
     
     if (pageInfo) {
