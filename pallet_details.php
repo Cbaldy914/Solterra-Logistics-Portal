@@ -23,7 +23,7 @@ $pallet_id = (int)$_GET['pallet_id'];
 $pallet_data = null;
 $associated_deliveries = [];
 $errorMessage = '';
-$breadcrumbProjectId = 0;
+$breadcrumbProjectId = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
 
 try {
     // 1. Fetch Pallet Master Data
@@ -444,7 +444,14 @@ $conn->close();
 <main>
     <?php 
         require_once 'components/breadcrumbs.php'; 
-        $mpUrl = 'create_shipment.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
+        // For customers, Manage Pallets breadcrumb should return to manage_pallets
+        // Admins/Global Admins keep create_shipment as destination
+        $mpUrl = '';
+        if ($role === 'admin' || $role === 'global_admin') {
+            $mpUrl = 'create_shipment.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
+        } else {
+            $mpUrl = 'manage_pallets.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
+        }
         echo slp_render_breadcrumbs([
             'current_label' => 'Pallet Details',
             'project_id' => (int)$breadcrumbProjectId,
