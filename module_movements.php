@@ -713,24 +713,6 @@ $conn->close();
         </div>
 
         <?php if (!empty($movement_data)): ?>
-            
-            <!-- Performance Info -->
-            <?php 
-            $execution_time = number_format((microtime(true) - $start_time) * 1000, 0);
-            if ($total_pallets > 5000): ?>
-                <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-                    <strong>⚡ Large Dataset Optimized:</strong> 
-                    Processing <?php echo number_format($total_pallets); ?> pallets across <?php echo count($movement_data); ?> location groups. 
-                    Map shows aggregated data for improved performance (loaded in <?php echo $execution_time; ?>ms).
-                </div>
-            <?php elseif ($total_pallets > 1000): ?>
-                <div style="background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-                    <strong>📊 Dataset Info:</strong> 
-                    Displaying <?php echo number_format($total_pallets); ?> pallets across <?php echo count($movement_data); ?> location groups 
-                    (loaded in <?php echo $execution_time; ?>ms).
-                </div>
-            <?php endif; ?>
-            
             <!-- Map Legend and Status Breakdown Container -->
             <div style="display: flex; gap: 20px; margin-bottom: 20px;">
                 <!-- Map Legend -->
