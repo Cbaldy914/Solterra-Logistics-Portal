@@ -887,6 +887,7 @@ try {
                 ip.assigned_project_id,
                 ip.manufacturer_location_id,
                 m.vendor_name AS origin_vendor,
+                m.pallets_per_truck AS module_pallets_per_truck,
                 COALESCE(
                     CONCAT(ml.street_address, ', ', ml.city, ', ', ml.state, ' ', ml.zip_code),
                     m.initial_location
@@ -937,25 +938,17 @@ try {
     
     if ($role === 'admin' && $account_id_for_admin) {
         $sql .= " WHERE (p_current.account_id = ? OR p_assigned.account_id = ? OR m.account_id = ?) AND ip.status IN ($status_placeholders)";
-        // Add project-specific filtering if coming from a specific project page
-        if ($project_id_from_url > 0) {
-            $sql .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
-        }
         if (!empty($pallet_ids_filter)) {
             $sql .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
         }
     } else {
         $sql .= " WHERE ip.status IN ($status_placeholders)";
-        // Add project-specific filtering if coming from a specific project page
-        if ($project_id_from_url > 0) {
-            $sql .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
-        }
         if (!empty($pallet_ids_filter)) {
             $sql .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
         }
     }
     
-    $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.manufacturer_location_id, m.vendor_name, m.account_id, ml.street_address, ml.city, ml.state, ml.zip_code, ml.country, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
+    $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.manufacturer_location_id, m.vendor_name, m.pallets_per_truck, m.account_id, ml.street_address, ml.city, ml.state, ml.zip_code, ml.country, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
               ORDER BY ip.id ASC LIMIT " . (int)$server_side_limit . "";
     
     // Also compute accurate global counts for header/pagination
@@ -967,11 +960,7 @@ try {
         $params = array_merge([$account_id_for_admin, $account_id_for_admin, $account_id_for_admin], $allowed_statuses);
         $types = 'iii' . str_repeat('s', count($allowed_statuses));
         
-        // Add project parameters if filtering by project
-        if ($project_id_from_url > 0) {
-            $params = array_merge($params, [$project_id_from_url, $project_id_from_url]);
-            $types .= 'ii';
-        }
+        // No project-level restriction so switching projects in filter works
         if (!empty($pallet_ids_filter)) {
             foreach ($pallet_ids_filter as $pid) { $params[] = $pid; $types .= 'i'; }
         }
@@ -1001,11 +990,7 @@ try {
         $count_types = 'iii' . str_repeat('s', count($allowed_statuses));
         $count_params = array_merge($count_params, $allowed_statuses);
 
-        if ($project_id_from_url > 0) {
-            $count_where .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
-            $count_params[] = $project_id_from_url; $count_params[] = $project_id_from_url;
-            $count_types .= 'ii';
-        }
+        // No project-level restriction so switching projects via UI filter works
         if (!empty($pallet_ids_filter)) {
             $count_where .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
             foreach ($pallet_ids_filter as $pid) { $count_params[] = $pid; $count_types .= 'i'; }
@@ -1040,11 +1025,7 @@ try {
         $params = $allowed_statuses;
         $types = str_repeat('s', count($allowed_statuses));
         
-        // Add project parameters if filtering by project
-        if ($project_id_from_url > 0) {
-            $params = array_merge($params, [$project_id_from_url, $project_id_from_url]);
-            $types .= 'ii';
-        }
+        // No project-level restriction so switching projects in filter works
         if (!empty($pallet_ids_filter)) {
             foreach ($pallet_ids_filter as $pid) { $params[] = $pid; $types .= 'i'; }
         }
@@ -1071,11 +1052,7 @@ try {
         $count_where = " WHERE ip.status IN (" . $status_placeholders . ")";
         $count_params = $allowed_statuses;
         $count_types = str_repeat('s', count($allowed_statuses));
-        if ($project_id_from_url > 0) {
-            $count_where .= " AND (ip.current_project_id = ? OR ip.assigned_project_id = ?)";
-            $count_params[] = $project_id_from_url; $count_params[] = $project_id_from_url;
-            $count_types .= 'ii';
-        }
+        
         if (!empty($pallet_ids_filter)) {
             $count_where .= " AND ip.id IN (" . implode(',', array_fill(0, count($pallet_ids_filter), '?')) . ")";
             foreach ($pallet_ids_filter as $pid) { $count_params[] = $pid; $count_types .= 'i'; }
@@ -1436,6 +1413,37 @@ if (!empty($bolCompletionMessage)) {
             border-bottom: 2px solid #488C9A;
             padding-bottom: 5px;
         }
+        /* Unified Filter + Table Header (from view_project) */
+        .filter-section {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            padding: 28px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+        .filter-header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 16px; gap: 16px; flex-wrap: wrap; }
+        .filter-title { font-size: 1.2em; font-weight: 600; color:#293E4C; margin:0; display:flex; align-items:center; gap:10px; }
+        .filter-title i { color:#488C9A; }
+        .filter-actions { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+        .btn-clear, .btn-apply { padding:10px 16px; border-radius:10px; font-size:.9em; font-weight:600; cursor:pointer; border:none; display:flex; align-items:center; gap:8px; }
+        .btn-clear { background: linear-gradient(135deg, rgba(239,68,68,.1) 0%, rgba(220,38,38,.15) 100%); color:#dc2626; border:1px solid rgba(239,68,68,.2); }
+        .btn-apply { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:#fff; }
+        .filter-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(250px,1fr)); gap: 16px; }
+        .filter-group { display:flex; flex-direction:column; }
+        .filter-label { font-weight:600; color:#293E4C; font-size:.95em; margin-bottom:6px; }
+        .filter-select, .filter-input { width:100%; padding: 10px 12px; border: 2px solid rgba(72,140,154,.15); border-radius:10px; background:#fff; font-size:.95em; box-sizing:border-box; }
+        .deliveries-container { background: linear-gradient(135deg,#ffffff 0%, #f8f9fa 100%); border-radius:20px; overflow:hidden; box-shadow: 0 8px 32px rgba(0,0,0,.06); border:1px solid rgba(72,140,154,.08); margin-top: 12px; }
+        .table-header { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:white; padding: 16px 20px; display:flex; align-items:center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        .table-title { font-size:1.2em; font-weight:600; margin:0; display:flex; align-items:center; gap:10px; color:white; }
+        .table-header-actions { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+        .action-btn { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:10px; font-size:.85em; font-weight:600; text-decoration:none; border:none; cursor:pointer; white-space:nowrap; transition: all .2s ease; }
+        .action-btn-primary { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:white; }
+        .action-btn-warning { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color:white; }
+        .btn-export-header { background: rgba(255,255,255,.95); color:#16a34a; border:none; box-shadow: 0 2px 8px rgba(0,0,0,.15); cursor: pointer; }
+        .action-btn:hover:not([disabled]) { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .btn-export-header:hover { background:white; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .action-btn[disabled] { opacity: .5; cursor: not-allowed; filter: grayscale(20%); box-shadow: none; }
         table {
             width: 100%;
             border-collapse: collapse;
@@ -1824,23 +1832,68 @@ if (!empty($bolCompletionMessage)) {
             <input type="hidden" name="action" value="ship_pallets">
             
             <div class="pallets-section">
+                <h2 class="section-title" style="display:none;">Select Pallets to Create Shipment</h2>
+                <!-- New Unified Filter Bar -->
+                <div class="filter-section">
+                    <div class="filter-header">
+                        <h2 class="filter-title"><i class="fas fa-filter"></i> Filter Pallets</h2>
+                        <div class="filter-actions">
+                            <button type="button" class="btn-clear" onclick="clearFilterBar()"><i class="fas fa-times"></i> Clear</button>
+                            <button type="button" class="btn-apply" onclick="applyFilterBar()"><i class="fas fa-search"></i> Apply Filters</button>
+                        </div>
+                    </div>
+                    <div class="filter-grid">
+                        <div class="filter-group">
+                            <label class="filter-label" for="cs_search">Search</label>
+                            <input type="text" id="cs_search" class="filter-input" placeholder="Search pallets...">
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label" for="cs_project">Project</label>
+                            <select id="cs_project" class="filter-select">
+                                <option value="">All Projects</option>
+                                <option value="Unassigned">Unassigned</option>
+                                <?php foreach ($all_projects_for_filter as $proj): ?>
+                                    <option value="<?php echo htmlspecialchars($proj['project_name']); ?>" <?php echo ($project_id_from_url > 0 && $proj['id'] == $project_id_from_url) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($proj['project_name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label" for="cs_wattage">Wattage</label>
+                            <select id="cs_wattage" class="filter-select">
+                                <option value="">All Wattages</option>
+                                <?php $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets)); sort($wattages); foreach ($wattages as $w) { echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>'; } ?>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label" for="cs_status">Status</label>
+                            <select id="cs_status" class="filter-select">
+                                <option value="">All Statuses</option>
+                                <?php $available_statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets)); foreach ($available_statuses as $s) { echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>'; } ?>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section Title (moved below filters) -->
                 <h2 class="section-title">Select Pallets to Create Shipment</h2>
-                <!-- Filters and Controls -->
-                <div class="filters-container" style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;">
+
+                <!-- Legacy controls (hidden) -->
+                <div class="filters-container" style="display:none; margin-bottom: 15px; justify-content: space-between; align-items: flex-start; gap: 20px;">
                     <div style="display: flex; align-items: center; gap: 12px;">
                         <div class="filter-dropdown">
-                            <button type="button" class="filter-toggle-btn" onclick="toggleFilters()">
+                            <button type="button" class="filter-toggle-btn" onclick="toggleFilters()" style="display:none;">
                                 <span>Filters</span> <span class="filter-arrow">▼</span>
                             </button>
-                            <div class="filter-content" id="filterContent" style="display: none;">
-                                <div style="display: flex; flex-direction: column; gap: 15px; padding: 15px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 0 0 4px 4px;">
+                            <div class="filter-content" id="filterContent" style="display: block;">
+                                <div style="display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;">
                                 <div style="display: flex; align-items: center; gap: 10px;">
-                                    <label>Search:</label>
-                                    <input type="text" id="palletSearch" placeholder="Filter by ID, Identifier, Wattage..." onkeyup="filterPallets()" style="flex: 1;">
+                                    <input type="text" id="palletSearch" placeholder="Search pallets..." onkeyup="filterPallets()" style="flex: 1; min-width: 220px;">
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 10px;">
-                                    <label for="projectFilter">Project:</label>
-                                    <select id="projectFilter" onchange="filterPallets()" style="flex: 1;">
+                                    <label for="projectFilter" style="display:none;">Project:</label>
+                                    <select id="projectFilter" onchange="filterPallets()" style="min-width: 200px;">
                                         <option value="">All Projects</option>
                                         <option value="Unassigned">Unassigned</option>
                                         <?php foreach ($all_projects_for_filter as $proj): ?>
@@ -1851,9 +1904,9 @@ if (!empty($bolCompletionMessage)) {
                                     </select>
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 10px;">
-                                    <label for="wattageFilter">Wattage:</label>
-                                    <select id="wattageFilter" onchange="filterPallets()" style="flex: 1;">
-                                        <option value="">All</option>
+                                    <label for="wattageFilter" style="display:none;">Wattage:</label>
+                                    <select id="wattageFilter" onchange="filterPallets()" style="min-width: 160px;">
+                                        <option value="">All Wattages</option>
                                         <?php
                                         // Only show wattages that are available in current pallets (filtered by account if admin)
                                         $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
@@ -1865,9 +1918,9 @@ if (!empty($bolCompletionMessage)) {
                                     </select>
                                 </div>
                                 <div style="display: flex; align-items: center; gap: 10px;">
-                                    <label for="statusFilter">Status:</label>
-                                    <select id="statusFilter" onchange="filterPallets()" style="flex: 1;">
-                                        <option value="">All</option>
+                                    <label for="statusFilter" style="display:none;">Status:</label>
+                                    <select id="statusFilter" onchange="filterPallets()" style="min-width: 200px;">
+                                        <option value="">All Statuses</option>
                                         <?php
                                         // Only show statuses that are available in current pallets (filtered by account if admin)
                                         $available_statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
@@ -1880,16 +1933,15 @@ if (!empty($bolCompletionMessage)) {
                                 </div>
                             </div>
                         </div>
-                        <button type="button" id="exportCsvBtn" class="action-button">Export to CSV</button>
+                        
                     </div>
-                    <div style="display: flex; align-items: center; justify-content: center; flex: 1;">
+                    <div style="display: none; align-items: center; justify-content: center; flex: 1;">
                         <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 12px;">
-                        <button type="button" id="deletePalletsBtn" class="action-button" style="background-color:#dc3545;" disabled>Delete</button>
-                        <button type="button" id="openShipModalBtn" class="action-button" disabled>
-                            Create Shipment with Selected Pallets
-                        </button>
+                    <div style="display: none; align-items: center; gap: 12px;">
+                        <button type="button" id="deletePalletsBtn_old" class="action-button" style="background-color:#dc3545;" disabled>Delete</button>
+                        <button type="button" id="exportCsvBtn_old" class="action-button">Export</button>
+                        <button type="button" id="openShipModalBtn_old" class="action-button" disabled> Create Shipment </button>
                     </div>
                 </div>
                 
@@ -1908,6 +1960,16 @@ if (!empty($bolCompletionMessage)) {
                 </div>
                 
                 <?php if (!empty($pallets)): ?>
+                    <div class="deliveries-container">
+                        <div class="table-header">
+                            <h3 class="table-title"><i class="fas fa-boxes"></i> Pallets</h3>
+                            <div class="table-header-actions">
+                                <button type="button" id="deletePalletsBtn" class="action-btn action-btn-warning" disabled><i class="fas fa-trash"></i> Delete</button>
+                                <button type="button" id="exportCsvBtn" class="btn-export-header"><i class="fas fa-download"></i> Export</button>
+                                <button type="button" id="openShipModalBtn" class="action-btn action-btn-primary" disabled><i class="fas fa-truck-loading"></i> Create Shipment</button>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
                     <table id="palletsTable">
                         <thead>
                             <tr>
@@ -1978,6 +2040,8 @@ if (!empty($bolCompletionMessage)) {
                             <?php endforeach; ?>
                         </tbody>
                     </table>
+                        </div>
+                    </div>
                 <?php else: ?>
                     <p>No pallets found.</p>
                 <?php endif; ?>
@@ -1992,15 +2056,12 @@ if (!empty($bolCompletionMessage)) {
         <span class="close-modal-btn">&times;</span>
         <div class="shipment-details-modal-content">
             <h2 class="section-title" style="margin-top:0; text-align:center;">Create Shipment</h2>
-            <div class="tabs">
-                <button type="button" class="modal-tab active" id="singleTabBtn">Single Shipment</button>
-                <button type="button" class="modal-tab" id="multiTabBtn">Multiple Shipments</button>
-            </div>
+            <div class="tabs" style="display:none;"></div>
             
 
             
             <!-- SINGLE SHIPMENT SECTION -->
-            <div id="singleShipmentSection">
+            <div id="singleShipmentSection" style="display:none;">
                 <form id="singleShipmentForm" onsubmit="return false;">
                     <!-- BOL Number for Domestic Shipments -->
                     <div id="domesticBolField">
@@ -2117,7 +2178,7 @@ if (!empty($bolCompletionMessage)) {
                 </form>
             </div>
             <!-- MULTIPLE SHIPMENTS SECTION -->
-            <div id="multiShipmentSection" style="display:none;">
+            <div id="multiShipmentSection">
                 <form id="multiShipmentForm" onsubmit="return false;">
                     <label for="palletsPerTruck">Pallets per Truck:</label>
                     <input type="number" id="palletsPerTruck" min="1" max="12" value="1" style="width:100px;" data-user-edited="false">
@@ -2370,6 +2431,11 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('projectFilter')?.addEventListener('change', saveFilters);
     document.getElementById('wattageFilter')?.addEventListener('change', saveFilters);
     document.getElementById('statusFilter')?.addEventListener('change', saveFilters);
+    // New filter bar listeners (no persistence needed)
+    document.getElementById('cs_search')?.addEventListener('keyup', filterPallets);
+    document.getElementById('cs_project')?.addEventListener('change', filterPallets);
+    document.getElementById('cs_wattage')?.addEventListener('change', filterPallets);
+    document.getElementById('cs_status')?.addEventListener('change', filterPallets);
     document.getElementById('itemsPerPage')?.addEventListener('change', saveFilters);
 
     // Wire up Export and Delete controls
@@ -2487,10 +2553,10 @@ function getFilteredRows() {
     return allPalletRows.filter(row => {
         if (!row || !row.cells) return false;
         
-        const filter = document.getElementById('palletSearch')?.value.toLowerCase() || '';
-        const projectFilter = document.getElementById('projectFilter')?.value || '';
-        const wattageFilter = document.getElementById('wattageFilter')?.value || '';
-        const statusFilter = document.getElementById('statusFilter')?.value || '';
+        const filter = (document.getElementById('cs_search')?.value || document.getElementById('palletSearch')?.value || '').toLowerCase();
+        const projectFilter = document.getElementById('cs_project')?.value || document.getElementById('projectFilter')?.value || '';
+        const wattageFilter = document.getElementById('cs_wattage')?.value || document.getElementById('wattageFilter')?.value || '';
+        const statusFilter = document.getElementById('cs_status')?.value || document.getElementById('statusFilter')?.value || '';
         
         // Get cell contents
         let textContent = '';
@@ -2611,6 +2677,16 @@ function filterPallets() {
     updatePagination();
 }
 
+// Apply/Clear for new filter bar
+function applyFilterBar() {
+    filterPallets();
+}
+function clearFilterBar() {
+    const ids = ['cs_search','cs_project','cs_wattage','cs_status'];
+    ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    filterPallets();
+}
+
 // ----------------- MODAL LOGIC -----------------
 const shipModal = document.getElementById('shipModal');
 const openShipModalBtn = document.getElementById('openShipModalBtn');
@@ -2633,7 +2709,8 @@ function selectionHasInvalidPallets() {
 
 function openShipModal() {
     shipModal.style.display = 'block';
-    // Initialize multi-shipment BOL fields when modal opens
+    // Initialize multi-shipment defaults and BOL fields when modal opens
+    try { setDefaultPalletsPerTruckFromSelection(); } catch(e) {}
     updateMultiShipSummary();
 }
 function closeShipModal() {
@@ -2651,6 +2728,24 @@ function handleOpenShipModalClick(e) {
 openShipModalBtn.addEventListener('click', handleOpenShipModalClick);
 if (closeShipModalBtn) {
     closeShipModalBtn.addEventListener('click', closeShipModal);
+}
+// Determine default pallets per truck from selected pallets' module settings
+function setDefaultPalletsPerTruckFromSelection() {
+    const perTruckInput = document.getElementById('palletsPerTruck');
+    if (!perTruckInput) return;
+    const selected = getSelectedPallets();
+    if (!selected || selected.length === 0) return;
+    const counts = {};
+    let fallback = 1;
+    selected.forEach(p => {
+        const v = parseInt(p.module_pallets_per_truck || 0, 10);
+        if (v && v > 0) {
+            counts[v] = (counts[v] || 0) + 1;
+        }
+    });
+    let best = null, bestCount = 0;
+    Object.entries(counts).forEach(([k,c]) => { if (c > bestCount) { best = parseInt(k,10); bestCount = c; } });
+    perTruckInput.value = best || fallback;
 }
 // Disable clicking outside to close modal for admin/global_admin users
 // (They need to click the X button to close)
@@ -3160,7 +3255,7 @@ function hideOverseasFields() {
     // Reset button and modal styling for domestic shipments
     const createButton = document.getElementById('openShipModalBtn');
     if (createButton) {
-        createButton.innerHTML = 'Create Shipment with Selected Pallets';
+        createButton.innerHTML = 'Create Shipment';
         createButton.style.backgroundColor = ''; // Reset to default background
         createButton.style.borderColor = ''; // Reset to default border
     }

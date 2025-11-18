@@ -314,13 +314,7 @@ try {
         $types .= 'ii';
     }
 
-    // If deep-linked from a project, restrict to that project's pallets (current or assigned)
-    if ($project_id_from_url > 0) {
-        $conditions[] = "(ip.current_project_id = ? OR ip.assigned_project_id = ?)";
-        $params[] = $project_id_from_url;
-        $params[] = $project_id_from_url;
-        $types .= 'ii';
-    }
+    // Do not restrict dataset to a single project so users can switch projects in the UI filter
 
     // Optional deep-link filter to specific pallet IDs
     if (!empty($pallet_ids_filter)) {
@@ -686,9 +680,91 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Manage Pallets']); ?>
+<?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Manage Pallets']); ?>
+    <style>
+        .delivery-tracker-header { background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 24px; padding: 32px; margin: 16px 0 20px 0; box-shadow: 0 8px 32px rgba(0,0,0,0.06); border: 1px solid rgba(72,140,154,0.08); position: relative; overflow: hidden; }
+        .delivery-tracker-header::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
+        .header-content { display:flex; align-items:center; justify-content: space-between; flex-wrap:wrap; gap:24px; }
+        .header-info h1 { font-size: 2.2em; font-weight: 700; background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0 0 6px 0; line-height: 1.2; }
+        .header-subtitle { color:#6c757d; font-size:1.05em; font-weight:500; margin:0; }
+    </style>
+    <div class="delivery-tracker-header">
+        <div class="header-content">
+            <div class="header-info">
+                <h1>Manage All Pallets</h1>
+                <p class="header-subtitle">View and manage all pallets</p>
+            </div>
+        </div>
+    </div>
     
-    <h1>Manage All Pallets</h1>
+    <!-- Unified Filter Section (styled like view_project) -->
+    <style>
+        .filter-section {background: linear-gradient(135deg,#ffffff 0%,#f8f9fa 100%); border-radius:20px; padding:24px; margin:16px 0; box-shadow:0 8px 32px rgba(0,0,0,.06); border:1px solid rgba(72,140,154,.08);} 
+        .filter-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;}
+        .filter-title{font-size:1.2em;font-weight:600;color:#293E4C;margin:0;display:flex;align-items:center;gap:10px}
+        .filter-title i{color:#488C9A}
+        .filter-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+        .btn-clear,.btn-apply{padding:10px 16px;border-radius:10px;font-size:.9em;font-weight:600;cursor:pointer;border:none;display:flex;align-items:center;gap:8px}
+        .btn-clear{background:linear-gradient(135deg,rgba(239,68,68,.1) 0%,rgba(220,38,38,.15) 100%);color:#dc2626;border:1px solid rgba(239,68,68,.2)}
+        .btn-apply{background:linear-gradient(135deg,#488C9A 0%,#3A6E7F 100%);color:#fff}
+        .filter-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+        .filter-group{display:flex;flex-direction:column}
+        .filter-label{font-weight:600;color:#293E4C;font-size:.95em;margin-bottom:6px}
+        .filter-select,.filter-input{width:100%;padding:10px 12px;border:2px solid rgba(72,140,154,.15);border-radius:10px;background:#fff;font-size:.95em;box-sizing:border-box}
+        .deliveries-container{background:linear-gradient(135deg,#ffffff 0%,#f8f9fa 100%);border-radius:20px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.06);border:1px solid rgba(72,140,154,.08);margin-top: 12px}
+        .table-header{background:linear-gradient(135deg,#488C9A 0%,#3A6E7F 100%);color:#fff;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+        .table-title{font-size:1.2em;font-weight:600;margin:0;display:flex;align-items:center;gap:10px;color:#fff}
+        .table-header-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+        .btn-export-header{background:rgba(255,255,255,.95);color:#16a34a;border:none;box-shadow:0 2px 8px rgba(0,0,0,.15);cursor:pointer}
+        .action-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;font-size:.85em;font-weight:600;text-decoration:none;border:none;cursor:pointer;white-space:nowrap;transition:all .2s ease}
+        .action-btn-warning{background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%);color:#fff}
+        .action-btn:hover:not([disabled]){transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.15)}
+        .btn-export-header:hover{background:#fff;transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.2)}
+        .action-btn[disabled]{opacity:.5;cursor:not-allowed;filter:grayscale(20%);box-shadow:none}
+    </style>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+
+    <div class="filter-section">
+        <div class="filter-header">
+            <h2 class="filter-title"><i class="fas fa-filter"></i> Filter Pallets</h2>
+            <div class="filter-actions">
+                <button type="button" class="btn-clear" onclick="clearMpFilters()"><i class="fas fa-times"></i> Clear</button>
+                <button type="button" class="btn-apply" onclick="filterTable()"><i class="fas fa-search"></i> Apply Filters</button>
+            </div>
+        </div>
+        <div class="filter-grid">
+            <div class="filter-group">
+                <label class="filter-label" for="mp_search">Search</label>
+                <input type="text" id="mp_search" class="filter-input" placeholder="Search pallets..." onkeyup="filterTable()">
+            </div>
+            <div class="filter-group">
+                <label class="filter-label" for="mp_project">Project</label>
+                <select id="mp_project" class="filter-select" onchange="filterTable()">
+                    <option value="">All Projects</option>
+                    <option value="Unassigned">Unassigned</option>
+                    <?php foreach ($projects as $proj): ?>
+                        <option value="<?php echo htmlspecialchars($proj['project_name']); ?>" <?php echo ($project_id_from_url > 0 && (int)$proj['id'] === $project_id_from_url) ? 'selected' : ''; ?>><?php echo htmlspecialchars($proj['project_name']); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label" for="mp_wattage">Wattage</label>
+                <select id="mp_wattage" class="filter-select" onchange="filterTable()">
+                    <option value="">All Wattages</option>
+                    <?php $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets)); sort($wattages); foreach ($wattages as $w) { echo '<option value="' . htmlspecialchars($w) . '">' . htmlspecialchars($w) . 'W</option>'; } ?>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label" for="mp_status">Status</label>
+                <select id="mp_status" class="filter-select" onchange="filterTable()">
+                    <option value="">All Statuses</option>
+                    <?php $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets)); sort($statuses); foreach ($statuses as $s) { echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>'; } ?>
+                </select>
+            </div>
+        </div>
+    </div>
+    
+
 
     <?php if (!empty($successMessage)): /* This is for general page messages, including shipment outcomes */ ?>
         <div class="success-message">
@@ -729,20 +805,19 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         <input type="hidden" name="action" value="ship_pallets">
         
         <!-- Filters and Controls -->
-        <div class="filters-container" style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;">
+        <div class="filters-container" style="display:none; margin-bottom: 15px; justify-content: space-between; align-items: flex-start; gap: 20px;">
             <div class="filter-dropdown" style="width: 300px;">
-                <button type="button" class="filter-toggle-btn" onclick="toggleFilters()">
+                <button type="button" class="filter-toggle-btn" onclick="toggleFilters()" style="display:none;">
                     <span>Filters</span> <span class="filter-arrow">▼</span>
                 </button>
-                <div class="filter-content" id="filterContent" style="display: none;">
-                    <div style="display: flex; flex-direction: column; gap: 15px; padding: 15px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 0 0 4px 4px;">
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <label for="filterInput">Search:</label>
-                            <input type="text" id="filterInput" onkeyup="filterBySearch()" placeholder="Filter table..." style="flex: 1;">
+                <div class="filter-content" id="filterContent" style="display: block;">
+                    <div style="display: flex; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 12px; padding: 10px; background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;">
+                        <div style="display: flex; align-items: center; gap: 10px; min-width: 240px; flex: 1;">
+                            <input type="text" id="filterInput" onkeyup="filterBySearch()" placeholder="Search pallets..." style="flex: 1;">
                         </div>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <label for="projectFilter">Project:</label>
-                            <select id="projectFilter" onchange="filterByProject()" style="flex: 1;">
+                        <div style="display: flex; align-items: center; gap: 10px; min-width: 200px;">
+                            <label for="projectFilter" style="display:none;">Project:</label>
+                            <select id="projectFilter" onchange="filterByProject()" style="min-width: 200px;">
                                 <option value="">All Projects</option>
                                 <option value="Unassigned">Unassigned</option>
                                 <?php foreach ($projects as $proj): ?>
@@ -750,10 +825,10 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <label for="wattageFilter">Wattage:</label>
-                            <select id="wattageFilter" onchange="filterByWattage()" style="flex: 1;">
-                                <option value="">All</option>
+                        <div style="display: flex; align-items: center; gap: 10px; min-width: 160px;">
+                            <label for="wattageFilter" style="display:none;">Wattage:</label>
+                            <select id="wattageFilter" onchange="filterByWattage()" style="min-width: 160px;">
+                                <option value="">All Wattages</option>
                                 <?php
                                 // Get unique wattages from pallets for filter dropdown
                                 $wattages = array_unique(array_map(function($p) { return $p['wattage']; }, $pallets));
@@ -764,10 +839,10 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                                 ?>
                             </select>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <label for="statusFilter">Status:</label>
-                            <select id="statusFilter" onchange="filterTable()" style="flex: 1;">
-                                <option value="">All</option>
+                        <div style="display: flex; align-items: center; gap: 10px; min-width: 200px;">
+                            <label for="statusFilter" style="display:none;">Status:</label>
+                            <select id="statusFilter" onchange="filterTable()" style="min-width: 200px;">
+                                <option value="">All Statuses</option>
                                 <?php
                                 $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets));
                                 sort($statuses);
@@ -785,13 +860,13 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                 <span id="selectedCount" style="font-weight: bold; color: #488C9A;">0 pallets selected</span>
                 <?php endif; ?>
             </div>
-            <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="display: none; align-items: center; gap: 15px;">
                 <?php if (!$is_user): ?>
-                <button type="button" id="deletePalletsBtn" class="action-button" style="padding: 8px 15px; font-size: 0.9em; background-color: #dc3545;" disabled>
+                <button type="button" id="deletePalletsBtn_old" class="action-button" style="padding: 8px 15px; font-size: 0.9em; background-color: #dc3545;" disabled>
                     Delete
                 </button>
                 <?php endif; ?>
-                <button type="button" id="exportCsvBtn" class="action-button" style="padding: 8px 15px; font-size: 0.9em;">Export to CSV</button>
+                <button type="button" id="exportCsvBtn_old" class="action-button" style="padding: 8px 15px; font-size: 0.9em;">Export</button>
             </div>
         </div>
 
@@ -809,6 +884,16 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
             </div>
         </div>
 
+        <div class="deliveries-container">
+            <div class="table-header">
+                <h3 class="table-title"><i class="fas fa-boxes"></i> Pallets</h3>
+                <div class="table-header-actions">
+                    <?php if (!$is_user): ?>
+                    <button type="button" id="deletePalletsBtn" class="action-btn action-btn-warning" disabled><i class="fas fa-trash"></i> Delete</button>
+                    <?php endif; ?>
+                    <button type="button" id="exportCsvBtn" class="btn-export-header"><i class="fas fa-download"></i> Export</button>
+                </div>
+            </div>
         <div class="table-responsive">
             <table id="palletsTable">
                 <thead>
@@ -942,6 +1027,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                 </tbody>
             </table>
         </div>
+        </div>
 
         <div class="back-link" style="margin-top: 20px;">
             
@@ -984,6 +1070,11 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 </script>
 
 <script>
+function clearMpFilters(){
+  const ids=['mp_search','mp_project','mp_wattage','mp_status'];
+  ids.forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
+  filterTable();
+}
 // Combined filter for project, wattage, and general search
 function filterTable() {
     // Reset to page 1 when filter changes
@@ -1058,10 +1149,10 @@ function getFilteredRows() {
         // Check if row matches current filters (not just display style)
         if (!row || !row.cells) return false;
         
-        const input = document.getElementById("filterInput")?.value.toUpperCase() || '';
-        const projectFilterValue = document.getElementById("projectFilter")?.value || '';
-        const wattageFilterValue = document.getElementById("wattageFilter")?.value || '';
-        const statusFilterValue = document.getElementById("statusFilter")?.value || '';
+        const input = (document.getElementById('mp_search')?.value || document.getElementById('filterInput')?.value || '').toUpperCase();
+        const projectFilterValue = document.getElementById('mp_project')?.value || document.getElementById('projectFilter')?.value || '';
+        const wattageFilterValue = document.getElementById('mp_wattage')?.value || document.getElementById('wattageFilter')?.value || '';
+        const statusFilterValue = document.getElementById('mp_status')?.value || document.getElementById('statusFilter')?.value || '';
         
         // Adjust column indices based on user role (users don't have checkbox column)
         const projectColumnIndex = isUser ? 0 : 1;
