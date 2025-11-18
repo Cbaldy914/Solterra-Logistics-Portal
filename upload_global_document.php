@@ -44,15 +44,12 @@ try {
     
     // Normalize Photos virtual sub-types to underlying storage types
     if ($document_type === 'pictures') {
-        if (strcasecmp($document_sub_type, 'Project Photos') === 0) {
-            // Store as Project Photo (singular) under pictures
+        if (strcasecmp($document_sub_type, 'Project Photos') === 0 || strcasecmp($document_sub_type, 'Project Photo') === 0) {
             $document_sub_type = 'Project Photo';
-        } elseif (strcasecmp($document_sub_type, 'Warehouse Photos') === 0) {
-            // Route to Warehousing -> Photos
+        } elseif (strcasecmp($document_sub_type, 'Warehouse Photos') === 0 || strcasecmp($document_sub_type, 'Warehouse Photo') === 0) {
             $document_type = 'warehousing';
             $document_sub_type = 'Photos';
-        } elseif (strcasecmp($document_sub_type, 'Damage Photos') === 0) {
-            // Route to Exception Reports -> Damage Photo
+        } elseif (strcasecmp($document_sub_type, 'Damage Photos') === 0 || strcasecmp($document_sub_type, 'Damage Photo') === 0) {
             $document_type = 'exception_reports';
             $document_sub_type = 'Damage Photo';
         }
