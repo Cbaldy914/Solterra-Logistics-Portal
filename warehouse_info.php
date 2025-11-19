@@ -1279,12 +1279,12 @@ if ($conn) {
             } elseif ($warehouse_id) {
                 echo slp_render_breadcrumbs([
                     'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
-                    'extra' => [ ['label' => 'Manage Warehouses', 'url' => 'manage_warehouses.php'] ]
+                    'extra' => [ ['label' => 'Warehouse Overview', 'url' => 'warehousing_overview.php'] ]
                 ]);
             } else {
                 echo slp_render_breadcrumbs([
                     'current_label' => 'Warehouse Information',
-                    'extra' => [ ['label' => 'Manage Warehouses', 'url' => 'manage_warehouses.php'] ]
+                    'extra' => [ ['label' => 'Warehouse Overview', 'url' => 'warehousing_overview.php'] ]
                 ]);
             }
         }
