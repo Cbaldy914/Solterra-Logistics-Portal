@@ -1013,6 +1013,84 @@ $conn->close();
             color: #9ca3af;
             margin: 0;
         }
+
+        /* Pagination styles - matching manage_pallets.php */
+        .pagination-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+
+        .pagination-info {
+            font-size: 0.9em;
+            color: #6c757d;
+            font-weight: 500;
+        }
+
+        .pagination-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .pagination-controls label {
+            font-size: 0.9em;
+            margin-right: 5px;
+            color: #293E4C;
+            font-weight: 500;
+        }
+
+        .pagination-controls input,
+        .pagination-controls select {
+            padding: 8px 12px;
+            border: 2px solid rgba(72, 140, 154, 0.15);
+            border-radius: 8px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 0.9em;
+        }
+
+        .pagination-controls input:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 4px 15px rgba(72, 140, 154, 0.2);
+        }
+
+        .pagination-controls button {
+            padding: 8px 16px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-family: 'Poppins', sans-serif;
+            font-size: 0.9em;
+            transition: all 0.3s ease;
+        }
+
+        .pagination-controls button:hover:not(:disabled) {
+            background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
+            transform: translateY(-1px);
+        }
+
+        .pagination-controls button:disabled {
+            background: #e9ecef;
+            color: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        #pageInfo {
+            color: #293E4C;
+            font-weight: 600;
+            padding: 0 8px;
+        }
     </style>
     <script>
         // Clear filters
@@ -1187,6 +1265,23 @@ $conn->close();
             </div>
         </form>
     </div>
+
+    <!-- Pagination Controls -->
+    <?php if (!empty($deliveries)): ?>
+    <div class="pagination-container">
+        <div class="pagination-info">
+            <span id="paginationInfo">Showing 0 of 0 deliveries</span>
+        </div>
+        <div class="pagination-controls">
+            <label for="itemsPerPage">Show:</label>
+            <input type="number" id="itemsPerPage" value="25" min="1" max="500" style="width: 80px;">
+            <label>per page</label>
+            <button type="button" id="prevPage" disabled>Previous</button>
+            <span id="pageInfo">Page 1 of 1</span>
+            <button type="button" id="nextPage" disabled>Next</button>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <!-- Sustainability Table -->
     <div class="table-container">
@@ -1371,7 +1466,100 @@ $conn->close();
                 toggleColumn(columnClass, isVisible);
             });
         });
+
+        // Initialize pagination
+        initializePagination();
     });
+
+    // Pagination logic
+    let currentPage = 1;
+    let itemsPerPage = 25;
+    let allDeliveryRows = [];
+
+    function initializePagination() {
+        const table = document.getElementById('deliveriesTable');
+        if (!table) return;
+        
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+        
+        allDeliveryRows = Array.from(tbody.querySelectorAll('tr'));
+        
+        const itemsPerPageInput = document.getElementById('itemsPerPage');
+        const prevButton = document.getElementById('prevPage');
+        const nextButton = document.getElementById('nextPage');
+        
+        if (itemsPerPageInput) {
+            itemsPerPageInput.addEventListener('change', function() {
+                itemsPerPage = Math.min(Math.max(1, parseInt(this.value) || 25), 500);
+                this.value = itemsPerPage;
+                currentPage = 1;
+                updatePagination();
+            });
+        }
+        
+        if (prevButton) {
+            prevButton.addEventListener('click', function() {
+                if (currentPage > 1) {
+                    currentPage--;
+                    updatePagination();
+                }
+            });
+        }
+        
+        if (nextButton) {
+            nextButton.addEventListener('click', function() {
+                const maxPages = Math.ceil(allDeliveryRows.length / itemsPerPage);
+                if (currentPage < maxPages) {
+                    currentPage++;
+                    updatePagination();
+                }
+            });
+        }
+        
+        updatePagination();
+    }
+
+    function updatePagination() {
+        const totalItems = allDeliveryRows.length;
+        const maxPages = Math.ceil(totalItems / itemsPerPage);
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        const endIndex = startIndex + itemsPerPage;
+        
+        // Hide all rows
+        allDeliveryRows.forEach(row => {
+            row.style.display = 'none';
+        });
+        
+        // Show only current page rows
+        allDeliveryRows.slice(startIndex, endIndex).forEach(row => {
+            row.style.display = '';
+        });
+        
+        // Update pagination info
+        const paginationInfo = document.getElementById('paginationInfo');
+        const pageInfo = document.getElementById('pageInfo');
+        const prevButton = document.getElementById('prevPage');
+        const nextButton = document.getElementById('nextPage');
+        
+        if (paginationInfo) {
+            const showing = Math.min(endIndex, totalItems);
+            const displayStart = totalItems > 0 ? startIndex + 1 : 0;
+            paginationInfo.textContent = `Showing ${displayStart}-${showing} of ${totalItems} deliveries`;
+        }
+        
+        if (pageInfo) {
+            pageInfo.textContent = `Page ${Math.max(1, currentPage)} of ${Math.max(1, maxPages)}`;
+        }
+        
+        if (prevButton) {
+            prevButton.disabled = currentPage <= 1;
+        }
+        
+        if (nextButton) {
+            nextButton.disabled = currentPage >= maxPages || totalItems === 0;
+        }
+    }
     </script>
 </main>
 </body>
