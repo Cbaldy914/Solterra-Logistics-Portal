@@ -33,25 +33,6 @@ if ($allowedProjectIds === null) {
     $stmt->close();
 }
 
-// Calculate summary statistics for header
-$statsQuery = "SELECT 
-    COUNT(*) as total_tickets,
-    SUM(CASE WHEN w.status = 'Closed' THEN 1 ELSE 0 END) as closed_tickets,
-    SUM(CASE WHEN w.status LIKE '%Pending%' THEN 1 ELSE 0 END) as pending_tickets,
-    SUM(CASE WHEN w.status LIKE '%Approved%' THEN 1 ELSE 0 END) as approved_tickets
-FROM warranty_claims w
-JOIN site_scheduling ss ON w.scheduling_id = ss.id
-WHERE 1=1";
-
-if ($allowedProjectIds !== null && !empty($allowedProjectIds)) {
-    $statsQuery .= " AND ss.project_id IN (" . implode(',', array_map('intval', $allowedProjectIds)) . ")";
-}
-
-$statsResult = $conn->query($statsQuery);
-$stats = $statsResult->fetch_assoc();
-
-$conn->close();
-
 // Filters persistence
 $filters = loadPersistedWarrantyFilters();
 $incoming = getWarrantyFiltersFromRequest();
@@ -63,6 +44,91 @@ foreach ($incoming as $k => $v) {
     }
 }
 persistWarrantyFilters($filters);
+
+// Re-compute header stats using current filters (project scope + filters)
+// Build WHERE
+$where = [];
+$types = '';
+$params = [];
+
+// Project scope (specific or allowed list)
+if (!empty($filters['project_id'])) {
+    $where[] = 'ss.project_id = ?';
+    $types  .= 'i';
+    $params[] = (int)$filters['project_id'];
+} elseif (is_array($allowedProjectIds)) {
+    if (!empty($allowedProjectIds)) {
+        $place = implode(',', array_fill(0, count($allowedProjectIds), '?'));
+        $where[] = 'ss.project_id IN (' . $place . ')';
+        $types  .= str_repeat('i', count($allowedProjectIds));
+        foreach ($allowedProjectIds as $pid) { $params[] = (int)$pid; }
+    } else {
+        // No accessible projects => zero stats
+        $stats = [
+            'total_tickets' => 0,
+            'closed_tickets' => 0,
+            'pending_tickets' => 0,
+            'approved_tickets' => 0,
+        ];
+    }
+}
+
+// Apply filters
+if (!isset($stats)) {
+    if ((int)($filters['hide_closed'] ?? 0) === 1) {
+        $where[] = "w.status <> 'Closed'";
+    }
+    if (!empty($filters['issue_types'])) {
+        $place = implode(',', array_fill(0, count($filters['issue_types']), '?'));
+        $where[] = 'w.issue_type IN (' . $place . ')';
+        $types  .= str_repeat('s', count($filters['issue_types']));
+        foreach ($filters['issue_types'] as $it) { $params[] = (string)$it; }
+    }
+    if (!empty($filters['responsible_party'])) {
+        $where[] = 'w.responsible_party = ?';
+        $types  .= 's';
+        $params[] = (string)$filters['responsible_party'];
+    }
+    if (!empty($filters['statuses'])) {
+        $place = implode(',', array_fill(0, count($filters['statuses']), '?'));
+        $where[] = 'w.status IN (' . $place . ')';
+        $types  .= str_repeat('s', count($filters['statuses']));
+        foreach ($filters['statuses'] as $st) { $params[] = (string)$st; }
+    }
+    if (!empty($filters['date_from'])) {
+        $where[] = 'DATE(w.created_at) >= ?';
+        $types  .= 's';
+        $params[] = (string)$filters['date_from'];
+    }
+    if (!empty($filters['date_to'])) {
+        $where[] = 'DATE(w.created_at) <= ?';
+        $types  .= 's';
+        $params[] = (string)$filters['date_to'];
+    }
+
+    $whereSql = empty($where) ? '' : ('WHERE ' . implode(' AND ', $where));
+    $sql = "SELECT 
+                COUNT(*) as total_tickets,
+                SUM(CASE WHEN w.status = 'Closed' THEN 1 ELSE 0 END) as closed_tickets,
+                SUM(CASE WHEN w.status LIKE '%Pending%' THEN 1 ELSE 0 END) as pending_tickets,
+                SUM(CASE WHEN w.status LIKE '%Approved%' THEN 1 ELSE 0 END) as approved_tickets
+            FROM warranty_claims w
+            JOIN site_scheduling ss ON ss.id = w.scheduling_id
+            $whereSql";
+    $stmt = $conn->prepare($sql);
+    if ($types !== '') { $stmt->bind_param($types, ...$params); }
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stats = $res->fetch_assoc() ?: [
+        'total_tickets' => 0,
+        'closed_tickets' => 0,
+        'pending_tickets' => 0,
+        'approved_tickets' => 0,
+    ];
+    $stmt->close();
+}
+
+$conn->close();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -751,15 +817,8 @@ persistWarrantyFilters($filters);
             background: #f3f4f6 !important;
         }
 
-        /* Pagination wrapper - container outside table */
-        #pagination-wrapper {
-            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-            border-radius: 20px;
-            margin-bottom: 24px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
-            border: 1px solid rgba(72, 140, 154, 0.08);
-            padding: 20px 24px;
-        }
+        /* Pagination wrapper - no longer used (replaced by .pagination-container) */
+        #pagination-wrapper { display: none; }
 
         /* DataTables layout sections */
         .dataTables_wrapper .dataTables_top {
@@ -854,34 +913,24 @@ persistWarrantyFilters($filters);
             color: #293E4C;
         }
 
-        /* Pagination styles - matching manage_pallets.php */
+        /* Pagination styles - match view_project.php */
         .pagination-container {
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 20px 24px;
-            background-color: white;
-            border-top: 1px solid rgba(72, 140, 154, 0.08);
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
         }
 
-        .pagination-info {
-            font-size: 0.9em;
-            color: #6c757d;
-            font-weight: 500;
-        }
+        .pagination-info { font-size: 0.9em; color: #6c757d; font-weight: 500; }
 
-        .pagination-controls {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
+        .pagination-controls { display: flex; align-items: center; gap: 12px; }
 
-        .pagination-controls label {
-            font-size: 0.9em;
-            margin-right: 5px;
-            color: #293E4C;
-            font-weight: 500;
-        }
+        .pagination-controls label { font-size: 0.9em; margin-right: 5px; color: #293E4C; font-weight: 500; }
 
         .pagination-controls input,
         .pagination-controls select {
@@ -892,11 +941,7 @@ persistWarrantyFilters($filters);
             font-size: 0.9em;
         }
 
-        .pagination-controls input:focus {
-            outline: none;
-            border-color: #488C9A;
-            box-shadow: 0 4px 15px rgba(72, 140, 154, 0.2);
-        }
+        .pagination-controls input:focus { outline: none; border-color: #488C9A; box-shadow: 0 4px 15px rgba(72, 140, 154, 0.2); }
 
         .pagination-controls button {
             padding: 8px 16px;
@@ -911,23 +956,11 @@ persistWarrantyFilters($filters);
             transition: all 0.3s ease;
         }
 
-        .pagination-controls button:hover:not(:disabled) {
-            background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
-            transform: translateY(-1px);
-        }
+        .pagination-controls button:hover:not(:disabled) { background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%); transform: translateY(-1px); }
 
-        .pagination-controls button:disabled {
-            background: #e9ecef;
-            color: #6c757d;
-            cursor: not-allowed;
-            transform: none;
-        }
+        .pagination-controls button:disabled { background: #e9ecef; color: #6c757d; cursor: not-allowed; transform: none; }
 
-        #pageInfo {
-            color: #293E4C;
-            font-weight: 600;
-            padding: 0 8px;
-        }
+        #pageInfo { color: #293E4C; font-weight: 600; padding: 0 8px; }
     </style>
 </head>
 <body>
@@ -962,19 +995,19 @@ persistWarrantyFilters($filters);
             </div>
             <div class="header-stats">
                 <div class="stat-item stat-item-total">
-                    <p class="stat-number"><?php echo number_format($stats['total_tickets'] ?? 0); ?></p>
+                    <p class="stat-number" id="stat-total"><?php echo number_format($stats['total_tickets'] ?? 0); ?></p>
                     <p class="stat-label">Total Tickets</p>
                 </div>
                 <div class="stat-item stat-item-closed">
-                    <p class="stat-number"><?php echo number_format($stats['closed_tickets'] ?? 0); ?></p>
+                    <p class="stat-number" id="stat-closed"><?php echo number_format($stats['closed_tickets'] ?? 0); ?></p>
                     <p class="stat-label">Closed</p>
                 </div>
                 <div class="stat-item stat-item-pending">
-                    <p class="stat-number"><?php echo number_format($stats['pending_tickets'] ?? 0); ?></p>
+                    <p class="stat-number" id="stat-pending"><?php echo number_format($stats['pending_tickets'] ?? 0); ?></p>
                     <p class="stat-label">Pending</p>
                 </div>
                 <div class="stat-item stat-item-approved">
-                    <p class="stat-number"><?php echo number_format($stats['approved_tickets'] ?? 0); ?></p>
+                    <p class="stat-number" id="stat-approved"><?php echo number_format($stats['approved_tickets'] ?? 0); ?></p>
                     <p class="stat-label">Approved</p>
                 </div>
             </div>
@@ -1096,8 +1129,20 @@ persistWarrantyFilters($filters);
         </form>
     </div>
 
-    <!-- Pagination Container (DataTables will populate this) -->
-    <div id="pagination-wrapper"></div>
+    <!-- Pagination Controls (Custom, matching view_project.php) -->
+    <div class="pagination-container">
+        <div class="pagination-info">
+            <span id="paginationInfo">Showing 0 of 0 claims</span>
+        </div>
+        <div class="pagination-controls">
+            <label for="itemsPerPage">Show:</label>
+            <input type="number" id="itemsPerPage" value="25" min="1" max="500" style="width: 80px;">
+            <label>per page</label>
+            <button type="button" id="prevPage" disabled>Previous</button>
+            <span id="pageInfo">Page 1 of 1</span>
+            <button type="button" id="nextPage" disabled>Next</button>
+        </div>
+    </div>
 
     <!-- Table Container - EXACT MATCH to sustainability -->
     <div class="table-container">
@@ -1260,13 +1305,13 @@ function toggleColumn(columnClass, isVisible) {
     });
 }
 
-// Export CSV function
-function exportCSV() {
-    alert('CSV export functionality would export current filtered data');
-    // TODO: Implement CSV export with current filters
-}
+  // Export CSV function
+  function exportCSV() {
+      alert('CSV export functionality would export current filtered data');
+      // TODO: Implement CSV export with current filters
+  }
 
-document.addEventListener('DOMContentLoaded', function() {
+  document.addEventListener('DOMContentLoaded', function() {
   claimsTable = $('#claimsTable').DataTable({
     processing: true,
     serverSide: true,
@@ -1274,11 +1319,8 @@ document.addEventListener('DOMContentLoaded', function() {
     ajax: { url: 'get_warranty_claims.php', data: function(d){ buildAjaxData(d); } },
     pageLength: 25,
     lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
-    dom: '<"dataTables_top"lfp>rt<"dataTables_bottom"i>',
-    initComplete: function() {
-      // Move pagination controls outside table container
-      $('.dataTables_top').appendTo('#pagination-wrapper');
-    },
+    // Use custom external pagination controls; hide built-in length/pager/info
+    dom: 'rt',
     columns: [
       { data: 0, className: 'col-ticket' },
       { data: 1, className: 'col-project' },
@@ -1317,16 +1359,16 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           return '-';
         }},
-      { data: 7, className: 'col-opened', render: function(data, type, row) {
+      { data: 8, className: 'col-opened', render: function(data, type, row) {
           if (data) {
-            const date = new Date(data);
+            const date = new Date(String(data).replace(' ', 'T'));
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
           }
           return '-';
         }},
-      { data: 8, className: 'col-updated', render: function(data, type, row) {
+      { data: 9, className: 'col-updated', render: function(data, type, row) {
           if (data) {
-            const date = new Date(data);
+            const date = new Date(String(data).replace(' ', 'T'));
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
           }
           return '-';
@@ -1334,6 +1376,99 @@ document.addEventListener('DOMContentLoaded', function() {
       { data: null, className: 'col-action', orderable:false, searchable:false, render: (row)=> `<button class="icon-btn" title="Open" onclick="event.stopPropagation(); window.location='warranty_detail.php?id=${row[0]}'">▶</button>` }
     ]
   });
+
+  // Stats refresher to match filtered view
+  function refreshStats() {
+    const form = document.getElementById('filtersForm');
+    const fd = new FormData(form);
+    const params = new URLSearchParams();
+    params.set('project_id', fd.get('project_id') || '0');
+    const issueVals = [document.getElementById('issue_hidden_1')?.value, document.getElementById('issue_hidden_2')?.value].filter(Boolean);
+    issueVals.forEach(v => params.append('issue_types[]', v));
+    const statusVals = [document.getElementById('status_hidden_1')?.value, document.getElementById('status_hidden_2')?.value, document.getElementById('status_hidden_3')?.value].filter(Boolean);
+    statusVals.forEach(v => params.append('statuses[]', v));
+    params.set('responsible_party', fd.get('responsible_party') || '');
+    params.set('date_from', fd.get('date_from') || '');
+    params.set('date_to', fd.get('date_to') || '');
+    params.set('hide_closed', document.getElementById('f_hide').checked ? '1' : '0');
+
+    fetch('get_warranty_stats.php?' + params.toString(), { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(s => {
+        if (!s) return;
+        const fmt = (n) => (new Intl.NumberFormat().format(parseInt(n || 0, 10)));
+        const elTotal = document.getElementById('stat-total');
+        const elClosed = document.getElementById('stat-closed');
+        const elPending = document.getElementById('stat-pending');
+        const elApproved = document.getElementById('stat-approved');
+        if (elTotal) elTotal.textContent = fmt(s.total_tickets || 0);
+        if (elClosed) elClosed.textContent = fmt(s.closed_tickets || 0);
+        if (elPending) elPending.textContent = fmt(s.pending_tickets || 0);
+        if (elApproved) elApproved.textContent = fmt(s.approved_tickets || 0);
+      })
+      .catch(() => {});
+  }
+
+  // External pagination controls wired to DataTables
+  const itemsPerPageInput = document.getElementById('itemsPerPage');
+  const prevButton = document.getElementById('prevPage');
+  const nextButton = document.getElementById('nextPage');
+  const paginationInfo = document.getElementById('paginationInfo');
+  const pageInfo = document.getElementById('pageInfo');
+
+  function updatePaginationUI() {
+    if (!claimsTable) return;
+    const info = claimsTable.page.info();
+    if (!info) return;
+    // Update info text
+    const total = info.recordsDisplay ?? info.recordsTotal ?? 0;
+    const start = total ? (info.start + 1) : 0;
+    const end = info.end ?? 0;
+    if (paginationInfo) {
+      paginationInfo.textContent = `Showing ${start}-${end} of ${total} claims`;
+    }
+    // Update page text
+    if (pageInfo) {
+      const current = (info.page ?? 0) + 1;
+      const pages = Math.max(info.pages ?? 1, 1);
+      pageInfo.textContent = `Page ${current} of ${pages}`;
+    }
+    // Update buttons
+    if (prevButton) prevButton.disabled = (info.page ?? 0) <= 0;
+    if (nextButton) nextButton.disabled = (info.pages ?? 0) === 0 || (info.page ?? 0) >= ((info.pages ?? 1) - 1);
+    // Sync itemsPerPage input
+    if (itemsPerPageInput) itemsPerPageInput.value = claimsTable.page.len();
+  }
+
+  if (itemsPerPageInput) {
+    itemsPerPageInput.addEventListener('change', function(){
+      let val = parseInt(this.value, 10);
+      if (isNaN(val) || val < 1) val = 1;
+      if (val > 500) val = 500;
+      this.value = val;
+      claimsTable.page.len(val).draw(false);
+      updatePaginationUI();
+    });
+  }
+  if (prevButton) {
+    prevButton.addEventListener('click', function(){
+      claimsTable.page('previous').draw('page');
+      updatePaginationUI();
+    });
+  }
+  if (nextButton) {
+    nextButton.addEventListener('click', function(){
+      claimsTable.page('next').draw('page');
+      updatePaginationUI();
+    });
+  }
+
+  // Update pagination UI on table events
+  claimsTable.on('draw', updatePaginationUI);
+  claimsTable.on('xhr', updatePaginationUI);
+  updatePaginationUI();
+  // Initial stats sync
+  refreshStats();
 
   $('#claimsTable tbody').on('click', 'tr', function() {
     const data = claimsTable.row(this).data();
@@ -1356,6 +1491,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const newUrl = window.location.pathname + '?' + params.toString();
     window.history.replaceState({}, '', newUrl);
     claimsTable.ajax.reload();
+    refreshStats();
   });
   
   // Issue Type dropdown
