@@ -52,6 +52,13 @@ function notification_settings_for(int $userId): array {
 }
 
 /**
+ * Helper: check a notification flag with a sensible default when the column is missing.
+ */
+function notification_flag_enabled(array $settings, string $key, bool $default = true): bool {
+    return array_key_exists($key, $settings) ? !empty($settings[$key]) : $default;
+}
+
+/**
  * Ensure notification settings exist for a user (create with defaults if not)
  * @param int $userId User ID
  */
@@ -112,8 +119,9 @@ function notify_user(int $userId, string $type, string $title, string $message =
         // Check if user has in-app notifications enabled for this type
         $settings = notification_settings_for($userId);
         $typeKey = 'in_app_' . $type;
+        $inAppEnabled = notification_flag_enabled($settings, $typeKey);
         
-        if (empty($settings[$typeKey])) {
+        if (!$inAppEnabled) {
             // User has disabled in-app notifications for this type
             $conn->close();
             return;
@@ -128,7 +136,7 @@ function notify_user(int $userId, string $type, string $title, string $message =
         // Send email if enabled
         if (!empty($settings['email_enabled'])) {
             $emailTypeKey = 'email_' . $type;
-            if (!empty($settings[$emailTypeKey])) {
+            if (notification_flag_enabled($settings, $emailTypeKey)) {
                 send_notification_email($userId, $title, $message, $link);
             }
         }
@@ -289,3 +297,66 @@ function notify_global_admins(string $type, string $title, string $message = '',
     }
 }
 
+/**
+ * Get account IDs for a given user (supports multiple accounts).
+ *
+ * @param int $userId
+ * @return int[]
+ */
+function account_ids_for_user(int $userId): array {
+    require_once __DIR__ . '/../config.php';
+    $conn = getDBConnection();
+
+    $ids = [];
+
+    try {
+        $stmt = $conn->prepare('SELECT account_id FROM customer_account_users WHERE user_id = ?');
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        while ($row = $result->fetch_assoc()) {
+            $ids[] = (int)$row['account_id'];
+        }
+
+        $stmt->close();
+        $conn->close();
+    } catch (Throwable $e) {
+        error_log('Account lookup error: ' . $e->getMessage());
+    }
+
+    return array_values(array_unique($ids));
+}
+
+/**
+ * Notify all admins tied to the provided account IDs.
+ */
+function notify_account_admins(array $accountIds, string $type, string $title, string $message = '', ?string $link = null): void {
+    if (empty($accountIds)) {
+        return;
+    }
+
+    require_once __DIR__ . '/../config.php';
+    $conn = getDBConnection();
+
+    $accountIds = array_values(array_unique(array_map('intval', $accountIds)));
+
+    try {
+        $placeholders = implode(',', array_fill(0, count($accountIds), '?'));
+        $types = str_repeat('i', count($accountIds));
+
+        $stmt = $conn->prepare("SELECT DISTINCT user_id FROM customer_account_users WHERE account_id IN ($placeholders) AND role = 'admin'");
+        $stmt->bind_param($types, ...$accountIds);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        while ($row = $result->fetch_assoc()) {
+            notify_user((int)$row['user_id'], $type, $title, $message, $link);
+        }
+
+        $stmt->close();
+        $conn->close();
+    } catch (Throwable $e) {
+        error_log('Notify account admins error: ' . $e->getMessage());
+    }
+}
