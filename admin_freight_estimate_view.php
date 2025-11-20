@@ -3,38 +3,80 @@ session_name("logistics_session");
 session_start();
 
 // Check if the user is logged in and is an admin
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'global_admin') {
+if (!isset($_SESSION['user_id'])) {
     header("Location: login");
     exit();
 }
 
-if (!isset($_GET['id'])) {
+$role = $_SESSION['role'] ?? '';
+if ($role !== 'global_admin' && $role !== 'admin') {
+    header("Location: unauthorized");
+    exit();
+}
+
+$estimate_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+if ($estimate_id <= 0) {
     die("Estimate ID not specified.");
 }
 
-$estimate_id = intval($_GET['id']);
-
-// Database connection
 require_once '../config.php';
+require_once 'notification_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
+}
+
+$currentUserId = (int)$_SESSION['user_id'];
+$adminAccounts = $role === 'admin' ? account_ids_for_user($currentUserId) : [];
+
+// Fetch estimate data with account info
+$stmt = $conn->prepare("
+    SELECT 
+        fe.user_id, 
+        fe.name, 
+        fe.estimate_data, 
+        fe.created_at,
+        cau.account_id,
+        ca.name AS account_name,
+        u.username
+    FROM freight_estimates fe
+    LEFT JOIN (
+        SELECT user_id, MIN(account_id) AS account_id
+        FROM customer_account_users
+        GROUP BY user_id
+    ) AS cau ON fe.user_id = cau.user_id
+    LEFT JOIN customer_accounts ca ON ca.id = cau.account_id
+    LEFT JOIN users u ON u.id = fe.user_id
+    WHERE fe.id = ?
+    LIMIT 1
+");
+$stmt->bind_param("i", $estimate_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$estimateRow = $result->fetch_assoc();
+$stmt->close();
+
+if (!$estimateRow) {
+    $conn->close();
+    die("Estimate not found.");
+}
+
+$estimate_data = json_decode($estimateRow['estimate_data'], true) ?? [];
+
+// Enforce account scoping for admins
+if ($role === 'admin') {
+    $ownerAccounts = account_ids_for_user((int)$estimateRow['user_id']);
+    if (empty(array_intersect($adminAccounts, $ownerAccounts))) {
+        $conn->close();
+        header("Location: unauthorized");
+        exit();
+    }
 }
 
 // Handle form submission for updating the estimate
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_estimate'])) {
     $cost_per_truck = floatval($_POST['cost_per_truck'] ?? 0);
     $total_accessorial_cost = floatval($_POST['total_accessorial_cost'] ?? 0);
-
-    // Fetch existing estimate data
-    $stmt = $conn->prepare("SELECT estimate_data FROM freight_estimates WHERE id = ?");
-    $stmt->bind_param("i", $estimate_id);
-    $stmt->execute();
-    $stmt->bind_result($estimate_data_json);
-    $stmt->fetch();
-    $stmt->close();
-
-    $estimate_data = json_decode($estimate_data_json, true) ?? [];
 
     // Safely retrieve numeric fields, default to 0 if missing
     $number_of_trucks = floatval($estimate_data['estimated_number_of_trucks'] ?? 0);
@@ -56,22 +98,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_estimate'])) {
 
     if ($stmt->execute()) {
         $success_message = "Estimate updated successfully!";
+
+        $ownerAccounts = account_ids_for_user((int)$estimateRow['user_id']);
+        $title = "Freight rate added: " . ($estimateRow['name'] ?? 'Estimate');
+        $message = "Rates were added by " . ($_SESSION['username'] ?? 'an admin') . " for " . ($estimate_data['origin'] ?? 'origin') . " to " . ($estimate_data['destination'] ?? 'destination') . ".";
+        $link = 'view_freight_estimate?id=' . $estimate_id;
+
+        notify_user((int)$estimateRow['user_id'], 'freight_estimate_rated', $title, $message, $link);
+        notify_account_admins($ownerAccounts, 'freight_estimate_rated', $title, $message, $link);
     } else {
         $error_message = "Error updating estimate: " . $stmt->error;
     }
     $stmt->close();
 }
 
-// Fetch estimate data
-$stmt = $conn->prepare("SELECT user_id, name, estimate_data, created_at FROM freight_estimates WHERE id = ?");
-$stmt->bind_param("i", $estimate_id);
-$stmt->execute();
-$stmt->bind_result($user_id, $name, $estimate_data_json, $created_at);
-$stmt->fetch();
-$stmt->close();
 $conn->close();
-
-$estimate_data = json_decode($estimate_data_json, true) ?? [];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -136,7 +177,7 @@ $estimate_data = json_decode($estimate_data_json, true) ?? [];
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <h1>Freight Estimate: <?php echo htmlspecialchars($name ?? ''); ?></h1>
+    <h1>Freight Estimate: <?php echo htmlspecialchars($estimateRow['name'] ?? ''); ?></h1>
 
     <?php
     // Display success or error messages
@@ -150,8 +191,8 @@ $estimate_data = json_decode($estimate_data_json, true) ?? [];
 
     <!-- Basic Info -->
     <ul>
-        <li><strong>User ID:</strong> <?php echo htmlspecialchars($user_id ?? ''); ?></li>
-        <li><strong>Created At:</strong> <?php echo htmlspecialchars($created_at ?? ''); ?></li>
+        <li><strong>Customer:</strong> <?php echo htmlspecialchars($estimateRow['account_name'] ?? 'Unassigned'); ?></li>
+        <li><strong>Created At:</strong> <?php echo htmlspecialchars($estimateRow['created_at'] ?? ''); ?></li>
     </ul>
 
     <h2>Estimate Details</h2>
