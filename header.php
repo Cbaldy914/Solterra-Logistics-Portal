@@ -357,7 +357,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             <div class="slp-submenu" role="menu">
               <a href="create_shipment" role="menuitem">Create Shipment</a>
               <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
-              <a href="freight_estimate" role="menuitem">Freight Estimate</a>
+              <a href="admin_freight_estimates" role="menuitem">Freight Estimates</a>
             </div>
           </li>
 

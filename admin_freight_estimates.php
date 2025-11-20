@@ -2,65 +2,92 @@
 session_name("logistics_session");
 session_start();
 
-// Check if the user is logged in and is an admin
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 'global_admin') {
+// Check if the user is logged in and is an admin or global admin
+if (!isset($_SESSION['user_id'])) {
     header("Location: login");
+    exit();
+}
+
+$role = $_SESSION['role'] ?? '';
+if ($role !== 'global_admin' && $role !== 'admin') {
+    header("Location: unauthorized");
     exit();
 }
 
 // Database connection
 require_once '../config.php';
+require_once 'notification_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
 }
 
-// Handle form submission for updating estimates
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_estimate'])) {
-    $estimate_id = intval($_POST['estimate_id']);
-    $cost_per_truck = floatval($_POST['cost_per_truck']);
-    $total_accessorial_cost = floatval($_POST['total_accessorial_cost']);
+$currentUserId = (int)$_SESSION['user_id'];
+$accountFilter = [];
 
-    // Fetch existing estimate data
-    $stmt = $conn->prepare("SELECT estimate_data FROM freight_estimates WHERE id = ?");
-    $stmt->bind_param("i", $estimate_id);
-    $stmt->execute();
-    $stmt->bind_result($estimate_data_json);
-    $stmt->fetch();
-    $stmt->close();
-
-    $estimate_data = json_decode($estimate_data_json, true);
-
-    // Update estimate data with admin inputs
-    $number_of_trucks = $estimate_data['estimated_number_of_trucks'];
-    $total_freight_cost = $cost_per_truck * $number_of_trucks;
-    $grand_total = $total_freight_cost + $total_accessorial_cost;
-
-    $estimate_data['cost_per_truck'] = $cost_per_truck;
-    $estimate_data['total_accessorial_cost'] = $total_accessorial_cost;
-    $estimate_data['total_freight_cost'] = $total_freight_cost;
-    $estimate_data['grand_total'] = $grand_total;
-
-    // Save updated estimate data
-    $estimate_data_json = json_encode($estimate_data);
-    $stmt = $conn->prepare("UPDATE freight_estimates SET estimate_data = ? WHERE id = ?");
-    $stmt->bind_param("si", $estimate_data_json, $estimate_id);
-
-    if ($stmt->execute()) {
-        $success_message = "Estimate updated successfully!";
-    } else {
-        $error_message = "Error updating estimate: " . $stmt->error;
+if ($role === 'admin') {
+    $accountFilter = account_ids_for_user($currentUserId);
+    if (empty($accountFilter)) {
+        $error_message = "No customer account is assigned to your user yet.";
     }
-    $stmt->close();
 }
 
-// Fetch all estimates
-$stmt = $conn->prepare("SELECT id, user_id, name, estimate_data, created_at FROM freight_estimates ORDER BY created_at DESC");
-$stmt->execute();
-$result = $stmt->get_result();
+function format_lane(?string $location): string {
+    $location = trim((string)$location);
+    if (preg_match('/^\s*([^,]+),\s*([A-Za-z]{2})/i', $location, $matches)) {
+        return trim($matches[1]) . ', ' . strtoupper($matches[2]);
+    }
+    return $location;
+}
+
 $estimates = [];
-while ($row = $result->fetch_assoc()) {
-    $estimates[] = $row;
+
+if (empty($error_message)) {
+    $baseQuery = "
+        SELECT 
+            fe.id,
+            fe.user_id,
+            fe.name,
+            fe.estimate_data,
+            fe.created_at,
+            cau.account_id,
+            ca.name AS customer_name
+        FROM freight_estimates fe
+        LEFT JOIN (
+            SELECT user_id, MIN(account_id) AS account_id
+            FROM customer_account_users
+            GROUP BY user_id
+        ) AS cau ON fe.user_id = cau.user_id
+        LEFT JOIN customer_accounts ca ON ca.id = cau.account_id
+    ";
+
+    $params = [];
+    $types = '';
+
+    if ($role === 'admin' && !empty($accountFilter)) {
+        $placeholders = implode(',', array_fill(0, count($accountFilter), '?'));
+        $baseQuery .= " WHERE cau.account_id IN ($placeholders)";
+        $types = str_repeat('i', count($accountFilter));
+        $params = $accountFilter;
+    }
+
+    $baseQuery .= " ORDER BY fe.created_at DESC";
+
+    $stmt = $conn->prepare($baseQuery);
+
+    if (!empty($params)) {
+        $stmt->bind_param($types, ...$params);
+    }
+
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    while ($row = $result->fetch_assoc()) {
+        $row['estimate_data_array'] = json_decode($row['estimate_data'], true) ?? [];
+        $estimates[] = $row;
+    }
+
+    $stmt->close();
 }
 
 $conn->close();
@@ -71,15 +98,41 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin- Freight Estimate</title>
+    <title>Admin - Freight Estimates</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <style>
+        main { padding: 24px; }
+        h1 { margin-bottom: 18px; }
+        .summary { margin-bottom: 20px; color: #556; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px 10px; border-bottom: 1px solid #e8ecef; text-align: left; }
+        th { font-weight: 700; color: #23343f; background: #f7fafb; }
+        tr:hover { background: #f5f9fb; }
+        .success-message { color: #0f5132; background: #d1e7dd; border: 1px solid #badbcc; padding: 10px 12px; border-radius: 8px; }
+        .error-message { color: #842029; background: #f8d7da; border: 1px solid #f5c2c7; padding: 10px 12px; border-radius: 8px; }
+        .rate-chip { display: inline-flex; padding: 8px 12px; border-radius: 12px; text-decoration: none; font-weight: 600; border: 1px solid transparent; transition: all .15s ease; }
+        .rate-chip.has-rate { background: #e7f6f8; color: #1c4755; border-color: #b8dde4; }
+        .rate-chip.missing-rate { background: #fff6e6; color: #8a4b00; border-color: #ffd699; }
+        .rate-chip:hover { transform: translateY(-1px); box-shadow: 0 8px 16px rgba(0,0,0,.06); }
+        .lane { color: #23343f; font-weight: 600; }
+        .meta { color: #6c7a82; font-size: 0.95em; }
+        @media (max-width: 768px) {
+            table, thead, tbody, th, td, tr { display: block; }
+            thead { display: none; }
+            tr { border: 1px solid #e8ecef; border-radius: 12px; margin-bottom: 12px; padding: 10px; }
+            td { border: none; padding: 6px 0; }
+            td::before { content: attr(data-label); display: block; font-weight: 700; color: #23343f; margin-bottom: 4px; }
+            .rate-chip { width: 100%; justify-content: center; }
+        }
+    </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
     <main>
         <h1>Freight Estimates</h1>
+        <p class="summary">Monitor all freight estimate requests and quickly apply rates.</p>
 
         <?php
         // Display success or error messages
@@ -91,24 +144,48 @@ $conn->close();
         }
         ?>
 
-        <table>
-            <tr>
-                <th>Name</th>
-                <th>User ID</th>
-                <th>Created At</th>
-                <th>Actions</th>
-            </tr>
-            <?php foreach ($estimates as $estimate): ?>
-                <tr>
-                    <td><?php echo htmlspecialchars($estimate['name']); ?></td>
-                    <td><?php echo htmlspecialchars($estimate['user_id']); ?></td>
-                    <td><?php echo htmlspecialchars($estimate['created_at']); ?></td>
-                    <td>
-                        <a href="admin_freight_estimate_view?id=<?php echo $estimate['id']; ?>">View / Edit</a>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-        </table>
+        <?php if (!empty($estimates)): ?>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Customer</th>
+                        <th>Estimate</th>
+                        <th>Origin</th>
+                        <th>Destination</th>
+                        <th>Created</th>
+                        <th>Rate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($estimates as $estimate): 
+                    $data = $estimate['estimate_data_array'];
+                    $originLane = format_lane($data['origin'] ?? '');
+                    $destLane = format_lane($data['destination'] ?? '');
+                    $grandTotal = $data['grand_total'] ?? null;
+                    $hasRate = is_numeric($grandTotal) && (float)$grandTotal > 0;
+                    $rateDisplay = $hasRate ? '$' . number_format((float)$grandTotal, 2) : 'Add rate';
+                    $customerName = $estimate['customer_name'] ?? 'Unassigned';
+                ?>
+                    <tr>
+                        <td data-label="Customer"><?php echo htmlspecialchars($customerName); ?></td>
+                        <td data-label="Estimate">
+                            <div class="lane"><?php echo htmlspecialchars($estimate['name']); ?></div>
+                        </td>
+                        <td data-label="Origin"><span class="lane"><?php echo htmlspecialchars($originLane); ?></span></td>
+                        <td data-label="Destination"><span class="lane"><?php echo htmlspecialchars($destLane); ?></span></td>
+                        <td data-label="Created" class="meta"><?php echo htmlspecialchars($estimate['created_at']); ?></td>
+                        <td data-label="Rate">
+                            <a class="rate-chip <?php echo $hasRate ? 'has-rate' : 'missing-rate'; ?>" href="admin_freight_estimate_view?id=<?php echo $estimate['id']; ?>">
+                                <?php echo htmlspecialchars($rateDisplay); ?>
+                            </a>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php else: ?>
+            <p>No freight estimates found.</p>
+        <?php endif; ?>
     </main>
 </body>
 </html>
