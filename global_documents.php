@@ -1608,19 +1608,14 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
             </div>
 
             <div class="filter-group">
-                <label class="filter-label">Upload Date Range</label>
+                <label class="filter-label">
+                    <i class="fas fa-calendar-upload" style="margin-right: 6px;"></i>
+                    Filter by Upload Date
+                </label>
                 <div class="date-range-group">
-                    <input type="date" id="startDate" class="filter-input" placeholder="Start Date">
-                    <input type="date" id="endDate" class="filter-input" placeholder="End Date">
+                    <input type="date" id="startDate" class="filter-input" placeholder="From date">
+                    <input type="date" id="endDate" class="filter-input" placeholder="To date">
                 </div>
-            </div>
-
-            <div class="filter-group">
-                <label class="filter-label" for="warehouseFilter">Warehouse</label>
-                <select id="warehouseFilter" class="filter-select">
-                    <option value="">All Warehouses</option>
-                    <!-- Will be populated dynamically -->
-                </select>
             </div>
 
             <div class="filter-group">
@@ -1722,6 +1717,17 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
             </div>
             <div id="warehousingSubfilters" style="display: none;">
                 <div class="filter-grid">
+                    <!-- Warehouse filter - shows for all warehousing sub-types -->
+                    <div class="filter-group">
+                        <label class="filter-label" for="warehouseFilterContext">
+                            <i class="fas fa-warehouse" style="margin-right: 6px;"></i>
+                            Warehouse
+                        </label>
+                        <select id="warehouseFilterContext" class="filter-select">
+                            <option value="">All Warehouses</option>
+                            <!-- Will be populated dynamically -->
+                        </select>
+                    </div>
                     <!-- For Warehouse POD: mirrors PODs filters -->
                     <div class="filter-group" data-whpod>
                         <label class="filter-label">Delivery Date (Actual)</label>
@@ -2027,13 +2033,15 @@ async function loadWarehouseFilter() {
         const response = await fetch('get_warehouses.php');
         const data = await response.json();
         if (data.success) {
-            const select = document.getElementById('warehouseFilter');
-            data.data.forEach(warehouse => {
-                const option = document.createElement('option');
-                option.value = warehouse.id;
-                option.textContent = warehouse.name || warehouse.location_name;
-                select.appendChild(option);
-            });
+            const select = document.getElementById('warehouseFilterContext');
+            if (select) {
+                data.data.forEach(warehouse => {
+                    const option = document.createElement('option');
+                    option.value = warehouse.id;
+                    option.textContent = warehouse.name || warehouse.location_name;
+                    select.appendChild(option);
+                });
+            }
         }
     } catch (e) {
         console.warn('Failed to load warehouses', e);
@@ -2466,21 +2474,25 @@ function toggleSubFilter(element) {
 function toggleWarehousingSections() {
     const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
     const isPods = chips.includes('Warehouse POD');
-    const basic = (chips.includes('Inventory Report') || chips.includes('Photos')) && !isPods;
-    document.querySelectorAll('#warehousingSubfilters [data-whpod]')?.forEach(el => el.style.display = isPods ? '' : 'none');
-    document.querySelectorAll('#warehousingSubfilters [data-whbasic]')?.forEach(el => el.style.display = basic ? '' : 'none');
+    const basic = (chips.includes('Inventory Report') || chips.includes('Photos') || chips.includes('Quote')) && !isPods;
+    const showAll = chips.length === 0; // If no sub-type selected, show all
+    
+    document.querySelectorAll('#warehousingSubfilters [data-whpod]')?.forEach(el => el.style.display = (isPods || showAll) ? '' : 'none');
+    document.querySelectorAll('#warehousingSubfilters [data-whbasic]')?.forEach(el => el.style.display = (basic || showAll) ? '' : 'none');
 }
 
 function toggleModulesSections() {
     const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
     const basic = (chips.includes('Flash Test Data') || chips.includes('Spec Sheets'));
-    document.querySelectorAll('#modulesSubfilters [data-modbasic]')?.forEach(el => el.style.display = basic ? '' : 'none');
+    const showAll = chips.length === 0; // If no sub-type selected, show all
+    document.querySelectorAll('#modulesSubfilters [data-modbasic]')?.forEach(el => el.style.display = (basic || showAll) ? '' : 'none');
 }
 
 function toggleIncidentSections() {
     const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
     const isPods = chips.includes('Project POD') || chips.includes('Warehouse POD');
-    document.querySelectorAll('#incidentSubfilters [data-inc-pods]')?.forEach(el => el.style.display = isPods ? '' : 'none');
+    const showAll = chips.length === 0; // If no sub-type selected, show all
+    document.querySelectorAll('#incidentSubfilters [data-inc-pods]')?.forEach(el => el.style.display = (isPods || showAll) ? '' : 'none');
 }
 
 async function loadIncidentFilterOptions() {
@@ -2775,10 +2787,11 @@ async function loadDocuments() {
         `;
         
         // Collect filter values
+        const warehouseFilterEl = document.getElementById('warehouseFilterContext');
         const filters = {
             project_id: document.getElementById('projectFilter').value,
             document_type: document.getElementById('documentTypeFilter').value,
-            warehouse_id: document.getElementById('warehouseFilter').value,
+            warehouse_id: warehouseFilterEl ? warehouseFilterEl.value : '',
             start_date: document.getElementById('startDate').value,
             end_date: document.getElementById('endDate').value,
             search: document.getElementById('searchFilter').value,
