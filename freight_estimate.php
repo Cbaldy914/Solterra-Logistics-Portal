@@ -6,6 +6,13 @@ session_start();
 
 $notification_email = 'cbaldy@solterrasol.com';
 
+// Notification toggles (set to false to disable a channel)
+$notify_account_admins_on_request = true;
+$notify_global_admins_on_request = true;
+$notify_user_on_rate_update = true;
+$notify_account_admins_on_rate_update = false;
+$notify_global_admins_on_rate_update = false;
+
 // Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
     // redirect to login page
@@ -155,38 +162,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         if ($stmt->execute()) {
             $estimate_id = (int)$stmt->insert_id;
-            $success_message = "Your estimate has been saved successfully!";
+            $success_message = "Your request has been submitted. Expect a response within 24 hours. You can revisit it under Saved Estimates.";
 
-            // Prepare the email content
-            $subject = '[Solterra Logistics] New Freight Cost Estimate Request';
-            $message = "You have received a new freight cost estimate request:\n\n";
-            $message .= "Estimate Name: $estimate_name\n";
-            $message .= "Origin: $origin\n";
-            $message .= "Destination: $destination\n";
-            $message .= "Distance: $distance miles\n";
-            $message .= "Project Size: $project_size MW\n";
-            $message .= "Estimated Start Date: $estimated_start_date\n";
-            $message .= "Estimated Number of Trucks: $estimated_number_of_trucks\n";
-            $message .= "Estimated Modules Per Truck: $estimated_modules_per_truck\n";
-
-            try {
-                $sent = Mailer::send($notification_email, $subject, $message);
-                if (!$sent) {
-                    error_log("Freight estimate notification email returned false for: " . $notification_email . " (Estimate ID #" . $estimate_id . ")");
-                }
-            } catch (Exception $e) {
-                // Log error but don't fail the request
-                error_log("Freight estimate notification email failed: " . $e->getMessage());
-            }
-
-            // Notify admins and global admins
+            // Notify admins and global admins if enabled
             $accountIds = account_ids_for_user($user_id);
             $notifyTitle = "New freight estimate request: $estimate_name";
             $notifyMessage = "Origin: $origin → Destination: $destination";
             $adminLink = 'admin_freight_estimate_view?id=' . $estimate_id;
 
-            notify_account_admins($accountIds, 'freight_estimate_request', $notifyTitle, $notifyMessage, $adminLink);
-            notify_global_admins('freight_estimate_request', $notifyTitle, $notifyMessage, $adminLink);
+            if ($notify_account_admins_on_request) {
+                notify_account_admins($accountIds, 'freight_estimate_request', $notifyTitle, $notifyMessage, $adminLink);
+            }
+            if ($notify_global_admins_on_request) {
+                notify_global_admins('freight_estimate_request', $notifyTitle, $notifyMessage, $adminLink);
+            }
         } else {
             $error_message = "Error saving estimate: " . $stmt->error;
         }
@@ -340,7 +329,7 @@ function format_estimate_rate(?array $data): array {
 
         /* Saved estimates */
         .saved-estimates-card { background: #fff; border-radius: 16px; box-shadow: 0 8px 20px rgba(0,0,0,0.05); padding: 16px; margin-bottom: 18px; }
-        .saved-estimates-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .saved-estimates-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
         .saved-estimates-toggle { background: #293E4C; color: #fff; border: none; border-radius: 12px; padding: 10px 16px; cursor: pointer; font-weight: 600; box-shadow: 0 10px 24px rgba(41,62,76,0.28); }
         .saved-estimates-toggle:hover { background: #1f2f3a; }
         .saved-estimates-list { margin-top: 12px; display: none; }
@@ -349,21 +338,10 @@ function format_estimate_rate(?array $data): array {
         .estimate-name { font-weight: 700; color: #1f303a; }
         .estimate-meta { color: #6c7a82; font-size: 0.92em; }
         .rate-pill { padding: 8px 12px; border-radius: 12px; font-weight: 700; }
+        .delete-btn { padding: 8px 12px; border-radius: 10px; border: 1px solid #e3eaee; background: #fff; cursor: pointer; font-weight: 600; }
+        .delete-btn:hover { background: #f8d7da; color: #842029; border-color: #f5c2c7; }
         .rate-pill.ready { background: #e7f6f8; color: #1c4755; border: 1px solid #b8dde4; }
         .rate-pill.pending { background: #fff6e6; color: #8a4b00; border: 1px solid #ffd699; }
-        .view-link { color: #488C9A; text-decoration: none; font-weight: 600; }
-
-        /* Modal */
-        .modal-backdrop { position: fixed; inset: 0; background: rgba(13,21,28,0.35); display: none; align-items: center; justify-content: center; z-index: 2000; }
-        .modal-backdrop.open { display: flex; }
-        .modal { background: #fff; border-radius: 16px; max-width: 640px; width: 92%; box-shadow: 0 20px 60px rgba(0,0,0,.2); padding: 20px; position: relative; }
-        .modal h3 { margin-top: 0; }
-        .modal-close { position: absolute; top: 12px; right: 12px; background: none; border: none; font-size: 22px; cursor: pointer; }
-        .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        .modal-tile { background: #f7f9fb; border-radius: 12px; padding: 12px; }
-        .modal-actions { margin-top: 12px; display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
-        .link-button { padding: 10px 14px; border-radius: 10px; border: 1px solid #dbe3e7; background: #fff; color: #1f303a; text-decoration: none; font-weight: 600; }
-        .link-button.primary { background: #488C9A; color: #fff; border-color: #488C9A; }
     </style>
 </head>
 <body>
@@ -380,17 +358,16 @@ function format_estimate_rate(?array $data): array {
                     <p class="freight-sub">Plan your lane, capture quotes, and keep track of Solterra rates in one spot.</p>
                 </div>
             </div>
-            <div class="freight-actions">
-                <button id="saved-estimates-button" class="saved-estimates-toggle">Saved Estimates</button>
-            </div>
+            <div class="freight-actions"></div>
         </div>
     </section>
 
     <!-- Saved Estimates Section -->
+    <?php $saved_count = count($saved_estimates); ?>
     <div class="saved-estimates-card">
         <div class="saved-estimates-header">
-            <h3 style="margin:0;">Quick Picks</h3>
-            <span class="estimate-meta">Open a saved request to view details or delete.</span>
+            <button id="saved-estimates-button" class="saved-estimates-toggle">Saved Estimates (<?php echo $saved_count; ?>)</button>
+            <span class="estimate-meta">View or delete saved requests.</span>
         </div>
         <div id="saved-estimates-list" class="saved-estimates-list">
             <?php if (!empty($saved_estimates)): ?>
@@ -403,7 +380,7 @@ function format_estimate_rate(?array $data): array {
                             <div class="estimate-meta">Created <?php echo htmlspecialchars($estimate['created_at']); ?></div>
                         </div>
                         <div class="rate-pill <?php echo $hasRate ? 'ready' : 'pending'; ?>"><?php echo htmlspecialchars($rateDisplay); ?></div>
-                        <a class="view-link" href="view_freight_estimate?id=<?php echo $estimate['id']; ?>">Open</a>
+                        <button class="delete-btn" type="button" data-id="<?php echo $estimate['id']; ?>">Delete</button>
                     </div>
                 <?php endforeach; ?>
             <?php else: ?>
@@ -564,7 +541,7 @@ if (isset($error_message)) {
     window.onload = initMap;
 </script>
 <script>
-    // Toggle saved estimates list
+        // Toggle saved estimates list
     const toggleButton = document.getElementById('saved-estimates-button');
     const savedList = document.getElementById('saved-estimates-list');
     const savedEstimates = <?php echo json_encode($saved_estimates, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
@@ -574,100 +551,21 @@ if (isset($error_message)) {
         savedList.style.display = isHidden ? 'block' : 'none';
     });
 
-    // Modal handling
-    const modal = document.createElement('div');
-    modal.className = 'modal-backdrop';
-    modal.innerHTML = `
-        <div class="modal" role="dialog" aria-modal="true">
-            <button class="modal-close" aria-label="Close">×</button>
-            <h3 id="modal-title"></h3>
-            <div class="modal-grid">
-                <div class="modal-tile">
-                    <strong>Origin</strong>
-                    <div id="modal-origin"></div>
-                </div>
-                <div class="modal-tile">
-                    <strong>Destination</strong>
-                    <div id="modal-destination"></div>
-                </div>
-                <div class="modal-tile">
-                    <strong>Distance</strong>
-                    <div id="modal-distance"></div>
-                </div>
-                <div class="modal-tile">
-                    <strong>Project Size</strong>
-                    <div id="modal-project"></div>
-                </div>
-                <div class="modal-tile">
-                    <strong>Rate</strong>
-                    <div id="modal-rate"></div>
-                </div>
-                <div class="modal-tile">
-                    <strong>Created</strong>
-                    <div id="modal-created"></div>
-                </div>
-            </div>
-            <div class="modal-actions">
-                <a id="modal-view" class="link-button primary" href="#">View Full Estimate</a>
-                <button id="modal-delete" class="link-button" type="button">Delete</button>
-                <button class="link-button modal-close" type="button">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(modal);
-
-    function formatCurrency(value) {
-        const num = parseFloat(value);
-        if (isNaN(num)) return 'Rate pending';
-        return `$${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    }
-
-    function openModal(estimateId) {
-        const estimate = savedEstimates.find(e => String(e.id) === String(estimateId));
-        if (!estimate) return;
-        const data = estimate.estimate_data || {};
-
-        document.getElementById('modal-title').textContent = estimate.name || 'Estimate';
-        document.getElementById('modal-origin').textContent = data.origin || '—';
-        document.getElementById('modal-destination').textContent = data.destination || '—';
-        document.getElementById('modal-distance').textContent = data.distance ? `${data.distance} miles` : '—';
-        document.getElementById('modal-project').textContent = data.project_size ? `${data.project_size} MW` : '—';
-        document.getElementById('modal-rate').textContent = formatCurrency(data.grand_total);
-        document.getElementById('modal-created').textContent = estimate.created_at || '';
-
-        document.getElementById('modal-view').href = `view_freight_estimate?id=${estimate.id}`;
-        document.getElementById('modal-delete').setAttribute('data-id', estimate.id);
-
-        modal.classList.add('open');
-    }
-
-    function closeModal() {
-        modal.classList.remove('open');
-    }
-
-    modal.addEventListener('click', (event) => {
-        if (event.target.classList.contains('modal-backdrop') || event.target.classList.contains('modal-close')) {
-            closeModal();
-        }
-    });
-
     document.querySelectorAll('.estimate-row').forEach(row => {
-        row.addEventListener('click', (event) => {
-            // Prevent navigating when clicking the inline "Open" link
-            if (event.target.closest('a')) {
-                return;
-            }
+        row.addEventListener('click', () => {
             const estimateId = row.getAttribute('data-estimate-id');
-            openModal(estimateId);
+            window.location.href = `view_freight_estimate?id=${estimateId}`;
         });
     });
 
-    document.getElementById('modal-delete').addEventListener('click', (event) => {
-        const estimateId = event.target.getAttribute('data-id');
-        if (!estimateId) return;
-        if (confirm('Are you sure you want to delete this estimate?')) {
-            window.location.href = window.location.href.split('?')[0] + '?delete_estimate=' + estimateId;
-        }
+    document.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const estimateId = btn.getAttribute('data-id');
+            if (confirm('Are you sure you want to delete this estimate?')) {
+                window.location.href = window.location.href.split('?')[0] + '?delete_estimate=' + estimateId;
+            }
+        });
     });
 </script>
 </main>

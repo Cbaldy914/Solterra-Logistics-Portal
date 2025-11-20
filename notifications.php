@@ -20,6 +20,15 @@ ensure_notification_settings($user_id);
 
 // Get user's notification settings
 $settings = notification_settings_for($user_id);
+$available_settings_cols = [];
+try {
+    $colRes = $conn->query("SHOW COLUMNS FROM notification_settings");
+    while ($c = $colRes->fetch_assoc()) {
+        $available_settings_cols[] = $c['Field'];
+    }
+} catch (Throwable $e) {
+    error_log('Notification settings column discovery error: '.$e->getMessage());
+}
 
 // Fetch recent notifications (last 50)
 $stmt = $conn->prepare('
@@ -584,6 +593,21 @@ $conn->close();
                                <?php echo !empty($settings['in_app_warranty_claim']) ? 'checked' : ''; ?>>
                         <label for="in_app_warranty_claim">⚠️ Warranty Claims</label>
                     </div>
+                    <?php if ($role !== "user" && in_array("in_app_freight_estimate_request", $available_settings_cols, true)): ?>
+                    <div class="form-check">
+                        <input type="checkbox" id="in_app_freight_estimate_request" name="in_app_freight_estimate_request" value="1" 
+                               <?php echo !empty($settings['in_app_freight_estimate_request']) ? "checked" : ""; ?>>
+                        <label for="in_app_freight_estimate_request">🚛 Freight Requests</label>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if ($role === "user" && in_array("in_app_freight_estimate_rated", $available_settings_cols, true)): ?>
+                    <div class="form-check">
+                        <input type="checkbox" id="in_app_freight_estimate_rated" name="in_app_freight_estimate_rated" value="1" 
+                               <?php echo !empty($settings['in_app_freight_estimate_rated']) ? "checked" : ""; ?>>
+                        <label for="in_app_freight_estimate_rated">✅ Freight Rates Added</label>
+                    </div>
+                    <?php endif; ?>
                 </div>
                 
                 <!-- Email Notifications -->
@@ -623,14 +647,26 @@ $conn->close();
                                <?php echo empty($settings['email_enabled']) ? 'disabled' : ''; ?>>
                         <label for="email_warranty_claim">Warranty Claims</label>
                     </div>
-                    
-                    <div class="form-note">
-                        💡 <strong>Note:</strong> Email notifications require a valid email address in your profile. 
-                        Email is off by default to protect your privacy.
+                    <?php if ($role !== "user" && in_array("email_freight_estimate_request", $available_settings_cols, true)): ?>
+                    <div class="form-check sub-option">
+                        <input type="checkbox" id="email_freight_estimate_request" name="email_freight_estimate_request" value="1"
+                               <?php echo !empty($settings['email_freight_estimate_request']) ? 'checked' : ''; ?>
+                               <?php echo empty($settings['email_enabled']) ? 'disabled' : ''; ?>>
+                        <label for="email_freight_estimate_request">Freight Requests</label>
                     </div>
+                    <?php endif; ?>
+
+                    <?php if ($role === "user" && in_array("email_freight_estimate_rated", $available_settings_cols, true)): ?>
+                    <div class="form-check sub-option">
+                        <input type="checkbox" id="email_freight_estimate_rated" name="email_freight_estimate_rated" value="1"
+                               <?php echo !empty($settings['email_freight_estimate_rated']) ? 'checked' : ''; ?>
+                               <?php echo empty($settings['email_enabled']) ? 'disabled' : ''; ?>>
+                        <label for="email_freight_estimate_rated">Freight Rates Added</label>
+                    </div>
+                    <?php endif; ?>
                 </div>
-                
-                <div class="submit-actions">
+
+                <div style="padding: 20px 30px; display: flex; justify-content: center;">
                     <button type="submit" class="btn btn-primary">Save Settings</button>
                 </div>
             </form>

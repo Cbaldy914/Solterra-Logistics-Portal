@@ -32,10 +32,27 @@ if ($role === 'admin') {
     }
 }
 
-function format_lane(?string $location): string {
+function format_lane_city_state(?string $location): string {
     $location = trim((string)$location);
-    if (preg_match('/^\s*([^,]+),\s*([A-Za-z]{2})/i', $location, $matches)) {
-        return trim($matches[1]) . ', ' . strtoupper($matches[2]);
+    if ($location === '') {
+        return $location;
+    }
+    $parts = array_map('trim', explode(',', $location));
+    $parts = array_values(array_filter($parts, fn($p) => $p !== ''));
+    $state = '';
+    $city = '';
+    for ($i = count($parts) - 1; $i >= 0; $i--) {
+        if (preg_match('/^[A-Za-z]{2}$/', $parts[$i])) {
+            $state = strtoupper($parts[$i]);
+            $city = $parts[$i - 1] ?? '';
+            break;
+        }
+    }
+    if ($state !== '' && $city !== '') {
+        return trim($city) . ', ' . $state;
+    }
+    if (count($parts) >= 2) {
+        return $parts[0] . ', ' . strtoupper(substr($parts[1], 0, 2));
     }
     return $location;
 }
@@ -104,7 +121,7 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
         main { padding: 24px; }
-        h1 { margin-bottom: 18px; }
+        h1 { margin: 0 0 4px 0; }
         .summary { margin-bottom: 20px; color: #556; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th, td { padding: 12px 10px; border-bottom: 1px solid #e8ecef; text-align: left; }
@@ -118,6 +135,19 @@ $conn->close();
         .rate-chip:hover { transform: translateY(-1px); box-shadow: 0 8px 16px rgba(0,0,0,.06); }
         .lane { color: #23343f; font-weight: 600; }
         .meta { color: #6c7a82; font-size: 0.95em; }
+        .admin-hero {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 24px;
+            margin-bottom: 18px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .admin-hero::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
+        .admin-hero__content { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+        .hero-sub { color: #556; margin: 4px 0 0; }
         @media (max-width: 768px) {
             table, thead, tbody, th, td, tr { display: block; }
             thead { display: none; }
@@ -131,8 +161,15 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
     <main>
-        <h1>Freight Estimates</h1>
-        <p class="summary">Monitor all freight estimate requests and quickly apply rates.</p>
+        <?php require_once "components/breadcrumbs.php"; echo slp_render_breadcrumbs(["current_label" => "Freight Estimates"]); ?>
+        <section class="admin-hero">
+            <div class="admin-hero__content">
+                <div>
+                    <h1>Freight Estimates</h1>
+                    <p class="hero-sub">Monitor all freight estimate requests and quickly apply rates.</p>
+                </div>
+            </div>
+        </section>
 
         <?php
         // Display success or error messages
@@ -159,11 +196,14 @@ $conn->close();
                 <tbody>
                 <?php foreach ($estimates as $estimate): 
                     $data = $estimate['estimate_data_array'];
-                    $originLane = format_lane($data['origin'] ?? '');
-                    $destLane = format_lane($data['destination'] ?? '');
-                    $grandTotal = $data['grand_total'] ?? null;
-                    $hasRate = is_numeric($grandTotal) && (float)$grandTotal > 0;
-                    $rateDisplay = $hasRate ? '$' . number_format((float)$grandTotal, 2) : 'Add rate';
+                    $originLane = format_lane_city_state($data['origin'] ?? '');
+                    $destLane = format_lane_city_state($data['destination'] ?? '');
+                    $grandTotal = $data['grand_total'] ?? 0;
+                    $numberTrucks = max(1, floatval($data['estimated_number_of_trucks'] ?? 0));
+                    $fallbackTotal = ((float)($data['cost_per_truck'] ?? 0) * $numberTrucks) + (float)($data['total_accessorial_cost'] ?? 0);
+                    $computedTotal = max((float)$grandTotal, $fallbackTotal, (float)($data['total_freight_cost'] ?? 0));
+                    $hasRate = $computedTotal > 0;
+                    $rateDisplay = $hasRate ? '$' . number_format($computedTotal, 2) : 'Add rate';
                     $customerName = $estimate['customer_name'] ?? 'Unassigned';
                 ?>
                     <tr>
