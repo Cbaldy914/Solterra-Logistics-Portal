@@ -263,7 +263,7 @@ function format_estimate_rate(?array $data): array {
             font-weight: bold;
         }
         input, select {
-            width: 100%;
+            width: 80%;
             padding: 10px;
             margin-top: 6px;
             border: 1px solid #dbe3e7;
@@ -332,7 +332,34 @@ function format_estimate_rate(?array $data): array {
         .saved-estimates-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
         .saved-estimates-toggle { background: #293E4C; color: #fff; border: none; border-radius: 12px; padding: 10px 16px; cursor: pointer; font-weight: 600; box-shadow: 0 10px 24px rgba(41,62,76,0.28); }
         .saved-estimates-toggle:hover { background: #1f2f3a; }
-        .saved-estimates-list { margin-top: 12px; display: none; }
+        
+        /* Enhanced Saved Estimates Toggle */
+        .saved-estimates-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: auto;
+            min-width: 200px;
+            gap: 12px;
+        }
+        .toggle-icon {
+            transition: transform 0.3s ease;
+            font-size: 0.9em;
+        }
+        .saved-estimates-toggle.active .toggle-icon { transform: rotate(180deg); }
+        .saved-estimates-header { cursor: pointer; transition: all 0.2s ease; }
+        .saved-estimates-header:hover { transform: translateX(2px); }
+        .saved-estimates-list {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease, opacity 0.3s ease, margin-top 0.3s ease;
+            opacity: 0;
+        }
+        .saved-estimates-list.show {
+            max-height: 2000px;
+            opacity: 1;
+            margin-top: 12px;
+        }
         .estimate-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 12px 10px; border: 1px solid #e3eaee; border-radius: 12px; margin-bottom: 10px; background: #fdfefe; cursor: pointer; transition: box-shadow .15s ease, transform .15s ease; }
         .estimate-row:hover { box-shadow: 0 8px 20px rgba(0,0,0,0.06); transform: translateY(-2px); }
         .estimate-name { font-weight: 700; color: #1f303a; }
@@ -366,7 +393,10 @@ function format_estimate_rate(?array $data): array {
     <?php $saved_count = count($saved_estimates); ?>
     <div class="saved-estimates-card">
         <div class="saved-estimates-header">
-            <button id="saved-estimates-button" class="saved-estimates-toggle">Saved Estimates (<?php echo $saved_count; ?>)</button>
+            <button id="saved-estimates-button" class="saved-estimates-toggle">
+                <span class="toggle-text">Saved Estimates (<?php echo $saved_count; ?>)</span>
+                <i class="fas fa-chevron-down toggle-icon"></i>
+            </button>
             <span class="estimate-meta">View or delete saved requests.</span>
         </div>
         <div id="saved-estimates-list" class="saved-estimates-list">
@@ -547,8 +577,14 @@ if (isset($error_message)) {
     const savedEstimates = <?php echo json_encode($saved_estimates, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>;
 
     toggleButton.addEventListener('click', function() {
-        const isHidden = savedList.style.display === 'none' || savedList.style.display === '';
-        savedList.style.display = isHidden ? 'block' : 'none';
+        const isHidden = !savedList.classList.contains('show');
+        if (isHidden) {
+            savedList.classList.add('show');
+            toggleButton.classList.add('active');
+        } else {
+            savedList.classList.remove('show');
+            toggleButton.classList.remove('active');
+        }
     });
 
     document.querySelectorAll('.estimate-row').forEach(row => {
