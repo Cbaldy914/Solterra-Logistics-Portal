@@ -27,6 +27,8 @@ try {
         'in_app_warranty_claim' => isset($_POST['in_app_warranty_claim']) ? 1 : 0,
         'in_app_freight_estimate_request' => isset($_POST['in_app_freight_estimate_request']) ? 1 : 0,
         'in_app_freight_estimate_rated' => isset($_POST['in_app_freight_estimate_rated']) ? 1 : 0,
+        'in_app_warehouse_estimate_request' => isset($_POST['in_app_warehouse_estimate_request']) ? 1 : 0,
+        'in_app_warehouse_estimate_rated' => isset($_POST['in_app_warehouse_estimate_rated']) ? 1 : 0,
         'email_enabled' => isset($_POST['email_enabled']) ? 1 : 0,
         'email_document_upload' => 0,
         'email_project_update' => 0,
@@ -34,6 +36,8 @@ try {
         'email_warranty_claim' => 0,
         'email_freight_estimate_request' => 0,
         'email_freight_estimate_rated' => 0,
+        'email_warehouse_estimate_request' => 0,
+        'email_warehouse_estimate_rated' => 0,
     ];
 
     // Respect email enabled for sub-options
@@ -44,6 +48,8 @@ try {
         $fields['email_warranty_claim'] = isset($_POST['email_warranty_claim']) ? 1 : 0;
         $fields['email_freight_estimate_request'] = isset($_POST['email_freight_estimate_request']) ? 1 : 0;
         $fields['email_freight_estimate_rated'] = isset($_POST['email_freight_estimate_rated']) ? 1 : 0;
+        $fields['email_warehouse_estimate_request'] = isset($_POST['email_warehouse_estimate_request']) ? 1 : 0;
+        $fields['email_warehouse_estimate_rated'] = isset($_POST['email_warehouse_estimate_rated']) ? 1 : 0;
     }
 
     // Determine which columns actually exist
