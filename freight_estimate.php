@@ -276,7 +276,7 @@ function format_estimate_rate(?array $data): array {
         }
         #map {
             width: 100%;
-            height: 500px; /* Adjusted height for better visibility */
+            height: 100%; /* Adjusted height for better visibility */
             background-color: #ccc;
             margin-top: 20px;
             border-radius: 14px;

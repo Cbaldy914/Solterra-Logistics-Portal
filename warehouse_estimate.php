@@ -67,6 +67,7 @@ $estimated_number_of_pallets = '';
 $pallet_length = '';
 $pallet_width = '';
 $pallet_height = '';
+$pallet_unit = 'in';
 $stackable = false;
 $square_feet = '';
 $success_message = '';
@@ -111,6 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $pallet_length = trim($_POST['pallet_length'] ?? '');
     $pallet_width = trim($_POST['pallet_width'] ?? '');
     $pallet_height = trim($_POST['pallet_height'] ?? '');
+    $pallet_unit = $_POST['pallet_unit'] ?? 'in';
     $stackable = isset($_POST['stackable']);
 
     $upload_dir = 'uploads/warehouse_estimates/';
@@ -137,7 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
     }
 
-    if (empty($estimate_name) || empty($project_location) || empty($estimated_number_of_pallets) || empty($pallet_length) || empty($pallet_width) || empty($pallet_height)) {
+    if (empty($estimate_name) || empty($project_location) || empty($estimated_number_of_pallets) || empty($pallet_length) || empty($pallet_width)) {
         $error_message = "Please fill in all required fields.";
     } else {
         $length_ft = $pallet_length / 12;
@@ -156,7 +158,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             'estimated_number_of_pallets' => $estimated_number_of_pallets,
             'pallet_length' => $pallet_length,
             'pallet_width' => $pallet_width,
-            'pallet_height' => $pallet_height,
+            'pallet_height' => null,
+            'pallet_unit' => $pallet_unit,
             'stackable' => $stackable,
             'square_feet' => $square_feet,
             'additional_documentation' => $uploaded_file_path,
@@ -215,11 +218,11 @@ if ($conn) {
 
 function format_estimate_rate(?array $data): array {
     $quotes = $data['quotes'] ?? [];
-    $first = $quotes[0] ?? [];
-    $monthly = $first['monthly_storage_cost_per_pallet'] ?? null;
-    $hasRate = is_numeric($monthly) && (float)$monthly > 0;
-    $display = $hasRate ? '$' . number_format((float)$monthly, 2) . ' / pallet' : 'Rate pending';
-    return [$display, $hasRate];
+    $count = count($quotes);
+    if ($count === 0) {
+        return ['No Quotes Yet', false];
+    }
+    return [$count . ' Quotes', true];
 }
 
 ?>
@@ -366,18 +369,22 @@ if (!empty($error_message)) {
             </label>
             <input type="number" id="estimated_number_of_pallets" name="estimated_number_of_pallets" required value="<?php echo htmlspecialchars($estimated_number_of_pallets); ?>">
 
-            <label>Estimated Pallet Dimensions (in inches):<span class="required">*</span>
+            <label>Estimated Pallet Dimensions:<span class="required">*</span>
+                <div style="margin-top:6px;">
+                    <label><input type="radio" name="pallet_unit" value="in" <?php echo ($pallet_unit ?? 'in')==='in' ? 'checked' : ''; ?>> Inches</label>
+                    <label style="margin-left:10px;"><input type="radio" name="pallet_unit" value="cm" <?php echo ($pallet_unit ?? 'in')==='cm' ? 'checked' : ''; ?>> Centimeters</label>
+                    <label style="margin-left:10px;"><input type="radio" name="pallet_unit" value="mm" <?php echo ($pallet_unit ?? 'in')==='mm' ? 'checked' : ''; ?>> Millimeters</label>
+                </div>
                 <span class="info-tooltip">?
                     <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet.</span>
                 </span>
             </label>
             <div class="dimensions-row">
-                <input type="number" id="pallet_length" name="pallet_length" placeholder="Length (L)" required value="<?php echo htmlspecialchars($pallet_length); ?>">
-                <input type="number" id="pallet_width" name="pallet_width" placeholder="Width (W)" required value="<?php echo htmlspecialchars($pallet_width); ?>">
-                <input type="number" id="pallet_height" name="pallet_height" placeholder="Height (H)" required value="<?php echo htmlspecialchars($pallet_height); ?>">
+                <input type="number" id="pallet_length" name="pallet_length" placeholder="Length" required value="<?php echo htmlspecialchars($pallet_length); ?>">
+                <input type="number" id="pallet_width" name="pallet_width" placeholder="Width" required value="<?php echo htmlspecialchars($pallet_width); ?>">
             </div>
 
-            <div class="checkbox-row">
+            <div class="checkbox-row" style="justify-content:flex-start;">
                 <input type="checkbox" id="stackable" name="stackable" <?php echo $stackable ? 'checked' : ''; ?>>
                 <label for="stackable">Stackable?</label>
             </div>
@@ -421,8 +428,11 @@ if (!empty($error_message)) {
     });
 
     function calculateSquareFeet() {
-        const lengthInches = parseFloat(document.getElementById('pallet_length').value) || 0;
-        const widthInches = parseFloat(document.getElementById('pallet_width').value) || 0;
+        let lengthInches = parseFloat(document.getElementById('pallet_length').value) || 0;
+        let widthInches = parseFloat(document.getElementById('pallet_width').value) || 0;
+        const unit = document.querySelector('input[name="pallet_unit"]:checked')?.value || 'in';
+        if (unit === 'cm') { lengthInches = lengthInches / 2.54; widthInches = widthInches / 2.54; }
+        if (unit === 'mm') { lengthInches = lengthInches / 25.4; widthInches = widthInches / 25.4; }
         const numberOfPallets = parseInt(document.getElementById('estimated_number_of_pallets').value) || 0;
         const stackable = document.getElementById('stackable').checked;
 
@@ -441,12 +451,12 @@ if (!empty($error_message)) {
     if (stackableEl) stackableEl.addEventListener('change', calculateSquareFeet);
     calculateSquareFeet();
 
-    // Google Maps Autocomplete (cities)
+    // Google Maps Autocomplete (ZIP/city)
     let autocomplete;
     function initAutocomplete() {
         autocomplete = new google.maps.places.Autocomplete(
             document.getElementById('autocomplete'),
-            { types: ['(cities)'], componentRestrictions: { country: 'us' } }
+            { types: ['geocode'], componentRestrictions: { country: 'us' } }
         );
     }
     google.maps.event.addDomListener(window, 'load', initAutocomplete);
