@@ -301,96 +301,44 @@ $conn->close();
             background: #dc2626;
         }
 
-        /* Documents Modal */
-        .modal {
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(5px);
+        .docs-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-width: 350px;
         }
-        .modal-content {
-            background-color: #fff;
-            margin: 5% auto;
-            padding: 32px;
-            border-radius: 20px;
-            width: 90%;
-            max-width: 700px;
-            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
-            position: relative;
-        }
-        .close-modal {
-            position: absolute;
-            right: 20px;
-            top: 20px;
-            font-size: 28px;
-            font-weight: bold;
-            color: #9ca3af;
-            cursor: pointer;
-            transition: color 0.2s ease;
-        }
-        .close-modal:hover {
-            color: #ef4444;
-        }
-        .modal-content h2 {
-            margin-top: 0;
-            color: #293E4C;
-        }
-        .modal-document-item {
+        .doc-item-inline {
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            padding: 16px;
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-            border: 1px solid rgba(72, 140, 154, 0.15);
-            border-radius: 12px;
-            margin-bottom: 12px;
-        }
-        .modal-doc-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        .modal-doc-icon {
-            font-size: 1.5em;
-            color: #488C9A;
-        }
-        .modal-doc-name {
-            font-weight: 600;
-            color: #293E4C;
-        }
-        .modal-doc-size {
-            font-size: 0.85em;
-            color: #6c757d;
-        }
-        .modal-doc-download {
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            color: white;
-            padding: 8px 16px;
+            gap: 8px;
+            padding: 6px 10px;
+            background: #f8f9fa;
             border-radius: 8px;
+            border: 1px solid #e9ecef;
+            transition: all 0.2s ease;
+        }
+        .doc-item-inline:hover {
+            background: #e7f6f8;
+            border-color: #488C9A;
+        }
+        .doc-link {
+            color: #293E4C;
             text-decoration: none;
             font-weight: 600;
             font-size: 0.9em;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            transition: all 0.3s ease;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
-        .modal-doc-download:hover {
-            background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
-            transform: translateY(-1px);
-        }
-        .view-documents-link {
+        .doc-link:hover {
             color: #488C9A;
-            text-decoration: none;
-            font-weight: 600;
-            transition: color 0.2s ease;
         }
-        .view-documents-link:hover {
-            color: #293E4C;
+        .doc-size {
+            font-size: 0.8em;
+            color: #6c757d;
+            white-space: nowrap;
         }
     </style>
 </head>
@@ -489,11 +437,30 @@ $conn->close();
                     <td>$<?php echo number_format($quote['monthly_storage_cost_per_pallet'], 2); ?></td>
                     <td>
                         <?php if ($doc_count > 0): ?>
-                            <a href="#" class="view-documents-link" data-quote-index="<?php echo $index; ?>">
-                                <i class="fas fa-file-alt"></i> <?php echo $doc_count; ?> Document<?php echo $doc_count > 1 ? 's' : ''; ?>
-                            </a>
+                            <div class="docs-cell">
+                                <?php 
+                                $docs = $quote_documents[$index] ?? [];
+                                foreach ($docs as $doc): 
+                                    $size = $doc['file_size'];
+                                    if ($size < 1024) {
+                                        $formatted_size = $size . ' B';
+                                    } elseif ($size < 1024 * 1024) {
+                                        $formatted_size = round($size / 1024, 1) . ' KB';
+                                    } else {
+                                        $formatted_size = round($size / (1024 * 1024), 1) . ' MB';
+                                    }
+                                ?>
+                                    <div class="doc-item-inline">
+                                        <i class="fas fa-file-alt" style="color: #488C9A;"></i>
+                                        <a href="download_document.php?id=<?php echo $doc['id']; ?>" target="_blank" class="doc-link" title="<?php echo htmlspecialchars($doc['original_file_name']); ?>">
+                                            <?php echo htmlspecialchars(strlen($doc['original_file_name']) > 25 ? substr($doc['original_file_name'], 0, 25) . '...' : $doc['original_file_name']); ?>
+                                        </a>
+                                        <span class="doc-size">(<?php echo $formatted_size; ?>)</span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
                         <?php else: ?>
-                            <span style="color: #9ca3af;">No documents</span>
+                            <span style="color: #9ca3af; font-style: italic;">No documents</span>
                         <?php endif; ?>
                     </td>
                     <td>
@@ -509,21 +476,69 @@ $conn->close();
     <?php else: ?>
         <p>No rates added yet.</p>
     <?php endif; ?>
-    
-    <!-- Documents Modal -->
-    <div id="documentsModal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <span class="close-modal" onclick="closeDocumentsModal()">&times;</span>
-            <h2>Quote Documents</h2>
-            <div id="modalDocumentsList"></div>
-        </div>
-    </div>
     <script>
         document.addEventListener("DOMContentLoaded", function() {
             const input = document.getElementById("warehouse_location");
             if (input && window.google && google.maps && google.maps.places) {
                 new google.maps.places.Autocomplete(input, { types: ["geocode"], componentRestrictions: { country: "us" } });
             }
+
+            // Warehouse rate prepopulation
+            const warehouseSelect = document.getElementById('warehouse_id');
+            const locationInput = document.getElementById('warehouse_location');
+            const inFeeInput = document.querySelector('input[name="in_fee"]');
+            const outFeeInput = document.querySelector('input[name="out_fee"]');
+            const storageInput = document.querySelector('input[name="monthly_storage_fee"]');
+            
+            let existingRatesLoaded = false;
+
+            warehouseSelect.addEventListener('change', async function() {
+                const warehouseId = this.value;
+                if (!warehouseId) {
+                    // Clear form if no warehouse selected
+                    locationInput.value = '';
+                    inFeeInput.value = '';
+                    outFeeInput.value = '';
+                    storageInput.value = '';
+                    existingRatesLoaded = false;
+                    return;
+                }
+
+                // Fetch existing rates for this warehouse
+                try {
+                    const response = await fetch(`get_warehouse_rates.php?warehouse_id=${warehouseId}`);
+                    const data = await response.json();
+                    
+                    if (data.success && data.rates) {
+                        // Ask user if they want to use existing rates
+                        const useExisting = confirm(
+                            `Existing rates found for this warehouse:\n\n` +
+                            `Location: ${data.rates.warehouse_location}\n` +
+                            `In Fee: $${data.rates.in_fee}\n` +
+                            `Out Fee: $${data.rates.out_fee}\n` +
+                            `Monthly Storage: $${data.rates.monthly_storage_fee}\n\n` +
+                            `Would you like to use these rates? (Click OK to use existing rates, or Cancel to enter new rates)`
+                        );
+                        
+                        if (useExisting) {
+                            locationInput.value = data.rates.warehouse_location;
+                            inFeeInput.value = data.rates.in_fee;
+                            outFeeInput.value = data.rates.out_fee;
+                            storageInput.value = data.rates.monthly_storage_fee;
+                            existingRatesLoaded = true;
+                        } else {
+                            // User wants to enter new rates
+                            locationInput.value = '';
+                            inFeeInput.value = '';
+                            outFeeInput.value = '';
+                            storageInput.value = '';
+                            existingRatesLoaded = false;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error fetching warehouse rates:', error);
+                }
+            });
 
             // File upload functionality
             const fileUploadZone = document.getElementById('fileUploadZone');
@@ -599,62 +614,6 @@ $conn->close();
 
             window.removeFileAt = function(index) {
                 removeFile(index);
-            };
-
-            // Documents modal functionality
-            const quoteDocuments = <?php echo json_encode($quote_documents); ?>;
-
-            window.showDocumentsModal = function(quoteIndex) {
-                const docs = quoteDocuments[quoteIndex] || [];
-                const modal = document.getElementById('documentsModal');
-                const docsList = document.getElementById('modalDocumentsList');
-
-                if (docs.length === 0) {
-                    docsList.innerHTML = '<p>No documents found.</p>';
-                } else {
-                    let html = '';
-                    docs.forEach(doc => {
-                        const sizeKB = (doc.file_size / 1024).toFixed(1);
-                        html += `
-                            <div class="modal-document-item">
-                                <div class="modal-doc-info">
-                                    <i class="fas fa-file-alt modal-doc-icon"></i>
-                                    <div>
-                                        <div class="modal-doc-name">${doc.original_file_name}</div>
-                                        <div class="modal-doc-size">${sizeKB} KB</div>
-                                    </div>
-                                </div>
-                                <a href="download_document.php?id=${doc.id}" class="modal-doc-download" target="_blank">
-                                    <i class="fas fa-download"></i> Download
-                                </a>
-                            </div>
-                        `;
-                    });
-                    docsList.innerHTML = html;
-                }
-
-                modal.style.display = 'block';
-            };
-
-            window.closeDocumentsModal = function() {
-                document.getElementById('documentsModal').style.display = 'none';
-            };
-
-            // Attach click handlers to view document links
-            document.querySelectorAll('.view-documents-link').forEach(link => {
-                link.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    const quoteIndex = this.getAttribute('data-quote-index');
-                    showDocumentsModal(quoteIndex);
-                });
-            });
-
-            // Close modal when clicking outside
-            window.onclick = function(event) {
-                const modal = document.getElementById('documentsModal');
-                if (event.target === modal) {
-                    closeDocumentsModal();
-                }
             };
         });
     </script>

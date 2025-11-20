@@ -268,16 +268,46 @@ function format_estimate_rate(?array $data): array {
         .card-box { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.06); padding: 18px; width: 100%; }
         .left-side { flex: 1 1 380px; }
         .right-side { flex: 1 1 420px; }
-        label { display: block; margin-top: 15px; font-weight: bold; }
-        input, select { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #dbe3e7; border-radius: 10px; font-size: 1em; }
-        .dimensions-row { display: flex; gap: 10px; }
-        .dimensions-row input { flex: 1; }
-        .checkbox-row { margin-top: 15px; display: flex; align-items: center; gap: 8px; }
-        .success-message { color: #0f5132; background: #d1e7dd; border: 1px solid #badbcc; padding: 10px 12px; border-radius: 8px; margin-top: 15px; }
-        .error-message { color: #842029; background: #f8d7da; border: 1px solid #f5c2c7; padding: 10px 12px; border-radius: 8px; margin-top: 15px; }
-        .submit-button { background-color: #488C9A; border: none; color: #fff; padding: 12px 18px; border-radius: 12px; cursor: pointer; font-weight: 700; box-shadow: 0 8px 18px rgba(72,140,154,0.3); }
+        
+        /* Form Grid Layout */
+        #warehouse-form {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px 50px;
+            align-items: start;
+        }
+        #warehouse-form > p { grid-column: 1 / -1; margin: 0 0 8px 0; }
+        .form-field { display: flex; flex-direction: column; }
+        .form-field-full { grid-column: 1 / -1; }
+        .form-field label { display: block; margin: 0 0 6px 0; font-weight: 600; font-size: 0.95em; color: #293E4C; }
+        .form-field input, .form-field select { padding: 10px; border: 1px solid #dbe3e7; border-radius: 10px; font-size: 1em; transition: border-color 0.2s ease; }
+        .form-field input:focus, .form-field select:focus { outline: none; border-color: #488C9A; box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1); }
+        
+        .dimensions-row { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 16px; 
+            max-width: 500px; 
+        }
+        .dimensions-row input { 
+            width: 100%; 
+            min-height: 45px;
+        }
+        
+        .checkbox-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+        .checkbox-row input[type="checkbox"] { width: auto; margin: 0; }
+        .checkbox-row label { margin: 0; font-weight: 600; cursor: pointer; }
+        
+        .success-message { color: #0f5132; background: #d1e7dd; border: 1px solid #badbcc; padding: 10px 12px; border-radius: 8px; grid-column: 1 / -1; }
+        .error-message { color: #842029; background: #f8d7da; border: 1px solid #f5c2c7; padding: 10px 12px; border-radius: 8px; grid-column: 1 / -1; }
+        .submit-button { background-color: #488C9A; border: none; color: #fff; padding: 12px 18px; border-radius: 12px; cursor: pointer; font-weight: 700; box-shadow: 0 8px 18px rgba(72,140,154,0.3); grid-column: 1 / -1; margin-top: 8px; }
         .submit-button:hover { background-color: #3A6E7F; }
-        @media (max-width: 768px) { .container { flex-direction: column; } .dimensions-row { flex-direction: column; } }
+        
+        @media (max-width: 768px) { 
+            .container { flex-direction: column; }
+            #warehouse-form { grid-template-columns: 1fr; }
+            .dimensions-row { grid-template-columns: 1fr; max-width: none; }
+        }
         .required { color: red; }
 
         /* Saved estimates */
@@ -285,7 +315,6 @@ function format_estimate_rate(?array $data): array {
         .saved-estimates-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
         .saved-estimates-toggle { background: #293E4C; color: #fff; border: none; border-radius: 12px; padding: 10px 16px; cursor: pointer; font-weight: 600; box-shadow: 0 10px 24px rgba(41,62,76,0.28); }
         .saved-estimates-toggle:hover { background: #1f2f3a; }
-        .saved-estimates-list { margin-top: 12px; display: none; }
         .estimate-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 12px 10px; border: 1px solid #e3eaee; border-radius: 12px; margin-bottom: 10px; background: #fdfefe; cursor: pointer; transition: box-shadow .15s ease, transform .15s ease; }
         .estimate-row:hover { box-shadow: 0 8px 20px rgba(0,0,0,0.06); transform: translateY(-2px); }
         .estimate-name { font-weight: 700; color: #1f303a; }
@@ -297,8 +326,19 @@ function format_estimate_rate(?array $data): array {
         .rate-pill.pending { background: #fff6e6; color: #8a4b00; border: 1px solid #ffd699; }
 
         /* Modern Unit Selector */
-        .unit-selector-wrapper { margin: 15px 0 10px; }
-        .unit-selector-label { display: block; font-weight: 600; color: #293E4C; margin-bottom: 10px; font-size: 0.95em; }
+        .unit-selector-wrapper { 
+            margin: 0 0 16px 0; 
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .unit-selector-label { 
+            font-weight: 600; 
+            color: #293E4C; 
+            margin: 0; 
+            font-size: 0.95em; 
+        }
         .unit-selector {
             display: inline-flex;
             background: #f3f4f6;
@@ -309,10 +349,10 @@ function format_estimate_rate(?array $data): array {
         }
         .unit-selector input[type="radio"] { display: none; }
         .unit-selector .unit-option {
-            padding: 10px 20px;
+            padding: 8px 16px;
             border-radius: 10px;
             font-weight: 600;
-            font-size: 0.9em;
+            font-size: 0.85em;
             cursor: pointer;
             transition: all 0.3s ease;
             color: #6b7280;
@@ -334,12 +374,13 @@ function format_estimate_rate(?array $data): array {
             border: 2px solid #b8dde4;
             border-radius: 16px;
             padding: 20px;
-            margin: 25px 0;
+            margin: 8px 0;
             display: flex;
             align-items: center;
             gap: 16px;
             box-shadow: 0 8px 20px rgba(72, 140, 154, 0.15);
             transition: all 0.3s ease;
+            grid-column: 1 / -1;
         }
         .calculated-square-feet-card:hover { box-shadow: 0 12px 28px rgba(72, 140, 154, 0.25); transform: translateY(-2px); }
         .calc-icon { font-size: 2.5em; line-height: 1; }
@@ -448,54 +489,66 @@ if (!empty($error_message)) {
 
 <div class="container">
     <div class="left-side card-box">
-        <p><span class="required">*</span> indicates a required field.</p>
         <form id="warehouse-form" method="POST" action="" enctype="multipart/form-data">
-            <label for="estimate_name">Quote Name:<span class="required">*</span></label>
-            <input type="text" id="estimate_name" name="estimate_name" required value="<?php echo htmlspecialchars($estimate_name); ?>">
+            <p><span class="required">*</span> indicates a required field.</p>
+            
+            <div class="form-field">
+                <label for="estimate_name">Quote Name:<span class="required">*</span></label>
+                <input type="text" id="estimate_name" name="estimate_name" required value="<?php echo htmlspecialchars($estimate_name); ?>">
+            </div>
 
-            <label for="project_location">Project Location (City or ZIP Code):<span class="required">*</span></label>
-            <input type="text" id="autocomplete" name="project_location" required value="<?php echo htmlspecialchars($project_location); ?>">
+            <div class="form-field">
+                <label for="project_location">Project Location (City or ZIP Code):<span class="required">*</span></label>
+                <input type="text" id="autocomplete" name="project_location" required value="<?php echo htmlspecialchars($project_location); ?>">
+            </div>
 
-            <label for="estimated_storage_start">Estimated Storage Start:</label>
-            <input type="date" id="estimated_storage_start" name="estimated_storage_start" value="<?php echo htmlspecialchars($estimated_storage_start); ?>">
+            <div class="form-field">
+                <label for="estimated_storage_start">Estimated Storage Start:</label>
+                <input type="date" id="estimated_storage_start" name="estimated_storage_start" value="<?php echo htmlspecialchars($estimated_storage_start); ?>">
+            </div>
 
-            <label for="estimated_number_of_pallets">Estimated Number of Pallets:<span class="required">*</span>
-                <span class="info-tooltip">?
-                    <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet.</span>
-                </span>
-            </label>
-            <input type="number" id="estimated_number_of_pallets" name="estimated_number_of_pallets" required value="<?php echo htmlspecialchars($estimated_number_of_pallets); ?>">
+            <div class="form-field">
+                <label for="estimated_number_of_pallets">Estimated Number of Pallets:<span class="required">*</span>
+                    <span class="info-tooltip">?
+                        <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet.</span>
+                    </span>
+                </label>
+                <input type="number" id="estimated_number_of_pallets" name="estimated_number_of_pallets" required value="<?php echo htmlspecialchars($estimated_number_of_pallets); ?>">
+            </div>
 
-            <label>Estimated Pallet Dimensions:<span class="required">*</span>
-                <span class="info-tooltip">?
-                    <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet.</span>
-                </span>
-            </label>
-            <div class="unit-selector-wrapper">
-                <label class="unit-selector-label">Unit of Measurement:</label>
-                <div class="unit-selector">
-                    <input type="radio" name="pallet_unit" value="in" id="unit_in" <?php echo ($pallet_unit ?? 'in')==='in' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
-                    <label for="unit_in" class="unit-option">Inches</label>
-                    
-                    <input type="radio" name="pallet_unit" value="cm" id="unit_cm" <?php echo ($pallet_unit ?? 'in')==='cm' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
-                    <label for="unit_cm" class="unit-option">Centimeters</label>
-                    
-                    <input type="radio" name="pallet_unit" value="mm" id="unit_mm" <?php echo ($pallet_unit ?? 'in')==='mm' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
-                    <label for="unit_mm" class="unit-option">Millimeters</label>
+            <div class="form-field-full">
+                <label>Estimated Pallet Dimensions:<span class="required">*</span>
+                    <span class="info-tooltip">?
+                        <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet.</span>
+                    </span>
+                </label>
+                <div class="unit-selector-wrapper">
+                    <label class="unit-selector-label">Unit of Measurement:</label>
+                    <div class="unit-selector">
+                        <input type="radio" name="pallet_unit" value="in" id="unit_in" <?php echo ($pallet_unit ?? 'in')==='in' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
+                        <label for="unit_in" class="unit-option">Inches</label>
+                        
+                        <input type="radio" name="pallet_unit" value="cm" id="unit_cm" <?php echo ($pallet_unit ?? 'in')==='cm' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
+                        <label for="unit_cm" class="unit-option">Centimeters</label>
+                        
+                        <input type="radio" name="pallet_unit" value="mm" id="unit_mm" <?php echo ($pallet_unit ?? 'in')==='mm' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
+                        <label for="unit_mm" class="unit-option">Millimeters</label>
+                    </div>
+                </div>
+                <div class="dimensions-row">
+                    <input type="number" step="0.01" id="pallet_length" name="pallet_length" placeholder="Length" required value="<?php echo htmlspecialchars($pallet_length); ?>">
+                    <input type="number" step="0.01" id="pallet_width" name="pallet_width" placeholder="Width" required value="<?php echo htmlspecialchars($pallet_width); ?>">
+                </div>
+                <div class="checkbox-row">
+                    <input type="checkbox" id="stackable" name="stackable" <?php echo $stackable ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
+                    <label for="stackable">Stackable?</label>
                 </div>
             </div>
-            <div class="dimensions-row">
-                <input type="number" step="0.01" id="pallet_length" name="pallet_length" placeholder="Length" required value="<?php echo htmlspecialchars($pallet_length); ?>">
-                <input type="number" step="0.01" id="pallet_width" name="pallet_width" placeholder="Width" required value="<?php echo htmlspecialchars($pallet_width); ?>">
-            </div>
 
-            <div class="checkbox-row" style="justify-content:flex-start;">
-                <input type="checkbox" id="stackable" name="stackable" <?php echo $stackable ? 'checked' : ''; ?>>
-                <label for="stackable">Stackable?</label>
+            <div class="form-field-full">
+                <label for="additional_documentation">Additional Documentation:</label>
+                <input type="file" id="additional_documentation" name="additional_documentation" accept=".pdf,.doc,.docx,.jpg,.png">
             </div>
-
-            <label for="additional_documentation">Additional Documentation:</label>
-            <input type="file" id="additional_documentation" name="additional_documentation" accept=".pdf,.doc,.docx,.jpg,.png">
 
             <div class="calculated-square-feet-card">
                 <div class="calc-icon">📐</div>
