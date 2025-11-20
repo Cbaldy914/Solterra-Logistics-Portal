@@ -21,6 +21,11 @@ if ($estimate_id <= 0) {
 
 require_once '../config.php';
 require_once 'notification_helpers.php';
+
+// Notification toggles
+$notify_user_on_rate_update = true;
+$notify_account_admins_on_rate_update = false;
+$notify_global_admins_on_rate_update = false;
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -79,7 +84,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_estimate'])) {
     $total_accessorial_cost = floatval($_POST['total_accessorial_cost'] ?? 0);
 
     // Safely retrieve numeric fields, default to 0 if missing
-    $number_of_trucks = floatval($estimate_data['estimated_number_of_trucks'] ?? 0);
+    $number_of_trucks_raw = $estimate_data['estimated_number_of_trucks'] ?? 0;
+    $number_of_trucks = max(1, floatval($number_of_trucks_raw));
 
     // Perform calculations
     $total_freight_cost = $cost_per_truck * $number_of_trucks;
@@ -104,8 +110,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_estimate'])) {
         $message = "Rates were added by " . ($_SESSION['username'] ?? 'an admin') . " for " . ($estimate_data['origin'] ?? 'origin') . " to " . ($estimate_data['destination'] ?? 'destination') . ".";
         $link = 'view_freight_estimate?id=' . $estimate_id;
 
-        notify_user((int)$estimateRow['user_id'], 'freight_estimate_rated', $title, $message, $link);
-        notify_account_admins($ownerAccounts, 'freight_estimate_rated', $title, $message, $link);
+        if ($notify_user_on_rate_update) {
+            notify_user((int)$estimateRow['user_id'], 'freight_estimate_rated', $title, $message, $link);
+        }
+        if ($notify_account_admins_on_rate_update) {
+            notify_account_admins($ownerAccounts, 'freight_estimate_rated', $title, $message, $link);
+        }
+        if ($notify_global_admins_on_rate_update) {
+            notify_global_admins('freight_estimate_rated', $title, $message, $link);
+        }
     } else {
         $error_message = "Error updating estimate: " . $stmt->error;
     }
@@ -172,12 +185,33 @@ $conn->close();
         h1, h2 {
             margin-top: 20px;
         }
+        .admin-hero {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 24px;
+            margin-bottom: 18px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .admin-hero::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
+        .admin-hero__content { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+        .hero-sub { color: #556; margin: 4px 0 0; }
     </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <h1>Freight Estimate: <?php echo htmlspecialchars($estimateRow['name'] ?? ''); ?></h1>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Freight Estimate']); ?>
+    <section class="admin-hero">
+        <div class="admin-hero__content">
+            <div>
+                <h1>Freight Estimate</h1>
+                <p class="hero-sub"><?php echo htmlspecialchars($estimateRow['name'] ?? ''); ?></p>
+            </div>
+        </div>
+    </section>
 
     <?php
     // Display success or error messages
