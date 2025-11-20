@@ -65,7 +65,7 @@ $document_types = [
         'name' => 'Warehousing',
         'icon' => 'fas fa-warehouse',
         'color' => '#06b6d4',
-        'sub_filters' => ['Warehouse POD', 'Inventory Report', 'Photos']
+        'sub_filters' => ['Warehouse POD', 'Inventory Report', 'Photos', 'Quote']
     ],
     'modules' => [
         'name' => 'Modules',
@@ -1616,6 +1616,14 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
             </div>
 
             <div class="filter-group">
+                <label class="filter-label" for="warehouseFilter">Warehouse</label>
+                <select id="warehouseFilter" class="filter-select">
+                    <option value="">All Warehouses</option>
+                    <!-- Will be populated dynamically -->
+                </select>
+            </div>
+
+            <div class="filter-group">
                 <label class="filter-label" for="searchFilter">Search Documents</label>
                 <input type="text" id="searchFilter" class="filter-input" placeholder="Search by filename, description...">
             </div>
@@ -1900,9 +1908,9 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
                             <h3 class="step-title">Select Project</h3>
                         </div>
                         <div class="form-group">
-                            <label class="form-label" for="uploadProjectSelect">Project *</label>
-                            <select id="uploadProjectSelect" name="project_id" class="form-select" required>
-                                <option value="">Choose a project...</option>
+                            <label class="form-label" for="uploadProjectSelect">Project (Optional)</label>
+                            <select id="uploadProjectSelect" name="project_id" class="form-select">
+                                <option value="">No project association</option>
                                 <?php foreach ($accessible_projects as $project): ?>
                                     <option value="<?php echo $project['id']; ?>"><?php echo htmlspecialchars($project['project_name']); ?></option>
                                 <?php endforeach; ?>
@@ -2013,8 +2021,30 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
      'other': []
  };
 
+// Load warehouses for filter
+async function loadWarehouseFilter() {
+    try {
+        const response = await fetch('get_warehouses.php');
+        const data = await response.json();
+        if (data.success) {
+            const select = document.getElementById('warehouseFilter');
+            data.data.forEach(warehouse => {
+                const option = document.createElement('option');
+                option.value = warehouse.id;
+                option.textContent = warehouse.name || warehouse.location_name;
+                select.appendChild(option);
+            });
+        }
+    } catch (e) {
+        console.warn('Failed to load warehouses', e);
+    }
+}
+
 // Initialize page
 document.addEventListener('DOMContentLoaded', function() {
+    // Load warehouses
+    loadWarehouseFilter();
+    
     // Preselect filters from query params (project, folder, subfolder)
     <?php if ($pre_selected_project > 0): ?>
       // Verify the project is in the accessible projects list
@@ -2748,6 +2778,7 @@ async function loadDocuments() {
         const filters = {
             project_id: document.getElementById('projectFilter').value,
             document_type: document.getElementById('documentTypeFilter').value,
+            warehouse_id: document.getElementById('warehouseFilter').value,
             start_date: document.getElementById('startDate').value,
             end_date: document.getElementById('endDate').value,
             search: document.getElementById('searchFilter').value,
@@ -3533,7 +3564,7 @@ const documentConfig = {
         }
     },
     'warehousing': {
-        'sub_types': ['Warehouse POD', 'Inventory Report', 'Photos'],
+        'sub_types': ['Warehouse POD', 'Inventory Report', 'Photos', 'Quote'],
         'fields': {
             'Warehouse POD': [
                 {type: 'bol_autocomplete', name: 'delivery_id', label: 'BOL/Delivery', required: true},
@@ -3544,6 +3575,9 @@ const documentConfig = {
             ],
             'Photos': [
                 {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: true, data_source: 'warehouses'}
+            ],
+            'Quote': [
+                {type: 'select', name: 'warehouse_id', label: 'Warehouse', required: false, data_source: 'warehouses'}
             ]
         }
     },
@@ -3773,9 +3807,16 @@ function validateForm() {
     
     // Check required dynamic fields
     let requiredFieldsValid = true;
+    let hasWarehouseId = false;
     if (documentType && subType && documentConfig[documentType]?.fields?.[subType]) {
         const fields = documentConfig[documentType].fields[subType];
         fields.forEach(field => {
+            if (field.name === 'warehouse_id') {
+                const warehouseEl = document.getElementById(field.name);
+                if (warehouseEl && warehouseEl.value) {
+                    hasWarehouseId = true;
+                }
+            }
             if (field.required) {
                 let element;
                 if (field.type === 'bol_autocomplete') {
@@ -3793,7 +3834,9 @@ function validateForm() {
         });
     }
     
-    const isValid = projectId && documentType && subType && hasFiles && requiredFieldsValid;
+    // Allow upload if either project_id OR warehouse_id is provided
+    const hasValidContext = projectId || hasWarehouseId;
+    const isValid = hasValidContext && documentType && subType && hasFiles && requiredFieldsValid;
     document.getElementById('uploadBtn').disabled = !isValid;
 }
 

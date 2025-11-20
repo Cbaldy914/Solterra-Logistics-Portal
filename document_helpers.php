@@ -168,11 +168,17 @@ function createDocumentPath($project_id, $document_type) {
  */
 function saveDocumentToProjectDocuments($conn, $document_data) {
     // Validate required fields - file_path OR tmp_name should be provided
-    $required_fields = ['project_id', 'document_type', 'original_name', 'file_size', 'mime_type', 'uploaded_by'];
+    // Note: project_id is now optional (can be NULL for warehouse-level documents)
+    $required_fields = ['document_type', 'original_name', 'file_size', 'mime_type', 'uploaded_by'];
     foreach ($required_fields as $field) {
         if (!isset($document_data[$field])) {
             throw new Exception("Missing required field: $field");
         }
+    }
+    
+    // Validate that at least one context is provided
+    if (empty($document_data['project_id']) && empty($document_data['warehouse_id']) && empty($document_data['entity_context'])) {
+        throw new Exception("At least one of project_id, warehouse_id, or entity_context must be provided");
     }
     
     // Either tmp_name (for upload) or file_path (for existing file) should be provided
@@ -184,7 +190,9 @@ function saveDocumentToProjectDocuments($conn, $document_data) {
     if (isset($document_data['tmp_name'])) {
         // Generate unique server filename
         $server_filename = generateSecureFilename($document_data['original_name']);
-        $document_path = createDocumentPath($document_data['project_id'], $document_data['document_type']);
+        // Use project_id if available, otherwise use a generic path
+        $context_id = $document_data['project_id'] ?? 'warehouse_' . ($document_data['warehouse_id'] ?? 'global');
+        $document_path = createDocumentPath($context_id, $document_data['document_type']);
         $full_path = $document_path . $server_filename;
         
         // Move uploaded file
