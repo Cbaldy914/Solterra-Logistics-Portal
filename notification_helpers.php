@@ -34,6 +34,10 @@ function notification_settings_for(int $userId): array {
         'email_warranty_claim' => 0,
         'email_freight_estimate_request' => 0,
         'email_freight_estimate_rated' => 0,
+        'in_app_warehouse_estimate_request' => 0,
+        'in_app_warehouse_estimate_rated' => 0,
+        'email_warehouse_estimate_request' => 0,
+        'email_warehouse_estimate_rated' => 0,
     ];
 
     try {
