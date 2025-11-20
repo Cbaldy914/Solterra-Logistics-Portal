@@ -113,13 +113,13 @@ $conn->close();
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th, td { padding: 12px 10px; border-bottom: 1px solid #e8ecef; text-align: left; }
         th { font-weight: 700; color: #23343f; background: #f7fafb; }
-        tr:hover { background: #f5f9fb; }
+        tr:hover { background: #f5f9fb; transition: all 0.2s ease; transform: translateX(2px); }
         .success-message { color: #0f5132; background: #d1e7dd; border: 1px solid #badbcc; padding: 10px 12px; border-radius: 8px; }
         .error-message { color: #842029; background: #f8d7da; border: 1px solid #f5c2c7; padding: 10px 12px; border-radius: 8px; }
-        .rate-chip { display: inline-flex; padding: 8px 12px; border-radius: 12px; text-decoration: none; font-weight: 600; border: 1px solid transparent; transition: all .15s ease; }
-        .rate-chip.has-rate { background: #e7f6f8; color: #1c4755; border-color: #b8dde4; }
-        .rate-chip.missing-rate { background: #fff6e6; color: #8a4b00; border-color: #ffd699; }
-        .rate-chip:hover { transform: translateY(-1px); box-shadow: 0 8px 16px rgba(0,0,0,.06); }
+        .rate-chip { display: inline-flex; padding: 8px 12px; border-radius: 12px; text-decoration: none; font-weight: 600; border: 1px solid transparent; transition: all .25s ease; }
+        .rate-chip.has-rate { background: linear-gradient(135deg, #e7f6f8 0%, #d4eef3 100%); color: #1c4755; border-color: #b8dde4; }
+        .rate-chip.missing-rate { background: linear-gradient(135deg, #fff6e6 0%, #ffedd5 100%); color: #8a4b00; border-color: #ffd699; }
+        .rate-chip:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(72,140,154,.2); }
         .lane { color: #23343f; font-weight: 600; }
         .meta { color: #6c7a82; font-size: 0.95em; }
         .admin-hero { background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 24px; padding: 24px; margin-bottom: 18px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06); border: 1px solid rgba(72, 140, 154, 0.08); position: relative; overflow: hidden; }

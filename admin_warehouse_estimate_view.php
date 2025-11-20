@@ -20,6 +20,7 @@ if ($estimate_id <= 0) {
 
 require_once '../config.php';
 require_once 'notification_helpers.php';
+require_once 'document_helpers.php';
 
 // Notification toggles
 $notify_user_on_rate_update = true;
@@ -68,6 +69,16 @@ if (!$estimateRow) {
 
 $estimate_data = json_decode($estimateRow['estimate_data'], true) ?? [];
 
+// Fetch warehouses for dropdown
+$warehouses = [];
+$wh_stmt = $conn->prepare("SELECT id, name FROM warehouses ORDER BY name ASC");
+$wh_stmt->execute();
+$wh_result = $wh_stmt->get_result();
+while ($wh_row = $wh_result->fetch_assoc()) {
+    $warehouses[] = $wh_row;
+}
+$wh_stmt->close();
+
 // Admin scoping
 if ($role === 'admin') {
     $ownerAccounts = account_ids_for_user((int)$estimateRow['user_id']);
@@ -81,30 +92,65 @@ if ($role === 'admin') {
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['add_quote'])) {
         $warehouse_location = trim($_POST['warehouse_location'] ?? '');
+        $warehouse_id = intval($_POST['warehouse_id'] ?? 0);
         $in_fee = floatval($_POST['in_fee'] ?? 0);
         $out_fee = floatval($_POST['out_fee'] ?? 0);
         $monthly_storage_fee = floatval($_POST['monthly_storage_fee'] ?? 0);
 
-        // handle doc upload
-        $doc_path = '';
-        if (!empty($_FILES['quote_document']['name'])) {
-            $dir = 'uploads/warehouse_rate_docs/';
-            if (!is_dir($dir)) { mkdir($dir, 0777, true); }
-            $fname = basename($_FILES['quote_document']['name']);
-            $tmp = $_FILES['quote_document']['tmp_name'];
-            $dest = $dir . time() . '_' . preg_replace('/\s+/', '_', $fname);
-            if (move_uploaded_file($tmp, $dest)) { $doc_path = $dest; }
+        // Handle multiple document uploads
+        $uploaded_doc_ids = [];
+        if (!empty($_FILES['quote_documents']['name'][0])) {
+            $file_count = count($_FILES['quote_documents']['name']);
+            for ($i = 0; $i < $file_count; $i++) {
+                if ($_FILES['quote_documents']['error'][$i] === UPLOAD_ERR_OK) {
+                    $file_data = [
+                        'name' => $_FILES['quote_documents']['name'][$i],
+                        'type' => $_FILES['quote_documents']['type'][$i],
+                        'tmp_name' => $_FILES['quote_documents']['tmp_name'][$i],
+                        'error' => $_FILES['quote_documents']['error'][$i],
+                        'size' => $_FILES['quote_documents']['size'][$i]
+                    ];
+
+                    try {
+                        // Process the uploaded file
+                        $processed_file = processDocumentUpload($file_data, 'warehousing');
+                        
+                        // Save to project_documents table
+                        $document_data = [
+                            'project_id' => null,  // No project association
+                            'warehouse_id' => $warehouse_id > 0 ? $warehouse_id : null,
+                            'document_type' => 'warehousing',
+                            'document_sub_type' => 'Quote',
+                            'original_name' => $processed_file['original_name'],
+                            'file_size' => $processed_file['size'],
+                            'mime_type' => $processed_file['mime_type'],
+                            'uploaded_by' => $currentUserId,
+                            'tmp_name' => $processed_file['tmp_name'],
+                            'description' => "Warehouse quote for {$warehouse_location}",
+                            'entity_context' => json_encode(['warehouse_quote_id' => $estimate_id, 'warehouse_location' => $warehouse_location])
+                        ];
+
+                        $save_result = saveDocumentToProjectDocuments($conn, $document_data);
+                        if ($save_result && isset($save_result['document_id'])) {
+                            $uploaded_doc_ids[] = $save_result['document_id'];
+                        }
+                    } catch (Exception $e) {
+                        error_log("Failed to upload document: " . $e->getMessage());
+                    }
+                }
+            }
         }
 
-        if (empty($warehouse_location) || $in_fee < 0 || $out_fee < 0 || $monthly_storage_fee < 0 || empty($doc_path)) {
-            $error_message = "Please fill in all required fields with valid values and attach a document.";
+        if (empty($warehouse_location) || $warehouse_id <= 0 || $in_fee < 0 || $out_fee < 0 || $monthly_storage_fee < 0 || empty($uploaded_doc_ids)) {
+            $error_message = "Please fill in all required fields with valid values and attach at least one document.";
         } else {
             $new_quote = [
                 'warehouse_location' => $warehouse_location,
+                'warehouse_id' => $warehouse_id,
                 'in_fee_per_pallet' => $in_fee,
                 'out_fee_per_pallet' => $out_fee,
                 'monthly_storage_cost_per_pallet' => $monthly_storage_fee,
-                'document' => $doc_path
+                'document_ids' => $uploaded_doc_ids  // Store IDs instead of paths
             ];
             if (!isset($estimate_data['quotes'])) {
                 $estimate_data['quotes'] = [];
@@ -115,7 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $up = $conn->prepare("UPDATE warehouse_quotes SET estimate_data = ? WHERE id = ?");
             $up->bind_param("si", $updated_estimate_data_json, $estimate_id);
             if ($up->execute()) {
-                $success_message = "Quote added successfully!";
+                $success_message = "Quote added successfully with " . count($uploaded_doc_ids) . " document(s)!";
 
                 $ownerAccounts = account_ids_for_user((int)$estimateRow['user_id']);
                 $title = "Warehouse rate added: " . ($estimateRow['name'] ?? 'Estimate');
@@ -155,6 +201,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
+// Fetch documents for display
+$quote_documents = [];
+if (!empty($estimate_data['quotes'])) {
+    foreach ($estimate_data['quotes'] as $idx => $quote) {
+        if (!empty($quote['document_ids'])) {
+            $placeholders = implode(',', array_fill(0, count($quote['document_ids']), '?'));
+            $doc_stmt = $conn->prepare("SELECT id, original_file_name, file_size FROM project_documents WHERE id IN ($placeholders) AND is_active = 1");
+            $types = str_repeat('i', count($quote['document_ids']));
+            $doc_stmt->bind_param($types, ...$quote['document_ids']);
+            $doc_stmt->execute();
+            $doc_result = $doc_stmt->get_result();
+            $quote_documents[$idx] = [];
+            while ($doc_row = $doc_result->fetch_assoc()) {
+                $quote_documents[$idx][] = $doc_row;
+            }
+            $doc_stmt->close();
+        }
+    }
+}
+
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -166,6 +232,7 @@ $conn->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
         label { display: block; margin-top: 15px; font-weight: bold; }
         input { width: 95%; padding: 8px; margin-top: 5px; }
@@ -180,6 +247,151 @@ $conn->close();
         .admin-hero::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
         .admin-hero__content { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
         .hero-sub { color: #556; margin: 4px 0 0; }
+
+        /* File Upload Zone */
+        .file-upload-zone {
+            border: 2px dashed #d1d5db;
+            border-radius: 16px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #f9fafb;
+        }
+        .file-upload-zone:hover {
+            border-color: #488C9A;
+            background: #f0f9fb;
+        }
+        .file-upload-zone.dragover {
+            border-color: #22c55e;
+            background: #f0fdf4;
+        }
+        .selected-files-list {
+            margin-top: 16px;
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .file-icon {
+            color: #488C9A;
+            font-size: 1.2em;
+        }
+        .remove-file-btn {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s ease;
+        }
+        .remove-file-btn:hover {
+            background: #dc2626;
+        }
+
+        /* Documents Modal */
+        .modal {
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+        }
+        .modal-content {
+            background-color: #fff;
+            margin: 5% auto;
+            padding: 32px;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 700px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);
+            position: relative;
+        }
+        .close-modal {
+            position: absolute;
+            right: 20px;
+            top: 20px;
+            font-size: 28px;
+            font-weight: bold;
+            color: #9ca3af;
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+        .close-modal:hover {
+            color: #ef4444;
+        }
+        .modal-content h2 {
+            margin-top: 0;
+            color: #293E4C;
+        }
+        .modal-document-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border: 1px solid rgba(72, 140, 154, 0.15);
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }
+        .modal-doc-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .modal-doc-icon {
+            font-size: 1.5em;
+            color: #488C9A;
+        }
+        .modal-doc-name {
+            font-weight: 600;
+            color: #293E4C;
+        }
+        .modal-doc-size {
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+        .modal-doc-download {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9em;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.3s ease;
+        }
+        .modal-doc-download:hover {
+            background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
+            transform: translateY(-1px);
+        }
+        .view-documents-link {
+            color: #488C9A;
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.2s ease;
+        }
+        .view-documents-link:hover {
+            color: #293E4C;
+        }
     </style>
 </head>
 <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars(getGoogleMapsApiKey()); ?>&libraries=places"></script>
@@ -221,23 +433,37 @@ $conn->close();
     </ul>
 
     <h2>Add Warehouse Rate</h2>
-    <form method="POST" action="" enctype="multipart/form-data">
+    <form method="POST" action="" enctype="multipart/form-data" id="addQuoteForm">
         <input type="hidden" name="add_quote" value="1">
 
-        <label for="warehouse_location">Warehouse Location</label>
-        <input type="text" id="warehouse_location" name="warehouse_location" required>
+        <label for="warehouse_id">Warehouse <span style="color: red;">*</span></label>
+        <select id="warehouse_id" name="warehouse_id" required>
+            <option value="">Select warehouse...</option>
+            <?php foreach ($warehouses as $wh): ?>
+                <option value="<?php echo $wh['id']; ?>"><?php echo htmlspecialchars($wh['name']); ?></option>
+            <?php endforeach; ?>
+        </select>
 
-        <label for="in_fee">In Fee (per pallet)</label>
-        <input type="number" step="0.01" name="in_fee" required>
+        <label for="warehouse_location">Warehouse Location (City, State) <span style="color: red;">*</span></label>
+        <input type="text" id="warehouse_location" name="warehouse_location" required placeholder="e.g., Phoenix, AZ">
 
-        <label for="out_fee">Out Fee (per pallet)</label>
-        <input type="number" step="0.01" name="out_fee" required>
+        <label for="in_fee">In Fee (per pallet) <span style="color: red;">*</span></label>
+        <input type="number" step="0.01" name="in_fee" required placeholder="0.00">
 
-        <label for="monthly_storage_fee">Monthly Storage Fee (per pallet)</label>
-        <input type="number" step="0.01" name="monthly_storage_fee" required>
+        <label for="out_fee">Out Fee (per pallet) <span style="color: red;">*</span></label>
+        <input type="number" step="0.01" name="out_fee" required placeholder="0.00">
 
-        <label for="quote_document">Quote Document (PDF/Image/DOC)</label>
-        <input type="file" id="quote_document" name="quote_document" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" required>
+        <label for="monthly_storage_fee">Monthly Storage Fee (per pallet) <span style="color: red;">*</span></label>
+        <input type="number" step="0.01" name="monthly_storage_fee" required placeholder="0.00">
+
+        <label for="quote_documents">Quote Documents (PDF/Image/DOC) <span style="color: red;">*</span></label>
+        <div class="file-upload-zone" id="fileUploadZone">
+            <i class="fas fa-cloud-upload-alt" style="font-size: 3em; color: #9ca3af; margin-bottom: 16px;"></i>
+            <p style="margin: 0 0 8px; font-weight: 600; color: #488C9A;">Drop files here or click to browse</p>
+            <p style="margin: 0; font-size: 0.85em; color: #9ca3af;">Supports: PDF, DOC, DOCX, JPG, PNG (Max: 50MB each)</p>
+        </div>
+        <input type="file" id="quote_documents" name="quote_documents[]" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" multiple required style="display: none;">
+        <div id="selectedFiles" class="selected-files-list"></div>
 
         <button type="submit">Add Rate</button>
     </form>
@@ -250,18 +476,28 @@ $conn->close();
                 <th>In Fee (per pallet)</th>
                 <th>Out Fee (per pallet)</th>
                 <th>Monthly Storage Fee (per pallet)</th>
-                <th>Document</th>
+                <th>Documents</th>
                 <th>Actions</th>
             </tr>
-            <?php foreach ($estimate_data['quotes'] as $index => $quote): ?>
+            <?php foreach ($estimate_data['quotes'] as $index => $quote): 
+                $doc_count = !empty($quote['document_ids']) ? count($quote['document_ids']) : (!empty($quote['document']) ? 1 : 0);
+            ?>
                 <tr>
                     <td><?php echo htmlspecialchars($quote['warehouse_location']); ?></td>
                     <td>$<?php echo number_format($quote['in_fee_per_pallet'], 2); ?></td>
                     <td>$<?php echo number_format($quote['out_fee_per_pallet'], 2); ?></td>
                     <td>$<?php echo number_format($quote['monthly_storage_cost_per_pallet'], 2); ?></td>
-                    <td><?php if (!empty($quote['document'])): ?><a href="<?php echo htmlspecialchars($quote['document']); ?>" target="_blank">View</a><?php else: ?>N/A<?php endif; ?></td>
                     <td>
-                        <form method="POST" action="" class="delete-form">
+                        <?php if ($doc_count > 0): ?>
+                            <a href="#" class="view-documents-link" data-quote-index="<?php echo $index; ?>">
+                                <i class="fas fa-file-alt"></i> <?php echo $doc_count; ?> Document<?php echo $doc_count > 1 ? 's' : ''; ?>
+                            </a>
+                        <?php else: ?>
+                            <span style="color: #9ca3af;">No documents</span>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <form method="POST" action="" class="delete-form" onsubmit="return confirm('Are you sure you want to delete this quote?');">
                             <input type="hidden" name="delete_quote" value="1">
                             <input type="hidden" name="quote_index" value="<?php echo $index; ?>">
                             <button type="submit">Delete</button>
@@ -273,12 +509,153 @@ $conn->close();
     <?php else: ?>
         <p>No rates added yet.</p>
     <?php endif; ?>
+    
+    <!-- Documents Modal -->
+    <div id="documentsModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeDocumentsModal()">&times;</span>
+            <h2>Quote Documents</h2>
+            <div id="modalDocumentsList"></div>
+        </div>
+    </div>
     <script>
         document.addEventListener("DOMContentLoaded", function() {
             const input = document.getElementById("warehouse_location");
             if (input && window.google && google.maps && google.maps.places) {
                 new google.maps.places.Autocomplete(input, { types: ["geocode"], componentRestrictions: { country: "us" } });
             }
+
+            // File upload functionality
+            const fileUploadZone = document.getElementById('fileUploadZone');
+            const fileInput = document.getElementById('quote_documents');
+            const selectedFilesList = document.getElementById('selectedFiles');
+            let selectedFiles = [];
+
+            fileUploadZone.addEventListener('click', () => fileInput.click());
+
+            fileUploadZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                fileUploadZone.classList.add('dragover');
+            });
+
+            fileUploadZone.addEventListener('dragleave', () => {
+                fileUploadZone.classList.remove('dragover');
+            });
+
+            fileUploadZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                fileUploadZone.classList.remove('dragover');
+                const files = Array.from(e.dataTransfer.files);
+                handleFiles(files);
+            });
+
+            fileInput.addEventListener('change', (e) => {
+                const files = Array.from(e.target.files);
+                handleFiles(files);
+            });
+
+            function handleFiles(files) {
+                selectedFiles = [...selectedFiles, ...files];
+                updateFilesList();
+            }
+
+            function removeFile(index) {
+                selectedFiles.splice(index, 1);
+                updateFilesList();
+            }
+
+            function updateFilesList() {
+                if (selectedFiles.length === 0) {
+                    selectedFilesList.innerHTML = '';
+                    fileInput.required = true;
+                    return;
+                }
+
+                fileInput.required = false;
+
+                let html = '';
+                selectedFiles.forEach((file, index) => {
+                    const sizeKB = (file.size / 1024).toFixed(1);
+                    html += `
+                        <div class="file-item">
+                            <div class="file-info">
+                                <i class="fas fa-file file-icon"></i>
+                                <div>
+                                    <div style="font-weight: 600;">${file.name}</div>
+                                    <div style="font-size: 0.85em; color: #6c757d;">${sizeKB} KB</div>
+                                </div>
+                            </div>
+                            <button type="button" class="remove-file-btn" onclick="removeFileAt(${index})">Remove</button>
+                        </div>
+                    `;
+                });
+                selectedFilesList.innerHTML = html;
+
+                // Update the file input with selected files
+                const dataTransfer = new DataTransfer();
+                selectedFiles.forEach(file => dataTransfer.items.add(file));
+                fileInput.files = dataTransfer.files;
+            }
+
+            window.removeFileAt = function(index) {
+                removeFile(index);
+            };
+
+            // Documents modal functionality
+            const quoteDocuments = <?php echo json_encode($quote_documents); ?>;
+
+            window.showDocumentsModal = function(quoteIndex) {
+                const docs = quoteDocuments[quoteIndex] || [];
+                const modal = document.getElementById('documentsModal');
+                const docsList = document.getElementById('modalDocumentsList');
+
+                if (docs.length === 0) {
+                    docsList.innerHTML = '<p>No documents found.</p>';
+                } else {
+                    let html = '';
+                    docs.forEach(doc => {
+                        const sizeKB = (doc.file_size / 1024).toFixed(1);
+                        html += `
+                            <div class="modal-document-item">
+                                <div class="modal-doc-info">
+                                    <i class="fas fa-file-alt modal-doc-icon"></i>
+                                    <div>
+                                        <div class="modal-doc-name">${doc.original_file_name}</div>
+                                        <div class="modal-doc-size">${sizeKB} KB</div>
+                                    </div>
+                                </div>
+                                <a href="download_document.php?id=${doc.id}" class="modal-doc-download" target="_blank">
+                                    <i class="fas fa-download"></i> Download
+                                </a>
+                            </div>
+                        `;
+                    });
+                    docsList.innerHTML = html;
+                }
+
+                modal.style.display = 'block';
+            };
+
+            window.closeDocumentsModal = function() {
+                document.getElementById('documentsModal').style.display = 'none';
+            };
+
+            // Attach click handlers to view document links
+            document.querySelectorAll('.view-documents-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const quoteIndex = this.getAttribute('data-quote-index');
+                    showDocumentsModal(quoteIndex);
+                });
+            });
+
+            // Close modal when clicking outside
+            window.onclick = function(event) {
+                const modal = document.getElementById('documentsModal');
+                if (event.target === modal) {
+                    closeDocumentsModal();
+                }
+            };
         });
     </script>
 </main>

@@ -33,6 +33,7 @@ $user_role = $_SESSION['role'];
 
 // Get filter parameters
 $project_id = intval($_GET['project_id'] ?? 0);
+$warehouse_id = intval($_GET['warehouse_id'] ?? 0);
 $document_type = trim($_GET['document_type'] ?? '');
 $start_date = trim($_GET['start_date'] ?? '');
 $end_date = trim($_GET['end_date'] ?? '');
@@ -130,7 +131,7 @@ $base_sql = "
     LEFT JOIN project_invoices pi ON pd.project_invoice_id = pi.id
     LEFT JOIN manufacturers m ON pd.manufacturer_id = m.id
     LEFT JOIN modules um ON pd.module_id = um.id
-    JOIN projects p ON pd.project_id = p.id
+    LEFT JOIN projects p ON pd.project_id = p.id
 ";
 
 // Add permission-based WHERE clause
@@ -139,22 +140,35 @@ $params = [];
 $param_types = "";
 
 if ($user_role === 'global_admin') {
-    // Global admin can access all projects - no additional WHERE needed
+    // Global admin can access all documents - no additional WHERE needed
 } else {
-    // Admin and regular users can only access their account's projects
-    $where_conditions[] = "p.account_id IN (
-        SELECT account_id 
-        FROM customer_account_users 
-        WHERE user_id = ?
+    // Admin and regular users can only access:
+    // 1. Documents with project_id in their accounts
+    // 2. Documents with warehouse_id but no project (warehouse-level docs)
+    // 3. Documents they uploaded (no project/warehouse)
+    $where_conditions[] = "(
+        (pd.project_id IS NOT NULL AND p.account_id IN (
+            SELECT account_id 
+            FROM customer_account_users 
+            WHERE user_id = ?
+        ))
+        OR (pd.project_id IS NULL AND (pd.warehouse_id IS NOT NULL OR pd.uploaded_by = ?))
     )";
     $params[] = $user_id;
-    $param_types .= "i";
+    $params[] = $user_id;
+    $param_types .= "ii";
 }
 
 // Add filter conditions
 if ($project_id > 0) {
     $where_conditions[] = "pd.project_id = ?";
     $params[] = $project_id;
+    $param_types .= "i";
+}
+
+if ($warehouse_id > 0) {
+    $where_conditions[] = "pd.warehouse_id = ?";
+    $params[] = $warehouse_id;
     $param_types .= "i";
 }
 
@@ -503,7 +517,7 @@ if (!empty($invoice_due_end)) {
 $count_sql = "
     SELECT COUNT(*) as total
     FROM project_documents pd
-    JOIN projects p ON pd.project_id = p.id
+    LEFT JOIN projects p ON pd.project_id = p.id
     LEFT JOIN deliveries d ON pd.delivery_id = d.id
     LEFT JOIN warehouses w ON pd.warehouse_id = w.id
     LEFT JOIN project_invoices pi ON pd.project_invoice_id = pi.id
@@ -570,7 +584,7 @@ try {
             'manufacturer_id' => $row['manufacturer_id'],
             'is_safe_harbor' => (bool)$row['is_safe_harbor'],
             'project_id' => $row['project_id'],
-            'project_name' => $row['project_name'],
+            'project_name' => $row['project_name'] ?: ($row['warehouse_name'] ? 'Warehouse: ' . $row['warehouse_name'] : 'No Project'),
             'bol_number' => $row['bol_number'],
             'actual_delivery_date' => $row['actual_delivery_date'],
             'delivery_wattage' => $row['delivery_wattage'],

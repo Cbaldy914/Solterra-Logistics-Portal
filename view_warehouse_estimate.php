@@ -34,6 +34,24 @@ if ($stmt->fetch()) {
 }
 $stmt->close();
 
+// Fetch documents for this warehouse quote
+$documents = [];
+$doc_stmt = $conn->prepare("
+    SELECT pd.*, u.username as uploaded_by_name
+    FROM project_documents pd
+    LEFT JOIN users u ON pd.uploaded_by = u.id
+    WHERE pd.entity_context LIKE ? AND pd.is_active = 1
+    ORDER BY pd.uploaded_at DESC
+");
+$search_pattern = '%warehouse_quote_id:' . $estimate_id . '%';
+$doc_stmt->bind_param("s", $search_pattern);
+$doc_stmt->execute();
+$doc_result = $doc_stmt->get_result();
+while ($doc_row = $doc_result->fetch_assoc()) {
+    $documents[] = $doc_row;
+}
+$doc_stmt->close();
+
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -47,8 +65,11 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
         /* Add any custom styles here */
+        body { background: #f7f9fb; }
+        main { padding: 20px; }
         .container {
             display: flex;
             flex-wrap: wrap;
@@ -116,6 +137,191 @@ $conn->close();
                 flex: 1 1 100%;
             }
         }
+
+        /* Modern Header */
+        .warehouse-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .warehouse-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+        .header-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 36px;
+            box-shadow: 0 12px 24px rgba(72, 140, 154, 0.3);
+        }
+        .header-info h1 {
+            font-size: 2.2em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1em;
+            margin: 0;
+        }
+        .header-badges {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+        .badge-quotes {
+            background: #e7f6f8;
+            color: #1c4755;
+            border: 1px solid #b8dde4;
+        }
+
+        /* Documents Section */
+        .documents-section {
+            background: #fff;
+            border-radius: 20px;
+            padding: 28px;
+            margin: 24px 0;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+        .documents-section h2 {
+            font-size: 1.6em;
+            font-weight: 700;
+            color: #293E4C;
+            margin: 0 0 20px 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .documents-section h2 i {
+            color: #488C9A;
+        }
+        .documents-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+        }
+        .document-card {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border: 1px solid rgba(72, 140, 154, 0.15);
+            border-radius: 16px;
+            padding: 20px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .document-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 28px rgba(72, 140, 154, 0.2);
+            border-color: #488C9A;
+        }
+        .doc-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 12px;
+        }
+        .doc-icon.pdf { background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); color: white; }
+        .doc-icon.image { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; }
+        .doc-icon.document { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; }
+        .doc-icon.spreadsheet { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; }
+        .doc-icon.default { background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); color: white; }
+        .doc-name {
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 0.95em;
+            margin-bottom: 8px;
+            word-break: break-word;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .doc-meta {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin-bottom: 4px;
+        }
+        .doc-actions {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(72, 140, 154, 0.1);
+        }
+        .btn-download-doc {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.85em;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.3s ease;
+        }
+        .btn-download-doc:hover {
+            background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #9ca3af;
+        }
+        .empty-state i {
+            font-size: 4em;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+        .empty-state h3 {
+            font-size: 1.3em;
+            color: #6c757d;
+            margin-bottom: 8px;
+        }
     </style>
 </head>
 <body>
@@ -128,8 +334,29 @@ $conn->close();
             'extra' => [ ['label' => 'Warehouse Quote Request', 'url' => 'warehouse_estimate.php'] ]
         ]);
     ?>
-    <h1><?php echo htmlspecialchars($name); ?></h1>
-    <p><strong>Created At:</strong> <?php echo htmlspecialchars($created_at); ?></p>
+    
+    <section class="warehouse-header">
+        <div class="header-content">
+            <div class="header-left">
+                <div class="header-icon">
+                    🏢
+                </div>
+                <div class="header-info">
+                    <h1><?php echo htmlspecialchars($name); ?></h1>
+                    <p class="header-subtitle">Created <?php echo htmlspecialchars(date('F j, Y', strtotime($created_at))); ?></p>
+                </div>
+            </div>
+            <div class="header-badges">
+                <?php 
+                $quote_count = !empty($estimate_data['quotes']) ? count($estimate_data['quotes']) : 0;
+                if ($quote_count > 0): ?>
+                    <span class="badge badge-quotes">
+                        <i class="fas fa-file-invoice"></i> <?php echo $quote_count; ?> <?php echo $quote_count === 1 ? 'Quote' : 'Quotes'; ?>
+                    </span>
+                <?php endif; ?>
+            </div>
+        </div>
+    </section>
 
     <!-- Display Quotes at the Top -->
     <h2>Available Quotes</h2>
@@ -155,6 +382,70 @@ $conn->close();
     <?php endif; ?>
 
     <p class="disclaimer">This number is an estimate and is for budgeting purposes only.</p>
+
+    <!-- Documents Section -->
+    <section class="documents-section">
+        <h2><i class="fas fa-file-alt"></i> Documents</h2>
+        <?php if (!empty($documents)): ?>
+            <div class="documents-grid">
+                <?php foreach ($documents as $doc): 
+                    $mime_type = $doc['mime_type'];
+                    $icon_class = 'default';
+                    $icon = 'fa-file';
+                    if (strpos($mime_type, 'pdf') !== false) {
+                        $icon_class = 'pdf';
+                        $icon = 'fa-file-pdf';
+                    } elseif (strpos($mime_type, 'image') !== false) {
+                        $icon_class = 'image';
+                        $icon = 'fa-file-image';
+                    } elseif (strpos($mime_type, 'word') !== false || strpos($mime_type, 'document') !== false) {
+                        $icon_class = 'document';
+                        $icon = 'fa-file-word';
+                    } elseif (strpos($mime_type, 'sheet') !== false || strpos($mime_type, 'excel') !== false) {
+                        $icon_class = 'spreadsheet';
+                        $icon = 'fa-file-excel';
+                    }
+                    $size = $doc['file_size'];
+                    if ($size < 1024) {
+                        $formatted_size = $size . ' B';
+                    } elseif ($size < 1024 * 1024) {
+                        $formatted_size = round($size / 1024, 1) . ' KB';
+                    } else {
+                        $formatted_size = round($size / (1024 * 1024), 1) . ' MB';
+                    }
+                ?>
+                    <div class="document-card">
+                        <div class="doc-icon <?php echo $icon_class; ?>">
+                            <i class="fas <?php echo $icon; ?>"></i>
+                        </div>
+                        <div class="doc-name"><?php echo htmlspecialchars($doc['original_file_name']); ?></div>
+                        <div class="doc-meta">
+                            <i class="fas fa-hdd"></i> <?php echo $formatted_size; ?>
+                        </div>
+                        <div class="doc-meta">
+                            <i class="fas fa-calendar"></i> <?php echo date('M j, Y', strtotime($doc['uploaded_at'])); ?>
+                        </div>
+                        <?php if (!empty($doc['uploaded_by_name'])): ?>
+                            <div class="doc-meta">
+                                <i class="fas fa-user"></i> <?php echo htmlspecialchars($doc['uploaded_by_name']); ?>
+                            </div>
+                        <?php endif; ?>
+                        <div class="doc-actions">
+                            <a href="download_document.php?id=<?php echo $doc['id']; ?>" class="btn-download-doc" target="_blank">
+                                <i class="fas fa-download"></i> Download
+                            </a>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php else: ?>
+            <div class="empty-state">
+                <i class="fas fa-folder-open"></i>
+                <h3>No Documents Yet</h3>
+                <p>Documents will appear here when uploaded by administrators.</p>
+            </div>
+        <?php endif; ?>
+    </section>
 
     <div class="container">
         <div class="left-side">
