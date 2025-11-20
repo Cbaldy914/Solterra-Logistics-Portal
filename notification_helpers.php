@@ -19,6 +19,23 @@ function notification_settings_for(int $userId): array {
     require_once __DIR__ . '/../config.php';
     $conn = getDBConnection();
     
+    $defaults = [
+        'user_id' => $userId,
+        'in_app_document_upload' => 1,
+        'in_app_project_update' => 1,
+        'in_app_delivery_status' => 1,
+        'in_app_warranty_claim' => 1,
+        'in_app_freight_estimate_request' => 0,
+        'in_app_freight_estimate_rated' => 0,
+        'email_enabled' => 0,
+        'email_document_upload' => 0,
+        'email_project_update' => 0,
+        'email_delivery_status' => 0,
+        'email_warranty_claim' => 0,
+        'email_freight_estimate_request' => 0,
+        'email_freight_estimate_rated' => 0,
+    ];
+
     try {
         $stmt = $conn->prepare('SELECT * FROM notification_settings WHERE user_id = ?');
         $stmt->bind_param('i', $userId);
@@ -29,32 +46,20 @@ function notification_settings_for(int $userId): array {
         $conn->close();
         
         if ($row) {
-            return $row;
+            return array_merge($defaults, $row);
         }
     } catch (Throwable $e) {
         // Table may not exist yet during deployment
         error_log('Notification settings error: ' . $e->getMessage());
     }
     
-    // Return defaults if not found
-    return [
-        'user_id' => $userId,
-        'in_app_document_upload' => 1,
-        'in_app_project_update' => 1,
-        'in_app_delivery_status' => 1,
-        'in_app_warranty_claim' => 1,
-        'email_enabled' => 0,
-        'email_document_upload' => 0,
-        'email_project_update' => 0,
-        'email_delivery_status' => 0,
-        'email_warranty_claim' => 0,
-    ];
+    return $defaults;
 }
 
 /**
  * Helper: check a notification flag with a sensible default when the column is missing.
  */
-function notification_flag_enabled(array $settings, string $key, bool $default = true): bool {
+function notification_flag_enabled(array $settings, string $key, bool $default = false): bool {
     return array_key_exists($key, $settings) ? !empty($settings[$key]) : $default;
 }
 
