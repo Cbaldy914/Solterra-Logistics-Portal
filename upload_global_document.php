@@ -34,13 +34,19 @@ require_once 'notification_helpers.php';
 
 try {
     // Validate required fields
-    if (!isset($_POST['project_id']) || !isset($_POST['document_type']) || !isset($_POST['document_sub_type'])) {
-        throw new Exception('Missing required fields: project_id, document_type, or document_sub_type');
+    if (!isset($_POST['document_type']) || !isset($_POST['document_sub_type'])) {
+        throw new Exception('Missing required fields: document_type or document_sub_type');
     }
 
-    $project_id = (int)$_POST['project_id'];
+    $project_id = isset($_POST['project_id']) && !empty($_POST['project_id']) ? (int)$_POST['project_id'] : null;
+    $warehouse_id_param = isset($_POST['warehouse_id']) && !empty($_POST['warehouse_id']) ? (int)$_POST['warehouse_id'] : null;
     $document_type = trim($_POST['document_type']);
     $document_sub_type = trim($_POST['document_sub_type']);
+    
+    // Validate that at least one context is provided
+    if ($project_id === null && $warehouse_id_param === null) {
+        throw new Exception('Either project_id or warehouse_id must be provided');
+    }
     
     // Normalize Photos virtual sub-types to underlying storage types
     if ($document_type === 'pictures') {
@@ -56,29 +62,32 @@ try {
     }
     $is_safe_harbor = isset($_POST['is_safe_harbor']) && $_POST['is_safe_harbor'] === '1';
 
-    // Verify user has access to this project
-    if ($user_role === 'global_admin') {
-        // Global admin can access any project
-        $stmt = $conn->prepare("SELECT id, project_name FROM projects WHERE id = ?");
-        $stmt->bind_param("i", $project_id);
-    } else {
-        // Admin can only access projects in their account
-        $stmt = $conn->prepare("
-            SELECT p.id, p.project_name 
-            FROM projects p 
-            JOIN customer_account_users cau ON p.account_id = cau.account_id 
-            WHERE p.id = ? AND cau.user_id = ? AND cau.role = 'admin'
-        ");
-        $stmt->bind_param("ii", $project_id, $user_id);
+    // Verify user has access to this project (if project_id is provided)
+    $project = null;
+    if ($project_id !== null) {
+        if ($user_role === 'global_admin') {
+            // Global admin can access any project
+            $stmt = $conn->prepare("SELECT id, project_name FROM projects WHERE id = ?");
+            $stmt->bind_param("i", $project_id);
+        } else {
+            // Admin can only access projects in their account
+            $stmt = $conn->prepare("
+                SELECT p.id, p.project_name 
+                FROM projects p 
+                JOIN customer_account_users cau ON p.account_id = cau.account_id 
+                WHERE p.id = ? AND cau.user_id = ? AND cau.role = 'admin'
+            ");
+            $stmt->bind_param("ii", $project_id, $user_id);
+        }
+        
+        $stmt->execute();
+        $result = $stmt->get_result();
+        if ($result->num_rows === 0) {
+            throw new Exception('Project not found or access denied');
+        }
+        $project = $result->fetch_assoc();
+        $stmt->close();
     }
-    
-    $stmt->execute();
-    $result = $stmt->get_result();
-    if ($result->num_rows === 0) {
-        throw new Exception('Project not found or access denied');
-    }
-    $project = $result->fetch_assoc();
-    $stmt->close();
 
     // Validate files
     if (!isset($_FILES['files']) || empty($_FILES['files']['name'][0])) {
@@ -112,9 +121,19 @@ try {
             $description = "Global upload: {$document_sub_type}";
         }
 
+        // Build entity context
+        $entity_context = "Global document upload";
+        if ($project !== null) {
+            $entity_context .= " for project: {$project['project_name']}";
+        }
+        if ($warehouse_id_param !== null) {
+            $entity_context .= " for warehouse_id: {$warehouse_id_param}";
+        }
+
         // Prepare document data
         $document_data = [
             'project_id' => $project_id,
+            'warehouse_id' => $warehouse_id_param,
             'document_type' => $document_type,
             'document_sub_type' => $document_sub_type,
             'original_name' => $processed_file['original_name'],
@@ -123,7 +142,7 @@ try {
             'uploaded_by' => $user_id,
             'tmp_name' => $processed_file['tmp_name'],
             'description' => $description,
-            'entity_context' => "Global document upload for project: {$project['project_name']}"
+            'entity_context' => $entity_context
         ];
 
         // Add optional/derived foreign key references based on form data
@@ -131,7 +150,7 @@ try {
             $document_data['delivery_id'] = (int)$_POST['delivery_id'];
         }
 
-        // For shipments, support POD uploads (no container required), else require container number
+        // For shipments, support POD uploads (no container required), else require container number (requires project_id)
         if ($document_type === 'shipments') {
             if (in_array($document_sub_type, ['Project POD','Warehouse POD'], true)) {
                 // Require a delivery_id (set via BOL autocomplete) for PODs
@@ -139,7 +158,7 @@ try {
                     throw new Exception('BOL/Delivery is required for POD uploads.');
                 }
                 $document_data['delivery_id'] = (int)$_POST['delivery_id'];
-            } else {
+            } else if ($project_id !== null) {
                 $container_number = isset($_POST['container_number']) ? trim($_POST['container_number']) : '';
                 if ($container_number === '') {
                     throw new Exception('Container number is required for shipments.');
@@ -160,8 +179,11 @@ try {
             }
         }
         
-        if (isset($_POST['warehouse_id']) && !empty($_POST['warehouse_id'])) {
-            $document_data['warehouse_id'] = (int)$_POST['warehouse_id'];
+        // Update warehouse_id if provided in specific field contexts (don't overwrite if already set from param)
+        if (!isset($document_data['warehouse_id']) || $document_data['warehouse_id'] === null) {
+            if (isset($_POST['warehouse_id']) && !empty($_POST['warehouse_id'])) {
+                $document_data['warehouse_id'] = (int)$_POST['warehouse_id'];
+            }
         }
         
         if (isset($_POST['manufacturer_id']) && !empty($_POST['manufacturer_id'])) {
@@ -180,8 +202,8 @@ try {
             }
         }
 
-        // Exception Reports: require valid ticket_id (warranty_claims.id) and persist in entity_context
-        if ($document_type === 'exception_reports') {
+        // Exception Reports: require valid ticket_id (warranty_claims.id) and persist in entity_context (requires project_id)
+        if ($document_type === 'exception_reports' && $project_id !== null) {
             $ticket_id = isset($_POST['ticket_id']) ? trim($_POST['ticket_id']) : '';
             if ($ticket_id === '' || !ctype_digit($ticket_id)) {
                 throw new Exception('Valid Ticket Number is required for exception reports.');
@@ -201,8 +223,8 @@ try {
             $document_data['entity_context'] = trim(($document_data['entity_context'] ?? '') . " | incident_ticket_id:" . $tid);
         }
 
-        // Handle invoice documents - save to project_invoices if it's an invoice
-        if ($document_type === 'invoices' && in_array($document_sub_type, ['Solterra Invoice', 'Module Invoice', 'Freight Invoice'])) {
+        // Handle invoice documents - save to project_invoices if it's an invoice (requires project_id)
+        if ($project_id !== null && $document_type === 'invoices' && in_array($document_sub_type, ['Solterra Invoice', 'Module Invoice', 'Freight Invoice'])) {
             // Validate required invoice fields for Solterra/Module
             if (in_array($document_sub_type, ['Solterra Invoice', 'Module Invoice'])) {
                 if (empty($_POST['invoice_total']) || empty($_POST['invoice_date']) || empty($_POST['invoice_due_date'])) {
@@ -230,13 +252,15 @@ try {
             $stmt->execute();
             $stmt->close();
             
-            // Copy to Safe Harbor folder
-            $safe_harbor_path = copySafeHarborDocument($processed_file, $project_id, $document_type);
-            if ($safe_harbor_path) {
-                $safe_harbor_documents[] = [
-                    'original_name' => $processed_file['original_name'],
-                    'safe_harbor_path' => $safe_harbor_path
-                ];
+            // Copy to Safe Harbor folder (only if project_id is provided)
+            if ($project_id !== null) {
+                $safe_harbor_path = copySafeHarborDocument($processed_file, $project_id, $document_type);
+                if ($safe_harbor_path) {
+                    $safe_harbor_documents[] = [
+                        'original_name' => $processed_file['original_name'],
+                        'safe_harbor_path' => $safe_harbor_path
+                    ];
+                }
             }
         }
 
@@ -249,8 +273,8 @@ try {
         ];
     }
 
-    // Send notifications to project users
-    if (!empty($uploaded_documents)) {
+    // Send notifications to project users (only if project_id is provided)
+    if (!empty($uploaded_documents) && $project_id !== null && $project !== null) {
         $docCount = count($uploaded_documents);
         $docType = $document_sub_type;
         $projectName = $project['project_name'];

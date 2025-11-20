@@ -235,6 +235,7 @@ function format_estimate_rate(?array $data): array {
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 
     <style>
         body { background: #f7f9fb; }
@@ -294,6 +295,99 @@ function format_estimate_rate(?array $data): array {
         .delete-btn:hover { background: #f8d7da; color: #842029; border-color: #f5c2c7; }
         .rate-pill.ready { background: #e7f6f8; color: #1c4755; border: 1px solid #b8dde4; }
         .rate-pill.pending { background: #fff6e6; color: #8a4b00; border: 1px solid #ffd699; }
+
+        /* Modern Unit Selector */
+        .unit-selector-wrapper { margin: 15px 0 10px; }
+        .unit-selector-label { display: block; font-weight: 600; color: #293E4C; margin-bottom: 10px; font-size: 0.95em; }
+        .unit-selector {
+            display: inline-flex;
+            background: #f3f4f6;
+            border-radius: 12px;
+            padding: 4px;
+            gap: 4px;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.06);
+        }
+        .unit-selector input[type="radio"] { display: none; }
+        .unit-selector .unit-option {
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            color: #6b7280;
+            background: transparent;
+            border: none;
+            margin: 0;
+        }
+        .unit-selector .unit-option:hover { color: #488C9A; background: rgba(72, 140, 154, 0.08); }
+        .unit-selector input[type="radio"]:checked + .unit-option {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+            transform: translateY(-1px);
+        }
+
+        /* Calculated Square Feet Card */
+        .calculated-square-feet-card {
+            background: linear-gradient(135deg, #e7f6f8 0%, #d4eef3 100%);
+            border: 2px solid #b8dde4;
+            border-radius: 16px;
+            padding: 20px;
+            margin: 25px 0;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            box-shadow: 0 8px 20px rgba(72, 140, 154, 0.15);
+            transition: all 0.3s ease;
+        }
+        .calculated-square-feet-card:hover { box-shadow: 0 12px 28px rgba(72, 140, 154, 0.25); transform: translateY(-2px); }
+        .calc-icon { font-size: 2.5em; line-height: 1; }
+        .calc-content { flex: 1; }
+        .calc-label {
+            font-size: 0.9em;
+            font-weight: 600;
+            color: #1c4755;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .calc-value {
+            font-size: 2.2em;
+            font-weight: 700;
+            color: #0f4350;
+            line-height: 1;
+        }
+        .calc-unit { font-size: 0.6em; font-weight: 500; color: #488C9A; margin-left: 6px; }
+        .calc-formula { margin-top: 6px; color: #488C9A; font-style: italic; }
+
+        /* Enhanced Saved Estimates Toggle */
+        .saved-estimates-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: auto;
+            min-width: 200px;
+            gap: 12px;
+        }
+        .toggle-icon {
+            transition: transform 0.3s ease;
+            font-size: 0.9em;
+        }
+        .saved-estimates-toggle.active .toggle-icon { transform: rotate(180deg); }
+        .saved-estimates-header { cursor: pointer; transition: all 0.2s ease; }
+        .saved-estimates-header:hover { transform: translateX(2px); }
+        .saved-estimates-list {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease, opacity 0.3s ease, margin-top 0.3s ease;
+            opacity: 0;
+        }
+        .saved-estimates-list.show {
+            max-height: 2000px;
+            opacity: 1;
+            margin-top: 12px;
+        }
     </style>
 </head>
 <body>
@@ -317,7 +411,10 @@ function format_estimate_rate(?array $data): array {
     <?php $saved_count = count($saved_estimates); ?>
     <div class="saved-estimates-card">
         <div class="saved-estimates-header">
-            <button id="saved-estimates-button" class="saved-estimates-toggle">Saved Quotes (<?php echo $saved_count; ?>)</button>
+            <button id="saved-estimates-button" class="saved-estimates-toggle">
+                <span class="toggle-text">Saved Quotes (<?php echo $saved_count; ?>)</span>
+                <i class="fas fa-chevron-down toggle-icon"></i>
+            </button>
             <span class="estimate-meta">View or delete saved quotes.</span>
         </div>
         <div id="saved-estimates-list" class="saved-estimates-list">
@@ -370,18 +467,26 @@ if (!empty($error_message)) {
             <input type="number" id="estimated_number_of_pallets" name="estimated_number_of_pallets" required value="<?php echo htmlspecialchars($estimated_number_of_pallets); ?>">
 
             <label>Estimated Pallet Dimensions:<span class="required">*</span>
-                <div style="margin-top:6px;">
-                    <label><input type="radio" name="pallet_unit" value="in" <?php echo ($pallet_unit ?? 'in')==='in' ? 'checked' : ''; ?>> Inches</label>
-                    <label style="margin-left:10px;"><input type="radio" name="pallet_unit" value="cm" <?php echo ($pallet_unit ?? 'in')==='cm' ? 'checked' : ''; ?>> Centimeters</label>
-                    <label style="margin-left:10px;"><input type="radio" name="pallet_unit" value="mm" <?php echo ($pallet_unit ?? 'in')==='mm' ? 'checked' : ''; ?>> Millimeters</label>
-                </div>
                 <span class="info-tooltip">?
                     <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet.</span>
                 </span>
             </label>
+            <div class="unit-selector-wrapper">
+                <label class="unit-selector-label">Unit of Measurement:</label>
+                <div class="unit-selector">
+                    <input type="radio" name="pallet_unit" value="in" id="unit_in" <?php echo ($pallet_unit ?? 'in')==='in' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
+                    <label for="unit_in" class="unit-option">Inches</label>
+                    
+                    <input type="radio" name="pallet_unit" value="cm" id="unit_cm" <?php echo ($pallet_unit ?? 'in')==='cm' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
+                    <label for="unit_cm" class="unit-option">Centimeters</label>
+                    
+                    <input type="radio" name="pallet_unit" value="mm" id="unit_mm" <?php echo ($pallet_unit ?? 'in')==='mm' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
+                    <label for="unit_mm" class="unit-option">Millimeters</label>
+                </div>
+            </div>
             <div class="dimensions-row">
-                <input type="number" id="pallet_length" name="pallet_length" placeholder="Length" required value="<?php echo htmlspecialchars($pallet_length); ?>">
-                <input type="number" id="pallet_width" name="pallet_width" placeholder="Width" required value="<?php echo htmlspecialchars($pallet_width); ?>">
+                <input type="number" step="0.01" id="pallet_length" name="pallet_length" placeholder="Length" required value="<?php echo htmlspecialchars($pallet_length); ?>">
+                <input type="number" step="0.01" id="pallet_width" name="pallet_width" placeholder="Width" required value="<?php echo htmlspecialchars($pallet_width); ?>">
             </div>
 
             <div class="checkbox-row" style="justify-content:flex-start;">
@@ -392,7 +497,19 @@ if (!empty($error_message)) {
             <label for="additional_documentation">Additional Documentation:</label>
             <input type="file" id="additional_documentation" name="additional_documentation" accept=".pdf,.doc,.docx,.jpg,.png">
 
-            <div id="calculated-square-feet">Calculated Square Feet: <span id="square-feet-value"><?php echo !empty($square_feet) ? number_format($square_feet, 2) : '0.00'; ?></span> sq ft</div>
+            <div class="calculated-square-feet-card">
+                <div class="calc-icon">📐</div>
+                <div class="calc-content">
+                    <div class="calc-label">Calculated Square Feet</div>
+                    <div class="calc-value">
+                        <span id="square-feet-value"><?php echo !empty($square_feet) ? number_format($square_feet, 2) : '0.00'; ?></span>
+                        <span class="calc-unit">sq ft</span>
+                    </div>
+                    <div class="calc-formula" id="calc-formula-display" style="display: none;">
+                        <small>Formula: <span id="formula-text"></span></small>
+                    </div>
+                </div>
+            </div>
 
             <button id="submit-quote-button" class="submit-button">Submit</button>
         </form>
@@ -406,8 +523,14 @@ if (!empty($error_message)) {
     const savedList = document.getElementById('saved-estimates-list');
 
     toggleButton.addEventListener('click', function() {
-        const isHidden = savedList.style.display === 'none' || savedList.style.display === '';
-        savedList.style.display = isHidden ? 'block' : 'none';
+        const isHidden = !savedList.classList.contains('show');
+        if (isHidden) {
+            savedList.classList.add('show');
+            toggleButton.classList.add('active');
+        } else {
+            savedList.classList.remove('show');
+            toggleButton.classList.remove('active');
+        }
     });
 
     document.querySelectorAll('.estimate-row').forEach(row => {
@@ -431,6 +554,11 @@ if (!empty($error_message)) {
         let lengthInches = parseFloat(document.getElementById('pallet_length').value) || 0;
         let widthInches = parseFloat(document.getElementById('pallet_width').value) || 0;
         const unit = document.querySelector('input[name="pallet_unit"]:checked')?.value || 'in';
+        const unitLabel = unit === 'in' ? 'inches' : (unit === 'cm' ? 'cm' : 'mm');
+        
+        // Convert to inches
+        let lengthInput = lengthInches;
+        let widthInput = widthInches;
         if (unit === 'cm') { lengthInches = lengthInches / 2.54; widthInches = widthInches / 2.54; }
         if (unit === 'mm') { lengthInches = lengthInches / 25.4; widthInches = widthInches / 25.4; }
         const numberOfPallets = parseInt(document.getElementById('estimated_number_of_pallets').value) || 0;
@@ -439,7 +567,21 @@ if (!empty($error_message)) {
         const lengthFeet = lengthInches / 12;
         const widthFeet = widthInches / 12;
         let totalArea = (lengthFeet * widthFeet) * numberOfPallets;
-        if (stackable) { totalArea /= 2; }
+        
+        // Build formula string
+        let formulaText = '';
+        if (lengthInput > 0 && widthInput > 0 && numberOfPallets > 0) {
+            formulaText = `(${lengthInput} × ${widthInput} ${unitLabel}) × ${numberOfPallets} pallets`;
+            if (stackable) { 
+                totalArea /= 2;
+                formulaText += ' ÷ 2 (stackable)';
+            }
+            document.getElementById('calc-formula-display').style.display = 'block';
+            document.getElementById('formula-text').textContent = formulaText;
+        } else {
+            document.getElementById('calc-formula-display').style.display = 'none';
+        }
+        
         document.getElementById('square-feet-value').textContent = totalArea.toFixed(2);
     }
 
