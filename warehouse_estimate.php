@@ -3,28 +3,32 @@
 session_name("logistics_session");
 session_start();
 
-// Replace with your administrator's email address
-$to_email = 'cbaldy@solterrasol.com';
+// Notification email (legacy) - we now rely on notifications
+$notification_email = 'cbaldy@solterrasol.com';
 
-// Check if the user is logged in
+// Check login
 if (!isset($_SESSION['user_id'])) {
-    // redirect to login page
     header("Location: login");
     exit();
 }
 
-// Get user role
-$user_role = isset($_SESSION['role']) ? $_SESSION['role'] : '';
+$user_role = $_SESSION['role'] ?? '';
+$user_id = (int)$_SESSION['user_id'];
 
-// Get user ID
-$user_id = $_SESSION['user_id'];
-
-// Database connection
 require_once '../config.php';
+require_once 'notification_helpers.php';
+require_once 'Mailer.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
 }
+
+// Notification toggles (adjust as needed)
+$notify_account_admins_on_request = true;
+$notify_global_admins_on_request = true;
+$notify_user_on_rate_update = true;
+$notify_account_admins_on_rate_update = false;
+$notify_global_admins_on_rate_update = false;
 
 // Helper function to safely validate database connection
 function validateDatabaseConnection(&$conn) {
@@ -32,35 +36,27 @@ function validateDatabaseConnection(&$conn) {
         $conn = getDBConnection();
         return ($conn !== false);
     }
-    
-    // Check if connection has errors
+
     if (isset($conn->connect_errno) && $conn->connect_errno) {
         $conn = getDBConnection();
         return ($conn !== false);
     }
-    
-    // Try to ping the connection
+
     try {
         if (!$conn->ping()) {
             $conn = getDBConnection();
             return ($conn !== false);
         }
-    } catch (Error $e) {
-        // Connection is closed or invalid
-        $conn = getDBConnection();
-        return ($conn !== false);
-    } catch (Exception $e) {
-        // Any other connection issue
+    } catch (Throwable $e) {
         $conn = getDBConnection();
         return ($conn !== false);
     }
-    
+
     return true;
 }
 
-// Validate initial connection
 if (!validateDatabaseConnection($conn)) {
-    die("Connection failed after reconnection attempt");     
+    die("Connection failed after reconnection attempt");
 }
 
 // Initialize variables
@@ -73,8 +69,6 @@ $pallet_width = '';
 $pallet_height = '';
 $stackable = false;
 $square_feet = '';
-$additional_documentation = '';
-
 $success_message = '';
 $error_message = '';
 
@@ -82,21 +76,18 @@ $error_message = '';
 if (isset($_GET['delete_estimate'])) {
     $estimate_id_to_delete = intval($_GET['delete_estimate']);
 
-    // Validate connection before using it
     if (!validateDatabaseConnection($conn)) {
         $error_message = "Database connection error.";
     }
-    
+
     if ($conn) {
-        // Verify that the estimate belongs to the current user
         $stmt = $conn->prepare("DELETE FROM warehouse_quotes WHERE id = ? AND user_id = ?");
         if ($stmt) {
             $stmt->bind_param("ii", $estimate_id_to_delete, $user_id);
-
             if ($stmt->execute()) {
-                $success_message = "Estimate deleted successfully!";
+                $success_message = "Quote deleted successfully!";
             } else {
-                $error_message = "Error deleting estimate: " . $stmt->error;
+                $error_message = "Error deleting quote: " . $stmt->error;
             }
             $stmt->close();
         } else {
@@ -107,42 +98,34 @@ if (isset($_GET['delete_estimate'])) {
         $error_message = "Database connection error.";
     }
 
-    // Refresh the page to update the list
     header("Location: " . basename($_SERVER['PHP_SELF']));
     exit();
 }
 
-// Check if the form has been submitted
+// Handle submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // Get form variables
-    $estimate_name = isset($_POST['estimate_name']) ? trim($_POST['estimate_name']) : '';
-    $project_location = isset($_POST['project_location']) ? trim($_POST['project_location']) : '';
-    $estimated_storage_start = isset($_POST['estimated_storage_start']) ? $_POST['estimated_storage_start'] : '';
-    $estimated_number_of_pallets = isset($_POST['estimated_number_of_pallets']) ? trim($_POST['estimated_number_of_pallets']) : '';
-    $pallet_length = isset($_POST['pallet_length']) ? trim($_POST['pallet_length']) : '';
-    $pallet_width = isset($_POST['pallet_width']) ? trim($_POST['pallet_width']) : '';
-    $pallet_height = isset($_POST['pallet_height']) ? trim($_POST['pallet_height']) : '';
-    $stackable = isset($_POST['stackable']) ? true : false;
+    $estimate_name = trim($_POST['estimate_name'] ?? '');
+    $project_location = trim($_POST['project_location'] ?? '');
+    $estimated_storage_start = $_POST['estimated_storage_start'] ?? '';
+    $estimated_number_of_pallets = trim($_POST['estimated_number_of_pallets'] ?? '');
+    $pallet_length = trim($_POST['pallet_length'] ?? '');
+    $pallet_width = trim($_POST['pallet_width'] ?? '');
+    $pallet_height = trim($_POST['pallet_height'] ?? '');
+    $stackable = isset($_POST['stackable']);
 
-    // Handle file upload for additional documentation
     $upload_dir = 'uploads/warehouse_estimates/';
     $uploaded_file_path = '';
 
     if (!empty($_FILES['additional_documentation']['name'])) {
-        // Ensure the upload directory exists
         if (!is_dir($upload_dir)) {
             mkdir($upload_dir, 0777, true);
         }
-
         $file_name = basename($_FILES['additional_documentation']['name']);
         $file_tmp = $_FILES['additional_documentation']['tmp_name'];
         $file_type = $_FILES['additional_documentation']['type'];
         $file_size = $_FILES['additional_documentation']['size'];
-
-        // Validate file type and size (optional)
         $allowed_types = ['application/pdf', 'image/jpeg', 'image/png', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
-        $max_size = 10 * 1024 * 1024; // 10 MB
-
+        $max_size = 10 * 1024 * 1024;
         if (in_array($file_type, $allowed_types) && $file_size <= $max_size) {
             $unique_file_name = time() . '_' . $file_name;
             $uploaded_file_path = $upload_dir . $unique_file_name;
@@ -154,23 +137,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
     }
 
-    // Validate required input fields
     if (empty($estimate_name) || empty($project_location) || empty($estimated_number_of_pallets) || empty($pallet_length) || empty($pallet_width) || empty($pallet_height)) {
         $error_message = "Please fill in all required fields.";
     } else {
-        // Calculate square feet
         $length_ft = $pallet_length / 12;
         $width_ft = $pallet_width / 12;
-        $pallet_area = $length_ft * $width_ft; // in square feet
+        $pallet_area = $length_ft * $width_ft;
         $total_area = $pallet_area * $estimated_number_of_pallets;
-
         if ($stackable) {
-            $total_area /= 2; // Assuming stackable reduces area by half
+            $total_area /= 2;
         }
-
         $square_feet = $total_area;
 
-        // Collect all estimate data
         $estimate_data = [
             'estimate_name' => $estimate_name,
             'project_location' => $project_location,
@@ -182,48 +160,31 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             'stackable' => $stackable,
             'square_feet' => $square_feet,
             'additional_documentation' => $uploaded_file_path,
-            // Initialize cost fields (admin will fill these later)
             'entry_fee_per_pallet' => null,
             'exit_fee_per_pallet' => null,
             'monthly_storage_cost_per_pallet' => null,
+            'quotes' => [],
         ];
 
-        // Save estimate to database
         $estimate_data_json = json_encode($estimate_data);
 
         $stmt = $conn->prepare("INSERT INTO warehouse_quotes (user_id, name, estimate_data, created_at) VALUES (?, ?, ?, NOW())");
         $stmt->bind_param("iss", $user_id, $estimate_name, $estimate_data_json);
 
         if ($stmt->execute()) {
-            $success_message = "Your request has been sent. Solterra Solutions will provide a quote shortly.";
-            // Send email notification to admin
+            $estimate_id = (int)$stmt->insert_id;
+            $success_message = "Your request has been submitted. Expect a response within 24 hours. You can revisit it under Saved Quotes.";
 
-            // Prepare the email content
-            $subject = 'New Warehouse Quote Request';
-            $message = "You have received a new warehouse quote request:\n\n";
-            $message .= "Quote Name: $estimate_name\n";
-            $message .= "Project Location: $project_location\n";
-            $message .= "Estimated Storage Start: $estimated_storage_start\n";
-            $message .= "Estimated Number of Pallets: $estimated_number_of_pallets\n";
-            $message .= "Estimated Pallet Dimensions (L x W x H in inches): $pallet_length x $pallet_width x $pallet_height\n";
-            $message .= "Stackable: " . ($stackable ? 'Yes' : 'No') . "\n";
-            $message .= "Calculated Square Feet: $square_feet sq ft\n";
-            if (!empty($uploaded_file_path)) {
-                $message .= "Additional Documentation: Yes\n";
-            } else {
-                $message .= "Additional Documentation: No\n";
+            $accountIds = account_ids_for_user($user_id);
+            $notifyTitle = "New warehouse quote request: $estimate_name";
+            $notifyMessage = "Location: $project_location";
+            $adminLink = 'admin_warehouse_estimate_view?id=' . $estimate_id;
+
+            if ($notify_account_admins_on_request) {
+                notify_account_admins($accountIds, 'warehouse_estimate_request', $notifyTitle, $notifyMessage, $adminLink);
             }
-
-            // Additional headers
-            $headers = "From: noreply@example.com\r\n";
-            $headers .= "Reply-To: noreply@example.com\r\n";
-            $headers .= "X-Mailer: PHP/" . phpversion();
-
-            // Send the email
-            if (mail($to_email, $subject, $message, $headers)) {
-                $success_message .= "";
-            } else {
-                $error_message = "There was a problem sending your request. Please try again later.";
+            if ($notify_global_admins_on_request) {
+                notify_global_admins('warehouse_estimate_request', $notifyTitle, $notifyMessage, $adminLink);
             }
         } else {
             $error_message = "Error saving estimate: " . $stmt->error;
@@ -232,12 +193,39 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $stmt->close();
     }
 }
-?>
 
+// Fetch user's saved estimates
+$saved_estimates = [];
+validateDatabaseConnection($conn);
+if ($conn) {
+    $stmt = $conn->prepare("SELECT id, name, estimate_data, created_at FROM warehouse_quotes WHERE user_id = ? ORDER BY created_at DESC");
+    if ($stmt) {
+        $stmt->bind_param("i", $user_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $row['estimate_data'] = json_decode($row['estimate_data'], true) ?? [];
+            $saved_estimates[] = $row;
+        }
+        $stmt->close();
+    } else {
+        error_log("Failed to prepare saved estimates query: " . $conn->error);
+    }
+}
+
+function format_estimate_rate(?array $data): array {
+    $quotes = $data['quotes'] ?? [];
+    $first = $quotes[0] ?? [];
+    $monthly = $first['monthly_storage_cost_per_pallet'] ?? null;
+    $hasRate = is_numeric($monthly) && (float)$monthly > 0;
+    $display = $hasRate ? '$' . number_format((float)$monthly, 2) . ' / pallet' : 'Rate pending';
+    return [$display, $hasRate];
+}
+
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- ... existing head content ... -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Warehouse Quote Request</title>
@@ -245,205 +233,111 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-    <!-- Include Google Maps JavaScript API with Places Library -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=REDACTED_GOOGLE_MAPS_KEY&libraries=places"></script>
-
     <style>
-        /* Basic styling for layout */
-        .breadcrumb {
-            display: flex;
-            margin-bottom: 20px;
-            margin-top: 10px;
-        }
-        .breadcrumb a {
-            color: #488C9A;
-            text-decoration: none;
-        }
-        .breadcrumb .separator {
-            margin: 0 8px;
-            color: #6c757d;
-        }
-        .container {
-            display: flex;
-            justify-content: left;
-            flex-wrap: wrap;
-        }
-        form#warehouse-form {
-            width: 45%;
-        }
-
-        label {
-            display: block;
-            margin-top: 15px;
-            font-weight: bold;
-        }
-        input[type="text"],
-        input[type="number"],
-        input[type="date"],
-        input[type="file"],
-        select {
-            width: 95%;
-            padding: 8px;
-            margin-top: 5px;
-        }
-        .dimensions-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .dimensions-row input {
-            width: 30%;
-        }
-        .checkbox-row {
-            margin-top: 15px;
-            display: flex;
-            align-items: center;
-        }
-        .checkbox-row input {
-            margin-left: 0;
-            margin-right: 10px;
-        }
-        .success-message {
-            color: green;
-            margin-top: 15px;
-        }
-        .error-message {
-            color: red;
-            margin-top: 15px;
-        }
-
-        #submit-quote-button{
-            margin-top: 10px;
-        }
-
-        table {
-            width: 100%;
-            margin-top: 20px;
-        }
-        .disclaimer {
-            margin-top: 20px;
-            font-size: 0.9em;
-            color: #666;
-        }
-        #calculated-square-feet {
-            margin-top: 15px;
-            font-weight: bold;
-        }
-        @media (max-width: 768px) {
-            .dimensions-row {
-                flex-direction: column;
-            }
-            .dimensions-row input {
-                width: 95%;
-            }
-            form#warehouse-form {
-            width: 100%;
-        }
-        }
-        .required {
-            color: red;
-        }
-        /* Tooltip styles (if you have them in your original code) */
-        .info-tooltip {
-            display: inline-block;
-            width: 18px;
-            height: 18px;
-            line-height: 18px;
-            text-align: center;
-            background-color: #488C9A; /* Secondary blue color */
-            color: white;
-            border-radius: 50%;
-            font-weight: bold;
-            cursor: pointer;
-            margin-left: 5px;
+        body { background: #f7f9fb; }
+        main { padding: 20px; }
+        .freight-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 28px;
+            margin-bottom: 22px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
             position: relative;
+            overflow: hidden;
         }
-        .info-tooltip:hover {
-            background-color: #293E4C; /* Darker shade on hover */
-        }
-        .info-tooltip .tooltip-text {
-            visibility: hidden;
-            width: 220px;
-            background-color: #fff;
-            color: #333;
-            text-align: left;
-            border-radius: 4px;
-            padding: 8px;
+        .freight-header::before {
+            content: '';
             position: absolute;
-            z-index: 1;
-            top: 25px;
-            left: -100px;
-            box-shadow: 0 0 5px rgba(0,0,0,0.3);
-            font-weight: normal;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
         }
-        .info-tooltip:hover .tooltip-text {
-            visibility: visible;
-        }
+        .freight-header__content { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+        .freight-header__left { display: flex; align-items: center; gap: 18px; }
+        .freight-icon { width: 70px; height: 70px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); border-radius: 18px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 34px; box-shadow: 0 12px 24px rgba(72,140,154,0.3); }
+        .freight-title { margin: 0; font-size: 2.2em; background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .freight-sub { margin: 6px 0 0; color: #556; max-width: 520px; }
+        .freight-actions { display: flex; gap: 10px; }
+
+        .container { display: flex; flex-wrap: wrap; gap: 18px; }
+        .card-box { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.06); padding: 18px; width: 100%; }
+        .left-side { flex: 1 1 380px; }
+        .right-side { flex: 1 1 420px; }
+        label { display: block; margin-top: 15px; font-weight: bold; }
+        input, select { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #dbe3e7; border-radius: 10px; font-size: 1em; }
+        .dimensions-row { display: flex; gap: 10px; }
+        .dimensions-row input { flex: 1; }
+        .checkbox-row { margin-top: 15px; display: flex; align-items: center; gap: 8px; }
+        .success-message { color: #0f5132; background: #d1e7dd; border: 1px solid #badbcc; padding: 10px 12px; border-radius: 8px; margin-top: 15px; }
+        .error-message { color: #842029; background: #f8d7da; border: 1px solid #f5c2c7; padding: 10px 12px; border-radius: 8px; margin-top: 15px; }
+        .submit-button { background-color: #488C9A; border: none; color: #fff; padding: 12px 18px; border-radius: 12px; cursor: pointer; font-weight: 700; box-shadow: 0 8px 18px rgba(72,140,154,0.3); }
+        .submit-button:hover { background-color: #3A6E7F; }
+        @media (max-width: 768px) { .container { flex-direction: column; } .dimensions-row { flex-direction: column; } }
+        .required { color: red; }
+
+        /* Saved estimates */
+        .saved-estimates-card { background: #fff; border-radius: 16px; box-shadow: 0 8px 20px rgba(0,0,0,0.05); padding: 16px; margin-bottom: 18px; }
+        .saved-estimates-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        .saved-estimates-toggle { background: #293E4C; color: #fff; border: none; border-radius: 12px; padding: 10px 16px; cursor: pointer; font-weight: 600; box-shadow: 0 10px 24px rgba(41,62,76,0.28); }
+        .saved-estimates-toggle:hover { background: #1f2f3a; }
+        .saved-estimates-list { margin-top: 12px; display: none; }
+        .estimate-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 12px 10px; border: 1px solid #e3eaee; border-radius: 12px; margin-bottom: 10px; background: #fdfefe; cursor: pointer; transition: box-shadow .15s ease, transform .15s ease; }
+        .estimate-row:hover { box-shadow: 0 8px 20px rgba(0,0,0,0.06); transform: translateY(-2px); }
+        .estimate-name { font-weight: 700; color: #1f303a; }
+        .estimate-meta { color: #6c7a82; font-size: 0.92em; }
+        .rate-pill { padding: 8px 12px; border-radius: 12px; font-weight: 700; }
+        .delete-btn { padding: 8px 12px; border-radius: 10px; border: 1px solid #e3eaee; background: #fff; cursor: pointer; font-weight: 600; }
+        .delete-btn:hover { background: #f8d7da; color: #842029; border-color: #f5c2c7; }
+        .rate-pill.ready { background: #e7f6f8; color: #1c4755; border: 1px solid #b8dde4; }
+        .rate-pill.pending { background: #fff6e6; color: #8a4b00; border: 1px solid #ffd699; }
     </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-<?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Warehouse Quote Request']); ?>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Warehouse Quote Request']); ?>
 
-<h1>Warehouse Quote Request</h1>
-<!-- Saved Estimates Section -->
-<div id="saved-estimates">
-    <button id="saved-estimates-button" class="submit-button">Saved Quotes</button>
-    <div id="saved-estimates-list" style="display: none;">
-        <?php
-        // Validate connection before using it
-        validateDatabaseConnection($conn);
-        
-        if ($conn) {
-            // Fetch user's saved estimates
-            $stmt = $conn->prepare("SELECT id, name, created_at FROM warehouse_quotes WHERE user_id = ? ORDER BY created_at DESC");
-            if ($stmt) {
-                $stmt->bind_param("i", $user_id);
-                $stmt->execute();
-                $result = $stmt->get_result();
-                $saved_estimates = [];
-                while ($row = $result->fetch_assoc()) {
-                    $saved_estimates[] = $row;
-                }
-                $stmt->close();
-            } else {
-                $saved_estimates = [];
-                error_log("Failed to prepare saved estimates query: " . $conn->error);
-            }
-        } else {
-            $saved_estimates = [];
-            error_log("Database connection lost when fetching saved estimates");
-        }
-        ?>
+    <section class="freight-header">
+        <div class="freight-header__content">
+            <div class="freight-header__left">
+                <div class="freight-icon">🏢</div>
+                <div>
+                    <h1 class="freight-title">Warehouse Quote Request</h1>
+                    <p class="freight-sub">Submit your storage details and track Solterra warehouse rates in one place.</p>
+                </div>
+            </div>
+            <div class="freight-actions"></div>
+        </div>
+    </section>
 
-        <?php if (!empty($saved_estimates)): ?>
-            <table>
-                <tr>
-                    <th>Name</th>
-                    <th>Created Date</th>
-                    <th>Actions</th>
-                </tr>
-                <?php foreach ($saved_estimates as $estimate): ?>
-                    <tr>
-                        <td><?php echo htmlspecialchars($estimate['name']); ?></td>
-                        <td><?php echo htmlspecialchars($estimate['created_at']); ?></td>
-                        <td>
-                            <a href="view_warehouse_estimate?id=<?php echo $estimate['id']; ?>">View</a>
-                            |
-                            <a href="#" class="delete-estimate" data-id="<?php echo $estimate['id']; ?>">Delete</a>
-                        </td>
-                    </tr>
+    <?php $saved_count = count($saved_estimates); ?>
+    <div class="saved-estimates-card">
+        <div class="saved-estimates-header">
+            <button id="saved-estimates-button" class="saved-estimates-toggle">Saved Quotes (<?php echo $saved_count; ?>)</button>
+            <span class="estimate-meta">View or delete saved quotes.</span>
+        </div>
+        <div id="saved-estimates-list" class="saved-estimates-list">
+            <?php if (!empty($saved_estimates)): ?>
+                <?php foreach ($saved_estimates as $estimate): 
+                    [$rateDisplay, $hasRate] = format_estimate_rate($estimate['estimate_data']);
+                ?>
+                    <div class="estimate-row" data-estimate-id="<?php echo $estimate['id']; ?>">
+                        <div>
+                            <div class="estimate-name"><?php echo htmlspecialchars($estimate['name']); ?></div>
+                            <div class="estimate-meta">Created <?php echo htmlspecialchars($estimate['created_at']); ?></div>
+                        </div>
+                        <div class="rate-pill <?php echo $hasRate ? 'ready' : 'pending'; ?>"><?php echo htmlspecialchars($rateDisplay); ?></div>
+                        <button class="delete-btn" type="button" data-id="<?php echo $estimate['id']; ?>">Delete</button>
+                    </div>
                 <?php endforeach; ?>
-            </table>
-        <?php else: ?>
-            <p>You have no saved quotes.</p>
-        <?php endif; ?>
+            <?php else: ?>
+                <p class="estimate-meta">You have no saved quotes.</p>
+            <?php endif; ?>
+        </div>
     </div>
-</div>
 
 <?php
-// Display success or error messages
 if (!empty($success_message)) {
     echo '<p class="success-message">' . htmlspecialchars($success_message) . '</p>';
 }
@@ -452,145 +346,109 @@ if (!empty($error_message)) {
 }
 ?>
 
-<!-- Disclaimer moved here -->
-<p><span class="required">*</span> indicates a required field.</p>
-
 <div class="container">
-    <form id="warehouse-form" method="POST" action="" enctype="multipart/form-data">
-        <!-- Form Inputs -->
-        <label for="estimate_name">Quote Name:<span class="required">*</span></label>
-        <input type="text" id="estimate_name" name="estimate_name" required value="<?php echo htmlspecialchars($estimate_name); ?>">
+    <div class="left-side card-box">
+        <p><span class="required">*</span> indicates a required field.</p>
+        <form id="warehouse-form" method="POST" action="" enctype="multipart/form-data">
+            <label for="estimate_name">Quote Name:<span class="required">*</span></label>
+            <input type="text" id="estimate_name" name="estimate_name" required value="<?php echo htmlspecialchars($estimate_name); ?>">
 
-        <label for="project_location">Project Location (City or ZIP Code):<span class="required">*</span></label>
-        <!-- Updated Input Field for Autocomplete -->
-        <input type="text" id="autocomplete" name="project_location" required value="<?php echo htmlspecialchars($project_location); ?>">
+            <label for="project_location">Project Location (City or ZIP Code):<span class="required">*</span></label>
+            <input type="text" id="autocomplete" name="project_location" required value="<?php echo htmlspecialchars($project_location); ?>">
 
-        <label for="estimated_storage_start">Estimated Storage Start:</label>
-        <input type="date" id="estimated_storage_start" name="estimated_storage_start" value="<?php echo htmlspecialchars($estimated_storage_start); ?>">
+            <label for="estimated_storage_start">Estimated Storage Start:</label>
+            <input type="date" id="estimated_storage_start" name="estimated_storage_start" value="<?php echo htmlspecialchars($estimated_storage_start); ?>">
 
-        <label for="estimated_number_of_pallets">Estimated Number of Pallets:<span class="required">*</span>
-            <span class="info-tooltip">?
-                <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet (may go by other names)</span>
-            </span>
-        </label>
-        <input type="number" id="estimated_number_of_pallets" name="estimated_number_of_pallets" required value="<?php echo htmlspecialchars($estimated_number_of_pallets); ?>">
+            <label for="estimated_number_of_pallets">Estimated Number of Pallets:<span class="required">*</span>
+                <span class="info-tooltip">?
+                    <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet.</span>
+                </span>
+            </label>
+            <input type="number" id="estimated_number_of_pallets" name="estimated_number_of_pallets" required value="<?php echo htmlspecialchars($estimated_number_of_pallets); ?>">
 
-        <label>Estimated Pallet Dimensions (in inches):<span class="required">*</span>
-            <span class="info-tooltip">?
-                <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet (may go by other names)</span>
-            </span>
-        </label>
-        <div class="dimensions-row">
-            <input type="number" id="pallet_length" name="pallet_length" placeholder="Length (L)" required value="<?php echo htmlspecialchars($pallet_length); ?>">
-            <input type="number" id="pallet_width" name="pallet_width" placeholder="Width (W)" required value="<?php echo htmlspecialchars($pallet_width); ?>">
-            <input type="number" id="pallet_height" name="pallet_height" placeholder="Height (H)" required value="<?php echo htmlspecialchars($pallet_height); ?>">
-        </div>
+            <label>Estimated Pallet Dimensions (in inches):<span class="required">*</span>
+                <span class="info-tooltip">?
+                    <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet.</span>
+                </span>
+            </label>
+            <div class="dimensions-row">
+                <input type="number" id="pallet_length" name="pallet_length" placeholder="Length (L)" required value="<?php echo htmlspecialchars($pallet_length); ?>">
+                <input type="number" id="pallet_width" name="pallet_width" placeholder="Width (W)" required value="<?php echo htmlspecialchars($pallet_width); ?>">
+                <input type="number" id="pallet_height" name="pallet_height" placeholder="Height (H)" required value="<?php echo htmlspecialchars($pallet_height); ?>">
+            </div>
 
-        <div class="checkbox-row">
-            <input type="checkbox" id="stackable" name="stackable" <?php echo $stackable ? 'checked' : ''; ?>>
-            <label for="stackable">Stackable?</label>
-        </div>
+            <div class="checkbox-row">
+                <input type="checkbox" id="stackable" name="stackable" <?php echo $stackable ? 'checked' : ''; ?>>
+                <label for="stackable">Stackable?</label>
+            </div>
 
-        <label for="additional_documentation">Additional Documentation:</label>
-        <input type="file" id="additional_documentation" name="additional_documentation" accept=".pdf,.doc,.docx,.jpg,.png">
+            <label for="additional_documentation">Additional Documentation:</label>
+            <input type="file" id="additional_documentation" name="additional_documentation" accept=".pdf,.doc,.docx,.jpg,.png">
 
-        <div id="calculated-square-feet">Calculated Square Feet: <span id="square-feet-value"><?php echo !empty($square_feet) ? number_format($square_feet, 2) : '0.00'; ?></span> sq ft</div>
+            <div id="calculated-square-feet">Calculated Square Feet: <span id="square-feet-value"><?php echo !empty($square_feet) ? number_format($square_feet, 2) : '0.00'; ?></span> sq ft</div>
 
-        <button id="submit-quote-button" class="submit-button">Submit</button>
-    </form>
+            <button id="submit-quote-button" class="submit-button">Submit</button>
+        </form>
+    </div>
 </div>
 
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars(getGoogleMapsApiKey()); ?>&libraries=places"></script>
 <script>
     // Toggle saved estimates list
-    document.getElementById('saved-estimates-button').addEventListener('click', function() {
-        var list = document.getElementById('saved-estimates-list');
-        if (list.style.display === 'none' || list.style.display === '') {
-            list.style.display = 'block';
-        } else {
-            list.style.display = 'none';
-        }
+    const toggleButton = document.getElementById('saved-estimates-button');
+    const savedList = document.getElementById('saved-estimates-list');
+
+    toggleButton.addEventListener('click', function() {
+        const isHidden = savedList.style.display === 'none' || savedList.style.display === '';
+        savedList.style.display = isHidden ? 'block' : 'none';
     });
 
-    // Handle deletion
-    var deleteButtons = document.querySelectorAll('.delete-estimate');
-    deleteButtons.forEach(function(button) {
-        button.addEventListener('click', function(event) {
-            event.preventDefault();
-            var estimateId = this.getAttribute('data-id');
-            if (confirm('Are you sure you want to delete this estimate?')) {
+    document.querySelectorAll('.estimate-row').forEach(row => {
+        row.addEventListener('click', () => {
+            const estimateId = row.getAttribute('data-estimate-id');
+            window.location.href = `view_warehouse_estimate?id=${estimateId}`;
+        });
+    });
+
+    document.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const estimateId = btn.getAttribute('data-id');
+            if (confirm('Are you sure you want to delete this quote?')) {
                 window.location.href = window.location.href.split('?')[0] + '?delete_estimate=' + estimateId;
             }
         });
     });
 
-    // Calculate square feet dynamically as user inputs data
     function calculateSquareFeet() {
-        var lengthInches = parseFloat(document.getElementById('pallet_length').value) || 0;
-        var widthInches = parseFloat(document.getElementById('pallet_width').value) || 0;
-        var numberOfPallets = parseInt(document.getElementById('estimated_number_of_pallets').value) || 0;
-        var stackable = document.getElementById('stackable').checked;
+        const lengthInches = parseFloat(document.getElementById('pallet_length').value) || 0;
+        const widthInches = parseFloat(document.getElementById('pallet_width').value) || 0;
+        const numberOfPallets = parseInt(document.getElementById('estimated_number_of_pallets').value) || 0;
+        const stackable = document.getElementById('stackable').checked;
 
-        var lengthFeet = lengthInches / 12;
-        var widthFeet = widthInches / 12;
-        var palletArea = lengthFeet * widthFeet;
-        var totalArea = palletArea * numberOfPallets;
-
-        if (stackable) {
-            totalArea /= 2;
-        }
-
-        totalArea = totalArea.toFixed(2);
-
-        document.getElementById('square-feet-value').textContent = totalArea;
+        const lengthFeet = lengthInches / 12;
+        const widthFeet = widthInches / 12;
+        let totalArea = (lengthFeet * widthFeet) * numberOfPallets;
+        if (stackable) { totalArea /= 2; }
+        document.getElementById('square-feet-value').textContent = totalArea.toFixed(2);
     }
 
-    // Add event listeners to input fields
-    document.getElementById('pallet_length').addEventListener('input', calculateSquareFeet);
-    document.getElementById('pallet_width').addEventListener('input', calculateSquareFeet);
-    document.getElementById('estimated_number_of_pallets').addEventListener('input', calculateSquareFeet);
-    document.getElementById('stackable').addEventListener('change', calculateSquareFeet);
-
-    // Initialize calculation
+    ['pallet_length','pallet_width','estimated_number_of_pallets'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', calculateSquareFeet);
+    });
+    const stackableEl = document.getElementById('stackable');
+    if (stackableEl) stackableEl.addEventListener('change', calculateSquareFeet);
     calculateSquareFeet();
 
-    // Google Maps Autocomplete
+    // Google Maps Autocomplete (cities)
     let autocomplete;
-
     function initAutocomplete() {
         autocomplete = new google.maps.places.Autocomplete(
             document.getElementById('autocomplete'),
             { types: ['(cities)'], componentRestrictions: { country: 'us' } }
         );
-
-        // Set fields to return
-        autocomplete.setFields(['address_components', 'geometry']);
-
-        // Add listener for place changed
-        autocomplete.addListener('place_changed', fillInAddress);
     }
-
-    function fillInAddress() {
-        // Get the place details from the autocomplete object
-        const place = autocomplete.getPlace();
-        // You can extract components if needed
-    }
-
-    function geolocate() {
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(function(position) {
-                const geolocation = {
-                    lat: position.coords.latitude,
-                    lng: position.coords.longitude
-                };
-                const circle = new google.maps.Circle(
-                    { center: geolocation, radius: position.coords.accuracy }
-                );
-                autocomplete.setBounds(circle.getBounds());
-            });
-        }
-    }
-
-    // Initialize the autocomplete when the window loads
     google.maps.event.addDomListener(window, 'load', initAutocomplete);
 </script>
 </main>

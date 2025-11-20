@@ -340,7 +340,7 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
               <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
               <a href="cost_estimate_calculator" role="menuitem">Cost Estimate Calculator</a>
               <a href="warehouse_optimization" role="menuitem">Warehouse Optimization (Beta)</a>
-              <a href="warehouse_estimate" role="menuitem">Warehouse Quotes</a>
+              <a href="admin_warehouse_estimate" role="menuitem">Warehouse Quotes</a>
             </div>
           </li>
 

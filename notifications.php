@@ -600,12 +600,26 @@ $conn->close();
                         <label for="in_app_freight_estimate_request">🚛 Freight Requests</label>
                     </div>
                     <?php endif; ?>
-
                     <?php if ($role === "user" && in_array("in_app_freight_estimate_rated", $available_settings_cols, true)): ?>
                     <div class="form-check">
                         <input type="checkbox" id="in_app_freight_estimate_rated" name="in_app_freight_estimate_rated" value="1" 
                                <?php echo !empty($settings['in_app_freight_estimate_rated']) ? "checked" : ""; ?>>
                         <label for="in_app_freight_estimate_rated">✅ Freight Rates Added</label>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if ($role !== "user" && in_array("in_app_warehouse_estimate_request", $available_settings_cols, true)): ?>
+                    <div class="form-check">
+                        <input type="checkbox" id="in_app_warehouse_estimate_request" name="in_app_warehouse_estimate_request" value="1" 
+                               <?php echo !empty($settings['in_app_warehouse_estimate_request']) ? "checked" : ""; ?>>
+                        <label for="in_app_warehouse_estimate_request">🏢 Warehouse Requests</label>
+                    </div>
+                    <?php endif; ?>
+                    <?php if ($role === "user" && in_array("in_app_warehouse_estimate_rated", $available_settings_cols, true)): ?>
+                    <div class="form-check">
+                        <input type="checkbox" id="in_app_warehouse_estimate_rated" name="in_app_warehouse_estimate_rated" value="1" 
+                               <?php echo !empty($settings['in_app_warehouse_estimate_rated']) ? "checked" : ""; ?>>
+                        <label for="in_app_warehouse_estimate_rated">✅ Warehouse Rates Added</label>
                     </div>
                     <?php endif; ?>
                 </div>
@@ -664,9 +678,26 @@ $conn->close();
                         <label for="email_freight_estimate_rated">Freight Rates Added</label>
                     </div>
                     <?php endif; ?>
-                </div>
 
-                <div style="padding: 20px 30px; display: flex; justify-content: center;">
+                    <?php if ($role !== "user" && in_array("email_warehouse_estimate_request", $available_settings_cols, true)): ?>
+                    <div class="form-check sub-option">
+                        <input type="checkbox" id="email_warehouse_estimate_request" name="email_warehouse_estimate_request" value="1"
+                               <?php echo !empty($settings['email_warehouse_estimate_request']) ? 'checked' : ''; ?>
+                               <?php echo empty($settings['email_enabled']) ? 'disabled' : ''; ?>>
+                        <label for="email_warehouse_estimate_request">Warehouse Requests</label>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if ($role === "user" && in_array("email_warehouse_estimate_rated", $available_settings_cols, true)): ?>
+                    <div class="form-check sub-option">
+                        <input type="checkbox" id="email_warehouse_estimate_rated" name="email_warehouse_estimate_rated" value="1"
+                               <?php echo !empty($settings['email_warehouse_estimate_rated']) ? 'checked' : ''; ?>
+                               <?php echo empty($settings['email_enabled']) ? 'disabled' : ''; ?>>
+                        <label for="email_warehouse_estimate_rated">Warehouse Rates Added</label>
+                    </div>
+                    <?php endif; ?>
+                </div>
+                <div style="padding: 20px 30px; display: flex; justify-content: flex-end;">
                     <button type="submit" class="btn btn-primary">Save Settings</button>
                 </div>
             </form>
