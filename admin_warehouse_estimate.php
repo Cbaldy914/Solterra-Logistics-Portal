@@ -174,10 +174,17 @@ $conn->close();
                     $data = $estimate['estimate_data_array'];
                     $location = format_city_state($data['project_location'] ?? '');
                     $quotes = $data['quotes'] ?? [];
-                    $first = $quotes[0] ?? [];
-                    $monthly = $first['monthly_storage_cost_per_pallet'] ?? 0;
-                    $hasRate = is_numeric($monthly) && (float)$monthly > 0;
-                    $rateDisplay = $hasRate ? '$' . number_format((float)$monthly, 2) . ' / pallet' : 'Add rate';
+                    $quoteCount = count($quotes);
+                    $hasRate = $quoteCount > 0;
+                    if ($hasRate) {
+                        $first = $quotes[0];
+                        $in = $first['in_fee_per_pallet'] ?? $first['entry_fee_per_pallet'] ?? 0;
+                        $out = $first['out_fee_per_pallet'] ?? $first['exit_fee_per_pallet'] ?? 0;
+                        $monthly = $first['monthly_storage_cost_per_pallet'] ?? 0;
+                        $rateDisplay = "$quoteCount Quotes";
+                    } else {
+                        $rateDisplay = 'Add rate';
+                    }
                     $customerName = $estimate['customer_name'] ?? 'Unassigned';
                 ?>
                     <tr>

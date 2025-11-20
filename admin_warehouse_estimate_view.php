@@ -85,14 +85,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $out_fee = floatval($_POST['out_fee'] ?? 0);
         $monthly_storage_fee = floatval($_POST['monthly_storage_fee'] ?? 0);
 
-        if (empty($warehouse_location) || $in_fee < 0 || $out_fee < 0 || $monthly_storage_fee < 0) {
-            $error_message = "Please fill in all required fields with valid values.";
+        // handle doc upload
+        $doc_path = '';
+        if (!empty($_FILES['quote_document']['name'])) {
+            $dir = 'uploads/warehouse_rate_docs/';
+            if (!is_dir($dir)) { mkdir($dir, 0777, true); }
+            $fname = basename($_FILES['quote_document']['name']);
+            $tmp = $_FILES['quote_document']['tmp_name'];
+            $dest = $dir . time() . '_' . preg_replace('/\s+/', '_', $fname);
+            if (move_uploaded_file($tmp, $dest)) { $doc_path = $dest; }
+        }
+
+        if (empty($warehouse_location) || $in_fee < 0 || $out_fee < 0 || $monthly_storage_fee < 0 || empty($doc_path)) {
+            $error_message = "Please fill in all required fields with valid values and attach a document.";
         } else {
             $new_quote = [
                 'warehouse_location' => $warehouse_location,
                 'in_fee_per_pallet' => $in_fee,
                 'out_fee_per_pallet' => $out_fee,
-                'monthly_storage_cost_per_pallet' => $monthly_storage_fee
+                'monthly_storage_cost_per_pallet' => $monthly_storage_fee,
+                'document' => $doc_path
             ];
             if (!isset($estimate_data['quotes'])) {
                 $estimate_data['quotes'] = [];
@@ -170,6 +182,7 @@ $conn->close();
         .hero-sub { color: #556; margin: 4px 0 0; }
     </style>
 </head>
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars(getGoogleMapsApiKey()); ?>&libraries=places"></script>
 <body>
 <?php include 'header.php'; ?>
 <main>
@@ -202,17 +215,17 @@ $conn->close();
         <li><strong>Project Location:</strong> <?php echo htmlspecialchars($estimate_data['project_location'] ?? ''); ?></li>
         <li><strong>Estimated Storage Start:</strong> <?php echo htmlspecialchars($estimate_data['estimated_storage_start'] ?? ''); ?></li>
         <li><strong>Estimated Number of Pallets:</strong> <?php echo htmlspecialchars($estimate_data['estimated_number_of_pallets'] ?? ''); ?></li>
-        <li><strong>Pallet Dimensions (L x W x H in inches):</strong> <?php echo htmlspecialchars($estimate_data['pallet_length'] ?? '') . ' x ' . htmlspecialchars($estimate_data['pallet_width'] ?? '') . ' x ' . htmlspecialchars($estimate_data['pallet_height'] ?? ''); ?></li>
+        <li><strong>Pallet Dimensions:</strong> <?php echo htmlspecialchars($estimate_data['pallet_length'] ?? '') . ' x ' . htmlspecialchars($estimate_data['pallet_width'] ?? '') . ' ' . strtolower($estimate_data['pallet_unit'] ?? 'in'); ?></li>
         <li><strong>Stackable:</strong> <?php echo !empty($estimate_data['stackable']) ? 'Yes' : 'No'; ?></li>
         <li><strong>Calculated Square Feet:</strong> <?php echo number_format($estimate_data['square_feet'] ?? 0, 2); ?> sq ft</li>
     </ul>
 
     <h2>Add Warehouse Rate</h2>
-    <form method="POST" action="">
+    <form method="POST" action="" enctype="multipart/form-data">
         <input type="hidden" name="add_quote" value="1">
 
         <label for="warehouse_location">Warehouse Location</label>
-        <input type="text" name="warehouse_location" required>
+        <input type="text" id="warehouse_location" name="warehouse_location" required>
 
         <label for="in_fee">In Fee (per pallet)</label>
         <input type="number" step="0.01" name="in_fee" required>
@@ -222,6 +235,9 @@ $conn->close();
 
         <label for="monthly_storage_fee">Monthly Storage Fee (per pallet)</label>
         <input type="number" step="0.01" name="monthly_storage_fee" required>
+
+        <label for="quote_document">Quote Document (PDF/Image/DOC)</label>
+        <input type="file" id="quote_document" name="quote_document" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" required>
 
         <button type="submit">Add Rate</button>
     </form>
@@ -234,6 +250,7 @@ $conn->close();
                 <th>In Fee (per pallet)</th>
                 <th>Out Fee (per pallet)</th>
                 <th>Monthly Storage Fee (per pallet)</th>
+                <th>Document</th>
                 <th>Actions</th>
             </tr>
             <?php foreach ($estimate_data['quotes'] as $index => $quote): ?>
@@ -242,6 +259,7 @@ $conn->close();
                     <td>$<?php echo number_format($quote['in_fee_per_pallet'], 2); ?></td>
                     <td>$<?php echo number_format($quote['out_fee_per_pallet'], 2); ?></td>
                     <td>$<?php echo number_format($quote['monthly_storage_cost_per_pallet'], 2); ?></td>
+                    <td><?php if (!empty($quote['document'])): ?><a href="<?php echo htmlspecialchars($quote['document']); ?>" target="_blank">View</a><?php else: ?>N/A<?php endif; ?></td>
                     <td>
                         <form method="POST" action="" class="delete-form">
                             <input type="hidden" name="delete_quote" value="1">
@@ -255,6 +273,14 @@ $conn->close();
     <?php else: ?>
         <p>No rates added yet.</p>
     <?php endif; ?>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const input = document.getElementById("warehouse_location");
+            if (input && window.google && google.maps && google.maps.places) {
+                new google.maps.places.Autocomplete(input, { types: ["geocode"], componentRestrictions: { country: "us" } });
+            }
+        });
+    </script>
 </main>
 </body>
 </html>
