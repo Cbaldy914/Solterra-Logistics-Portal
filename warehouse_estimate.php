@@ -378,6 +378,9 @@ function format_estimate_rate(?array $data): array {
         }
         .dimensions-right {
             flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         .section-header {
             font-size: 0.95em;
@@ -429,8 +432,9 @@ function format_estimate_rate(?array $data): array {
         .dimensions-input-group { 
             display: grid; 
             grid-template-columns: 1fr 1fr; 
-            gap: 16px; 
+            gap: 12px; 
             margin-bottom: 16px;
+            max-width: 400px;
         }
         .input-with-unit {
             position: relative;
@@ -482,34 +486,39 @@ function format_estimate_rate(?array $data): array {
             background: linear-gradient(135deg, #e7f6f8 0%, #d4eef3 100%);
             border: 2px solid #b8dde4;
             border-radius: 16px;
-            padding: 20px;
+            padding: 40px 24px;
             display: flex;
+            flex-direction: column;
             align-items: center;
+            justify-content: center;
             gap: 16px;
             box-shadow: 0 8px 20px rgba(72, 140, 154, 0.15);
             transition: all 0.3s ease;
-            position: sticky;
-            top: 20px;
+            text-align: center;
+            width: 100%;
+            max-width: 450px;
+            margin-top: 25px;
         }
         .calculated-square-feet-card:hover { box-shadow: 0 12px 28px rgba(72, 140, 154, 0.25); transform: translateY(-2px); }
-        .calc-icon { font-size: 2.5em; line-height: 1; }
-        .calc-content { flex: 1; }
+        .calc-icon { font-size: 3em; line-height: 1; }
+        .calc-content { width: 100%; }
         .calc-label {
-            font-size: 0.9em;
+            font-size: 0.85em;
             font-weight: 600;
             color: #1c4755;
-            margin-bottom: 4px;
+            margin-bottom: 8px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
         .calc-value {
-            font-size: 2.2em;
+            font-size: 2.5em;
             font-weight: 700;
             color: #0f4350;
             line-height: 1;
+            margin-bottom: 4px;
         }
         .calc-unit { font-size: 0.6em; font-weight: 500; color: #488C9A; margin-left: 6px; }
-        .calc-formula { margin-top: 6px; color: #488C9A; font-style: italic; }
+        .calc-formula { margin-top: 8px; color: #488C9A; font-style: italic; }
 
         /* Enhanced Saved Estimates Toggle */
         .saved-estimates-toggle {
