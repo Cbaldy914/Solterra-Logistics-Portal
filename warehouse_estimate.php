@@ -300,13 +300,54 @@ function format_estimate_rate(?array $data): array {
         
         .success-message { color: #0f5132; background: #d1e7dd; border: 1px solid #badbcc; padding: 10px 12px; border-radius: 8px; grid-column: 1 / -1; }
         .error-message { color: #842029; background: #f8d7da; border: 1px solid #f5c2c7; padding: 10px 12px; border-radius: 8px; grid-column: 1 / -1; }
-        .submit-button { background-color: #488C9A; border: none; color: #fff; padding: 12px 18px; border-radius: 12px; cursor: pointer; font-weight: 700; box-shadow: 0 8px 18px rgba(72,140,154,0.3); grid-column: 1 / -1; margin-top: 8px; }
-        .submit-button:hover { background-color: #3A6E7F; }
         
+        /* Form Actions */
+        .form-actions {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .submit-button { 
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border: none; 
+            color: #fff; 
+            padding: 14px 40px; 
+            border-radius: 12px; 
+            cursor: pointer; 
+            font-weight: 700; 
+            font-size: 1.05em;
+            box-shadow: 0 8px 24px rgba(72,140,154,0.35);
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .submit-button:hover { 
+            background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 12px 32px rgba(72,140,154,0.45);
+        }
+        .submit-button i {
+            font-size: 0.9em;
+        }
+        
+        @media (max-width: 992px) { 
+            .dimensions-section-wrapper {
+                grid-template-columns: 1fr;
+            }
+            .dimensions-right {
+                width: 100%;
+                order: -1;
+            }
+            .calculated-square-feet-card {
+                position: static;
+            }
+        }
         @media (max-width: 768px) { 
             .container { flex-direction: column; }
             #warehouse-form { grid-template-columns: 1fr; }
-            .dimensions-row { grid-template-columns: 1fr; max-width: none; }
+            .dimensions-input-group { grid-template-columns: 1fr; }
         }
         .required { color: red; }
 
@@ -325,19 +366,35 @@ function format_estimate_rate(?array $data): array {
         .rate-pill.ready { background: #e7f6f8; color: #1c4755; border: 1px solid #b8dde4; }
         .rate-pill.pending { background: #fff6e6; color: #8a4b00; border: 1px solid #ffd699; }
 
+        /* Dimensions Section Wrapper */
+        .dimensions-section-wrapper {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            align-items: start;
+        }
+        .dimensions-left {
+            flex: 1;
+        }
+        .dimensions-right {
+            flex: 1;
+        }
+        .section-header {
+            font-size: 0.95em;
+            font-weight: 700;
+            color: #293E4C;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .section-header strong {
+            font-weight: 700;
+        }
+
         /* Modern Unit Selector */
         .unit-selector-wrapper { 
             margin: 0 0 16px 0; 
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            flex-wrap: wrap;
-        }
-        .unit-selector-label { 
-            font-weight: 600; 
-            color: #293E4C; 
-            margin: 0; 
-            font-size: 0.95em; 
         }
         .unit-selector {
             display: inline-flex;
@@ -367,6 +424,58 @@ function format_estimate_rate(?array $data): array {
             box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
             transform: translateY(-1px);
         }
+        
+        /* Beautiful Dimension Inputs */
+        .dimensions-input-group { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 16px; 
+            margin-bottom: 16px;
+        }
+        .input-with-unit {
+            position: relative;
+        }
+        .input-with-unit input { 
+            padding: 12px 16px;
+            border: 2px solid #e0e7ef;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+        }
+        .input-with-unit input:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 0 0 4px rgba(72, 140, 154, 0.1);
+            background: #ffffff;
+            transform: translateY(-1px);
+        }
+        .input-with-unit input::placeholder {
+            color: #9ca3af;
+        }
+        
+        .additional-doc-field {
+            margin-top: 20px;
+        }
+        .additional-doc-field label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 0.95em;
+            color: #293E4C;
+        }
+        .additional-doc-field input[type="file"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px dashed #d1d5db;
+            border-radius: 12px;
+            background: #f9fafb;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .additional-doc-field input[type="file"]:hover {
+            border-color: #488C9A;
+            background: #f0f9fb;
+        }
 
         /* Calculated Square Feet Card */
         .calculated-square-feet-card {
@@ -374,13 +483,13 @@ function format_estimate_rate(?array $data): array {
             border: 2px solid #b8dde4;
             border-radius: 16px;
             padding: 20px;
-            margin: 8px 0;
             display: flex;
             align-items: center;
             gap: 16px;
             box-shadow: 0 8px 20px rgba(72, 140, 154, 0.15);
             transition: all 0.3s ease;
-            grid-column: 1 / -1;
+            position: sticky;
+            top: 20px;
         }
         .calculated-square-feet-card:hover { box-shadow: 0 12px 28px rgba(72, 140, 154, 0.25); transform: translateY(-2px); }
         .calc-icon { font-size: 2.5em; line-height: 1; }
@@ -516,55 +625,67 @@ if (!empty($error_message)) {
                 <input type="number" id="estimated_number_of_pallets" name="estimated_number_of_pallets" required value="<?php echo htmlspecialchars($estimated_number_of_pallets); ?>">
             </div>
 
-            <div class="form-field-full">
-                <label>Estimated Pallet Dimensions:<span class="required">*</span>
-                    <span class="info-tooltip">?
-                        <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet.</span>
-                    </span>
-                </label>
-                <div class="unit-selector-wrapper">
-                    <label class="unit-selector-label">Unit of Measurement:</label>
-                    <div class="unit-selector">
-                        <input type="radio" name="pallet_unit" value="in" id="unit_in" <?php echo ($pallet_unit ?? 'in')==='in' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
-                        <label for="unit_in" class="unit-option">Inches</label>
-                        
-                        <input type="radio" name="pallet_unit" value="cm" id="unit_cm" <?php echo ($pallet_unit ?? 'in')==='cm' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
-                        <label for="unit_cm" class="unit-option">Centimeters</label>
-                        
-                        <input type="radio" name="pallet_unit" value="mm" id="unit_mm" <?php echo ($pallet_unit ?? 'in')==='mm' ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
-                        <label for="unit_mm" class="unit-option">Millimeters</label>
+            <div class="form-field-full dimensions-section-wrapper">
+                <div class="dimensions-left">
+                    <div class="section-header">
+                        <strong>Estimated Pallet Dimensions:<span class="required">*</span></strong>
+                        <span class="info-tooltip">?
+                            <span class="tooltip-text">This information can be provided by the manufacturer's logistic information sheet.</span>
+                        </span>
+                    </div>
+                    <div class="unit-selector-wrapper">
+                        <div class="unit-selector">
+                            <input type="radio" name="pallet_unit" value="in" id="unit_in" <?php echo ($pallet_unit ?? 'in')==='in' ? 'checked' : ''; ?> onchange="updateUnitPlaceholders(); calculateSquareFeet()">
+                            <label for="unit_in" class="unit-option">Inches</label>
+                            
+                            <input type="radio" name="pallet_unit" value="cm" id="unit_cm" <?php echo ($pallet_unit ?? 'in')==='cm' ? 'checked' : ''; ?> onchange="updateUnitPlaceholders(); calculateSquareFeet()">
+                            <label for="unit_cm" class="unit-option">Centimeters</label>
+                            
+                            <input type="radio" name="pallet_unit" value="mm" id="unit_mm" <?php echo ($pallet_unit ?? 'in')==='mm' ? 'checked' : ''; ?> onchange="updateUnitPlaceholders(); calculateSquareFeet()">
+                            <label for="unit_mm" class="unit-option">Millimeters</label>
+                        </div>
+                    </div>
+                    <div class="dimensions-input-group">
+                        <div class="input-with-unit">
+                            <input type="number" step="0.01" id="pallet_length" name="pallet_length" placeholder="Length (in)" required value="<?php echo htmlspecialchars($pallet_length); ?>" oninput="calculateSquareFeet()">
+                        </div>
+                        <div class="input-with-unit">
+                            <input type="number" step="0.01" id="pallet_width" name="pallet_width" placeholder="Width (in)" required value="<?php echo htmlspecialchars($pallet_width); ?>" oninput="calculateSquareFeet()">
+                        </div>
+                    </div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="stackable" name="stackable" <?php echo $stackable ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
+                        <label for="stackable">Stackable?</label>
+                    </div>
+                    
+                    <div class="additional-doc-field">
+                        <label for="additional_documentation">Additional Documentation:</label>
+                        <input type="file" id="additional_documentation" name="additional_documentation" accept=".pdf,.doc,.docx,.jpg,.png">
                     </div>
                 </div>
-                <div class="dimensions-row">
-                    <input type="number" step="0.01" id="pallet_length" name="pallet_length" placeholder="Length" required value="<?php echo htmlspecialchars($pallet_length); ?>">
-                    <input type="number" step="0.01" id="pallet_width" name="pallet_width" placeholder="Width" required value="<?php echo htmlspecialchars($pallet_width); ?>">
-                </div>
-                <div class="checkbox-row">
-                    <input type="checkbox" id="stackable" name="stackable" <?php echo $stackable ? 'checked' : ''; ?> onchange="calculateSquareFeet()">
-                    <label for="stackable">Stackable?</label>
+
+                <div class="dimensions-right">
+                    <div class="calculated-square-feet-card">
+                        <div class="calc-icon">📐</div>
+                        <div class="calc-content">
+                            <div class="calc-label">Calculated Square Feet</div>
+                            <div class="calc-value">
+                                <span id="square-feet-value"><?php echo !empty($square_feet) ? number_format($square_feet, 2) : '0.00'; ?></span>
+                                <span class="calc-unit">sq ft</span>
+                            </div>
+                            <div class="calc-formula" id="calc-formula-display" style="display: none;">
+                                <small>Formula: <span id="formula-text"></span></small>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div class="form-field-full">
-                <label for="additional_documentation">Additional Documentation:</label>
-                <input type="file" id="additional_documentation" name="additional_documentation" accept=".pdf,.doc,.docx,.jpg,.png">
+            <div class="form-actions">
+                <button id="submit-quote-button" class="submit-button">
+                    <i class="fas fa-paper-plane"></i> Submit Quote Request
+                </button>
             </div>
-
-            <div class="calculated-square-feet-card">
-                <div class="calc-icon">📐</div>
-                <div class="calc-content">
-                    <div class="calc-label">Calculated Square Feet</div>
-                    <div class="calc-value">
-                        <span id="square-feet-value"><?php echo !empty($square_feet) ? number_format($square_feet, 2) : '0.00'; ?></span>
-                        <span class="calc-unit">sq ft</span>
-                    </div>
-                    <div class="calc-formula" id="calc-formula-display" style="display: none;">
-                        <small>Formula: <span id="formula-text"></span></small>
-                    </div>
-                </div>
-            </div>
-
-            <button id="submit-quote-button" class="submit-button">Submit</button>
         </form>
     </div>
 </div>
@@ -603,6 +724,15 @@ if (!empty($error_message)) {
         });
     });
 
+    function updateUnitPlaceholders() {
+        const unit = document.querySelector('input[name="pallet_unit"]:checked')?.value || 'in';
+        const lengthInput = document.getElementById('pallet_length');
+        const widthInput = document.getElementById('pallet_width');
+        
+        lengthInput.placeholder = `Length (${unit})`;
+        widthInput.placeholder = `Width (${unit})`;
+    }
+
     function calculateSquareFeet() {
         let lengthInches = parseFloat(document.getElementById('pallet_length').value) || 0;
         let widthInches = parseFloat(document.getElementById('pallet_width').value) || 0;
@@ -637,6 +767,11 @@ if (!empty($error_message)) {
         
         document.getElementById('square-feet-value').textContent = totalArea.toFixed(2);
     }
+
+    // Initialize placeholders on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        updateUnitPlaceholders();
+    });
 
     ['pallet_length','pallet_width','estimated_number_of_pallets'].forEach(id => {
         const el = document.getElementById(id);
