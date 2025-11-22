@@ -35,6 +35,52 @@ if (!$conn) {
 $currentUserId = (int)$_SESSION['user_id'];
 $adminAccounts = $role === 'admin' ? account_ids_for_user($currentUserId) : [];
 
+function slp_fetch_warehouses_with_costs($conn) {
+    $warehouses = [];
+    $sql = "SELECT
+                w.id, w.name, w.street_address, w.city, w.state, w.zip_code, w.country, w.image_url,
+                MAX(CASE WHEN wci.trigger_event = 'entry' AND wci.is_active = 1 THEN wci.amount END) AS in_fee,
+                MAX(CASE WHEN wci.trigger_event = 'exit' AND wci.is_active = 1 THEN wci.amount END) AS out_fee,
+                MAX(CASE WHEN wci.trigger_event = 'monthly' AND wci.is_active = 1 THEN wci.amount END) AS monthly_storage_fee
+            FROM warehouses w
+            LEFT JOIN warehouse_cost_items wci ON w.id = wci.warehouse_id AND wci.is_active = 1
+            GROUP BY w.id, w.name, w.street_address, w.city, w.state, w.zip_code, w.country, w.image_url
+            ORDER BY w.name ASC";
+
+    $stmt = $conn->prepare($sql);
+    if ($stmt) {
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $row['in_fee'] = isset($row['in_fee']) ? (float)$row['in_fee'] : 0;
+            $row['out_fee'] = isset($row['out_fee']) ? (float)$row['out_fee'] : 0;
+            $row['monthly_storage_fee'] = isset($row['monthly_storage_fee']) ? (float)$row['monthly_storage_fee'] : 0;
+            $warehouses[] = $row;
+        }
+        $stmt->close();
+    }
+
+    return $warehouses;
+}
+
+function slp_format_warehouse_location($warehouse) {
+    $city = trim($warehouse['city'] ?? '');
+    $state = trim($warehouse['state'] ?? '');
+    $street = trim($warehouse['street_address'] ?? '');
+
+    $cityState = trim($city . ($state !== '' ? ', ' . $state : ''));
+    if ($cityState !== '') {
+        return $cityState;
+    }
+
+    $streetCity = trim($street . ($city !== '' ? ', ' . $city : ''));
+    if ($streetCity !== '') {
+        return $streetCity;
+    }
+
+    return $warehouse['name'] ?? 'Warehouse';
+}
+
 // Fetch estimate data with account info
 $stmt = $conn->prepare("
     SELECT 
@@ -69,16 +115,6 @@ if (!$estimateRow) {
 
 $estimate_data = json_decode($estimateRow['estimate_data'], true) ?? [];
 
-// Fetch warehouses for dropdown
-$warehouses = [];
-$wh_stmt = $conn->prepare("SELECT id, name FROM warehouses ORDER BY name ASC");
-$wh_stmt->execute();
-$wh_result = $wh_stmt->get_result();
-while ($wh_row = $wh_result->fetch_assoc()) {
-    $warehouses[] = $wh_row;
-}
-$wh_stmt->close();
-
 // Admin scoping
 if ($role === 'admin') {
     $ownerAccounts = account_ids_for_user((int)$estimateRow['user_id']);
@@ -89,68 +125,104 @@ if ($role === 'admin') {
     }
 }
 
+$warehouses = slp_fetch_warehouses_with_costs($conn);
+$warehousesById = [];
+foreach ($warehouses as $wh) {
+    $warehousesById[$wh['id']] = $wh;
+}
+
+
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['add_quote'])) {
+        $warehouse_id = intval($_POST['existing_warehouse_id'] ?? 0);
         $warehouse_location = trim($_POST['warehouse_location'] ?? '');
-        $warehouse_id = intval($_POST['warehouse_id'] ?? 0);
-        $in_fee = floatval($_POST['in_fee'] ?? 0);
-        $out_fee = floatval($_POST['out_fee'] ?? 0);
-        $monthly_storage_fee = floatval($_POST['monthly_storage_fee'] ?? 0);
 
-        // Handle multiple document uploads
-        $uploaded_doc_ids = [];
-        if (!empty($_FILES['quote_documents']['name'][0])) {
-            $file_count = count($_FILES['quote_documents']['name']);
-            for ($i = 0; $i < $file_count; $i++) {
-                if ($_FILES['quote_documents']['error'][$i] === UPLOAD_ERR_OK) {
-                    $file_data = [
-                        'name' => $_FILES['quote_documents']['name'][$i],
-                        'type' => $_FILES['quote_documents']['type'][$i],
-                        'tmp_name' => $_FILES['quote_documents']['tmp_name'][$i],
-                        'error' => $_FILES['quote_documents']['error'][$i],
-                        'size' => $_FILES['quote_documents']['size'][$i]
-                    ];
+        $in_fee_raw = $_POST['in_fee'] ?? '';
+        $out_fee_raw = $_POST['out_fee'] ?? '';
+        $monthly_fee_raw = $_POST['monthly_storage_fee'] ?? '';
 
-                    try {
-                        // Process the uploaded file
-                        $processed_file = processDocumentUpload($file_data, 'warehousing');
-                        
-                        // Save to project_documents table
-                        $document_data = [
-                            'project_id' => null,  // No project association
-                            'warehouse_id' => $warehouse_id > 0 ? $warehouse_id : null,
-                            'document_type' => 'warehousing',
-                            'document_sub_type' => 'Quote',
-                            'original_name' => $processed_file['original_name'],
-                            'file_size' => $processed_file['size'],
-                            'mime_type' => $processed_file['mime_type'],
-                            'uploaded_by' => $currentUserId,
-                            'tmp_name' => $processed_file['tmp_name'],
-                            'description' => "Warehouse quote for {$warehouse_location}",
-                            'entity_context' => json_encode(['warehouse_quote_id' => $estimate_id, 'warehouse_location' => $warehouse_location])
-                        ];
+        $in_fee = ($in_fee_raw === '') ? 0 : floatval($in_fee_raw);
+        $out_fee = ($out_fee_raw === '') ? 0 : floatval($out_fee_raw);
+        $monthly_storage_fee = ($monthly_fee_raw === '') ? 0 : floatval($monthly_fee_raw);
 
-                        $save_result = saveDocumentToProjectDocuments($conn, $document_data);
-                        if ($save_result && isset($save_result['document_id'])) {
-                            $uploaded_doc_ids[] = $save_result['document_id'];
-                        }
-                    } catch (Exception $e) {
-                        error_log("Failed to upload document: " . $e->getMessage());
-                    }
-                }
+        $selectedWarehouse = $warehousesById[$warehouse_id] ?? null;
+        if (!$selectedWarehouse) {
+            $error_message = "Please select an existing warehouse to use for this quote.";
+        } else {
+            if ($warehouse_location === '') {
+                $warehouse_location = slp_format_warehouse_location($selectedWarehouse);
+            }
+            if ($in_fee_raw === '' && $selectedWarehouse['in_fee'] > 0) {
+                $in_fee = (float)$selectedWarehouse['in_fee'];
+            }
+            if ($out_fee_raw === '' && $selectedWarehouse['out_fee'] > 0) {
+                $out_fee = (float)$selectedWarehouse['out_fee'];
+            }
+            if ($monthly_fee_raw === '' && $selectedWarehouse['monthly_storage_fee'] > 0) {
+                $monthly_storage_fee = (float)$selectedWarehouse['monthly_storage_fee'];
             }
         }
 
-        if (empty($warehouse_location) || $warehouse_id <= 0 || $in_fee < 0 || $out_fee < 0 || $monthly_storage_fee < 0 || empty($uploaded_doc_ids)) {
-            $error_message = "Please fill in all required fields with valid values and attach at least one document.";
-        } else {
+        if (empty($error_message) && (empty($warehouse_location) || $warehouse_id <= 0 || $in_fee < 0 || $out_fee < 0 || $monthly_storage_fee < 0)) {
+            $error_message = "Please fill in all required fields with valid values.";
+        }
+
+        // Handle multiple document uploads
+        $uploaded_doc_ids = [];
+        if (empty($error_message)) {
+            if (!empty($_FILES['quote_documents']['name'][0])) {
+                $file_count = count($_FILES['quote_documents']['name']);
+                for ($i = 0; $i < $file_count; $i++) {
+                    if ($_FILES['quote_documents']['error'][$i] === UPLOAD_ERR_OK) {
+                        $file_data = [
+                            'name' => $_FILES['quote_documents']['name'][$i],
+                            'type' => $_FILES['quote_documents']['type'][$i],
+                            'tmp_name' => $_FILES['quote_documents']['tmp_name'][$i],
+                            'error' => $_FILES['quote_documents']['error'][$i],
+                            'size' => $_FILES['quote_documents']['size'][$i]
+                        ];
+
+                        try {
+                            $processed_file = processDocumentUpload($file_data, 'warehousing');
+                            $document_data = [
+                                'project_id' => null,
+                                'warehouse_id' => $warehouse_id > 0 ? $warehouse_id : null,
+                                'document_type' => 'warehousing',
+                                'document_sub_type' => 'Quote',
+                                'original_name' => $processed_file['original_name'],
+                                'file_size' => $processed_file['size'],
+                                'mime_type' => $processed_file['mime_type'],
+                                'uploaded_by' => $currentUserId,
+                                'tmp_name' => $processed_file['tmp_name'],
+                                'description' => "Warehouse quote for {$warehouse_location}",
+                                'entity_context' => json_encode(['warehouse_quote_id' => $estimate_id, 'warehouse_location' => $warehouse_location])
+                            ];
+
+                            $save_result = saveDocumentToProjectDocuments($conn, $document_data);
+                            if ($save_result && isset($save_result['document_id'])) {
+                                $uploaded_doc_ids[] = $save_result['document_id'];
+                            }
+                        } catch (Exception $e) {
+                            error_log("Failed to upload document: " . $e->getMessage());
+                        }
+                    }
+                }
+            }
+
+            if (empty($uploaded_doc_ids)) {
+                $error_message = "Please attach at least one document for this quote.";
+            }
+        }
+
+        if (empty($error_message)) {
             $new_quote = [
                 'warehouse_location' => $warehouse_location,
                 'warehouse_id' => $warehouse_id,
                 'in_fee_per_pallet' => $in_fee,
                 'out_fee_per_pallet' => $out_fee,
                 'monthly_storage_cost_per_pallet' => $monthly_storage_fee,
-                'document_ids' => $uploaded_doc_ids  // Store IDs instead of paths
+                'document_ids' => $uploaded_doc_ids
             ];
             if (!isset($estimate_data['quotes'])) {
                 $estimate_data['quotes'] = [];
@@ -234,10 +306,14 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        label { display: block; margin-top: 15px; font-weight: bold; }
-        input { width: 95%; padding: 8px; margin-top: 5px; }
-        button { background-color: #488C9A; color: white; padding: 10px 20px; margin: 10px 0; border: none; border-radius: 4px; font-size: 1em; cursor: pointer; font-weight: bold; }
-        button:hover { background-color: #293E4C; }
+        label { display: block; margin-top: 15px; font-weight: 600; color: #0f172a; font-size: 0.95em; }
+        input { width: 100%; padding: 10px 12px; margin-top: 6px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.95em; transition: all 0.2s ease; }
+        input:focus { outline: none; border-color: #488C9A; box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1); }
+        select { width: 100%; padding: 10px 12px; margin-top: 6px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.95em; background: white; cursor: pointer; transition: all 0.2s ease; }
+        select:focus { outline: none; border-color: #488C9A; box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1); }
+        button { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color: white; padding: 11px 24px; margin: 10px 0; border: none; border-radius: 8px; font-size: 0.95em; cursor: pointer; font-weight: 600; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(72, 140, 154, 0.25); }
+        button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(72, 140, 154, 0.35); background: linear-gradient(135deg, #3A6E7F 0%, #2d5c70 100%); }
+        button:active { transform: translateY(0); }
         .success-message { color: #0f5132; background: #d1e7dd; border: 1px solid #badbcc; padding: 10px 12px; border-radius: 8px; margin-top: 15px; }
         .error-message { color: #842029; background: #f8d7da; border: 1px solid #f5c2c7; padding: 10px 12px; border-radius: 8px; margin-top: 15px; }
         table { width: 100%; margin-top: 20px; border-collapse: collapse; }
@@ -246,6 +322,21 @@ $conn->close();
         .admin-hero { background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 24px; padding: 24px; margin-bottom: 18px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06); border: 1px solid rgba(72, 140, 154, 0.08); position: relative; overflow: hidden; }
         .admin-hero::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
         .admin-hero__content { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+        .rate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: flex-start; }
+        .card-block { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.04); transition: all 0.3s ease; }
+        .card-block:hover { box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+        .card-header { margin-bottom: 16px; }
+        .card-title { margin: 0; font-size: 1.05em; font-weight: 700; color: #0f172a; }
+        .card-sub { margin: 8px 0 0; color: #6b7280; font-size: 0.9em; }
+        .eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.75em; font-weight: 700; color: #488C9A; margin: 0 0 8px 0; }
+        .required { color: #d97757; font-weight: 700; }
+        .warehouse-preview { background: linear-gradient(135deg, #f0f9fb 0%, #f8fafc 100%); border: 1px solid rgba(72, 140, 154, 0.2); padding: 14px; border-radius: 10px; margin-top: 10px; }
+        .preview-title { font-weight: 700; color: #0f172a; margin: 0; }
+        .preview-meta { color: #6b7280; font-size: 0.9em; margin-top: 6px; }
+        .fee-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 16px 0; }
+        .fee-grid > div { display: flex; flex-direction: column; }
+        .hidden { display: none; }
+
         .hero-sub { color: #556; margin: 4px 0 0; }
 
         /* File Upload Zone */
@@ -380,43 +471,78 @@ $conn->close();
         <li><strong>Calculated Square Feet:</strong> <?php echo number_format($estimate_data['square_feet'] ?? 0, 2); ?> sq ft</li>
     </ul>
 
-    <h2>Add Warehouse Rate</h2>
-    <form method="POST" action="" enctype="multipart/form-data" id="addQuoteForm">
-        <input type="hidden" name="add_quote" value="1">
 
-        <label for="warehouse_id">Warehouse <span style="color: red;">*</span></label>
-        <select id="warehouse_id" name="warehouse_id" required>
-            <option value="">Select warehouse...</option>
-            <?php foreach ($warehouses as $wh): ?>
-                <option value="<?php echo $wh['id']; ?>"><?php echo htmlspecialchars($wh['name']); ?></option>
-            <?php endforeach; ?>
-        </select>
+<h2>Add Warehouse Rate</h2>
+<form method="POST" action="" enctype="multipart/form-data" id="addQuoteForm">
+    <input type="hidden" name="add_quote" value="1">
 
-        <label for="warehouse_location">Warehouse Location (City, State) <span style="color: red;">*</span></label>
-        <input type="text" id="warehouse_location" name="warehouse_location" required placeholder="e.g., Phoenix, AZ">
+    <div class="rate-grid">
+        <div class="card-block">
+            <div class="card-header">
+                <p class="eyebrow">Warehouse Source</p>
+                <h3 class="card-title">Select a warehouse</h3>
+            </div>
 
-        <label for="in_fee">In Fee (per pallet) <span style="color: red;">*</span></label>
-        <input type="number" step="0.01" name="in_fee" required placeholder="0.00">
+            <label for="existing_warehouse_id">Choose Warehouse <span class="required">*</span></label>
+            <select id="existing_warehouse_id" name="existing_warehouse_id" required>
+                <option value="">Select a warehouse...</option>
+                <?php foreach ($warehouses as $wh): ?>
+                    <option value="<?php echo $wh['id']; ?>"><?php echo htmlspecialchars($wh['name']); ?></option>
+                <?php endforeach; ?>
+            </select>
+            
+            <div class="warehouse-preview" id="existingWarehouseSummary" style="margin-top: 16px;">
+                <div class="preview-title" id="summaryName">Choose a warehouse to preview details.</div>
+                <div class="preview-meta" id="summaryAddress"></div>
+                <div class="preview-meta" id="summaryFees"></div>
+            </div>
 
-        <label for="out_fee">Out Fee (per pallet) <span style="color: red;">*</span></label>
-        <input type="number" step="0.01" name="out_fee" required placeholder="0.00">
-
-        <label for="monthly_storage_fee">Monthly Storage Fee (per pallet) <span style="color: red;">*</span></label>
-        <input type="number" step="0.01" name="monthly_storage_fee" required placeholder="0.00">
-
-        <label for="quote_documents">Quote Documents (PDF/Image/DOC) <span style="color: red;">*</span></label>
-        <div class="file-upload-zone" id="fileUploadZone">
-            <i class="fas fa-cloud-upload-alt" style="font-size: 3em; color: #9ca3af; margin-bottom: 16px;"></i>
-            <p style="margin: 0 0 8px; font-weight: 600; color: #488C9A;">Drop files here or click to browse</p>
-            <p style="margin: 0; font-size: 0.85em; color: #9ca3af;">Supports: PDF, DOC, DOCX, JPG, PNG (Max: 50MB each)</p>
+            <p style="font-size: 0.9em; color: #6b7280; margin-top: 16px;">
+                <i class="fas fa-info-circle" style="color: #488C9A;"></i>
+                Need to add a new warehouse? <a href="add_warehouse.php" style="color: #488C9A; font-weight: 600;">Create one here</a>
+            </p>
         </div>
-        <input type="file" id="quote_documents" name="quote_documents[]" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" multiple required style="display: none;">
-        <div id="selectedFiles" class="selected-files-list"></div>
 
-        <button type="submit">Add Rate</button>
-    </form>
+        <div class="card-block">
+            <div class="card-header">
+                <p class="eyebrow">Rates & Documentation</p>
+                <h3 class="card-title">Set fees and attach the quote</h3>
+            </div>
 
-    <h2>Existing Rates</h2>
+            <label for="warehouse_location">Location Reference <span class="required">*</span></label>
+            <input type="text" id="warehouse_location" name="warehouse_location" placeholder="e.g., Phoenix, AZ" required>
+            <p style="font-size: 0.85em; color: #6b7280; margin: 4px 0 12px;">Auto-populated from warehouse, override if needed</p>
+
+            <div class="fee-grid">
+                <div>
+                    <label for="in_fee">Entry Fee (per pallet) <span class="required">*</span></label>
+                    <input type="number" step="0.01" name="in_fee" placeholder="0.00" required>
+                </div>
+                <div>
+                    <label for="out_fee">Exit Fee (per pallet) <span class="required">*</span></label>
+                    <input type="number" step="0.01" name="out_fee" placeholder="0.00" required>
+                </div>
+                <div>
+                    <label for="monthly_storage_fee">Monthly Fee (per pallet) <span class="required">*</span></label>
+                    <input type="number" step="0.01" name="monthly_storage_fee" placeholder="0.00" required>
+                </div>
+            </div>
+
+            <label for="quote_documents">Quote Documents <span class="required">*</span></label>
+            <div class="file-upload-zone" id="fileUploadZone">
+                <i class="fas fa-cloud-upload-alt" style="font-size: 3em; color: #9ca3af; margin-bottom: 16px;"></i>
+                <p style="margin: 0 0 8px; font-weight: 600; color: #488C9A;">Drop files here or click to browse</p>
+                <p style="margin: 0; font-size: 0.85em; color: #9ca3af;">PDF, DOC, DOCX, JPG, PNG (Max: 50MB each)</p>
+            </div>
+            <input type="file" id="quote_documents" name="quote_documents[]" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" multiple required style="display: none;">
+            <div id="selectedFiles" class="selected-files-list"></div>
+
+            <button type="submit" style="margin-top: 20px;">Add Quote</button>
+        </div>
+    </div>
+</form>
+
+<h2>Existing Rates</h2>
     <?php if (!empty($estimate_data['quotes'])): ?>
         <table>
             <tr>
@@ -477,145 +603,155 @@ $conn->close();
         <p>No rates added yet.</p>
     <?php endif; ?>
     <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            const input = document.getElementById("warehouse_location");
-            if (input && window.google && google.maps && google.maps.places) {
-                new google.maps.places.Autocomplete(input, { types: ["geocode"], componentRestrictions: { country: "us" } });
-            }
 
-            // Warehouse rate prepopulation
-            const warehouseSelect = document.getElementById('warehouse_id');
-            const locationInput = document.getElementById('warehouse_location');
-            const inFeeInput = document.querySelector('input[name="in_fee"]');
-            const outFeeInput = document.querySelector('input[name="out_fee"]');
-            const storageInput = document.querySelector('input[name="monthly_storage_fee"]');
-            
-            let existingRatesLoaded = false;
+document.addEventListener("DOMContentLoaded", function() {
+    const warehousesData = <?php echo json_encode($warehouses ?? [], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?> || [];
+    const locationInput = document.getElementById("warehouse_location");
+    const inFeeInput = document.querySelector('input[name="in_fee"]');
+    const outFeeInput = document.querySelector('input[name="out_fee"]');
+    const storageInput = document.querySelector('input[name="monthly_storage_fee"]');
+    const warehouseSelect = document.getElementById('existing_warehouse_id');
+    const summaryName = document.getElementById('summaryName');
+    const summaryAddress = document.getElementById('summaryAddress');
+    const summaryFees = document.getElementById('summaryFees');
 
-            warehouseSelect.addEventListener('change', async function() {
-                const warehouseId = this.value;
-                if (!warehouseId) {
-                    // Clear form if no warehouse selected
-                    locationInput.value = '';
-                    inFeeInput.value = '';
-                    outFeeInput.value = '';
-                    storageInput.value = '';
-                    existingRatesLoaded = false;
-                    return;
-                }
+    // Helper function to format warehouse location
+    function formatLocation(wh) {
+        if (!wh) return '';
+        const city = (wh.city || '').trim();
+        const state = (wh.state || '').trim();
+        if (city || state) {
+            return `${city}${city && state ? ', ' : ''}${state}`.trim();
+        }
+        return (wh.name || '').trim();
+    }
 
-                // Fetch existing rates for this warehouse
-                try {
-                    const response = await fetch(`get_warehouse_rates.php?warehouse_id=${warehouseId}`);
-                    const data = await response.json();
-                    
-                    if (data.success && data.rates) {
-                        // Ask user if they want to use existing rates
-                        const useExisting = confirm(
-                            `Existing rates found for this warehouse:\n\n` +
-                            `Location: ${data.rates.warehouse_location}\n` +
-                            `In Fee: $${data.rates.in_fee}\n` +
-                            `Out Fee: $${data.rates.out_fee}\n` +
-                            `Monthly Storage: $${data.rates.monthly_storage_fee}\n\n` +
-                            `Would you like to use these rates? (Click OK to use existing rates, or Cancel to enter new rates)`
-                        );
-                        
-                        if (useExisting) {
-                            locationInput.value = data.rates.warehouse_location;
-                            inFeeInput.value = data.rates.in_fee;
-                            outFeeInput.value = data.rates.out_fee;
-                            storageInput.value = data.rates.monthly_storage_fee;
-                            existingRatesLoaded = true;
-                        } else {
-                            // User wants to enter new rates
-                            locationInput.value = '';
-                            inFeeInput.value = '';
-                            outFeeInput.value = '';
-                            storageInput.value = '';
-                            existingRatesLoaded = false;
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error fetching warehouse rates:', error);
-                }
-            });
+    // Update preview summary when warehouse is selected
+    function updateSummary(wh) {
+        if (!summaryName || !summaryAddress || !summaryFees) return;
+        if (!wh) {
+            summaryName.textContent = 'Choose a warehouse to preview details.';
+            summaryAddress.textContent = '';
+            summaryFees.textContent = '';
+            return;
+        }
+        summaryName.textContent = wh.name || 'Warehouse';
+        const parts = [];
+        if (wh.street_address) parts.push(wh.street_address);
+        const loc = formatLocation(wh);
+        if (loc) parts.push(loc);
+        if (wh.zip_code) parts.push(wh.zip_code);
+        if (wh.country) parts.push(wh.country);
+        summaryAddress.textContent = parts.join(' · ');
 
-            // File upload functionality
-            const fileUploadZone = document.getElementById('fileUploadZone');
-            const fileInput = document.getElementById('quote_documents');
-            const selectedFilesList = document.getElementById('selectedFiles');
-            let selectedFiles = [];
+        const fees = [];
+        if (wh.in_fee > 0) fees.push(`Entry: $${parseFloat(wh.in_fee).toFixed(2)}`);
+        if (wh.out_fee > 0) fees.push(`Exit: $${parseFloat(wh.out_fee).toFixed(2)}`);
+        if (wh.monthly_storage_fee > 0) fees.push(`Monthly: $${parseFloat(wh.monthly_storage_fee).toFixed(2)}`);
+        summaryFees.textContent = fees.length ? fees.join('  •  ') : 'No default rates on file.';
+    }
 
-            fileUploadZone.addEventListener('click', () => fileInput.click());
+    // Populate form fields from selected warehouse
+    function populateFromWarehouse(id) {
+        const wh = warehousesData.find(w => String(w.id) === String(id));
+        updateSummary(wh);
+        if (!wh) {
+            if (locationInput) locationInput.value = '';
+            if (inFeeInput) inFeeInput.value = '';
+            if (outFeeInput) outFeeInput.value = '';
+            if (storageInput) storageInput.value = '';
+            return;
+        }
+        if (locationInput) {
+            locationInput.value = formatLocation(wh);
+        }
+        if (inFeeInput) inFeeInput.value = wh.in_fee !== undefined && wh.in_fee !== null ? wh.in_fee : '';
+        if (outFeeInput) outFeeInput.value = wh.out_fee !== undefined && wh.out_fee !== null ? wh.out_fee : '';
+        if (storageInput) storageInput.value = wh.monthly_storage_fee !== undefined && wh.monthly_storage_fee !== null ? wh.monthly_storage_fee : '';
+    }
 
-            fileUploadZone.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                fileUploadZone.classList.add('dragover');
-            });
-
-            fileUploadZone.addEventListener('dragleave', () => {
-                fileUploadZone.classList.remove('dragover');
-            });
-
-            fileUploadZone.addEventListener('drop', (e) => {
-                e.preventDefault();
-                fileUploadZone.classList.remove('dragover');
-                const files = Array.from(e.dataTransfer.files);
-                handleFiles(files);
-            });
-
-            fileInput.addEventListener('change', (e) => {
-                const files = Array.from(e.target.files);
-                handleFiles(files);
-            });
-
-            function handleFiles(files) {
-                selectedFiles = [...selectedFiles, ...files];
-                updateFilesList();
-            }
-
-            function removeFile(index) {
-                selectedFiles.splice(index, 1);
-                updateFilesList();
-            }
-
-            function updateFilesList() {
-                if (selectedFiles.length === 0) {
-                    selectedFilesList.innerHTML = '';
-                    fileInput.required = true;
-                    return;
-                }
-
-                fileInput.required = false;
-
-                let html = '';
-                selectedFiles.forEach((file, index) => {
-                    const sizeKB = (file.size / 1024).toFixed(1);
-                    html += `
-                        <div class="file-item">
-                            <div class="file-info">
-                                <i class="fas fa-file file-icon"></i>
-                                <div>
-                                    <div style="font-weight: 600;">${file.name}</div>
-                                    <div style="font-size: 0.85em; color: #6c757d;">${sizeKB} KB</div>
-                                </div>
-                            </div>
-                            <button type="button" class="remove-file-btn" onclick="removeFileAt(${index})">Remove</button>
-                        </div>
-                    `;
-                });
-                selectedFilesList.innerHTML = html;
-
-                // Update the file input with selected files
-                const dataTransfer = new DataTransfer();
-                selectedFiles.forEach(file => dataTransfer.items.add(file));
-                fileInput.files = dataTransfer.files;
-            }
-
-            window.removeFileAt = function(index) {
-                removeFile(index);
-            };
+    // Update when warehouse selection changes
+    if (warehouseSelect) {
+        warehouseSelect.addEventListener('change', (e) => {
+            populateFromWarehouse(e.target.value);
         });
+    }
+
+    // File upload functionality
+    const fileUploadZone = document.getElementById('fileUploadZone');
+    const fileInput = document.getElementById('quote_documents');
+    const selectedFilesList = document.getElementById('selectedFiles');
+    let selectedFiles = [];
+
+    fileUploadZone.addEventListener('click', () => fileInput.click());
+
+    fileUploadZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        fileUploadZone.classList.add('dragover');
+    });
+
+    fileUploadZone.addEventListener('dragleave', () => {
+        fileUploadZone.classList.remove('dragover');
+    });
+
+    fileUploadZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        fileUploadZone.classList.remove('dragover');
+        const files = Array.from(e.dataTransfer.files);
+        handleFiles(files);
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files);
+        handleFiles(files);
+    });
+
+    function handleFiles(files) {
+        selectedFiles = [...selectedFiles, ...files];
+        updateFilesList();
+    }
+
+    function removeFile(index) {
+        selectedFiles.splice(index, 1);
+        updateFilesList();
+    }
+
+    function updateFilesList() {
+        if (selectedFiles.length === 0) {
+            selectedFilesList.innerHTML = '';
+            fileInput.required = true;
+            return;
+        }
+
+        fileInput.required = false;
+
+        let html = '';
+        selectedFiles.forEach((file, index) => {
+            const sizeKB = (file.size / 1024).toFixed(1);
+            html += `
+                <div class="file-item">
+                    <div class="file-info">
+                        <i class="fas fa-file file-icon"></i>
+                        <div>
+                            <div style="font-weight: 600;">${file.name}</div>
+                            <div style="font-size: 0.85em; color: #6c757d;">${sizeKB} KB</div>
+                        </div>
+                    </div>
+                    <button type="button" class="remove-file-btn" onclick="removeFileAt(${index})">Remove</button>
+                </div>
+            `;
+        });
+        selectedFilesList.innerHTML = html;
+
+        const dataTransfer = new DataTransfer();
+        selectedFiles.forEach(file => dataTransfer.items.add(file));
+        fileInput.files = dataTransfer.files;
+    }
+
+    window.removeFileAt = function(index) {
+        removeFile(index);
+    };
+});
     </script>
 </main>
 </body>
