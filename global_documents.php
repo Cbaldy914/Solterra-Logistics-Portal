@@ -120,7 +120,7 @@ $folder_mapping = [
         'customs_document' => 'Customs Document',
         'delivery_sop' => 'Delivery SOP'
     ]],
-    'warehousing' => ['document_type' => 'warehousing', 'subfolders' => ['warehouse_pod' => 'Warehouse POD', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Photos']],
+    'warehousing' => ['document_type' => 'warehousing', 'subfolders' => ['warehouse_pod' => 'Warehouse POD', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Photos', 'quote' => 'Quote']],
     'modules' => ['document_type' => 'modules', 'subfolders' => ['module_invoice' => 'Module Invoice', 'flash_test_data' => 'Flash Test Data', 'spec_sheet' => 'Spec Sheets']],
     // Virtual Photos folder routing to appropriate single-type filters
     'photos' => ['document_type' => 'photos', 'subfolders' => [
@@ -464,10 +464,30 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
             box-shadow: 0 6px 20px rgba(239, 68, 68, 0.3);
         }
 
-        .table-delete-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
+        .table-export-csv-btn {
+            background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+            color: white;
+            font-size: 0.9em;
+            font-weight: 500;
+            padding: 10px 16px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .table-export-csv-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(6, 182, 212, 0.4);
+            background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+        }
+
+        .table-export-csv-btn:active {
+            transform: translateY(0);
         }
 
         /* Dropdown positioning fix */
@@ -493,19 +513,6 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
             position: relative;
         }
 
-        /* Fix subfilter alignment in context sections */
-        #contextSubfilters .filter-grid {
-            align-items: stretch;
-        }
-
-        #contextSubfilters .filter-group {
-            align-self: stretch;
-        }
-
-        #contextSubfilters .filter-label {
-            margin-bottom: 8px;
-            min-height: auto;
-        }
 
         @media (max-width: 768px) {
             .table-header {
@@ -1591,20 +1598,13 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
 
             <div class="filter-group">
                 <label class="filter-label" for="documentTypeFilter">Document Type</label>
-                <select id="documentTypeFilter" class="filter-select" onchange="toggleSubFilters()">
+                <select id="documentTypeFilter" class="filter-select">
                     <option value="">All Document Types</option>
                     <?php foreach ($document_types as $type => $info): ?>
                         <option value="<?php echo $type; ?>"><?php echo htmlspecialchars($info['name']); ?></option>
                     <?php endforeach; ?>
                 </select>
                 
-                <!-- Sub-filters for specific document types -->
-                <div class="sub-filter-group" id="subFilterGroup">
-                    <label class="filter-label">Sub-category</label>
-                    <div class="sub-filter-options" id="subFilterOptions">
-                        <!-- Will be populated dynamically -->
-                    </div>
-                </div>
             </div>
 
             <div class="filter-group">
@@ -1625,212 +1625,6 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
         </div>
     </div>
 
-    <!-- Context subfilters: appear below advanced filters when Doc Type selected -->
-    <div id="contextSubfilters" style="display: none; margin-bottom: 16px;">
-        <div class="filter-section" style="padding: 16px; margin-bottom: 0; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 16px; border: 1px solid rgba(72, 140, 154, 0.08);">
-            <div id="podsSubfilters" style="display: none;">
-                <div class="filter-grid">
-                    <div class="filter-group">
-                        <label class="filter-label">Delivery Date (Actual)</label>
-                        <div class="date-range-group">
-                            <input type="date" id="podsDeliveryStart" class="filter-input" placeholder="Start Date">
-                            <input type="date" id="podsDeliveryEnd" class="filter-input" placeholder="End Date">
-                        </div>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label" for="podsBolNumber">BOL Number</label>
-                        <input type="text" id="podsBolNumber" class="filter-input" placeholder="e.g., 8086343">
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label" for="podsManufacturerSelect">Manufacturer</label>
-                        <select id="podsManufacturerSelect" class="filter-select">
-                            <option value="">All Manufacturers</option>
-                        </select>
-                    </div>
-                    <div class="filter-group" style="position: relative;">
-                        <label class="filter-label" for="podsWattageDisplay">Wattage</label>
-                        <div>
-                            <input type="text" id="podsWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleWattageMenu(event)">
-                            <div id="podsWattageMenu" class="checkbox-menu" style="display:none;"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="invoicesSubfilters" style="display: none;">
-                <div class="filter-grid">
-                    <div class="filter-group">
-                        <label class="filter-label">Invoice Total ($)</label>
-                        <div class="date-range-group">
-                            <input type="number" id="invTotalMin" class="filter-input" placeholder="Min" step="0.01" min="0">
-                            <input type="number" id="invTotalMax" class="filter-input" placeholder="Max" step="0.01" min="0">
-                        </div>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Invoice Date</label>
-                        <div class="date-range-group">
-                            <input type="date" id="invDateStart" class="filter-input" placeholder="Start Date">
-                            <input type="date" id="invDateEnd" class="filter-input" placeholder="End Date">
-                        </div>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label">Due Date</label>
-                        <div class="date-range-group">
-                            <input type="date" id="invDueStart" class="filter-input" placeholder="Start Date">
-                            <input type="date" id="invDueEnd" class="filter-input" placeholder="End Date">
-                        </div>
-                    </div>
-                    <div class="filter-group" id="invManufacturerGroup" style="display: none;">
-                        <label class="filter-label" for="invManufacturerSelect">Manufacturer</label>
-                        <select id="invManufacturerSelect" class="filter-select">
-                            <option value="">All Manufacturers</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-            <div id="shipmentsSubfilters" style="display: none;">
-                <div class="filter-grid">
-                    <div class="filter-group">
-                        <label class="filter-label">Cleared Customs Date</label>
-                        <div class="date-range-group">
-                            <input type="date" id="shipClearedStart" class="filter-input" placeholder="Start Date">
-                            <input type="date" id="shipClearedEnd" class="filter-input" placeholder="End Date">
-                        </div>
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label" for="shipContainerNumber">Container Number</label>
-                        <input type="text" id="shipContainerNumber" class="filter-input" placeholder="e.g., TEMU1234567">
-                    </div>
-                    <div class="filter-group">
-                        <label class="filter-label" for="shipManufacturerSelect">Manufacturer</label>
-                        <select id="shipManufacturerSelect" class="filter-select">
-                            <option value="">All Manufacturers</option>
-                        </select>
-                    </div>
-                    <div class="filter-group" style="position: relative;">
-                        <label class="filter-label" for="shipWattageDisplay">Wattage</label>
-                        <div>
-                            <input type="text" id="shipWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleShipWattageMenu(event)">
-                            <div id="shipWattageMenu" class="checkbox-menu" style="display:none;"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="warehousingSubfilters" style="display: none;">
-                <div class="filter-grid">
-                    <!-- Warehouse filter - shows for all warehousing sub-types -->
-                    <div class="filter-group">
-                        <label class="filter-label" for="warehouseFilterContext">
-                            <i class="fas fa-warehouse" style="margin-right: 6px;"></i>
-                            Warehouse
-                        </label>
-                        <select id="warehouseFilterContext" class="filter-select">
-                            <option value="">All Warehouses</option>
-                            <!-- Will be populated dynamically -->
-                        </select>
-                    </div>
-                    <!-- For Warehouse POD: mirrors PODs filters -->
-                    <div class="filter-group" data-whpod>
-                        <label class="filter-label">Delivery Date (Actual)</label>
-                        <div class="date-range-group">
-                            <input type="date" id="whPodsDeliveryStart" class="filter-input" placeholder="Start Date">
-                            <input type="date" id="whPodsDeliveryEnd" class="filter-input" placeholder="End Date">
-                        </div>
-                    </div>
-                    <div class="filter-group" data-whpod>
-                        <label class="filter-label" for="whPodsBolNumber">BOL Number</label>
-                        <input type="text" id="whPodsBolNumber" class="filter-input" placeholder="e.g., 8086343">
-                    </div>
-                    <div class="filter-group" data-whpod>
-                        <label class="filter-label" for="whPodsManufacturerSelect">Manufacturer</label>
-                        <select id="whPodsManufacturerSelect" class="filter-select">
-                            <option value="">All Manufacturers</option>
-                        </select>
-                    </div>
-                    <div class="filter-group" data-whpod style="position: relative;">
-                        <label class="filter-label" for="whPodsWattageDisplay">Wattage</label>
-                        <div>
-                            <input type="text" id="whPodsWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleWhPodsWattageMenu(event)">
-                            <div id="whPodsWattageMenu" class="checkbox-menu" style="display:none;"></div>
-                        </div>
-                    </div>
-
-                    <!-- For Inventory Report / Photos: Warehouse, Manufacturer, Wattage -->
-                    <div class="filter-group" data-whbasic>
-                        <label class="filter-label" for="whWarehouseSelect">Warehouse</label>
-                        <select id="whWarehouseSelect" class="filter-select">
-                            <option value="">All Warehouses</option>
-                        </select>
-                    </div>
-                    <div class="filter-group" data-whbasic>
-                        <label class="filter-label" for="whManufacturerSelect">Manufacturer</label>
-                        <select id="whManufacturerSelect" class="filter-select">
-                            <option value="">All Manufacturers</option>
-                        </select>
-                    </div>
-                    <div class="filter-group" data-whbasic style="position: relative;">
-                        <label class="filter-label" for="whWattageDisplay">Wattage</label>
-                        <div>
-                            <input type="text" id="whWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleWhWattageMenu(event)">
-                            <div id="whWattageMenu" class="checkbox-menu" style="display:none;"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="modulesSubfilters" style="display: none;">
-                <div class="filter-grid">
-                    <div class="filter-group" data-modbasic>
-                        <label class="filter-label" for="modManufacturerSelect">Manufacturer</label>
-                        <select id="modManufacturerSelect" class="filter-select">
-                            <option value="">All Manufacturers</option>
-                        </select>
-                    </div>
-                    <div class="filter-group" data-modbasic style="position: relative;">
-                        <label class="filter-label" for="modWattageDisplay">Wattage</label>
-                        <div>
-                            <input type="text" id="modWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleModWattageMenu(event)">
-                            <div id="modWattageMenu" class="checkbox-menu" style="display:none;"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="incidentSubfilters" style="display:none;">
-                <div class="filter-grid">
-                    <!-- Ticket number for all incident report tags -->
-                    <div class="filter-group" data-inc-common>
-                        <label class="filter-label" for="incTicketSelect">Ticket Number</label>
-                        <select id="incTicketSelect" class="filter-select">
-                            <option value="">All Tickets</option>
-                        </select>
-                    </div>
-                    <!-- POD-like filters when Project/ Warehouse POD tag selected -->
-                    <div class="filter-group" data-inc-pods>
-                        <label class="filter-label">Delivery Date (Actual)</label>
-                        <div class="date-range-group">
-                            <input type="date" id="incPodsDeliveryStart" class="filter-input" placeholder="Start Date">
-                            <input type="date" id="incPodsDeliveryEnd" class="filter-input" placeholder="End Date">
-                        </div>
-                    </div>
-                    <div class="filter-group" data-inc-pods>
-                        <label class="filter-label" for="incPodsBolNumber">BOL Number</label>
-                        <input type="text" id="incPodsBolNumber" class="filter-input" placeholder="e.g., 8086343">
-                    </div>
-                    <div class="filter-group" data-inc-pods>
-                        <label class="filter-label" for="incPodsManufacturerSelect">Manufacturer</label>
-                        <select id="incPodsManufacturerSelect" class="filter-select">
-                            <option value="">All Manufacturers</option>
-                        </select>
-                    </div>
-                    <div class="filter-group" data-inc-pods style="position: relative;">
-                        <label class="filter-label" for="incPodsWattageDisplay">Wattage</label>
-                        <div>
-                            <input type="text" id="incPodsWattageDisplay" class="filter-input" readonly placeholder="Select wattages" onclick="toggleIncPodsWattageMenu(event)">
-                            <div id="incPodsWattageMenu" class="checkbox-menu" style="display:none;"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <div class="documents-container">
         <div class="table-header">
@@ -1853,6 +1647,10 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
                 <button type="button" class="table-download-btn" id="tableDownload" onclick="downloadSelected()" disabled>
                     <i class="fas fa-download"></i>
                     Download Selected
+                </button>
+                <button type="button" class="table-export-csv-btn" id="tableExportCsv" onclick="exportToCSV()">
+                    <i class="fas fa-file-csv"></i>
+                    Export to CSV
                 </button>
                 <?php if ($can_upload): ?>
                 <button type="button" class="table-delete-btn" id="tableDelete" onclick="deleteSelected()" disabled>
@@ -2019,7 +1817,7 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
  const subFilters = {
      'invoices': ['Solterra Invoice', 'Module Invoice'],
      'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP', 'Project POD', 'Warehouse POD'],
-     'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos'],
+     'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos', 'Quote'],
      'modules': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
      'exception_reports': ['Damage Photo', 'Warranty Document', 'Proof of Completion', 'Safety Incident', 'Project POD', 'Warehouse POD'],
      'photos': ['Project Photo', 'Warehouse Photo', 'Damage Photo'],
@@ -2086,61 +1884,8 @@ document.addEventListener('DOMContentLoaded', function() {
     <?php endif; ?>
     <?php if (!empty($pre_selected_document_type)): ?>
       document.getElementById('documentTypeFilter').value = '<?php echo $pre_selected_document_type; ?>';
-      toggleSubFilters();
-      // Ensure context subfilters match preselected type
-      const docTypeSelectInit = document.getElementById('documentTypeFilter');
-      if (docTypeSelectInit) {
-        const ctx = document.getElementById('contextSubfilters');
-        const pods = document.getElementById('podsSubfilters');
-        if (docTypeSelectInit.value === 'pods') {
-            ctx.style.display = '';
-            pods.style.display = '';
-        }
-      }
-      <?php if (!empty($pre_selected_document_sub_type)): ?>
-        // Select the matching sub-filter chip if present
-        Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option')).forEach(el => {
-          if (el.textContent.trim() === '<?php echo $pre_selected_document_sub_type; ?>') {
-            el.classList.add('selected');
-          }
-        });
-      <?php endif; ?>
     <?php endif; ?>
 
-    // Show/hide context subfilters based on document type (only after Apply)
-    const docTypeSelect = document.getElementById('documentTypeFilter');
-    function toggleContextSubfilters() {
-        const type = docTypeSelect.value;
-        const ctx = document.getElementById('contextSubfilters');
-        const pods = document.getElementById('podsSubfilters');
-        const invoices = document.getElementById('invoicesSubfilters');
-        const ships = document.getElementById('shipmentsSubfilters');
-        if (filtersApplied && type === 'pods') {
-            ctx.style.display = '';
-            pods.style.display = '';
-            invoices.style.display = 'none';
-            if (ships) ships.style.display = 'none';
-            loadPodsFilterOptions();
-        } else if (filtersApplied && type === 'invoices') {
-            ctx.style.display = '';
-            pods.style.display = 'none';
-            invoices.style.display = '';
-            if (ships) ships.style.display = 'none';
-            updateInvoicesSubfilterVisibility();
-        } else if (filtersApplied && type === 'shipments') {
-            ctx.style.display = '';
-            pods.style.display = 'none';
-            invoices.style.display = 'none';
-            if (ships) ships.style.display = '';
-            loadShipFilterOptions();
-        } else {
-            pods.style.display = 'none';
-            invoices.style.display = 'none';
-            if (ships) ships.style.display = 'none';
-            ctx.style.display = 'none';
-        }
-    }
-    docTypeSelect.addEventListener('change', toggleContextSubfilters);
 
     // Initial state if coming from folder context
     <?php if ($pre_selected_document_type === 'pods' || $is_pods_context): ?>
@@ -2409,13 +2154,7 @@ function attachSubfilterListeners() {
 }
 
 function updateInvoicesSubfilterVisibility() {
-    const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
-    const showBol = chips.includes('Solterra Invoice');
-    const showMan = chips.includes('Module Invoice');
-    const bolGroup = document.getElementById('invBolGroup');
-    const manGroup = document.getElementById('invManufacturerGroup');
-    if (bolGroup) bolGroup.style.display = showBol ? '' : 'none';
-    if (manGroup) manGroup.style.display = showMan ? '' : 'none';
+    // This function is no longer used as context subfilters have been removed
 }
 
 function updateInvoicesManufacturersFromDocs(documents) {
@@ -2439,61 +2178,9 @@ function updateInvoicesManufacturersFromDocs(documents) {
 }
 
 // Toggle sub-filters based on document type selection
-function toggleSubFilters() {
-    const documentType = document.getElementById('documentTypeFilter').value;
-    const subFilterGroup = document.getElementById('subFilterGroup');
-    const subFilterOptions = document.getElementById('subFilterOptions');
-    
-    if (documentType && subFilters[documentType]) {
-        // Clear existing sub-filters
-        subFilterOptions.innerHTML = '';
-        
-        // Add sub-filter options
-        subFilters[documentType].forEach(filter => {
-            const option = document.createElement('div');
-            option.className = 'sub-filter-option';
-            option.textContent = filter;
-            option.onclick = () => toggleSubFilter(option);
-            subFilterOptions.appendChild(option);
-        });
-        
-        subFilterGroup.classList.add('active');
-    } else {
-        subFilterGroup.classList.remove('active');
-    }
-}
 
-// Toggle individual sub-filter selection
-function toggleSubFilter(element) {
-    element.classList.toggle('selected');
-    if (filtersApplied && document.getElementById('documentTypeFilter').value === 'invoices') {
-        updateInvoicesSubfilterVisibility();
-    }
-}
-
-function toggleWarehousingSections() {
-    const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
-    const isPods = chips.includes('Warehouse POD');
-    const basic = (chips.includes('Inventory Report') || chips.includes('Photos') || chips.includes('Quote')) && !isPods;
-    const showAll = chips.length === 0; // If no sub-type selected, show all
-    
-    document.querySelectorAll('#warehousingSubfilters [data-whpod]')?.forEach(el => el.style.display = (isPods || showAll) ? '' : 'none');
-    document.querySelectorAll('#warehousingSubfilters [data-whbasic]')?.forEach(el => el.style.display = (basic || showAll) ? '' : 'none');
-}
-
-function toggleModulesSections() {
-    const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
-    const basic = (chips.includes('Flash Test Data') || chips.includes('Spec Sheets'));
-    const showAll = chips.length === 0; // If no sub-type selected, show all
-    document.querySelectorAll('#modulesSubfilters [data-modbasic]')?.forEach(el => el.style.display = (basic || showAll) ? '' : 'none');
-}
-
-function toggleIncidentSections() {
-    const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
-    const isPods = chips.includes('Project POD') || chips.includes('Warehouse POD');
-    const showAll = chips.length === 0; // If no sub-type selected, show all
-    document.querySelectorAll('#incidentSubfilters [data-inc-pods]')?.forEach(el => el.style.display = (isPods || showAll) ? '' : 'none');
-}
+// These functions are no longer needed as context subfilters have been removed
+// Keeping empty stubs to prevent JS errors if called
 
 async function loadIncidentFilterOptions() {
     const projectId = document.getElementById('projectFilter').value || '';
@@ -2716,42 +2403,14 @@ function clearAllFilters() {
     document.getElementById('endDate').value = '';
     document.getElementById('searchFilter').value = '';
     
-    // Clear sub-filters
-    document.getElementById('subFilterGroup').classList.remove('active');
-    document.querySelectorAll('.sub-filter-option').forEach(el => el.classList.remove('selected'));
-
-    // Clear context subfilters and hide
-    const ctx = document.getElementById('contextSubfilters');
-    const pods = document.getElementById('podsSubfilters');
-    const ships = document.getElementById('shipmentsSubfilters');
-    if (document.getElementById('podsDeliveryStart')) document.getElementById('podsDeliveryStart').value = '';
-    if (document.getElementById('podsDeliveryEnd')) document.getElementById('podsDeliveryEnd').value = '';
-    if (document.getElementById('podsBolNumber')) document.getElementById('podsBolNumber').value = '';
-    const podsManSel = document.getElementById('podsManufacturerSelect');
-    if (podsManSel) podsManSel.value = '';
-    const podsWattSel = document.getElementById('podsWattageSelect');
-    if (podsWattSel) Array.from(podsWattSel.options).forEach(o => o.selected = false);
-    if (document.getElementById('shipClearedStart')) document.getElementById('shipClearedStart').value = '';
-    if (document.getElementById('shipClearedEnd')) document.getElementById('shipClearedEnd').value = '';
-    if (document.getElementById('shipContainerNumber')) document.getElementById('shipContainerNumber').value = '';
-    const shipManSel = document.getElementById('shipManufacturerSelect');
-    if (shipManSel) shipManSel.value = '';
-    const shipWattMenu = document.getElementById('shipWattageMenu');
-    if (shipWattMenu) shipWattMenu.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
-    if (document.getElementById('whPodsDeliveryStart')) document.getElementById('whPodsDeliveryStart').value = '';
-    if (document.getElementById('whPodsDeliveryEnd')) document.getElementById('whPodsDeliveryEnd').value = '';
-    if (document.getElementById('whPodsBolNumber')) document.getElementById('whPodsBolNumber').value = '';
-    const whPodsMan = document.getElementById('whPodsManufacturerSelect'); if (whPodsMan) whPodsMan.value='';
-    const whPodsMenu = document.getElementById('whPodsWattageMenu'); if (whPodsMenu) whPodsMenu.querySelectorAll('input[type="checkbox"]').forEach(cb=>cb.checked=false);
-    const whWhSel = document.getElementById('whWarehouseSelect'); if (whWhSel) whWhSel.value='';
-    const whManSel2 = document.getElementById('whManufacturerSelect'); if (whManSel2) whManSel2.value='';
-    const whMenu = document.getElementById('whWattageMenu'); if (whMenu) whMenu.querySelectorAll('input[type="checkbox"]').forEach(cb=>cb.checked=false);
-    const modManSel = document.getElementById('modManufacturerSelect'); if (modManSel) modManSel.value='';
-    const modMenu = document.getElementById('modWattageMenu'); if (modMenu) modMenu.querySelectorAll('input[type="checkbox"]').forEach(cb=>cb.checked=false);
-    const mods = document.getElementById('modulesSubfilters'); if (mods) mods.style.display = 'none';
-    if (pods) pods.style.display = 'none';
-    if (ships) ships.style.display = 'none';
-    if (ctx) ctx.style.display = 'none';
+    // Clear remaining filter field values (context subfilters have been removed)
+    const clearIfExists = (id) => { const el = document.getElementById(id); if (el && el.type === 'checkbox') el.checked = false; else if (el) el.value = ''; };
+    
+    // Clear any leftover filter values if they exist
+    ['podsDeliveryStart', 'podsDeliveryEnd', 'podsBolNumber', 'podsManufacturerSelect', 'podsWattageSelect',
+     'shipClearedStart', 'shipClearedEnd', 'shipContainerNumber', 'shipManufacturerSelect',
+     'whPodsDeliveryStart', 'whPodsDeliveryEnd', 'whPodsBolNumber', 'whPodsManufacturerSelect',
+     'whWarehouseSelect', 'whManufacturerSelect', 'modManufacturerSelect'].forEach(clearIfExists);
     
     // Reset pagination
     currentPage = 1;
@@ -2951,24 +2610,7 @@ async function loadDocuments() {
             } else if (filtersApplied && docType === 'modules') {
                 updateModDynamicFiltersFromDocs(data.documents);
             }
-            // Update subfilters visibility according to Apply state
-            (function(){
-                const type = document.getElementById('documentTypeFilter').value;
-                const ctx = document.getElementById('contextSubfilters');
-                const pods = document.getElementById('podsSubfilters');
-                const invoices = document.getElementById('invoicesSubfilters');
-                const ships = document.getElementById('shipmentsSubfilters');
-                const wh = document.getElementById('warehousingSubfilters');
-                const mods = document.getElementById('modulesSubfilters');
-                const inc = document.getElementById('incidentSubfilters');
-                if (filtersApplied && type === 'pods') { ctx.style.display = ''; pods.style.display = ''; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
-                else if (filtersApplied && type === 'invoices') { ctx.style.display=''; pods.style.display='none'; invoices.style.display=''; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
-                else if (filtersApplied && type === 'shipments') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display=''; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
-                else if (filtersApplied && type === 'warehousing') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) { wh.style.display=''; toggleWarehousingSections(); } if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; }
-                else if (filtersApplied && type === 'modules') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) { mods.style.display=''; toggleModulesSections(); } if (inc) inc.style.display='none'; }
-                else if (filtersApplied && type === 'exception_reports') { ctx.style.display=''; pods.style.display='none'; invoices.style.display='none'; ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) { inc.style.display=''; toggleIncidentSections(); loadIncidentFilterOptions(); } }
-                else { pods.style.display = 'none'; invoices.style.display='none'; if (ships) ships.style.display='none'; if (wh) wh.style.display='none'; if (mods) mods.style.display='none'; if (inc) inc.style.display='none'; ctx.style.display = 'none'; }
-            })();
+            // Context subfilters have been removed - no-op
             updatePagination(data.total_count, data.total_pages);
             updateStats();
         } else {
@@ -2999,12 +2641,13 @@ function renderDocumentsTable(documents) {
     const showPodsCols = (filtersApplied && docType === 'pods');
     const showInvCols = (filtersApplied && docType === 'invoices');
     const showShipCols = (filtersApplied && docType === 'shipments');
-    const chips = Array.from(document.querySelectorAll('#subFilterOptions .sub-filter-option.selected')).map(el => el.textContent.trim());
-    const showInvMan = showInvCols && chips.includes('Module Invoice');
-    const showModBasicCols = (filtersApplied && docType === 'modules' && (chips.includes('Flash Test Data') || chips.includes('Spec Sheets')));
+    // Sub-filters have been removed, so chips array is always empty
+    const chips = [];
+    const showInvMan = false;
+    const showModBasicCols = false;
     const showIncTicket = (filtersApplied && docType === 'exception_reports');
-    const showWhPodsCols = (filtersApplied && docType === 'warehousing' && chips.includes('Warehouse POD'));
-    const showWhBasicCols = (filtersApplied && docType === 'warehousing' && (chips.includes('Inventory Report') || chips.includes('Photos')) && !chips.includes('Warehouse POD'));
+    const showWhPodsCols = false;
+    const showWhBasicCols = false;
     const tableHTML = `
         <table class="documents-table">
             <thead>
@@ -3399,6 +3042,54 @@ async function downloadSelected() {
     } catch (error) {
         console.error('Error downloading documents:', error);
         alert('Network error occurred while downloading documents');
+    }
+}
+
+// Export all filtered documents to CSV
+async function exportToCSV() {
+    try {
+        // Collect current filters from the form
+        const filters = {
+            project: document.getElementById('projectFilter').value || '',
+            document_type: document.getElementById('documentTypeFilter').value || '',
+            search: document.getElementById('searchFilter').value || '',
+            start_date: document.getElementById('startDate').value || '',
+            end_date: document.getElementById('endDate').value || '',
+            warehouse: document.getElementById('warehouseFilter')?.value || '',
+            manufacturer: document.getElementById('manufacturerFilter')?.value || '',
+            wattage: Array.from(document.querySelectorAll('#wattageMenu input[type="checkbox"]:checked')).map(cb => cb.value),
+            delivery_date_start: document.getElementById('deliveryDateStart')?.value || '',
+            delivery_date_end: document.getElementById('deliveryDateEnd')?.value || '',
+            bol_number: document.getElementById('bolNumberFilter')?.value || ''
+        };
+        
+        const response = await fetch('export_documents_csv.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(filters)
+        });
+        
+        if (response.ok) {
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.style.display = 'none';
+            link.href = url;
+            const dateStr = new Date().toISOString().split('T')[0];
+            link.download = `documents_export_${dateStr}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(link);
+        } else {
+            const errorData = await response.json();
+            alert(errorData.message || 'Failed to export documents');
+        }
+    } catch (error) {
+        console.error('Error exporting documents:', error);
+        alert('Network error occurred while exporting documents');
     }
 }
 
