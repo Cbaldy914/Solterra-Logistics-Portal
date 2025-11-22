@@ -1541,7 +1541,14 @@ if ($conn) {
                                          </span>
                                      </td>
                                      <td>
-                                          <a href="pallet_details.php?pallet_id=<?php echo $pallet['pallet_id']; ?><?php if ($module_batch_id) echo '&origin_batch_id='.$module_batch_id; ?>" class="view-details-btn" target="_blank">
+                                         <?php
+                                             $palletDetailsUrl = 'pallet_details.php?pallet_id=' . (int)$pallet['pallet_id'];
+                                             if ($module_batch_id) { $palletDetailsUrl .= '&origin_batch_id=' . (int)$module_batch_id; }
+                                             if ($warehouse_id)     { $palletDetailsUrl .= '&warehouse_id=' . (int)$warehouse_id; }
+                                             if ($project_id)       { $palletDetailsUrl .= '&project_id=' . (int)$project_id; }
+                                             $palletDetailsUrl .= '&from=warehouse_info';
+                                         ?>
+                                          <a href="<?php echo $palletDetailsUrl; ?>" class="view-details-btn">
                                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                                                   <circle cx="12" cy="12" r="3"></circle>

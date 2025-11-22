@@ -24,6 +24,11 @@ $pallet_data = null;
 $associated_deliveries = [];
 $errorMessage = '';
 $breadcrumbProjectId = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
+$fromWarehouseInfo = (($_GET['from'] ?? '') === 'warehouse_info');
+$breadcrumbWarehouseId = isset($_GET['warehouse_id']) ? (int)$_GET['warehouse_id'] : 0;
+$breadcrumbWarehouseName = '';
+$originBatchId = isset($_GET['origin_batch_id']) ? (int)$_GET['origin_batch_id'] : 0;
+
 
 try {
     // 1. Fetch Pallet Master Data
@@ -32,6 +37,8 @@ try {
                         ip.pallet_identifier,
                         ip.wattage,
                         ip.quantity,
+                        ip.current_warehouse_id AS current_warehouse_id,
+                        ip.current_project_id AS current_project_id,
                         ip.status,
                         ip.arrival_date,
                         -- Clean manufacturer name by removing project suffix
@@ -66,10 +73,20 @@ try {
 
     if ($result_pallet->num_rows > 0) {
         $pallet_data = $result_pallet->fetch_assoc();
+        if ($fromWarehouseInfo) {
+            if ($breadcrumbWarehouseId <= 0 && !empty($pallet_data['current_warehouse_id'])) {
+                $breadcrumbWarehouseId = (int)$pallet_data['current_warehouse_id'];
+            }
+            if (!$breadcrumbWarehouseName && !empty($pallet_data['current_warehouse_name'])) {
+                $breadcrumbWarehouseName = $pallet_data['current_warehouse_name'];
+            }
+        }
         // Determine project context for breadcrumbs
         if ($pallet_data) {
-            $breadcrumbProjectId = (int)($pallet_data['current_project_id'] ?? 0);
-            if ($breadcrumbProjectId <= 0) {
+            $projectFromData = (int)($pallet_data['current_project_id'] ?? 0);
+            if ($projectFromData > 0) {
+                $breadcrumbProjectId = $projectFromData;
+            } elseif ($breadcrumbProjectId <= 0) {
                 // Try to infer via any associated delivery's project
                 $stmtProj = $conn->prepare("SELECT d.project_id FROM deliveries d JOIN delivery_pallets dp ON d.id = dp.delivery_id WHERE dp.inventory_pallet_id = ? AND d.project_id IS NOT NULL ORDER BY d.id DESC LIMIT 1");
                 if ($stmtProj) {
@@ -83,6 +100,17 @@ try {
         }
     } else {
         throw new Exception("Pallet with ID {$pallet_id} not found.");
+    }
+
+    if ($fromWarehouseInfo && $breadcrumbWarehouseId > 0 && !$breadcrumbWarehouseName) {
+        $stmtWh = $conn->prepare("SELECT name FROM warehouses WHERE id = ? LIMIT 1");
+        if ($stmtWh) {
+            $stmtWh->bind_param("i", $breadcrumbWarehouseId);
+            $stmtWh->execute();
+            $stmtWh->bind_result($whName);
+            if ($stmtWh->fetch()) { $breadcrumbWarehouseName = $whName; }
+            $stmtWh->close();
+        }
     }
     $stmt_pallet->close();
 
@@ -445,17 +473,36 @@ $conn->close();
     <?php 
         require_once 'components/breadcrumbs.php'; 
         // For customers, Manage Pallets breadcrumb should return to manage_pallets
-        // Admins/Global Admins keep create_shipment as destination
-        $mpUrl = '';
-        if ($role === 'admin' || $role === 'global_admin') {
-            $mpUrl = 'create_shipment.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
+        // Admins/Global Admins keep create_shipment as destination unless we came from warehouse view
+        $useWarehouseCrumb = $fromWarehouseInfo && $breadcrumbWarehouseId > 0;
+        $extraCrumbs = [];
+
+        if ($useWarehouseCrumb) {
+            $warehouseBackUrl = 'warehouse_info.php?warehouse_id=' . (int)$breadcrumbWarehouseId;
+            if ($breadcrumbProjectId > 0) {
+                $warehouseBackUrl .= '&project_id=' . (int)$breadcrumbProjectId;
+            }
+            if ($originBatchId > 0) {
+                $warehouseBackUrl .= '&module_batch_id=' . (int)$originBatchId;
+            }
+            $extraCrumbs[] = [
+                'label' => !empty($breadcrumbWarehouseName) ? $breadcrumbWarehouseName : 'Warehouse Details',
+                'url' => $warehouseBackUrl
+            ];
         } else {
-            $mpUrl = 'manage_pallets.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
+            $mpUrl = '';
+            if ($role === 'admin' || $role === 'global_admin') {
+                $mpUrl = 'create_shipment.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
+            } else {
+                $mpUrl = 'manage_pallets.php' . ($breadcrumbProjectId > 0 ? ('?project_id='.(int)$breadcrumbProjectId) : '');
+            }
+            $extraCrumbs[] = ['label' => 'Manage Pallets', 'url' => $mpUrl];
         }
+
         echo slp_render_breadcrumbs([
             'current_label' => 'Pallet Details',
             'project_id' => (int)$breadcrumbProjectId,
-            'extra' => [ ['label' => 'Manage Pallets', 'url' => $mpUrl] ]
+            'extra' => $extraCrumbs
         ]);
     ?>
 
