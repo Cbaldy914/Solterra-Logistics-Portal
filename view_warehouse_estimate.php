@@ -34,6 +34,26 @@ if ($stmt->fetch()) {
 }
 $stmt->close();
 
+// Fetch documents for each quote
+$quote_documents = [];
+if (!empty($estimate_data['quotes'])) {
+    foreach ($estimate_data['quotes'] as $idx => $quote) {
+        if (!empty($quote['document_ids'])) {
+            $placeholders = implode(',', array_fill(0, count($quote['document_ids']), '?'));
+            $doc_stmt = $conn->prepare("SELECT id, original_file_name, file_size FROM project_documents WHERE id IN ($placeholders) AND is_active = 1");
+            $types = str_repeat('i', count($quote['document_ids']));
+            $doc_stmt->bind_param($types, ...$quote['document_ids']);
+            $doc_stmt->execute();
+            $doc_result = $doc_stmt->get_result();
+            $quote_documents[$idx] = [];
+            while ($doc_row = $doc_result->fetch_assoc()) {
+                $quote_documents[$idx][] = $doc_row;
+            }
+            $doc_stmt->close();
+        }
+    }
+}
+
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -106,10 +126,33 @@ $conn->close();
         table {
             width: 100%;
             margin-top: 20px;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.04);
         }
-        th, td {
-            padding: 8px;
+        th {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 14px;
             text-align: left;
+            font-weight: 600;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        td {
+            padding: 14px;
+            text-align: left;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 0.95em;
+        }
+        tr:last-child td {
+            border-bottom: none;
+        }
+        tr:hover td {
+            background: #f8f9fb;
         }
         @media (max-width: 768px) {
             .container {
@@ -196,6 +239,48 @@ $conn->close();
             border: 1px solid #b8dde4;
         }
 
+        /* Document styling */
+        .docs-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-width: 350px;
+        }
+        .doc-item-inline {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+            transition: all 0.2s ease;
+        }
+        .doc-item-inline:hover {
+            background: #e7f6f8;
+            border-color: #488C9A;
+        }
+        .doc-link {
+            color: #293E4C;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9em;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .doc-link:hover {
+            color: #488C9A;
+            text-decoration: underline;
+        }
+        .doc-size {
+            font-size: 0.8em;
+            color: #6c757d;
+            white-space: nowrap;
+        }
+
     </style>
 </head>
 <body>
@@ -241,13 +326,44 @@ $conn->close();
                 <th>Entry Fee (per pallet)</th>
                 <th>Exit Fee (per pallet)</th>
                 <th>Monthly Storage Fee (per pallet)</th>
+                <th>Documents</th>
             </tr>
-            <?php foreach ($estimate_data['quotes'] as $quote): ?>
+            <?php foreach ($estimate_data['quotes'] as $idx => $quote): 
+                $doc_count = !empty($quote['document_ids']) ? count($quote['document_ids']) : 0;
+            ?>
                 <tr>
                     <td><?php echo htmlspecialchars($quote['warehouse_location']); ?></td>
                     <td>$<?php echo number_format($quote['entry_fee_per_pallet'] ?? $quote['in_fee_per_pallet'] ?? 0, 2); ?></td>
                     <td>$<?php echo number_format($quote['exit_fee_per_pallet'] ?? $quote['out_fee_per_pallet'] ?? 0, 2); ?></td>
                     <td>$<?php echo number_format($quote['monthly_storage_cost_per_pallet'], 2); ?></td>
+                    <td>
+                        <?php if ($doc_count > 0): ?>
+                            <div class="docs-cell">
+                                <?php 
+                                $docs = $quote_documents[$idx] ?? [];
+                                foreach ($docs as $doc): 
+                                    $size = $doc['file_size'];
+                                    if ($size < 1024) {
+                                        $formatted_size = $size . ' B';
+                                    } elseif ($size < 1024 * 1024) {
+                                        $formatted_size = round($size / 1024, 1) . ' KB';
+                                    } else {
+                                        $formatted_size = round($size / (1024 * 1024), 1) . ' MB';
+                                    }
+                                ?>
+                                    <div class="doc-item-inline">
+                                        <i class="fas fa-file-alt" style="color: #488C9A;"></i>
+                                        <a href="download_document.php?id=<?php echo $doc['id']; ?>" target="_blank" class="doc-link" title="<?php echo htmlspecialchars($doc['original_file_name']); ?>">
+                                            <?php echo htmlspecialchars(strlen($doc['original_file_name']) > 25 ? substr($doc['original_file_name'], 0, 25) . '...' : $doc['original_file_name']); ?>
+                                        </a>
+                                        <span class="doc-size">(<?php echo $formatted_size; ?>)</span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php else: ?>
+                            <span style="color: #9ca3af; font-style: italic;">No documents</span>
+                        <?php endif; ?>
+                    </td>
                 </tr>
             <?php endforeach; ?>
         </table>
