@@ -31,6 +31,7 @@ if (isset($_SESSION['demo_error'])) {
     <title>Request Information - Solterra Solutions</title>
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
     <style>
         * {
             margin: 0;
@@ -255,6 +256,10 @@ if (isset($_SESSION['demo_error'])) {
         .form-group input::placeholder,
         .form-group textarea::placeholder {
             color: #9ca3af;
+        }
+
+        .g-recaptcha {
+            margin: 0 0 1rem;
         }
 
         .submit-btn {
@@ -541,6 +546,8 @@ if (isset($_SESSION['demo_error'])) {
                             <label for="message">Tell Us About Your Needs</label>
                             <textarea id="message" name="message" placeholder="What logistics challenges are you facing? What features are most important to you?"></textarea>
                         </div>
+
+                        <div class="g-recaptcha" data-sitekey="6LdNOBUsAAAAAPH2xmAVblA4fNus6VqdG4HOg1Po"></div>
                         
                         <button type="submit" class="submit-btn">
                             <span>Submit Request</span>

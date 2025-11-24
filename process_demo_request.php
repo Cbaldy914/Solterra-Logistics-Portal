@@ -52,6 +52,52 @@ if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
     }
 }
 
+$recaptcha_secret = 'REDACTED_RECAPTCHA_SECRET';
+$recaptcha_response = trim($_POST['g-recaptcha-response'] ?? '');
+
+if (empty($recaptcha_response)) {
+    $_SESSION['demo_error'] = 'Please complete the reCAPTCHA verification.';
+    header("Location: request_demo");
+    exit();
+}
+
+$verify_data = [
+    'secret' => $recaptcha_secret,
+    'response' => $recaptcha_response,
+    'remoteip' => $ip_address,
+];
+
+$verify_response = null;
+
+if (function_exists('curl_init')) {
+    $ch = curl_init('https://www.google.com/recaptcha/api/siteverify');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $verify_data);
+    $verify_response = curl_exec($ch);
+    if ($verify_response === false) {
+        error_log('reCAPTCHA cURL error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+} else {
+    $context = stream_context_create([
+        'http' => [
+            'method'  => 'POST',
+            'header'  => 'Content-type: application/x-www-form-urlencoded',
+            'content' => http_build_query($verify_data),
+            'timeout' => 10,
+        ],
+    ]);
+    $verify_response = @file_get_contents('https://www.google.com/recaptcha/api/siteverify', false, $context);
+}
+
+$decoded = json_decode((string)$verify_response, true);
+if (empty($decoded['success'])) {
+    $_SESSION['demo_error'] = 'reCAPTCHA verification failed. Please try again.';
+    header("Location: request_demo");
+    exit();
+}
+
 $conn = getDBConnection();
 if (!$conn) {
     $_SESSION['demo_error'] = 'System error. Please try again later.';
