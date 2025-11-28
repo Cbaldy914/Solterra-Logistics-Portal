@@ -11,6 +11,10 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 require_once '../config.php';
 require_once 'document_helpers.php';
 require_once 'anticipated_schedule_helpers.php';
+require __DIR__ . '/vendor/autoload.php';
+
+use Dompdf\Dompdf;
+use Dompdf\Options;
 
 $conn = getDBConnection();
 if (!$conn) {
@@ -24,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['project_id'])) {
     $project_id = intval($_POST['project_id']);
 }
 $action = $_POST['action'] ?? '';
+$posted_summary_text = isset($_POST['summary_text']) ? trim($_POST['summary_text']) : null;
 
 // ---------- Helpers ----------
 function sanitizeFileName($name) {
@@ -46,6 +51,194 @@ function writeCsv($path, $headers, $rows) {
         fputcsv($f, $row);
     }
     fclose($f);
+}
+
+function summaryStorageDir($project_id) {
+    return __DIR__ . "/uploads/project_summaries/{$project_id}";
+}
+
+function loadStoredSummaryText($project_id) {
+    $path = summaryStorageDir($project_id) . '/summary.txt';
+    if (is_file($path)) {
+        return file_get_contents($path) ?: '';
+    }
+    return '';
+}
+
+function saveStoredSummaryText($project_id, $text) {
+    $dir = summaryStorageDir($project_id);
+    ensureDir($dir);
+    file_put_contents($dir . '/summary.txt', $text);
+}
+
+function buildDefaultSummaryText($project_row, $totals) {
+    [$total_order, $delivered, $percent] = $totals;
+    $percentDisplay = number_format($percent, 2);
+    $deliveredDisplay = number_format($delivered);
+    $totalDisplay = number_format($total_order);
+    $lines = [];
+    $lines[] = 'Project summary for ' . ($project_row['project_name'] ?? 'this project') . ' (' . ($project_row['account_name'] ?? 'Account unknown') . ').';
+    if ($total_order > 0) {
+        $lines[] = 'Delivery progress: ' . $percentDisplay . '% (' . $deliveredDisplay . ' of ' . $totalDisplay . ' modules delivered).';
+    } else {
+        $lines[] = 'Delivery progress: No wattage orders recorded.';
+    }
+    $lines[] = 'Use this space to capture highlights, risks, and client-facing notes:';
+    $lines[] = '- Outstanding items: ______';
+    $lines[] = '- Safety / quality notes: ______';
+    $lines[] = '- Customer follow-ups: ______';
+    return implode("\n", $lines);
+}
+
+function buildSummaryHtml($project_row, $summary_text, $user_row, $totals) {
+    [$total_order, $delivered, $percent] = $totals;
+    $percentDisplay = number_format($percent, 2);
+    $deliveredDisplay = number_format($delivered);
+    $totalDisplay = number_format($total_order);
+    $summarySafe = nl2br(htmlspecialchars($summary_text));
+    $addressParts = array_filter([
+        $project_row['street_address'] ?? $project_row['project_address'] ?? '',
+        trim(($project_row['city'] ?? '') . ' ' . ($project_row['state'] ?? '') . ' ' . ($project_row['zip_code'] ?? ''))
+    ]);
+    $address = implode('<br>', array_map('htmlspecialchars', $addressParts));
+    $logoPath = __DIR__ . '/pictures/header_logo.png';
+    $logoBase64 = '';
+    if (is_file($logoPath)) {
+        $logoBase64 = 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath));
+    }
+
+    $projectInfo = [
+        'Project' => htmlspecialchars($project_row['project_name'] ?? 'N/A'),
+        'Project ID' => htmlspecialchars($project_row['id'] ?? $project_row['project_id'] ?? 'N/A'),
+        'Account' => htmlspecialchars($project_row['account_name'] ?? 'N/A'),
+        'Address' => $address ?: 'N/A',
+        'Phone' => htmlspecialchars(trim(($project_row['phone1'] ?? '') . ' ' . ($project_row['phone2'] ?? '')) ?: 'N/A'),
+        'Timezone' => htmlspecialchars($project_row['timezone'] ?? 'N/A'),
+        'Reference Numbers' => htmlspecialchars($project_row['reference_numbers'] ?? 'N/A'),
+        'Instructions' => nl2br(htmlspecialchars($project_row['instructions'] ?? 'N/A')),
+    ];
+
+    $html = '<!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page { margin: 0.75in; }
+            body { font-family: Arial, sans-serif; color: #1f2a30; }
+            .header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+            .brand { font-size:22px; font-weight:700; color:#1f3b4d; }
+            .meta { font-size:12px; color:#4a5b6a; }
+            .card { border:1px solid #d9e2ec; border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+            .card h3 { margin:0 0 8px 0; font-size:16px; color:#1f3b4d; }
+            .info-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:8px 14px; font-size:12px; }
+            .info-item { padding:6px 8px; background:#f7fafc; border-radius:8px; border:1px solid #e7eef4; }
+            .info-item strong { display:block; color:#2d4857; margin-bottom:4px; font-size:11px; text-transform:uppercase; letter-spacing:0.5px; }
+            .summary-text { font-size:13px; line-height:1.5; color:#1f2a30; white-space:normal; }
+            .badge { display:inline-block; padding:6px 10px; border-radius:999px; background:#e8f4f7; color:#2c6070; font-weight:600; font-size:11px; margin-right:6px; }
+            .metrics { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:10px; }
+            .metric { background:#f9fbfd; border:1px solid #e7eef4; border-radius:10px; padding:10px 12px; }
+            .metric .label { font-size:11px; color:#5f6f7d; text-transform:uppercase; letter-spacing:0.6px; margin-bottom:4px; }
+            .metric .value { font-size:18px; font-weight:700; color:#1f3b4d; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div>
+                <div class="brand">Project Summary</div>
+                <div class="meta">Generated by ' . htmlspecialchars($user_row['email'] ?? ($user_row['username'] ?? '')) . ' on ' . date('M j, Y g:i A') . '</div>
+            </div>';
+    if ($logoBase64) {
+        $html .= '<img src="' . $logoBase64 . '" alt="Logo" style="height:48px;">';
+    }
+    $html .= '</div>
+        <div class="card">
+            <h3>Project Info</h3>
+            <div class="info-grid">';
+    foreach ($projectInfo as $label => $val) {
+        $html .= '<div class="info-item"><strong>' . htmlspecialchars($label) . '</strong><div>' . $val . '</div></div>';
+    }
+    $html .= '</div>
+        </div>
+        <div class="card">
+            <h3>Status</h3>
+            <div class="metrics">
+                <div class="metric"><div class="label">Delivery Progress</div><div class="value">' . $percentDisplay . '%</div></div>
+                <div class="metric"><div class="label">Delivered Modules</div><div class="value">' . $deliveredDisplay . '</div></div>
+                <div class="metric"><div class="label">Total Ordered</div><div class="value">' . $totalDisplay . '</div></div>
+            </div>
+        </div>
+        <div class="card">
+            <h3>Project Summary Notes</h3>
+            <div class="summary-text">' . $summarySafe . '</div>
+        </div>
+    </body>
+    </html>';
+    return $html;
+}
+
+function generateSummaryPdf($project_id, $project_row, $summary_text, $user_row, $totals) {
+    $options = new Options();
+    $options->set('isRemoteEnabled', true);
+    $options->set('isHtml5ParserEnabled', true);
+    $dompdf = new Dompdf($options);
+    $html = buildSummaryHtml($project_row, $summary_text, $user_row, $totals);
+    $dompdf->loadHtml($html);
+    $dompdf->setPaper('Letter', 'portrait');
+    $dompdf->render();
+    $output = $dompdf->output();
+
+    $dir = summaryStorageDir($project_id);
+    ensureDir($dir);
+    $pdfPath = $dir . '/project_summary.pdf';
+    file_put_contents($pdfPath, $output);
+    saveStoredSummaryText($project_id, $summary_text);
+
+    return [$pdfPath, $output];
+}
+
+function fetchSustainabilityReport($conn, $project_id) {
+    $sql = 'SELECT supplier, wattage, quantity, bol_number, status_of_delivery, miles FROM deliveries WHERE project_id = ?';
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('i', $project_id);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    $deliveries = [];
+    $totals = [
+        'total_emissions' => 0.0,
+        'total_truckloads' => 0,
+        'total_miles_driven' => 0.0,
+        'total_fuel_consumption' => 0.0,
+        'total_mws_delivered' => 0.0,
+    ];
+
+    while ($row = $res->fetch_assoc()) {
+        $quantity = (int)($row['quantity'] ?? 0);
+        $wattage = (float)($row['wattage'] ?? 0);
+        $miles = (float)($row['miles'] ?? 0);
+
+        if (in_array($row['status_of_delivery'] ?? '', ['Delivered to Project', 'Delivered to Warehouse']) && $miles > 0) {
+            $totals['total_truckloads'] += 1;
+        }
+
+        $fuel = $miles * 0.1667;
+        $emissions = $fuel * 10.21;
+        $mws = ($quantity * $wattage) / 1000000;
+
+        $totals['total_miles_driven'] += $miles;
+        $totals['total_fuel_consumption'] += $fuel;
+        $totals['total_emissions'] += $emissions;
+        $totals['total_mws_delivered'] += $mws;
+
+        $row['miles_driven'] = $miles;
+        $row['fuel_consumption'] = $fuel;
+        $row['emissions'] = $emissions;
+        $row['mw_delivered'] = $mws;
+        $deliveries[] = $row;
+    }
+    $stmt->close();
+
+    return ['deliveries' => $deliveries, 'totals' => $totals];
 }
 
 function addDirToZip($zip, $dir, $baseLength) {
@@ -142,17 +335,20 @@ function fetchTotals($conn, $project_id) {
     return [$total_order, $delivered, $percent];
 }
 
-function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals) {
+function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, $summaryPdfPath, $sustainabilityReport) {
     [$total_order, $delivered, $percent] = $totals;
     $rootName = 'Project_' . $project_id . '_' . sanitizeFileName($project_row['project_name'] ?? 'project');
     $tempBase = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'project_close_' . uniqid();
     $rootPath = $tempBase . DIRECTORY_SEPARATOR . $rootName;
     ensureDir($rootPath);
 
-    // 00 Project Summary
+    // 00 Project Summary (PDF + metadata)
     $summaryDir = $rootPath . '/00_Project_Summary';
     ensureDir($summaryDir);
-    $summaryData = [
+    if ($summaryPdfPath && is_file($summaryPdfPath)) {
+        @copy($summaryPdfPath, $summaryDir . '/project_summary.pdf');
+    }
+    $summaryMeta = [
         'project_id' => $project_id,
         'project_name' => $project_row['project_name'] ?? '',
         'account_name' => $project_row['account_name'] ?? '',
@@ -162,29 +358,11 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
         'total_ordered_modules' => $total_order,
         'delivered_percent' => $percent,
     ];
-    file_put_contents($summaryDir . '/summary.json', json_encode($summaryData, JSON_PRETTY_PRINT));
-
-    // 01 Project Info
-    $infoDir = $rootPath . '/01_Project_Info';
-    ensureDir($infoDir);
-    $projectHeaders = ['Project ID','Project Name','Account','Address','City','State','Zip','Phone1','Phone2','Timezone','Reference Numbers','Instructions','Standard Operating Hours','Additional Notes'];
-    $projectRows = [[
-        $project_row['id'] ?? '',
-        $project_row['project_name'] ?? '',
-        $project_row['account_name'] ?? '',
-        $project_row['street_address'] ?? $project_row['project_address'] ?? '',
-        $project_row['city'] ?? '',
-        $project_row['state'] ?? '',
-        $project_row['zip_code'] ?? '',
-        $project_row['phone1'] ?? '',
-        $project_row['phone2'] ?? '',
-        $project_row['timezone'] ?? '',
-        $project_row['reference_numbers'] ?? '',
-        $project_row['instructions'] ?? '',
-        $project_row['standard_operating_hours'] ?? '',
-        $project_row['additional_notes'] ?? ''
-    ]];
-    writeCsv($infoDir . '/project_info.csv', $projectHeaders, $projectRows);
+    file_put_contents($summaryDir . '/summary_meta.json', json_encode($summaryMeta, JSON_PRETTY_PRINT));
+    $storedSummaryText = loadStoredSummaryText($project_id);
+    if ($storedSummaryText !== '') {
+        file_put_contents($summaryDir . '/project_summary.txt', $storedSummaryText);
+    }
 
     // 02 Documents
     $docsDir = $rootPath . '/02_Documents';
@@ -437,10 +615,39 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
         file_put_contents($finDir . '/cost_summary.json', json_encode($totals, JSON_PRETTY_PRINT));
     }
 
-    // 08 Sustainability (placeholder sourced from sustainability details page if available)
+    // 08 Sustainability (export real data)
     $susDir = $rootPath . '/08_Sustainability';
     ensureDir($susDir);
-    writeCsv($susDir . '/sustainability.csv', ['message'], [['No sustainability records available in current export scope.']]);
+    $susRows = $sustainabilityReport['deliveries'] ?? [];
+    if (!empty($susRows)) {
+        $susHeaders = ['Supplier','Wattage','Quantity','BOL Number','Status','Miles','Fuel Consumption (gal)','Emissions (kg CO2)','MW Delivered'];
+        $rows = [];
+        foreach ($susRows as $sr) {
+            $rows[] = [
+                $sr['supplier'] ?? '',
+                $sr['wattage'] ?? '',
+                $sr['quantity'] ?? '',
+                $sr['bol_number'] ?? '',
+                $sr['status_of_delivery'] ?? '',
+                round($sr['miles_driven'] ?? ($sr['miles'] ?? 0), 2),
+                round($sr['fuel_consumption'] ?? 0, 2),
+                round($sr['emissions'] ?? 0, 2),
+                round($sr['mw_delivered'] ?? 0, 4)
+            ];
+        }
+        writeCsv($susDir . '/sustainability_details.csv', $susHeaders, $rows);
+    } else {
+        writeCsv($susDir . '/sustainability_details.csv', ['message'], [['No sustainability records found for this project']]);
+    }
+    $susTotals = array_merge([
+        'total_emissions' => 0,
+        'total_truckloads' => 0,
+        'total_miles_driven' => 0,
+        'total_fuel_consumption' => 0,
+        'total_mws_delivered' => 0,
+    ], $sustainabilityReport['totals'] ?? []);
+    $susTotals['generated_at'] = date('c');
+    file_put_contents($susDir . '/sustainability_summary.json', json_encode($susTotals, JSON_PRETTY_PRINT));
 
     // 09 Warranty / Exceptions
     $warrantyDir = $rootPath . '/09_Warranty_Exceptions';
@@ -488,23 +695,38 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     $stmtPhoto->close();
 
     // README
-    $readme = "Project Closure Package\n" .
-        "Project: " . ($project_row['project_name'] ?? '') . " (ID: {$project_id})\n" .
-        "Account: " . ($project_row['account_name'] ?? 'N/A') . "\n" .
-        "Generated: " . date('c') . "\n" .
-        "Generated by: " . ($user_row['email'] ?? ($user_row['username'] ?? '')) . "\n" .
-        "Delivered %: {$percent}%\n" .
-        "Structure:\n" .
-        "00_Project_Summary – summary.json\n" .
-        "01_Project_Info – project_info.csv\n" .
-        "02_Documents – all project documents grouped by type/sub-type\n" .
-        "03_Modules – batches.csv, pallets.csv, pallet_movements.csv\n" .
-        "05_Deliveries – deliveries.csv, appointments.csv, anticipated_schedule.csv\n" .
-        "06_Warehousing – warehouses.csv, inventory_by_warehouse.csv, warehouse_cost_items.csv\n" .
-        "07_Financials – cost_details.csv, cost_summary.json\n" .
-        "08_Sustainability – placeholder data\n" .
-        "09_Warranty_Exceptions – exceptions.csv\n" .
-        "10_Photos – pictures and manifest\n";
+    $readme = "Project Closure Package
+" .
+        "Project: " . ($project_row['project_name'] ?? '') . " (ID: {$project_id})
+" .
+        "Account: " . ($project_row['account_name'] ?? 'N/A') . "
+" .
+        "Generated: " . date('c') . "
+" .
+        "Generated by: " . ($user_row['email'] ?? ($user_row['username'] ?? '')) . "
+" .
+        "Delivered %: {$percent}%
+" .
+        "Structure:
+" .
+        "00_Project_Summary – project_summary.pdf, summary_meta.json
+" .
+        "02_Documents – all project documents grouped by type/sub-type
+" .
+        "03_Modules – batches.csv, pallets.csv, pallet_movements.csv
+" .
+        "05_Deliveries – deliveries.csv, appointments.csv, anticipated_schedule.csv
+" .
+        "06_Warehousing – warehouses.csv, inventory_by_warehouse.csv, warehouse_cost_items.csv
+" .
+        "07_Financials – cost_details.csv, cost_summary.json
+" .
+        "08_Sustainability – sustainability_details.csv, sustainability_summary.json
+" .
+        "09_Warranty_Exceptions – exceptions.csv
+" .
+        "10_Photos – pictures and manifest
+";
     file_put_contents($rootPath . '/README.txt', $readme);
 
     // Zip
@@ -537,17 +759,43 @@ if ($project_id > 0) {
 
 $project_row = $project_id ? fetchProjectRow($conn, $project_id) : null;
 $totals = $project_id ? fetchTotals($conn, $project_id) : [0,0,0];
+$default_summary_text = ($project_id && $project_row) ? buildDefaultSummaryText($project_row, $totals) : '';
 
-if ($action === 'export' && $project_id > 0) {
-    [$total_order, $delivered, $percent] = $totals;
-    if ($total_order > 0 && $percent < 100) {
-        $_SESSION['project_close_error'] = 'Project must be 100% delivered before closing.';
+if ($action === 'preview_summary' && $project_id > 0) {
+    $summary_text = trim($posted_summary_text ?? '');
+    if ($summary_text === '') {
+        $_SESSION['project_close_error'] = 'Please enter a project summary before previewing.';
         header('Location: project_close.php?project_id=' . $project_id);
         exit();
     }
     try {
         $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
-        [$tmpDir, $zipPath] = collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals);
+        $_SESSION['project_close_summary'][$project_id] = $summary_text;
+        [$summaryPdfPath, $pdfOutput] = generateSummaryPdf($project_id, $project_row, $summary_text, $user_row, $totals);
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: inline; filename="Project_' . $project_id . '_Summary.pdf"');
+        echo $pdfOutput;
+        exit();
+    } catch (Exception $e) {
+        $_SESSION['project_close_error'] = 'Summary preview failed: ' . $e->getMessage();
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+}
+
+if ($action === 'export' && $project_id > 0) {
+    $summary_text = trim($posted_summary_text ?? '');
+    if ($summary_text === '') {
+        $_SESSION['project_close_error'] = 'Please provide a written project summary to include in the export.';
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+    try {
+        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
+        $_SESSION['project_close_summary'][$project_id] = $summary_text;
+        [$summaryPdfPath, ] = generateSummaryPdf($project_id, $project_row, $summary_text, $user_row, $totals);
+        $sustainabilityReport = fetchSustainabilityReport($conn, $project_id);
+        [$tmpDir, $zipPath] = collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, $summaryPdfPath, $sustainabilityReport);
 
         header('Content-Type: application/zip');
         header('Content-Disposition: attachment; filename="' . basename($zipPath) . '"');
@@ -572,6 +820,18 @@ if ($action === 'export' && $project_id > 0) {
 
 $flash_error = $_SESSION['project_close_error'] ?? '';
 unset($_SESSION['project_close_error']);
+
+$summary_text = $default_summary_text;
+if ($posted_summary_text !== null) {
+    $summary_text = $posted_summary_text;
+} elseif ($project_id && isset($_SESSION['project_close_summary'][$project_id])) {
+    $summary_text = $_SESSION['project_close_summary'][$project_id];
+} elseif ($project_id) {
+    $storedDraft = loadStoredSummaryText($project_id);
+    if ($storedDraft !== '') {
+        $summary_text = $storedDraft;
+    }
+}
 
 ?>
 <!DOCTYPE html>
@@ -618,17 +878,13 @@ unset($_SESSION['project_close_error']);
             <div>
                 <div class="badge">Project Closure</div>
                 <h1>Deliver the final package</h1>
-                <p style="margin:6px 0 0;color:#4a5b6a;max-width:720px;">Generate a full, customer-ready archive of project documents, deliveries, warehousing, and costs. Export is enabled when the project is 100% delivered.</p>
+                <p style="margin:6px 0 0;color:#4a5b6a;max-width:720px;">Generate a full, customer-ready archive of project documents, deliveries, sustainability reporting, and costs. Add your written summary and export everything in one click.</p>
             </div>
             <div>
                 <?php if ($project_id): ?>
-                    <form method="post" style="margin:0;">
-                        <input type="hidden" name="project_id" value="<?php echo (int)$project_id; ?>">
-                        <input type="hidden" name="action" value="export">
-                        <button type="submit" class="cta" <?php echo ($totals[0] > 0 && $totals[2] >= 100) ? '' : 'disabled'; ?>>
-                            📦 Export Closure Package
-                        </button>
-                    </form>
+                    <button type="submit" class="cta" form="projectSummaryForm" name="action" value="export">
+                        📦 Save Summary & Export Package
+                    </button>
                 <?php endif; ?>
             </div>
         </div>
@@ -684,21 +940,32 @@ unset($_SESSION['project_close_error']);
                 </div>
             </div>
         </div>
-        <?php if ($totals[0] > 0 && $totals[2] < 100): ?>
-            <p class="warning" style="margin-top:12px;">Closure export is locked until delivery reaches 100%.</p>
-        <?php endif; ?>
     </div>
+
+    <form id="projectSummaryForm" method="post" style="margin:0;">
+        <input type="hidden" name="project_id" value="<?php echo (int)$project_id; ?>">
+        <div class="card">
+            <h2>Project Summary PDF</h2>
+            <p style="margin:6px 0 12px;color:#4a5b6a;">This summary is pre-filled with project info and will be saved as a PDF for the closure package. Tweak the copy below, preview it, then export.</p>
+            <textarea name="summary_text" rows="10" style="width:100%;padding:12px;border-radius:12px;border:1px solid #d9e2ec;" required><?php echo htmlspecialchars($summary_text ?? ''); ?></textarea>
+            <div class="select-group" style="margin-top:12px;gap:10px;flex-wrap:wrap;">
+                <button type="submit" class="cta" name="action" value="preview_summary" formtarget="_blank">👁️ Preview Summary PDF</button>
+                <button type="submit" class="cta" name="action" value="export">📦 Save Summary & Export</button>
+            </div>
+            <p style="margin-top:8px;color:#5f6f7d;font-size:13px;">Includes project info, delivery stats, and your notes.</p>
+        </div>
+    </form>
 
     <div class="card">
         <h2>Included in Export</h2>
         <div class="two-col">
-            <div class="pill"><strong>00</strong> Project Summary (JSON)</div>
-            <div class="pill"><strong>01</strong> Project Info (CSV)</div>
+            <div class="pill"><strong>00</strong> Project Summary (PDF + meta)</div>
             <div class="pill"><strong>02</strong> Documents grouped by type</div>
             <div class="pill"><strong>03</strong> Module batches, pallets, movements</div>
             <div class="pill"><strong>05</strong> Deliveries, appointments, anticipated schedule</div>
             <div class="pill"><strong>06</strong> Warehouses, inventory, cost items</div>
             <div class="pill"><strong>07</strong> Financial cost summary</div>
+            <div class="pill"><strong>08</strong> Sustainability report & emissions</div>
             <div class="pill"><strong>09</strong> Warranty / Exceptions</div>
             <div class="pill"><strong>10</strong> Photos & ordering</div>
         </div>
