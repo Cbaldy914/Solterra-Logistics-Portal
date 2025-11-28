@@ -376,8 +376,7 @@ $stmt_status = $conn->prepare(
        LEFT JOIN modules m ON umi.unassigned_module_id = m.id
        LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
        LEFT JOIN projects p ON ip.current_project_id = p.id
-       WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
-      AND ip.status != 'Damaged'"
+       WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)"
 );
 $stmt_status->bind_param('iii', $project_id, $project_id, $project_id);
 $stmt_status->execute();
@@ -1155,7 +1154,6 @@ $stmt_palletized = $conn->prepare("
     LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
     LEFT JOIN modules m ON umi.unassigned_module_id = m.id
     WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
-      AND ip.status != 'Damaged'
 ");
 $stmt_palletized->bind_param("iii", $project_id, $project_id, $project_id);
 $stmt_palletized->execute();
@@ -1184,7 +1182,6 @@ $stmt_existing_pallets = $conn->prepare("
     LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
     LEFT JOIN modules m ON umi.unassigned_module_id = m.id
     WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
-      AND ip.status != 'Damaged'
 ");
 $stmt_existing_pallets->bind_param("iii", $project_id, $project_id, $project_id);
 $stmt_existing_pallets->execute();
@@ -1205,7 +1202,6 @@ $stmt_delivered = $conn->prepare("
     LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
     LEFT JOIN modules m ON umi.unassigned_module_id = m.id
     WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
-      AND ip.status != 'Damaged'
       AND (ip.status = 'Delivered to Project' OR ip.status = 'Damaged')
     GROUP BY ip.wattage
 ");
