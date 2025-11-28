@@ -125,8 +125,8 @@ function buildSummaryHtml($project_row, $summary_text, $user_row, $totals) {
         <style>
             @page { margin: 0.75in; }
             body { font-family: Arial, sans-serif; color: #1f2a30; }
-            .header { margin-bottom:12px; display:flex; flex-direction:column; align-items:flex-start; gap:8px; }
-            .logo { height:52px; }
+            .header { margin-bottom:14px; display:flex; flex-direction:column; align-items:flex-start; gap:10px; }
+            .logo { height:75px; margin-bottom:15px; }
             .brand { font-size:22px; font-weight:700; color:#1f3b4d; }
             .meta { font-size:12px; color:#4a5b6a; }
             .card { border:1px solid #d9e2ec; border-radius:10px; padding:14px 16px; margin-bottom:12px; }
@@ -313,9 +313,10 @@ function fetchPalletJourney($conn, $project_id) {
         if ($r['origin_type'] === 'warehouse' && !empty($r['origin_warehouse_name'])) { $origin = 'Warehouse: ' . $r['origin_warehouse_name']; }
         elseif ($r['origin_type'] === 'project' && !empty($r['origin_project_name'])) { $origin = 'Project: ' . $r['origin_project_name']; }
 
-        $destination = $r['dest_project_name'] ?? '';
-        if (!empty($r['dest_warehouse_name'])) { $destination = 'Warehouse: ' . $r['dest_warehouse_name']; }
-        elseif (!empty($destination)) { $destination = 'Project: ' . $destination; }
+        $destination = '';
+        if (!empty($r['dest_project_name'])) { $destination = 'Project: ' . $r['dest_project_name']; }
+        elseif (!empty($r['dest_warehouse_name'])) { $destination = 'Warehouse: ' . $r['dest_warehouse_name']; }
+        elseif (!empty($r['supplier'])) { $destination = $r['supplier']; }
 
         $rows[] = [
             'pallet_id' => $r['inventory_pallet_id'],
@@ -325,8 +326,9 @@ function fetchPalletJourney($conn, $project_id) {
             'origin' => $origin,
             'destination' => $destination,
             'status' => $r['status_of_delivery'] ?? '',
-            'arrival_date' => $r['warehouse_arrival_date'] ?? $r['actual_delivery_date'] ?? $r['anticipated_delivery_date'] ?? '',
-            'left_date' => $r['left_warehouse_date'] ?? '',
+            'warehouse_arrival_date' => $r['warehouse_arrival_date'] ?? '',
+            'delivered_date' => $r['actual_delivery_date'] ?? $r['anticipated_delivery_date'] ?? '',
+            'left_warehouse_date' => $r['left_warehouse_date'] ?? '',
             'wattage' => $r['wattage'] ?? '',
             'quantity' => $r['quantity'] ?? '',
         ];
@@ -476,7 +478,8 @@ function fetchTotals($conn, $project_id) {
 
 function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, $summaryPdfPath, $sustainabilityReport) {
     [$total_order, $delivered, $percent] = $totals;
-    $rootName = 'Project_' . $project_id . '_' . sanitizeFileName($project_row['project_name'] ?? 'project');
+    $projectLabel = sanitizeFileName($project_row['project_name'] ?? 'project');
+    $rootName = 'Project_' . ($projectLabel !== '' ? $projectLabel : $project_id);
     $tempBase = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'project_close_' . uniqid();
     $rootPath = $tempBase . DIRECTORY_SEPARATOR . $rootName;
     ensureDir($rootPath);
@@ -589,13 +592,13 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     // Movements (journey per pallet derived from deliveries)
     $journeyRows = fetchPalletJourney($conn, $project_id);
     if (!empty($journeyRows)) {
-        $moveHeaders = ['Pallet ID','Pallet Identifier','Delivery ID','BOL Number','Origin','Destination','Status','Arrival Date','Left Date','Wattage','Quantity'];
+        $moveHeaders = ['Pallet ID','Pallet Identifier','Delivery ID','BOL Number','Origin','Destination','Status','Warehouse Arrival Date','Delivered to Project Date','Left Warehouse Date','Wattage','Quantity'];
         $out = [];
         foreach ($journeyRows as $jr) {
             $out[] = [
                 $jr['pallet_id'], $jr['pallet_identifier'], $jr['delivery_id'], $jr['bol_number'],
                 $jr['origin'], $jr['destination'], $jr['status'],
-                $jr['arrival_date'], $jr['left_date'], $jr['wattage'], $jr['quantity']
+                $jr['warehouse_arrival_date'], $jr['delivered_date'], $jr['left_warehouse_date'], $jr['wattage'], $jr['quantity']
             ];
         }
         writeCsv($modulesDir . '/pallet_movements.csv', $moveHeaders, $out);
