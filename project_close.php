@@ -197,6 +197,144 @@ function generateSummaryPdf($project_id, $project_row, $summary_text, $user_row,
     return [$pdfPath, $output];
 }
 
+function fetchPalletCosts($conn, $project_id) {
+    // Build BOL-level costs and pallet counts
+    $bolCost = [];
+    $stmtCost = $conn->prepare('SELECT bol_number, COALESCE(freight_cost,0) AS freight_cost, COALESCE(accessorial_costs,0) AS accessorial_costs FROM deliveries WHERE project_id = ?');
+    $stmtCost->bind_param('i', $project_id);
+    $stmtCost->execute();
+    $resCost = $stmtCost->get_result();
+    while ($row = $resCost->fetch_assoc()) {
+        $bol = $row['bol_number'] ?? '';
+        if (!isset($bolCost[$bol])) { $bolCost[$bol] = 0; }
+        $bolCost[$bol] += floatval($row['freight_cost']) + floatval($row['accessorial_costs']);
+    }
+    $stmtCost->close();
+
+    $bolCounts = [];
+    $stmtCnt = $conn->prepare('SELECT d.bol_number, COUNT(DISTINCT dp.inventory_pallet_id) AS pallets FROM deliveries d JOIN delivery_pallets dp ON dp.delivery_id = d.id WHERE d.project_id = ? GROUP BY d.bol_number');
+    $stmtCnt->bind_param('i', $project_id);
+    $stmtCnt->execute();
+    $resCnt = $stmtCnt->get_result();
+    while ($row = $resCnt->fetch_assoc()) {
+        $bol = $row['bol_number'] ?? '';
+        $bolCounts[$bol] = intval($row['pallets']);
+    }
+    $stmtCnt->close();
+
+    $sql = "
+        SELECT d.id AS delivery_id, d.bol_number, d.supplier, d.status_of_delivery, d.freight_cost, d.accessorial_costs,
+               d.warehouse_arrival_date, d.left_warehouse_date, d.actual_delivery_date, d.anticipated_delivery_date,
+               dp.inventory_pallet_id, ip.pallet_identifier, ip.wattage, ip.quantity,
+               w.name AS warehouse_name, p.project_name
+        FROM deliveries d
+        JOIN delivery_pallets dp ON dp.delivery_id = d.id
+        LEFT JOIN inventory_pallets ip ON ip.id = dp.inventory_pallet_id
+        LEFT JOIN warehouses w ON d.warehouse_id = w.id
+        LEFT JOIN projects p ON d.project_id = p.id
+        WHERE d.project_id = ?
+        ORDER BY COALESCE(d.actual_delivery_date, d.anticipated_delivery_date, d.created_at)
+    ";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('i', $project_id);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    $rows = [];
+    $summary = [
+        'pallet_count' => 0,
+        'total_load_cost' => 0,
+        'allocated_pallet_cost' => 0,
+    ];
+    $seenBol = [];
+
+    while ($r = $res->fetch_assoc()) {
+        $bol = $r['bol_number'] ?? '';
+        $count = max(1, $bolCounts[$bol] ?? 1);
+        $loadCost = $bolCost[$bol] ?? (floatval($r['freight_cost'] ?? 0) + floatval($r['accessorial_costs'] ?? 0));
+        $allocated = $loadCost / $count;
+
+        $destination = $r['project_name'] ? ('Project: ' . $r['project_name']) : '';
+        if (!empty($r['warehouse_name'])) { $destination = 'Warehouse: ' . $r['warehouse_name']; }
+
+        $rows[] = [
+            'pallet_id' => $r['inventory_pallet_id'],
+            'pallet_identifier' => $r['pallet_identifier'],
+            'delivery_id' => $r['delivery_id'],
+            'bol_number' => $bol,
+            'supplier' => $r['supplier'] ?? '',
+            'destination' => $destination,
+            'status' => $r['status_of_delivery'] ?? '',
+            'wattage' => $r['wattage'] ?? '',
+            'quantity' => $r['quantity'] ?? '',
+            'truckload_cost' => $r['freight_cost'] ?? 0,
+            'accessorial_costs' => $r['accessorial_costs'] ?? 0,
+            'total_load_cost' => $loadCost,
+            'allocated_pallet_cost' => $allocated,
+            'warehouse_arrival_date' => $r['warehouse_arrival_date'] ?? '',
+            'left_warehouse_date' => $r['left_warehouse_date'] ?? '',
+        ];
+
+        $summary['pallet_count'] += 1;
+        $summary['allocated_pallet_cost'] += $allocated;
+        if (!in_array($bol, $seenBol, true)) {
+            $summary['total_load_cost'] += $loadCost;
+            $seenBol[] = $bol;
+        }
+    }
+    $stmt->close();
+    return ['rows' => $rows, 'summary' => $summary];
+}
+
+function fetchPalletJourney($conn, $project_id) {
+    $sql = "
+        SELECT d.id AS delivery_id, d.bol_number, d.origin_type, d.origin_id, d.supplier, d.status_of_delivery,
+               d.project_id, d.warehouse_id, d.warehouse_arrival_date, d.left_warehouse_date, d.actual_delivery_date, d.anticipated_delivery_date,
+               dp.inventory_pallet_id, ip.pallet_identifier, ip.wattage, ip.quantity,
+               w_dest.name AS dest_warehouse_name, p_dest.project_name AS dest_project_name,
+               w_origin.name AS origin_warehouse_name, p_origin.project_name AS origin_project_name
+        FROM deliveries d
+        JOIN delivery_pallets dp ON dp.delivery_id = d.id
+        LEFT JOIN inventory_pallets ip ON ip.id = dp.inventory_pallet_id
+        LEFT JOIN warehouses w_dest ON d.warehouse_id = w_dest.id
+        LEFT JOIN projects p_dest ON d.project_id = p_dest.id
+        LEFT JOIN warehouses w_origin ON d.origin_type = 'warehouse' AND d.origin_id = w_origin.id
+        LEFT JOIN projects p_origin ON d.origin_type = 'project' AND d.origin_id = p_origin.id
+        WHERE d.project_id = ?
+        ORDER BY dp.inventory_pallet_id, COALESCE(d.actual_delivery_date, d.anticipated_delivery_date, d.created_at)
+    ";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param('i', $project_id);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $rows = [];
+    while ($r = $res->fetch_assoc()) {
+        $origin = $r['supplier'] ?? '';
+        if ($r['origin_type'] === 'warehouse' && !empty($r['origin_warehouse_name'])) { $origin = 'Warehouse: ' . $r['origin_warehouse_name']; }
+        elseif ($r['origin_type'] === 'project' && !empty($r['origin_project_name'])) { $origin = 'Project: ' . $r['origin_project_name']; }
+
+        $destination = $r['dest_project_name'] ?? '';
+        if (!empty($r['dest_warehouse_name'])) { $destination = 'Warehouse: ' . $r['dest_warehouse_name']; }
+        elseif (!empty($destination)) { $destination = 'Project: ' . $destination; }
+
+        $rows[] = [
+            'pallet_id' => $r['inventory_pallet_id'],
+            'pallet_identifier' => $r['pallet_identifier'],
+            'delivery_id' => $r['delivery_id'],
+            'bol_number' => $r['bol_number'],
+            'origin' => $origin,
+            'destination' => $destination,
+            'status' => $r['status_of_delivery'] ?? '',
+            'arrival_date' => $r['warehouse_arrival_date'] ?? $r['actual_delivery_date'] ?? $r['anticipated_delivery_date'] ?? '',
+            'left_date' => $r['left_warehouse_date'] ?? '',
+            'wattage' => $r['wattage'] ?? '',
+            'quantity' => $r['quantity'] ?? '',
+        ];
+    }
+    $stmt->close();
+    return $rows;
+}
+
 function fetchSustainabilityReport($conn, $project_id) {
     $sql = 'SELECT supplier, wattage, quantity, bol_number, status_of_delivery, miles FROM deliveries WHERE project_id = ?';
     $stmt = $conn->prepare($sql);
@@ -448,31 +586,21 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     $palletHeaders = ['Pallet ID','Identifier','Wattage','Quantity','Status','Warehouse','Current Project','Assigned Project','Arrival Date','Created At','Updated At','Manufacturer','Manufacturer Location ID'];
     writeCsv($modulesDir . '/pallets.csv', $palletHeaders, $palletRows);
 
-    // Movements (module_allocation_moves)
-    $sqlMoves = "
-        SELECT mam.*, ip.pallet_identifier
-        FROM module_allocation_moves mam
-        JOIN inventory_pallets ip ON mam.inventory_pallet_id = ip.id
-        JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
-        JOIN modules m ON umi.unassigned_module_id = m.id
-        WHERE m.project_id = ?
-        ORDER BY mam.created_at ASC
-    ";
-    if ($stmtM = $conn->prepare($sqlMoves)) {
-        $stmtM->bind_param('i', $project_id);
-        $stmtM->execute();
-        $resM = $stmtM->get_result();
-        $moveRows = [];
-        while ($mv = $resM->fetch_assoc()) {
-            $moveRows[] = [
-                $mv['id'], $mv['inventory_pallet_id'], $mv['pallet_identifier'],
-                $mv['from_project_id'], $mv['to_project_id'], $mv['from_status'], $mv['to_status'],
-                $mv['from_warehouse_id'], $mv['to_warehouse_id'], $mv['quantity'], $mv['notes'], $mv['created_at']
+    // Movements (journey per pallet derived from deliveries)
+    $journeyRows = fetchPalletJourney($conn, $project_id);
+    if (!empty($journeyRows)) {
+        $moveHeaders = ['Pallet ID','Pallet Identifier','Delivery ID','BOL Number','Origin','Destination','Status','Arrival Date','Left Date','Wattage','Quantity'];
+        $out = [];
+        foreach ($journeyRows as $jr) {
+            $out[] = [
+                $jr['pallet_id'], $jr['pallet_identifier'], $jr['delivery_id'], $jr['bol_number'],
+                $jr['origin'], $jr['destination'], $jr['status'],
+                $jr['arrival_date'], $jr['left_date'], $jr['wattage'], $jr['quantity']
             ];
         }
-        $stmtM->close();
-        $moveHeaders = ['Move ID','Pallet ID','Pallet Identifier','From Project','To Project','From Status','To Status','From Warehouse','To Warehouse','Quantity','Notes','Created At'];
-        writeCsv($modulesDir . '/pallet_movements.csv', $moveHeaders, $moveRows);
+        writeCsv($modulesDir . '/pallet_movements.csv', $moveHeaders, $out);
+    } else {
+        writeCsv($modulesDir . '/pallet_movements.csv', ['message'], [['No pallet journey records found']]);
     }
 
     // 05 Deliveries
@@ -550,8 +678,28 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     $byWarehouse = [];
     while ($row = $resWh->fetch_assoc()) {
         $wid = $row['warehouse_id'] ?? 0;
-        if (!isset($byWarehouse[$wid])) { $byWarehouse[$wid] = ['name' => $row['warehouse_name'] ?? 'Warehouse ' . $wid, 'rows' => []]; }
-        $byWarehouse[$wid]['rows'][] = $row;
+        if (!isset($byWarehouse[$wid])) { $byWarehouse[$wid] = ['name' => $row['warehouse_name'] ?? 'Warehouse ' . $wid, 'pallets' => []]; }
+        $pid = $row['inventory_pallet_id'] ?? 0;
+        if (!isset($byWarehouse[$wid]['pallets'][$pid])) {
+            $byWarehouse[$wid]['pallets'][$pid] = [
+                'delivery_id' => $row['delivery_id'] ?? '',
+                'bol_number' => $row['bol_number'] ?? '',
+                'pallet_id' => $pid,
+                'pallet_identifier' => $row['pallet_identifier'] ?? '',
+                'wattage' => $row['wattage'] ?? '',
+                'quantity' => $row['quantity'] ?? '',
+                'pallet_status' => $row['pallet_status'] ?? '',
+                'arrival' => '',
+                'left' => ''
+            ];
+        }
+        if (empty($byWarehouse[$wid]['pallets'][$pid]['arrival']) && !empty($row['warehouse_arrival_date'])) {
+            $byWarehouse[$wid]['pallets'][$pid]['arrival'] = $row['warehouse_arrival_date'];
+        }
+        if (!empty($row['left_warehouse_date'])) {
+            $byWarehouse[$wid]['pallets'][$pid]['left'] = $row['left_warehouse_date'];
+        }
+        if (!empty($row['bol_number'])) { $byWarehouse[$wid]['pallets'][$pid]['bol_number'] = $row['bol_number']; }
     }
     $stmtWh->close();
 
@@ -560,22 +708,20 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
             $fileName = 'warehouse_' . sanitizeFileName($bundle['name'] ?? ('warehouse_' . $wid)) . '.csv';
             $outRows = [];
             $headers = ['Warehouse','Delivery ID','BOL Number','Pallet ID','Pallet Identifier','Wattage','Quantity','Pallet Status','Arrival Date','Left Warehouse Date','Days In Warehouse'];
-            foreach ($bundle['rows'] as $r) {
-                $arrive = $r['warehouse_arrival_date'] ?? '';
-                $left = $r['left_warehouse_date'] ?? '';
+            foreach ($bundle['pallets'] as $p) {
+                $arrive = $p['arrival'];
+                $left = $p['left'];
                 $days = '';
-                if ($arrive && $left) {
-                    $days = (int)floor((strtotime($left) - strtotime($arrive)) / 86400);
-                }
+                if ($arrive && $left) { $days = (int)floor((strtotime($left) - strtotime($arrive)) / 86400); }
                 $outRows[] = [
                     $bundle['name'] ?? '',
-                    $r['delivery_id'] ?? '',
-                    $r['bol_number'] ?? '',
-                    $r['inventory_pallet_id'] ?? '',
-                    $r['pallet_identifier'] ?? '',
-                    $r['wattage'] ?? '',
-                    $r['quantity'] ?? '',
-                    $r['pallet_status'] ?? '',
+                    $p['delivery_id'],
+                    $p['bol_number'],
+                    $p['pallet_id'],
+                    $p['pallet_identifier'],
+                    $p['wattage'],
+                    $p['quantity'],
+                    $p['pallet_status'],
                     $arrive,
                     $left,
                     $days,
@@ -597,24 +743,28 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
         writeCsv($whDir . '/inventory_by_warehouse_index.csv', ['message'], [['No warehouse pallet records found for this project']]);
     }
 
-    // 07 Financials (reuse deliveries cost fields)
+    // 07 Financials (pallet-level costs)
     $finDir = $rootPath . '/07_Financials';
     ensureDir($finDir);
-    if (!empty($delRows)) {
-        writeCsv($finDir . '/cost_details.csv', array_keys($delRows[0]), array_map('array_values', $delRows));
-        $totals = [
-            'freight_cost' => 0,
-            'accessorial_costs' => 0,
-            'customer_cost' => 0,
-            'warehousing_cost' => 0,
-            'count' => count($delRows)
-        ];
-        foreach ($delRows as $row) {
-            $totals['freight_cost'] += floatval($row['freight_cost'] ?? 0);
-            $totals['accessorial_costs'] += floatval($row['accessorial_costs'] ?? 0);
-            $totals['customer_cost'] += floatval($row['customer_cost'] ?? 0);
+    $costData = fetchPalletCosts($conn, $project_id);
+    $costRows = $costData['rows'];
+    if (!empty($costRows)) {
+        $headers = ['Pallet ID','Pallet Identifier','Delivery ID','BOL Number','Supplier','Destination','Status','Wattage','Quantity','Truckload Freight','Accessorial Costs','Total Load Cost','Allocated Pallet Cost','Warehouse Arrival','Left Warehouse'];
+        $rows = [];
+        foreach ($costRows as $r) {
+            $rows[] = [
+                $r['pallet_id'], $r['pallet_identifier'], $r['delivery_id'], $r['bol_number'],
+                $r['supplier'], $r['destination'], $r['status'], $r['wattage'], $r['quantity'],
+                $r['truckload_cost'], $r['accessorial_costs'], $r['total_load_cost'], $r['allocated_pallet_cost'],
+                $r['warehouse_arrival_date'], $r['left_warehouse_date']
+            ];
         }
+        writeCsv($finDir . '/cost_details.csv', $headers, $rows);
+        $totals = $costData['summary'];
+        $totals['average_cost_per_pallet'] = $totals['pallet_count'] > 0 ? $totals['allocated_pallet_cost'] / $totals['pallet_count'] : 0;
         file_put_contents($finDir . '/cost_summary.json', json_encode($totals, JSON_PRETTY_PRINT));
+    } else {
+        writeCsv($finDir . '/cost_details.csv', ['message'], [['No pallet costs found']]);
     }
 
     // 08 Sustainability (export real data)
@@ -721,7 +871,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
 " .
         "06_Warehousing – per-warehouse CSVs (see inventory_by_warehouse_index.csv)
 " .
-        "07_Financials – cost_details.csv, cost_summary.json
+        "07_Financials – cost_details.csv (pallet-level), cost_summary.json
 " .
         "08_Sustainability – sustainability_details.csv, sustainability_summary.json
 " .
