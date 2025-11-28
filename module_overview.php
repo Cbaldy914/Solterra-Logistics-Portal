@@ -34,17 +34,6 @@ if ($project_id > 0) {
     $project_id = 0;
 }
 
-$latest_warranty_claim_id = null;
-if ($project_id > 0) {
-    if ($stmtLatestClaim = $conn->prepare("SELECT w.id FROM warranty_claims w JOIN site_scheduling ss ON ss.id = w.scheduling_id WHERE ss.project_id = ? ORDER BY w.id DESC LIMIT 1")) {
-        $stmtLatestClaim->bind_param('i', $project_id);
-        $stmtLatestClaim->execute();
-        $stmtLatestClaim->bind_result($latest_warranty_claim_id);
-        $stmtLatestClaim->fetch();
-        $stmtLatestClaim->close();
-    }
-}
-
 // Handle bulk pallet generation by modules per pallet
 $successMessage = '';
 // Track pallets created during this request to enable deep-linking to views
@@ -484,9 +473,6 @@ $item_quantity_by_id = [];
 $item_wattage_by_id = [];
 // Replacement tracking totals for callouts
 $replacement_totals = ['pallets' => 0, 'modules' => 0];
-$damaged_by_wattage = [];
-$replacement_module_id_set = [];
-
 // Replacement module totals by wattage (to subtract from 'ordered')
 $replacement_modules_by_wattage = [];
 
@@ -1591,7 +1577,7 @@ $conn->close();
                 <?php if ($view_mode === 'project' && !empty($batch_wattage_summary)): ?>
                     <?php foreach ($module_batches as $batch): $bId = (int)$batch['id']; ?>
                         <div style="width: 100%; background:#f7fbfc; border:1px solid #e2ecef; padding:12px; border-radius:8px; margin-bottom: 20px;">
-                            <h3 style="margin-top:0; color:#293E4C;">Batch #<?php echo $bId; ?> — <?php echo htmlspecialchars($batch['vendor_name'] ?? ''); ?> <span style="font-size:12px;color:#2c6070;font-weight:700;"><?php echo isset($replacement_module_id_set[$bId]) ? '(Replacement)' : ''; ?></span></h3>
+                            <h3 style="margin-top:0; color:#293E4C;">Batch #<?php echo $bId; ?> — <?php echo htmlspecialchars($batch['vendor_name'] ?? ''); ?></h3>
                             <?php if (!empty($batch_wattage_summary[$bId])): ?>
                                 <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-top: 15px;">
                                 <?php foreach ($batch_wattage_summary[$bId] as $wattage => $data): ?>
@@ -1616,46 +1602,34 @@ $conn->close();
                                                     </button>
                                                 </form>
                                             <?php endif; ?>
-                                        <?php else: ?>
-                                            <?php if ($data['remaining_quantity'] > 0): ?>
-                                                <p><strong>Remaining:</strong> <span style="color:#2e7d32;">&nbsp;<?php echo number_format($data['remaining_quantity']); ?></span></p>
-                                                <?php $damagedPalletsForWattage = $damaged_by_wattage[$wattage]['pallets'] ?? 0; ?>
-                                                <?php if ($damagedPalletsForWattage > 0): ?>
-                                                    <div style="padding:10px 12px; background:#fff3cd; border:1px solid #ffeeba; border-radius:8px; color:#856404; font-weight:600;">
-                                                        <?php echo number_format($damagedPalletsForWattage); ?> pallet<?php echo $damagedPalletsForWattage!==1?"s":""; ?> damaged. Create replacements via warranty.
-                                                        <?php if (!empty($latest_warranty_claim_id)): ?>
-                                                            <a href="warranty_detail.php?id=<?php echo (int)$latest_warranty_claim_id; ?>" style="margin-left:8px; text-decoration:underline; color:#856404; font-weight:700;">Open Warranty Ticket</a>
-                                                        <?php else: ?>
-                                                            <a href="warranty.php?project_id=<?php echo (int)$project_id; ?>" style="margin-left:8px; text-decoration:underline; color:#856404; font-weight:700;">Open Warranty</a>
-                                                        <?php endif; ?>
+                                        <?php elseif ($data['remaining_quantity'] > 0): ?>
+                                            <p><strong>Remaining:</strong> <span style="color:#2e7d32;">&nbsp;<?php echo number_format($data['remaining_quantity']); ?></span></p>
+                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin'])): ?>
+                                                <form method="POST" class="palletization-form" onsubmit="return handlePalletizationSubmit(event)">
+                                                    <input type="hidden" name="action" value="generate_pallets">
+                                                    <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
+                                                    <input type="hidden" name="remaining_modules" value="<?php echo $data['remaining_quantity']; ?>">
+                                                    <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                                    <input type="hidden" name="batch_id" value="<?php echo $data['batch_id']; ?>">
+                                                    <input type="hidden" name="current_modules_per_pallet" value="<?php echo $data['modules_per_pallet'] ?? ''; ?>">
+                                                    <input type="hidden" name="update_modules_table" value="false">
+                                                    <div>
+                                                        <label for="modules_per_pallet_<?php echo $bId.'_'.$wattage; ?>">Modules per Pallet:</label>
+                                                        <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $bId.'_'.$wattage; ?>" min="1" value="<?php echo $data['modules_per_pallet'] ?? 1; ?>" required data-original-value="<?php echo $data['modules_per_pallet'] ?? ''; ?>" data-batch-id="<?php echo $data['batch_id']; ?>">
+                                                        <button type="submit">Generate</button>
                                                     </div>
-                                                <?php elseif (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin'])): ?>
-                                                    <form method="POST" class="palletization-form" onsubmit="return handlePalletizationSubmit(event)">
-                                                        <input type="hidden" name="action" value="generate_pallets">
-                                                        <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
-                                                        <input type="hidden" name="remaining_modules" value="<?php echo $data['remaining_quantity']; ?>">
-                                                        <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
-                                                        <input type="hidden" name="batch_id" value="<?php echo $data['batch_id']; ?>">
-                                                        <input type="hidden" name="current_modules_per_pallet" value="<?php echo $data['modules_per_pallet'] ?? ''; ?>">
-                                                        <input type="hidden" name="update_modules_table" value="false">
-                                                        <div>
-                                                            <label for="modules_per_pallet_<?php echo $bId.'_'.$wattage; ?>">Modules per Pallet:</label>
-                                                            <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $bId.'_'.$wattage; ?>" min="1" value="<?php echo $data['modules_per_pallet'] ?? 1; ?>" required data-original-value="<?php echo $data['modules_per_pallet'] ?? ''; ?>" data-batch-id="<?php echo $data['batch_id']; ?>">
-                                                            <button type="submit">Generate</button>
-                                                        </div>
-                                                    </form>
-                                                <?php endif; ?>
-                                            <?php else: ?>
-                                                <p><strong>Remaining:</strong> <span style="color:green;">0 (Perfect match)</span></p>
-                                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin'])): ?>
-                                                    <form method="POST" style="margin-top: 10px;">
-                                                        <input type="hidden" name="action" value="undo_palletization">
-                                                        <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
-                                                        <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules in this batch?');" style="background-color: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
-                                                            Undo All Palletization (Batch)
-                                                        </button>
-                                                    </form>
-                                                <?php endif; ?>
+                                                </form>
+                                            <?php endif; ?>
+                                        <?php else: ?>
+                                            <p><strong>Remaining:</strong> <span style="color:green;">0 (Perfect match)</span></p>
+                                            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin','global_admin'])): ?>
+                                                <form method="POST" style="margin-top: 10px;">
+                                                    <input type="hidden" name="action" value="undo_palletization">
+                                                    <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                                    <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules in this batch?');" style="background-color: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
+                                                        Undo All Palletization (Batch)
+                                                    </button>
+                                                </form>
                                             <?php endif; ?>
                                         <?php endif; ?>
                                     </div>
@@ -1709,41 +1683,31 @@ $conn->close();
                                 <?php endif; ?>
                             <?php elseif ($data['remaining_quantity'] > 0): ?>
                                 <p><strong>Remaining:</strong> <span style="color: #2e7d32;"><?php echo number_format($data['remaining_quantity']); ?></span></p>
-<?php $damagedPalletsForWattage = $damaged_by_wattage[$wattage]["pallets"] ?? 0; ?>
-<?php if ($damagedPalletsForWattage > 0): ?>
-    <div style="padding:10px 12px; background:#fff3cd; border:1px solid #ffeeba; border-radius:8px; color:#856404; font-weight:600;">
-        <?php echo number_format($damagedPalletsForWattage); ?> pallet<?php echo $damagedPalletsForWattage!==1?"s":""; ?> damaged. Create replacements via warranty.
-        <?php if (!empty($latest_warranty_claim_id)): ?>
-            <a href="warranty_detail.php?id=<?php echo (int)$latest_warranty_claim_id; ?>" style="margin-left:8px; text-decoration:underline; color:#856404; font-weight:700;">Open Warranty Ticket</a>
-        <?php else: ?>
-            <a href="warranty.php?project_id=<?php echo (int)$project_id; ?>" style="margin-left:8px; text-decoration:underline; color:#856404; font-weight:700;">Open Warranty</a>
-        <?php endif; ?>
-    </div>
-<?php elseif (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-    <form method="POST" class="palletization-form" onsubmit="return handlePalletizationSubmit(event)">
-        <input type="hidden" name="action" value="generate_pallets">
-        <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
-        <input type="hidden" name="remaining_modules" value="<?php echo $data['remaining_quantity']; ?>">
-        <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
-        <input type="hidden" name="batch_id" value="<?php echo $data['batch_id']; ?>">
-        <input type="hidden" name="current_modules_per_pallet" value="<?php echo $data['modules_per_pallet'] ?? ''; ?>">
-        <input type="hidden" name="update_modules_table" value="false">
-        <div>
-            <label for="modules_per_pallet_<?php echo $wattage; ?>">Modules per Pallet:</label>
-            <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $wattage; ?>" min="1" value="<?php echo $data['modules_per_pallet'] ?? 1; ?>" required data-original-value="<?php echo $data['modules_per_pallet'] ?? ''; ?>" data-batch-id="<?php echo $data['batch_id']; ?>">
-            <button type="submit">Generate</button>
-        </div>
-    </form>
-    <?php if ($data['palletized_quantity'] > 0): ?>
-        <form method="POST" style="margin-top: 10px;">
-            <input type="hidden" name="action" value="undo_palletization">
-            <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
-            <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules? This will make all modules available for re-palletization.')" style="background-color: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
-                Undo All Palletization
-            </button>
-        </form>
-    <?php endif; ?>
-<?php endif; ?>
+                                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+                                    <form method="POST" class="palletization-form" onsubmit="return handlePalletizationSubmit(event)">
+                                        <input type="hidden" name="action" value="generate_pallets">
+                                        <input type="hidden" name="item_id" value="<?php echo $data['item_id']; ?>">
+                                        <input type="hidden" name="remaining_modules" value="<?php echo $data['remaining_quantity']; ?>">
+                                        <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                        <input type="hidden" name="batch_id" value="<?php echo $data['batch_id']; ?>">
+                                        <input type="hidden" name="current_modules_per_pallet" value="<?php echo $data['modules_per_pallet'] ?? ''; ?>">
+                                        <input type="hidden" name="update_modules_table" value="false">
+                                        <div>
+                                            <label for="modules_per_pallet_<?php echo $wattage; ?>">Modules per Pallet:</label>
+                                            <input type="number" name="modules_per_pallet" id="modules_per_pallet_<?php echo $wattage; ?>" min="1" value="<?php echo $data['modules_per_pallet'] ?? 1; ?>" required data-original-value="<?php echo $data['modules_per_pallet'] ?? ''; ?>" data-batch-id="<?php echo $data['batch_id']; ?>">
+                                            <button type="submit">Generate</button>
+                                        </div>
+                                    </form>
+                                    <?php if ($data['palletized_quantity'] > 0): ?>
+                                        <form method="POST" style="margin-top: 10px;">
+                                            <input type="hidden" name="action" value="undo_palletization">
+                                            <input type="hidden" name="wattage" value="<?php echo $wattage; ?>">
+                                            <button type="submit" onclick="return confirm('Are you sure you want to delete ALL pallets for <?php echo $wattage; ?>W modules? This will make all modules available for re-palletization.')" style="background-color: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
+                                                Undo All Palletization
+                                            </button>
+                                        </form>
+                                    <?php endif; ?>
+                                <?php endif; ?>
                             <?php else: ?>
                                 <p><strong>Remaining:</strong> <span style="color: green;">0 (Perfect match)</span></p>
                                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
