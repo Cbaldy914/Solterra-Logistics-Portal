@@ -126,7 +126,7 @@ function buildSummaryHtml($project_row, $summary_text, $user_row, $totals) {
             @page { margin: 0.75in; }
             body { font-family: Arial, sans-serif; color: #1f2a30; }
             .header { margin-bottom:14px; display:flex; flex-direction:column; align-items:flex-start; gap:10px; }
-            .logo { height:75px; margin-bottom:15px; }
+            .logo { height:75px; margin-bottom:25px; }
             .brand { font-size:22px; font-weight:700; color:#1f3b4d; }
             .meta { font-size:12px; color:#4a5b6a; }
             .card { border:1px solid #d9e2ec; border-radius:10px; padding:14px 16px; margin-bottom:12px; }
@@ -314,8 +314,8 @@ function fetchPalletJourney($conn, $project_id) {
         elseif ($r['origin_type'] === 'project' && !empty($r['origin_project_name'])) { $origin = 'Project: ' . $r['origin_project_name']; }
 
         $destination = '';
-        if (!empty($r['dest_project_name'])) { $destination = 'Project: ' . $r['dest_project_name']; }
-        elseif (!empty($r['dest_warehouse_name'])) { $destination = 'Warehouse: ' . $r['dest_warehouse_name']; }
+        if (!empty($r['dest_warehouse_name'])) { $destination = 'Warehouse: ' . $r['dest_warehouse_name']; }
+        elseif (!empty($r['dest_project_name'])) { $destination = 'Project: ' . $r['dest_project_name']; }
         elseif (!empty($r['supplier'])) { $destination = $r['supplier']; }
 
         $rows[] = [
@@ -327,7 +327,7 @@ function fetchPalletJourney($conn, $project_id) {
             'destination' => $destination,
             'status' => $r['status_of_delivery'] ?? '',
             'warehouse_arrival_date' => $r['warehouse_arrival_date'] ?? '',
-            'delivered_date' => $r['actual_delivery_date'] ?? $r['anticipated_delivery_date'] ?? '',
+            'delivered_date' => (!empty($r['dest_project_name'])) ? ($r['actual_delivery_date'] ?? $r['anticipated_delivery_date'] ?? '') : '',
             'left_warehouse_date' => $r['left_warehouse_date'] ?? '',
             'wattage' => $r['wattage'] ?? '',
             'quantity' => $r['quantity'] ?? '',
