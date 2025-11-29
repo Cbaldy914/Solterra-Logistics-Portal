@@ -24,6 +24,7 @@ $project_id_from_url = isset($_GET['project_id']) ? (int)$_GET['project_id'] : n
 require_once '../config.php';
 require_once 'document_helpers.php';
 require_once 'delivery_notification_helpers.php';
+require_once 'cost_helpers.php';
 $conn = getDBConnection();
 if (!$conn) die("Connection failed");
 
@@ -264,6 +265,98 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
                         $stmt_update_pallets->close();
                     }
                 }
+            }
+        }
+
+        /* ──────────────── UPDATE PALLET COSTS ──────────────── */
+        // 1. Freight and Accessorial Cost Adjustment (Diff Logic)
+        // Calculate old per-pallet costs
+        $pallet_count = count($associated_pallets);
+        if ($pallet_count > 0) {
+            $old_freight_per_pallet = $delivery['freight_cost'] / $pallet_count;
+            $old_accessorial_per_pallet = $delivery['accessorial_costs'] / $pallet_count; // Using charged amount
+
+            $new_freight_per_pallet = $freight_cost / $pallet_count;
+            $new_accessorial_per_pallet = $access_charged / $pallet_count;
+
+            $freight_diff = $new_freight_per_pallet - $old_freight_per_pallet;
+            $accessorial_diff = $new_accessorial_per_pallet - $old_accessorial_per_pallet;
+
+            if (abs($freight_diff) > 0.001 || abs($accessorial_diff) > 0.001) {
+                // Get all pallet IDs
+                $all_pallet_ids = array_column($associated_pallets, 'id');
+                if (!empty($all_pallet_ids)) {
+                    $ids_str = implode(',', array_map('intval', $all_pallet_ids));
+                    $sql_cost_update = "UPDATE inventory_pallets 
+                                        SET freight_cost = freight_cost + ?, 
+                                            accessorial_cost = accessorial_cost + ? 
+                                        WHERE id IN ($ids_str)";
+                    $stmt_cost = $conn->prepare($sql_cost_update);
+                    if ($stmt_cost) {
+                        $stmt_cost->bind_param("dd", $freight_diff, $accessorial_diff);
+                        $stmt_cost->execute();
+                        $stmt_cost->close();
+                    }
+                }
+            }
+        }
+
+        // 2. Warehouse Cost Snapshot (Only on Departure)
+        // If status changed from 'In Warehouse' (or similar) to a transit/delivered state,
+        // we assume the pallets are leaving the warehouse and we should snapshot the storage cost.
+        // We use the OLD status of the pallets to determine eligibility.
+        
+        // Define statuses that imply "At Warehouse"
+        $warehouse_statuses = ['In Warehouse', 'Delivered to Warehouse'];
+        // Define statuses that imply "Left Warehouse"
+        $departed_statuses = ['In Transit to Project', 'Delivered to Project', 'In Transit to Warehouse']; // Moving to another WH is also a departure from current
+
+        if (in_array($status, $departed_statuses)) {
+            // Check which pallets were previously in warehouse
+            $pallets_leaving_ids = [];
+            foreach ($associated_pallets as $p) {
+                if (in_array($p['status'], $warehouse_statuses)) {
+                    $pallets_leaving_ids[] = $p['id'];
+                }
+            }
+
+            if (!empty($pallets_leaving_ids)) {
+                // Calculate cost for this warehouse stay
+                // We need the warehouse_id (origin) and arrival/departure dates
+                // For a delivery leaving a warehouse, the delivery's warehouse_id is usually the ORIGIN (if origin_type is warehouse)
+                // OR we look at the pallet's current_warehouse_id (which might have just been updated? No, we updated it above).
+                // Wait, we updated pallet status/location above. 
+                // But we have the $associated_pallets array from BEFORE the update.
+                
+                // We need to know the warehouse they are leaving.
+                // If the delivery has 'left_warehouse_date', use it. Otherwise use current date.
+                $departure_date_calc = $left_wh_date ? $left_wh_date : date('Y-m-d H:i:s');
+                
+                // We need to fetch the arrival_date for each pallet to calculate cost
+                // We can do this in a loop or batch. Loop is safer for individual arrival dates.
+                
+                $stmt_get_arrival = $conn->prepare("SELECT id, current_warehouse_id, arrival_date FROM inventory_pallets WHERE id = ?");
+                $stmt_update_wh_cost = $conn->prepare("UPDATE inventory_pallets SET warehouse_cost = warehouse_cost + ? WHERE id = ?");
+                
+                foreach ($pallets_leaving_ids as $pid) {
+                    $stmt_get_arrival->bind_param("i", $pid);
+                    $stmt_get_arrival->execute();
+                    $res_arrival = $stmt_get_arrival->get_result();
+                    if ($row_arrival = $res_arrival->fetch_assoc()) {
+                        $wh_id = $row_arrival['current_warehouse_id'];
+                        $arr_date = $row_arrival['arrival_date'];
+                        
+                        if ($wh_id && $arr_date) {
+                            $cost = calculate_pallet_storage_cost($wh_id, $arr_date, $departure_date_calc, $conn);
+                            if ($cost > 0) {
+                                $stmt_update_wh_cost->bind_param("di", $cost, $pid);
+                                $stmt_update_wh_cost->execute();
+                            }
+                        }
+                    }
+                }
+                $stmt_get_arrival->close();
+                $stmt_update_wh_cost->close();
             }
         }
 
