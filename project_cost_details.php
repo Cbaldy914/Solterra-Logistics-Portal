@@ -19,6 +19,7 @@ $project_id = intval($_GET['project_id']);
 
 // Database connection
 require_once '../config.php';
+require_once 'cost_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -388,6 +389,71 @@ if ($filter === 'price_per_watt') {
     }
 }
 
+// --- Pallet Pagination Logic ---
+$pallet_page = isset($_GET['pallet_page']) ? max(1, intval($_GET['pallet_page'])) : 1;
+$pallet_limit = 50;
+$pallet_offset = ($pallet_page - 1) * $pallet_limit;
+
+// Build Pallet Query
+// We want pallets associated with the *filtered* deliveries to match the "breakdown" concept.
+// We reuse the same parameters as the delivery query, but we need to adjust the query structure.
+// The $dateCondition etc. use column names directly. We will alias deliveries as 'd' and replace column names if needed,
+// or just use the same table name 'deliveries' in the join to avoid rewriting all conditions.
+$pallet_params = $params;
+$pallet_params[] = $pallet_offset;
+$pallet_params[] = $pallet_limit;
+$pallet_types = $paramTypes . "ii";
+
+$sql_pallets_paginated = "
+    SELECT SQL_CALC_FOUND_ROWS 
+        ip.id, ip.pallet_identifier, ip.status, ip.manufacturer, ip.quantity, ip.wattage,
+        ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost,
+        ip.current_warehouse_id, ip.arrival_date
+    FROM inventory_pallets ip
+    JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+    JOIN deliveries ON dp.delivery_id = deliveries.id
+    WHERE deliveries.project_id = ?
+          $ytdCondition
+          $dateCondition
+          $statusCondition
+          $manufacturerCondition
+          $searchCondition
+    GROUP BY ip.id
+    ORDER BY ip.id DESC
+    LIMIT ?, ?
+";
+
+$stmt_pallets_page = $conn->prepare($sql_pallets_paginated);
+if ($stmt_pallets_page) {
+    $stmt_pallets_page->bind_param($pallet_types, ...$pallet_params);
+    $stmt_pallets_page->execute();
+    $result_pallets_page = $stmt_pallets_page->get_result();
+    
+    $pallets_data = [];
+    while ($p_row = $result_pallets_page->fetch_assoc()) {
+        // Calculate pending warehouse cost if currently in warehouse
+        $pending_cost = 0;
+        if ($p_row['status'] === 'In Warehouse' && $p_row['current_warehouse_id'] && $p_row['arrival_date']) {
+            $pending_cost = calculate_pallet_storage_cost($p_row['current_warehouse_id'], $p_row['arrival_date'], date('Y-m-d H:i:s'), $conn);
+        }
+        $p_row['pending_warehouse_cost'] = $pending_cost;
+        $p_row['total_cost'] = $p_row['warehouse_cost'] + $p_row['freight_cost'] + $p_row['accessorial_cost'] + $pending_cost;
+        $pallets_data[] = $p_row;
+    }
+    $stmt_pallets_page->close();
+    
+    // Get total count
+    $result_count = $conn->query("SELECT FOUND_ROWS()");
+    $total_pallets_found = $result_count->fetch_row()[0];
+    $total_pallet_pages = ceil($total_pallets_found / $pallet_limit);
+} else {
+    // Fallback or error
+    $pallets_data = [];
+    $total_pallets_found = 0;
+    $total_pallet_pages = 0;
+    error_log("Pallet query failed: " . $conn->error);
+}
+
 // CSV Export
 if (isset($_GET['export']) && $_GET['export'] == 1) {
     header('Content-Type: text/csv; charset=utf-8');
@@ -689,6 +755,76 @@ $conn->close();
             background: linear-gradient(135deg, #3A6E7F 0%, #293E4C 100%);
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
+        }
+
+        /* Tabs */
+        .tabs-nav {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid rgba(72, 140, 154, 0.1);
+            padding-bottom: 2px;
+        }
+        
+        .tab-btn {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            font-family: 'Poppins', sans-serif;
+            font-size: 1em;
+            font-weight: 600;
+            color: #6c757d;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .tab-btn:hover {
+            color: #488C9A;
+            background: rgba(72, 140, 154, 0.05);
+            border-radius: 8px 8px 0 0;
+        }
+        
+        .tab-btn.active {
+            color: #488C9A;
+            border-bottom-color: #488C9A;
+        }
+        
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 20px;
+            padding: 20px;
+        }
+        
+        .page-link {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            color: #488C9A;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        
+        .page-link:hover, .page-link.active {
+            background: #488C9A;
+            color: white;
+            border-color: #488C9A;
         }
 
 
@@ -1437,350 +1573,299 @@ $conn->close();
         </form>
     </div>
 
-    <!-- Pagination Controls -->
-    <?php if (!empty($deliveries)): ?>
-    <div class="pagination-container">
-        <div class="pagination-info">
-            <span id="paginationInfo">Showing 0 of 0 deliveries</span>
-        </div>
-        <div class="pagination-controls">
-            <label for="itemsPerPage">Show:</label>
-            <input type="number" id="itemsPerPage" value="25" min="1" max="500" style="width: 80px;">
-            <label>per page</label>
-            <button type="button" id="prevPage" disabled>Previous</button>
-            <span id="pageInfo">Page 1 of 1</span>
-            <button type="button" id="nextPage" disabled>Next</button>
-        </div>
+    <!-- Tabs Navigation -->
+    <div class="tabs-nav">
+        <button class="tab-btn active" onclick="switchTab('deliveries')">Delivery Breakdown</button>
+        <button class="tab-btn" onclick="switchTab('pallets')">Pallet Details</button>
     </div>
-    <?php endif; ?>
 
-    <!-- Deliveries Table -->
-    <div class="table-container">
-        <div class="table-header">
-            <h3 class="table-title">
-                <i class="fas fa-dollar-sign"></i>
-                Cost Breakdown
-            </h3>
-            <div class="table-header-actions">
-                <button type="submit" form="filterForm" name="export" value="1" class="btn-export-header">
-                    <i class="fas fa-download"></i>
-                    Export CSV
-                </button>
-                <div style="position: relative;">
-                    <button type="button" class="btn-columns-header" onclick="toggleColumnChooser()">
-                        <i class="fas fa-columns"></i>
-                        Columns
-                    </button>
-                    <div class="column-chooser-content" id="columnChooser">
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-bol" checked> BOL#</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-manufacturer" checked> Manufacturer</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-wattage" checked> Wattage</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-quantity" checked> Quantity</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-pallets" checked> Associated Pallets</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-status" checked> Status of Delivery</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-delivery-date" checked> Delivered to Site Date</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-warehousing-cost" checked> Warehousing Cost</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-freight-cost" checked> Freight Cost</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-accessorial-cost" checked> Accessorial Cost</label>
-                    </div>
-                    <div class="column-item">
-                        <label><input type="checkbox" class="column-toggle" data-column="col-total-cost" checked> Total Cost</label>
-                    </div>
-                </div>
-                </div>
+    <!-- Deliveries Tab -->
+    <div id="tab-deliveries" class="tab-content active">
+        <!-- Pagination Controls (Deliveries) -->
+        <?php if (!empty($deliveries)): ?>
+        <div class="pagination-container">
+            <div class="pagination-info">
+                <span id="paginationInfo">Showing 0 of 0 deliveries</span>
+            </div>
+            <div class="pagination-controls">
+                <label for="itemsPerPage">Show:</label>
+                <input type="number" id="itemsPerPage" value="25" min="1" max="500" style="width: 80px;">
+                <label>per page</label>
+                <button type="button" id="prevPage" disabled>Previous</button>
+                <span id="pageInfo">Page 1 of 1</span>
+                <button type="button" id="nextPage" disabled>Next</button>
             </div>
         </div>
+        <?php endif; ?>
 
-        <table id="deliveriesTable">
-            <thead>
-                <tr>
-                    <th class="col-bol">BOL#</th>
-                    <th class="col-manufacturer">Manufacturer</th>
-                    <th class="col-wattage">Wattage</th>
-                    <th class="col-quantity">Quantity</th>
-                    <th class="col-pallets">Associated Pallets</th>
-                    <th class="col-status">Status of Delivery</th>
-                    <th class="col-delivery-date">Delivered to Site Date</th>
-                    <th class="col-warehousing-cost">Warehousing Cost</th>
-                    <th class="col-freight-cost">Freight Cost</th>
-                    <th class="col-accessorial-cost">Accessorial Cost</th>
-                    <th class="col-total-cost">Total Cost</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php if (!empty($deliveries)): ?>
-                <?php foreach ($deliveries as $d): ?>
-                    <tr style="border-bottom: 1px solid #dee2e6;">
-                        <td class="col-bol"><?php echo htmlspecialchars($d['bol_number'] ?? ''); ?></td>
-                        <td class="col-manufacturer"><?php echo htmlspecialchars($d['supplier'] ?? ''); ?></td>
-                        <td class="col-wattage"><?php echo htmlspecialchars($d['wattage'] ?? ''); ?>W</td>
-                        <td class="col-quantity"><?php echo number_format($d['quantity'] ?? 0); ?></td>
-                        <td class="col-pallets" style="text-align: center;">
-                            <?php if ($d['pallet_count'] > 0): ?>
-                                <button type="button" class="action-btn action-btn-primary" 
-                                        onclick="showPalletModal(this)" 
-                                        data-pallets='<?php echo htmlspecialchars(json_encode($d['associated_pallets']), ENT_QUOTES, 'UTF-8'); ?>'>
-                                    <i class="fas fa-boxes"></i>
-                                    View Pallets (<?php echo $d['pallet_count']; ?>)
-                                </button>
-                            <?php else: ?>
-                                <span style="color: #6c757d;">—</span>
-                            <?php endif; ?>
-                        </td>
-                        <td class="col-status"><?php echo htmlspecialchars($d['status_of_delivery'] ?? ''); ?></td>
-                        <td class="col-delivery-date"><?php echo $d['actual_delivery_date_formatted']; ?></td>
-                        <td class="col-warehousing-cost" style="text-align: right;">$<?php echo number_format($d['warehousing_cost'] ?? 0, 2); ?></td>
-                        <td class="col-freight-cost" style="text-align: right;">$<?php echo number_format($d['customer_cost'] ?? 0, 2); ?></td>
-                        <td class="col-accessorial-cost" style="text-align: right;">$<?php echo number_format($d['accessorial_costs'] ?? 0, 2); ?></td>
-                        <td class="col-total-cost" style="text-align: right; font-weight: bold; background-color: #f8f9fa;">$<?php echo number_format($d['total_logistics_cost'] ?? 0, 2); ?></td>
-                    </tr>
-                <?php endforeach; ?>
-            <?php else: ?>
-                <tr>
-                    <td colspan="11">
-                        <div class="empty-state">
-                            <i class="fas fa-inbox"></i>
-                            <h3>No Deliveries Found</h3>
-                            <p>
-                                <?php if (!empty($status_filter) || $time_filter !== 'all'): ?>
-                                    No deliveries match your current filters. Try adjusting your time period or status filter.
-                                <?php else: ?>
-                                    No deliveries have been recorded for this project yet.<br>
-                                    Cost details will appear here once deliveries are added to the system.
-                                <?php endif; ?>
-                            </p>
+        <!-- Deliveries Table -->
+        <div class="table-container">
+            <div class="table-header">
+                <h3 class="table-title">
+                    <i class="fas fa-dollar-sign"></i>
+                    Cost Breakdown
+                </h3>
+                <div class="table-header-actions">
+                    <button type="submit" form="filterForm" name="export" value="1" class="btn-export-header">
+                        <i class="fas fa-download"></i>
+                        Export CSV
+                    </button>
+                    <div style="position: relative;">
+                        <button type="button" class="btn-columns-header" onclick="toggleColumnChooser()">
+                            <i class="fas fa-columns"></i>
+                            Columns
+                        </button>
+                        <div class="column-chooser-content" id="columnChooser">
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-bol" checked> BOL#</label>
                         </div>
-                    </td>
-                </tr>
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-manufacturer" checked> Manufacturer</label>
+                        </div>
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-wattage" checked> Wattage</label>
+                        </div>
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-quantity" checked> Quantity</label>
+                        </div>
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-pallets" checked> Associated Pallets</label>
+                        </div>
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-status" checked> Status of Delivery</label>
+                        </div>
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-delivery-date" checked> Delivered to Site Date</label>
+                        </div>
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-warehousing-cost" checked> Warehousing Cost</label>
+                        </div>
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-freight-cost" checked> Freight Cost</label>
+                        </div>
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-accessorial-cost" checked> Accessorial Cost</label>
+                        </div>
+                        <div class="column-item">
+                            <label><input type="checkbox" class="column-toggle" data-column="col-total-cost" checked> Total Cost</label>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+            </div>
+
+            <table id="deliveriesTable">
+                <thead>
+                    <tr>
+                        <th class="col-bol">BOL#</th>
+                        <th class="col-manufacturer">Manufacturer</th>
+                        <th class="col-wattage">Wattage</th>
+                        <th class="col-quantity">Quantity</th>
+                        <th class="col-pallets">Associated Pallets</th>
+                        <th class="col-status">Status of Delivery</th>
+                        <th class="col-delivery-date">Delivered to Site Date</th>
+                        <th class="col-warehousing-cost">Warehousing Cost</th>
+                        <th class="col-freight-cost">Freight Cost</th>
+                        <th class="col-accessorial-cost">Accessorial Cost</th>
+                        <th class="col-total-cost">Total Cost</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if (!empty($deliveries)): ?>
+                    <?php foreach ($deliveries as $d): ?>
+                        <tr style="border-bottom: 1px solid #dee2e6;">
+                            <td class="col-bol"><?php echo htmlspecialchars($d['bol_number'] ?? ''); ?></td>
+                            <td class="col-manufacturer"><?php echo htmlspecialchars($d['supplier'] ?? ''); ?></td>
+                            <td class="col-wattage"><?php echo htmlspecialchars($d['wattage'] ?? ''); ?>W</td>
+                            <td class="col-quantity"><?php echo number_format($d['quantity'] ?? 0); ?></td>
+                            <td class="col-pallets" style="text-align: center;">
+                                <?php if ($d['pallet_count'] > 0): ?>
+                                    <button type="button" class="action-btn action-btn-primary" 
+                                            onclick="showPalletModal(this)" 
+                                            data-pallets='<?php echo htmlspecialchars(json_encode($d['associated_pallets']), ENT_QUOTES, 'UTF-8'); ?>'>
+                                        <i class="fas fa-boxes"></i>
+                                        View Pallets (<?php echo $d['pallet_count']; ?>)
+                                    </button>
+                                <?php else: ?>
+                                    <span style="color: #6c757d;">—</span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="col-status"><?php echo htmlspecialchars($d['status_of_delivery'] ?? ''); ?></td>
+                            <td class="col-delivery-date"><?php echo $d['actual_delivery_date_formatted']; ?></td>
+                            <td class="col-warehousing-cost" style="text-align: right;">$<?php echo number_format($d['warehousing_cost'] ?? 0, 2); ?></td>
+                            <td class="col-freight-cost" style="text-align: right;">$<?php echo number_format($d['customer_cost'] ?? 0, 2); ?></td>
+                            <td class="col-accessorial-cost" style="text-align: right;">$<?php echo number_format($d['accessorial_costs'] ?? 0, 2); ?></td>
+                            <td class="col-total-cost" style="text-align: right; font-weight: bold; background-color: #f8f9fa;">$<?php echo number_format($d['total_logistics_cost'] ?? 0, 2); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="11">
+                            <div class="empty-state">
+                                <i class="fas fa-inbox"></i>
+                                <h3>No Deliveries Found</h3>
+                                <p>
+                                    <?php if (!empty($status_filter) || $time_filter !== 'all'): ?>
+                                        No deliveries match your current filters. Try adjusting your time period or status filter.
+                                    <?php else: ?>
+                                        No deliveries have been recorded for this project yet.<br>
+                                        Cost details will appear here once deliveries are added to the system.
+                                    <?php endif; ?>
+                                </p>
+                            </div>
+                        </td>
+                    </tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Pallets Tab -->
+    <div id="tab-pallets" class="tab-content">
+        <div class="table-container">
+            <div class="table-header">
+                <h2 class="table-title">
+                    <i class="fas fa-pallet"></i>
+                    Individual Pallet Costs
+                </h2>
+            </div>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Pallet ID</th>
+                            <th>Manufacturer</th>
+                            <th>Wattage</th>
+                            <th>Quantity</th>
+                            <th>Status</th>
+                            <th>Warehouse Cost</th>
+                            <th>Freight Cost</th>
+                            <th>Accessorial Cost</th>
+                            <th>Total Cost</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (!empty($pallets_data)): ?>
+                            <?php foreach ($pallets_data as $p): ?>
+                                <tr>
+                                    <td style="font-weight: 600;"><?php echo htmlspecialchars($p['pallet_identifier']); ?></td>
+                                    <td><?php echo htmlspecialchars($p['manufacturer'] ?? '-'); ?></td>
+                                    <td><?php echo htmlspecialchars($p['wattage']); ?>W</td>
+                                    <td><?php echo number_format($p['quantity']); ?></td>
+                                    <td>
+                                        <span class="status-badge status-<?php echo strtolower(str_replace(' ', '-', $p['status'])); ?>">
+                                            <?php echo htmlspecialchars($p['status']); ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        $<?php echo number_format($p['warehouse_cost'], 2); ?>
+                                        <?php if ($p['pending_warehouse_cost'] > 0): ?>
+                                            <span style="font-size:0.8em; color:#d97706;" title="Pending/Accruing cost">
+                                                (+$<?php echo number_format($p['pending_warehouse_cost'], 2); ?>)
+                                            </span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>$<?php echo number_format($p['freight_cost'], 2); ?></td>
+                                    <td>$<?php echo number_format($p['accessorial_cost'], 2); ?></td>
+                                    <td style="font-weight: 600; color: #488C9A;">$<?php echo number_format($p['total_cost'], 2); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="9" style="text-align: center; padding: 40px; color: #6c757d;">
+                                    <p>No pallets found matching criteria.</p>
+                                </td>
+                            </tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            <?php if ($total_pallet_pages > 1): ?>
+            <div class="pagination">
+                <?php 
+                // Build query string for pagination links, preserving other params
+                $queryParams = $_GET;
+                unset($queryParams['pallet_page']);
+                $queryString = http_build_query($queryParams);
+                
+                // Simple pagination: Prev, Next, and a few numbers
+                $range = 2;
+                $start_page = max(1, $pallet_page - $range);
+                $end_page = min($total_pallet_pages, $pallet_page + $range);
+                
+                if ($pallet_page > 1) {
+                    echo '<a href="?' . $queryString . '&pallet_page=' . ($pallet_page - 1) . '" class="page-link">&laquo; Prev</a>';
+                }
+                
+                if ($start_page > 1) {
+                     echo '<a href="?' . $queryString . '&pallet_page=1" class="page-link">1</a>';
+                     if ($start_page > 2) echo '<span style="padding:8px;">...</span>';
+                }
+                
+                for ($i = $start_page; $i <= $end_page; $i++) {
+                    $active = ($i == $pallet_page) ? 'active' : '';
+                    echo '<a href="?' . $queryString . '&pallet_page=' . $i . '" class="page-link ' . $active . '">' . $i . '</a>';
+                }
+                
+                if ($end_page < $total_pallet_pages) {
+                    if ($end_page < $total_pallet_pages - 1) echo '<span style="padding:8px;">...</span>';
+                    echo '<a href="?' . $queryString . '&pallet_page=' . $total_pallet_pages . '" class="page-link">' . $total_pallet_pages . '</a>';
+                }
+                
+                if ($pallet_page < $total_pallet_pages) {
+                    echo '<a href="?' . $queryString . '&pallet_page=' . ($pallet_page + 1) . '" class="page-link">Next &raquo;</a>';
+                }
+                ?>
+            </div>
             <?php endif; ?>
-            </tbody>
-        </table>
+        </div>
     </div>
 </main>
 
-    <!-- Associated Pallets Modal -->
-    <div id="associatedPalletsModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>Associated Pallets</h2>
-                <span class="modal-close" onclick="closeAssociatedPalletModal()">&times;</span>
-            </div>
-            <div class="modal-body">
-                <div id="palletList"></div>
-            </div>
+<!-- Associated Pallets Modal -->
+<div id="associatedPalletsModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Associated Pallets</h2>
+            <span class="modal-close" onclick="closeAssociatedPalletModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div id="palletList"></div>
         </div>
     </div>
+</div>
 
-    <script>
-    function searchTable() {
-        var input = document.getElementById("searchInput");
-        if (!input) return;
-        var filter = input.value.toLowerCase();
-        var table = document.getElementById("deliveriesTable");
-        var trs = table.getElementsByTagName("tr");
-
-        for (var i=1; i<trs.length; i++) {
-            var tds = trs[i].getElementsByTagName("td");
-            var show = false;
-            for (var j=0; j<tds.length; j++) {
-                var txtValue = tds[j].textContent || tds[j].innerText;
-                if (txtValue.toLowerCase().indexOf(filter) > -1) {
-                    show = true;
-                    break;
-                }
+<script>
+    function switchTab(tabName) {
+        // Hide all tabs
+        document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+        
+        // Show selected
+        document.getElementById('tab-' + tabName).classList.add('active');
+        
+        // Activate button
+        const btns = document.querySelectorAll('.tab-btn');
+        btns.forEach(btn => {
+            if (btn.getAttribute('onclick').includes(tabName)) {
+                btn.classList.add('active');
             }
-            trs[i].style.display = show ? "" : "none";
-        }
-    }
-
-    // --- Associated Pallets Modal --- 
-    var associatedPalletsModal = document.getElementById('associatedPalletsModal');
-    var palletListDiv = document.getElementById('palletList');
-
-    function showPalletModal(buttonElement) {
-        var palletsJson = buttonElement.getAttribute('data-pallets');
-        try {
-            var pallets = JSON.parse(palletsJson);
-            palletListDiv.innerHTML = '';
-
-            if (pallets.length > 0) {
-                var table = document.createElement('table');
-                table.className = 'pallet-table';
-
-                var thead = table.createTHead();
-                var headerRow = thead.insertRow();
-                var headers = ['Identifier', 'Wattage', 'Quantity', 'Actions'];
-                headers.forEach(function(headerText) {
-                    var th = document.createElement('th');
-                    th.textContent = headerText;
-                    headerRow.appendChild(th);
-                });
-
-                var tbody = table.createTBody();
-                pallets.forEach(function(pallet) {
-                    var row = tbody.insertRow();
-                    
-                    var cellIdentifier = row.insertCell();
-                    cellIdentifier.textContent = pallet.pallet_identifier ? pallet.pallet_identifier : `ID: ${pallet.id}`;
-
-                    var cellWattage = row.insertCell();
-                    cellWattage.textContent = pallet.wattage ? `${pallet.wattage}W` : '—';
-
-                    var cellQuantity = row.insertCell();
-                    cellQuantity.textContent = pallet.quantity ? pallet.quantity : '—';
-
-                    var cellActions = row.insertCell();
-                    cellActions.style.textAlign = 'center';
-
-                    var viewDetailsBtn = document.createElement('a');
-                    viewDetailsBtn.href = `pallet_details.php?pallet_id=${pallet.id}`;
-                    viewDetailsBtn.className = 'action-btn action-btn-primary';
-                    viewDetailsBtn.innerHTML = '<i class="fas fa-eye"></i> View Details';
-                    cellActions.appendChild(viewDetailsBtn);
-                });
-
-                palletListDiv.appendChild(table);
-            } else {
-                var p = document.createElement('p');
-                p.style.textAlign = 'center';
-                p.style.color = '#6c757d';
-                p.textContent = 'No pallets found.';
-                palletListDiv.appendChild(p);
-            }
-
-            associatedPalletsModal.style.display = 'block';
-        } catch (e) {
-            console.error("Error parsing pallet data or creating table:", e);
-            palletListDiv.innerHTML = '<p style="text-align: center; color: #dc2626;">Error loading pallet data.</p>';
-            associatedPalletsModal.style.display = 'block';
-        }
-    }
-
-    function closeAssociatedPalletModal() {
-         associatedPalletsModal.style.display = 'none';
-         palletListDiv.innerHTML = ''; // Clear list on close
-    }
-
-    // Close modal on outside click
-    window.addEventListener('click', function(event) {
-        if (event.target === associatedPalletsModal) {
-            closeAssociatedPalletModal();
-        }
-    });
-
-    // Pagination logic
-    let currentPage = 1;
-    let itemsPerPage = 25;
-    let allDeliveryRows = [];
-
-    function initializePagination() {
-        const table = document.getElementById('deliveriesTable');
-        if (!table) return;
-        
-        const tbody = table.querySelector('tbody');
-        if (!tbody) return;
-        
-        allDeliveryRows = Array.from(tbody.querySelectorAll('tr'));
-        
-        const itemsPerPageInput = document.getElementById('itemsPerPage');
-        const prevButton = document.getElementById('prevPage');
-        const nextButton = document.getElementById('nextPage');
-        
-        if (itemsPerPageInput) {
-            itemsPerPageInput.addEventListener('change', function() {
-                itemsPerPage = Math.min(Math.max(1, parseInt(this.value) || 25), 500);
-                this.value = itemsPerPage;
-                currentPage = 1;
-                updatePagination();
-            });
-        }
-        
-        if (prevButton) {
-            prevButton.addEventListener('click', function() {
-                if (currentPage > 1) {
-                    currentPage--;
-                    updatePagination();
-                }
-            });
-        }
-        
-        if (nextButton) {
-            nextButton.addEventListener('click', function() {
-                const maxPages = Math.ceil(allDeliveryRows.length / itemsPerPage);
-                if (currentPage < maxPages) {
-                    currentPage++;
-                    updatePagination();
-                }
-            });
-        }
-        
-        updatePagination();
-    }
-
-    function updatePagination() {
-        const totalItems = allDeliveryRows.length;
-        const maxPages = Math.ceil(totalItems / itemsPerPage);
-        const startIndex = (currentPage - 1) * itemsPerPage;
-        const endIndex = startIndex + itemsPerPage;
-        
-        // Hide all rows
-        allDeliveryRows.forEach(row => {
-            row.style.display = 'none';
         });
         
-        // Show only current page rows
-        allDeliveryRows.slice(startIndex, endIndex).forEach(row => {
-            row.style.display = '';
-        });
-        
-        // Update pagination info
-        const paginationInfo = document.getElementById('paginationInfo');
-        const pageInfo = document.getElementById('pageInfo');
-        const prevButton = document.getElementById('prevPage');
-        const nextButton = document.getElementById('nextPage');
-        
-        if (paginationInfo) {
-            const showing = Math.min(endIndex, totalItems);
-            const displayStart = totalItems > 0 ? startIndex + 1 : 0;
-            paginationInfo.textContent = `Showing ${displayStart}-${showing} of ${totalItems} deliveries`;
-        }
-        
-        if (pageInfo) {
-            pageInfo.textContent = `Page ${Math.max(1, currentPage)} of ${Math.max(1, maxPages)}`;
-        }
-        
-        if (prevButton) {
-            prevButton.disabled = currentPage <= 1;
-        }
-        
-        if (nextButton) {
-            nextButton.disabled = currentPage >= maxPages || totalItems === 0;
-        }
+        // Store preference
+        localStorage.setItem('cost_details_tab', tabName);
     }
-
-    // Initialize pagination when page loads
-    document.addEventListener('DOMContentLoaded', function() {
-        initializePagination();
+    
+    // Restore tab on load
+    document.addEventListener('DOMContentLoaded', () => {
+        const savedTab = localStorage.getItem('cost_details_tab');
+        if (savedTab) {
+            switchTab(savedTab);
+        }
     });
-    </script>
+</script>
 </body>
 </html>
