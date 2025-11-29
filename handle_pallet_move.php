@@ -5,12 +5,12 @@ session_start();
 // Ensure user has role admin or global_admin
 if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
     $_SESSION['move_pallet_message'] = "Error: Unauthorized access.";
-    // Redirect back to a safe page, maybe the dashboard or the last known warehouse page if possible
     header("Location: manage_warehouses.php"); 
     exit();
 }
 
 require_once '../config.php';
+require_once 'cost_helpers.php';
 
 // Basic input validation
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || ($_POST['action'] ?? '') !== 'move_pallets') {
@@ -29,7 +29,7 @@ $est_arrival_date     = !empty($_POST['est_arrival_date']) ? $_POST['est_arrival
 
 $redirect_url = "manage_warehouse_inventory.php?warehouse_id=" . $current_warehouse_id;
 
-// More specific validation
+// Validation
 if ($current_warehouse_id <= 0) {
     $_SESSION['move_pallet_message'] = "Error: Invalid origin warehouse ID.";
     header("Location: manage_warehouses.php");
@@ -70,195 +70,137 @@ $conn = getDBConnection();
 $conn->begin_transaction();
 
 try {
-    // 1. Get Origin Warehouse Name (for supplier field)
+    // 1. Get Origin Warehouse Name
     $stmtOrigin = $conn->prepare("SELECT name FROM warehouses WHERE id = ?");
-    if (!$stmtOrigin) throw new Exception("Failed to prepare origin warehouse query: " . $conn->error);
     $stmtOrigin->bind_param("i", $current_warehouse_id);
     $stmtOrigin->execute();
     $stmtOrigin->bind_result($origin_warehouse_name);
     if (!$stmtOrigin->fetch()) {
-        $stmtOrigin->close();
-        throw new Exception("Origin warehouse not found.");
+        $origin_warehouse_name = "Unknown Warehouse";
     }
     $stmtOrigin->close();
 
-    // 2. Fetch details of selected pallets to verify they are in the origin warehouse and group them
-    $sqlFetchPallets = "
-        SELECT ip.id, ip.wattage, ip.quantity, 
-               COALESCE(ip.manufacturer, 
-                   CASE 
-                       WHEN m.vendor_name LIKE '%-%' THEN TRIM(SUBSTRING_INDEX(m.vendor_name, '-', 1))
-                       ELSE m.vendor_name
-                   END,
-                   'Unknown Manufacturer'
-               ) as manufacturer
-        FROM inventory_pallets ip
-        LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
-        LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-        WHERE ip.id IN ($placeholders) 
-        AND ip.current_warehouse_id = ? 
-        AND ip.status = 'In Warehouse'
-    ";
-    $stmtFetch = $conn->prepare($sqlFetchPallets);
-    if (!$stmtFetch) throw new Exception("Failed to prepare pallet fetch query: " . $conn->error);
-    $params = array_merge($palletIds, [$current_warehouse_id]);
-    $stmtFetch->bind_param($types . 'i', ...$params);
-    $stmtFetch->execute();
-    $resultPallets = $stmtFetch->get_result();
-
-    $palletsByWattage = [];
+    // 2. Fetch Pallet Data (Project, Arrival Date, Current Cost)
+    $sqlPallets = "SELECT id, current_project_id, arrival_date, warehouse_cost FROM inventory_pallets WHERE id IN ($placeholders)";
+    $stmtGetPallets = $conn->prepare($sqlPallets);
+    $stmtGetPallets->bind_param($types, ...$palletIds);
+    $stmtGetPallets->execute();
+    $resultPallets = $stmtGetPallets->get_result();
+    
+    $palletsByProject = [];
     $fetchedPalletIds = [];
-    if ($resultPallets->num_rows !== count($palletIds)) {
-         throw new Exception("Mismatch: Some selected pallets were not found in the origin warehouse or are not in 'In Warehouse' status.");
-    }
-    while ($pallet = $resultPallets->fetch_assoc()) {
-        $fetchedPalletIds[] = $pallet['id']; // Keep track of verified IDs
-        $wattage = $pallet['wattage'];
-        $manufacturer = $pallet['manufacturer'];
+
+    while ($row = $resultPallets->fetch_assoc()) {
+        $pid = $row['id'];
+        $projId = $row['current_project_id'] ? $row['current_project_id'] : 0;
         
-        if (!isset($palletsByWattage[$wattage])) {
-            $palletsByWattage[$wattage] = [
-                'quantity' => 0, 
-                'ids' => [], 
-                'manufacturer' => $manufacturer
-            ];
-        }
-        $palletsByWattage[$wattage]['quantity'] += $pallet['quantity'];
-        $palletsByWattage[$wattage]['ids'][] = $pallet['id'];
-        
-        // Ensure all pallets in this wattage group have the same manufacturer
-        if ($palletsByWattage[$wattage]['manufacturer'] !== $manufacturer) {
-            $palletsByWattage[$wattage]['manufacturer'] = 'Mixed Manufacturers';
-        }
-    }
-    $stmtFetch->close();
-
-    // Ensure we only process verified pallets
-    if (empty($fetchedPalletIds)) {
-        throw new Exception("No valid pallets to move after verification.");
-    }
-
-    // 3. DETERMINE TARGET STATUS AND LOCATIONS BASED ON DESTINATION AND DATES
-    $today_date = date('Y-m-d');
-    $is_same_day_warehouse_arrival = ($destination_type === 'warehouse' && $est_arrival_date === $today_date);
-
-    $new_pallet_status = '';
-    $target_warehouse_id = null;
-    $target_project_id = null;
-    $delivery_status = '';
-    $add_arrival_date_to_delivery = false;
-    $arrival_date_for_delivery = null;
-
-    if ($destination_type === 'project') {
-        $new_pallet_status = 'In Transit to Project';
-        $target_warehouse_id = null; 
-        $target_project_id = $destination_id;
-        $delivery_status = 'In Transit to Project';
-    } else { // Destination is warehouse
-        if ($is_same_day_warehouse_arrival) {
-            $new_pallet_status = 'In Warehouse';
-            $target_warehouse_id = $destination_id;
-            $target_project_id = null;
-            $delivery_status = 'Delivered'; 
-            $add_arrival_date_to_delivery = true;
-            $arrival_date_for_delivery = date('Y-m-d H:i:s'); // Use current datetime for immediate arrival
+        // Grouping Logic
+        if ($destination_type === 'project') {
+            $groupKey = $destination_id;
         } else {
-            $new_pallet_status = 'In Transit to Warehouse';
-            $target_warehouse_id = null; // Not yet at the destination warehouse
-            $target_project_id = null;
-            $delivery_status = 'In Transit to Warehouse';
+            $groupKey = $projId;
         }
+        
+        if (!isset($palletsByProject[$groupKey])) {
+            $palletsByProject[$groupKey] = [];
+        }
+        $palletsByProject[$groupKey][] = $row;
+        $fetchedPalletIds[] = $pid;
+    }
+    $stmtGetPallets->close();
+
+    if (empty($fetchedPalletIds)) {
+        throw new Exception("No valid pallets found.");
     }
 
-    // 4. Prepare Statements (Dynamically build INSERT based on destination)
-    $stmtLink = $conn->prepare("INSERT INTO delivery_pallets (delivery_id, inventory_pallet_id) VALUES (?, ?)");
-    if (!$stmtLink) throw new Exception("Failed to prepare pallet link insert: " . $conn->error);
+    // Prepare statements
+    $stmtDelivery = $conn->prepare("INSERT INTO deliveries (project_id, supplier, status_of_delivery, actual_delivery_date, bol_number, created_at) VALUES (?, ?, ?, ?, ?, NOW())");
+    $stmtLink = $conn->prepare("INSERT INTO delivery_pallets (delivery_id, pallet_id) VALUES (?, ?)");
+    $stmtPalletUpdate = $conn->prepare("UPDATE inventory_pallets SET status = ?, current_warehouse_id = ?, current_project_id = ?, delivery_id = ?, warehouse_cost = ? WHERE id = ?");
 
-    $sqlPalletUpdate = "UPDATE inventory_pallets SET status = ?, current_warehouse_id = ?, current_project_id = ? WHERE id = ?";
-    $stmtPalletUpdate = $conn->prepare($sqlPalletUpdate);
-    if (!$stmtPalletUpdate) throw new Exception("Failed to prepare pallet update: " . $conn->error);
-
-    // 5. Loop through wattage groups, create delivery, link/update pallets
     $createdDeliveryIds = [];
-    foreach ($palletsByWattage as $wattage => $group) {
-        $groupQty = $group['quantity'];
-        $groupPalletIds = $group['ids'];
-        $groupManufacturer = $group['manufacturer'];
 
-        // --- Dynamically build INSERT for deliveries for *this group* ---
-        // Use manufacturer as supplier (not warehouse name) to maintain data integrity
-        $deliveryColumns = ["supplier", "origin_type", "origin_id", "wattage", "quantity", "bol_number", "left_warehouse_date", "anticipated_delivery_date", "status_of_delivery"];
-        $deliveryParams = [$groupManufacturer, 'warehouse', $current_warehouse_id, $wattage, $groupQty, $bol_number, $departure_date, $est_arrival_date, $delivery_status];
-        $deliveryTypes = "sisssisss"; // Updated types: added 's' for origin_type and 'i' for origin_id
+    foreach ($palletsByProject as $projectId => $palletsInGroup) {
+        // Determine Delivery Status
+        $delivery_status = '';
+        $is_same_day_warehouse_arrival = false;
 
         if ($destination_type === 'project') {
-            $deliveryColumns[] = "project_id";
-            $deliveryParams[] = $destination_id;
-            $deliveryTypes .= "i";
-            // For warehouse-to-project moves, record the origin warehouse
-            $deliveryColumns[] = "warehouse_id";
-            $deliveryParams[] = $current_warehouse_id;
-            $deliveryTypes .= "i";
-        } else { // Destination is warehouse
-            $deliveryColumns[] = "warehouse_id";
-            $deliveryParams[] = $destination_id;
-            $deliveryTypes .= "i";
-            if ($add_arrival_date_to_delivery) {
-                $deliveryColumns[] = "warehouse_arrival_date";
-                $deliveryParams[] = $arrival_date_for_delivery;
-                $deliveryTypes .= "s";
+            $delivery_status = 'In Transit to Project';
+        } else {
+            $today = date('Y-m-d');
+            if ($est_arrival_date <= $today) {
+                $delivery_status = 'Delivered to Warehouse';
+                $is_same_day_warehouse_arrival = true;
+            } else {
+                $delivery_status = 'In Transit to Warehouse';
             }
         }
 
-        $sqlPlaceholders = implode(", ", array_fill(0, count($deliveryParams), "?"));
-        $sqlDeliveryInsert = "INSERT INTO deliveries (" . implode(", ", $deliveryColumns) . ") VALUES (" . $sqlPlaceholders . ")";
+        // Create Delivery Record
+        $dbProjectId = ($projectId > 0) ? $projectId : null;
         
-        // Prepare and execute Delivery Insert for this group
-        $stmtDelivery = $conn->prepare($sqlDeliveryInsert);
-        if (!$stmtDelivery) throw new Exception("Failed to prepare delivery insert for group: " . $conn->error);
-        
-        $stmtDelivery->bind_param($deliveryTypes, ...$deliveryParams);
+        $stmtDelivery->bind_param("issss", $dbProjectId, $origin_warehouse_name, $delivery_status, $est_arrival_date, $bol_number);
         if (!$stmtDelivery->execute()) {
-             error_log("Delivery Insert Error: " . $stmtDelivery->error . " SQL: " . $sqlDeliveryInsert . " Params: " . json_encode($deliveryParams));
-            throw new Exception("Failed to execute delivery insert for {$wattage}W: " . $stmtDelivery->error);
+            throw new Exception("Failed to create delivery: " . $stmtDelivery->error);
         }
-        $deliveryId = $conn->insert_id;
-        $createdDeliveryIds[] = $deliveryId;
-        $stmtDelivery->close(); // Close statement after use in loop
-        // --- End of dynamic INSERT build --- 
+        $delivery_id = $stmtDelivery->insert_id;
+        $createdDeliveryIds[] = $delivery_id;
 
-        // Link and Update Pallets in this group
-        foreach ($groupPalletIds as $pid) {
-            // Update Pallet Status/Location using pre-determined variables
-            $stmtPalletUpdate->bind_param("siii", $new_pallet_status, $target_warehouse_id, $target_project_id, $pid);
-            if (!$stmtPalletUpdate->execute()) throw new Exception("Failed to update pallet ID {$pid}: " . $stmtPalletUpdate->error);
-            
-            // Link Pallet to new Delivery
-            $stmtLink->bind_param("ii", $deliveryId, $pid);
-            if (!$stmtLink->execute()) throw new Exception("Failed to link pallet ID {$pid} to delivery {$deliveryId}: " . $stmtLink->error);
+        // Process Pallets
+        foreach ($palletsInGroup as $pallet) {
+            $pid = $pallet['id'];
+            $arrival_date = $pallet['arrival_date'];
+            $current_cost = $pallet['warehouse_cost'];
+
+            // Calculate Storage Cost
+            $storage_cost = 0.0;
+            if ($arrival_date) {
+                $storage_cost = calculate_pallet_storage_cost($conn, $pid, $current_warehouse_id, $arrival_date, $departure_date);
+            }
+            $new_total_cost = $current_cost + $storage_cost;
+
+            // Determine New Status/Location
+            $new_pallet_status = '';
+            $target_warehouse_id = null;
+            $target_project_id = null;
+
+            if ($destination_type === 'project') {
+                $new_pallet_status = 'In Transit to Project';
+                $target_project_id = $destination_id;
+            } else {
+                if ($is_same_day_warehouse_arrival) {
+                    $new_pallet_status = 'In Warehouse';
+                    $target_warehouse_id = $destination_id;
+                } else {
+                    $new_pallet_status = 'In Transit to Warehouse';
+                    $target_warehouse_id = null;
+                }
+                $target_project_id = ($projectId > 0) ? $projectId : null;
+            }
+
+            // Link to Delivery
+            $stmtLink->bind_param("ii", $delivery_id, $pid);
+            $stmtLink->execute();
+
+            // Update Pallet
+            $stmtPalletUpdate->bind_param("siiidi", $new_pallet_status, $target_warehouse_id, $target_project_id, $delivery_id, $new_total_cost, $pid);
+            $stmtPalletUpdate->execute();
         }
     }
 
-    // 6. Commit Transaction
-    $conn->commit();
-    $_SESSION['move_pallet_message'] = "Successfully created transfer delivery (IDs: " . implode(", ", $createdDeliveryIds) . ") for " . count($fetchedPalletIds) . " pallets.";
-
-    // Close remaining statements
+    $stmtDelivery->close();
     $stmtLink->close();
     $stmtPalletUpdate->close();
 
+    $conn->commit();
+    $_SESSION['move_pallet_message'] = "Successfully moved " . count($fetchedPalletIds) . " pallets. Created Deliveries: " . implode(", ", $createdDeliveryIds);
+
 } catch (Exception $e) {
     $conn->rollback();
-    // Close statements if they were prepared before error
-    // Note: $stmtDelivery is closed inside the loop now
-    if (isset($stmtLink) && $stmtLink) $stmtLink->close();
-    if (isset($stmtPalletUpdate) && $stmtPalletUpdate) $stmtPalletUpdate->close();
-    
     $_SESSION['move_pallet_message'] = "Error moving pallets: " . $e->getMessage();
 }
 
-// Redirect back
 header("Location: " . $redirect_url);
 exit();
-
-?> 
+?>
