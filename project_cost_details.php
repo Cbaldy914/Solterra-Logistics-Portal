@@ -569,7 +569,7 @@ function enrichPalletCostData(array $row, $conn) {
 }
 
 // Initialize totals - ensure they are never null
-$total_customer_cost     = 0.0;
+$total_customer_cost     = 0.0; // Freight total
 $total_accessorial_costs = 0.0;
 $total_warehousing_cost  = 0.0;
 $total_solterra_fee      = 0.0;
@@ -585,24 +585,19 @@ $deliveries = [];
 $stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.arrival_date, ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
 
 while ($delivery = $deliveries_result->fetch_assoc()) {
-    $customer_cost     = (float)$delivery['customer_cost'];
-    $accessorial_costs = (float)$delivery['accessorial_costs'];
     $quantity          = (int)($delivery['quantity'] ?? 0);
     $wattage           = (float)($delivery['wattage'] ?? 0);
-
-    $total_customer_cost     += $customer_cost;
-    $total_accessorial_costs += $accessorial_costs;
-
     $total_quantity         += $quantity;
     $total_wattage_quantity += ($quantity * $wattage);
+
+    // Base costs straight from deliveries table
+    $delivery_freight_cost     = (float)($delivery['freight_cost'] ?? $delivery['customer_cost'] ?? 0);
+    $delivery_accessorial_cost = (float)($delivery['accessorial_costs'] ?? 0);
+    $delivery_warehousing_cost = 0.0;
 
     // Fetch associated pallets for this delivery and build cost rollups
     $associatedPallets = [];
     $palletCount = 0;
-    $delivery_freight_cost = 0.0;
-    $delivery_accessorial_cost = 0.0;
-    $delivery_warehousing_cost = 0.0;
-
     $warehouse_for_costs = (int)($delivery['warehouse_id'] ?? 0);
     if (!$warehouse_for_costs && (($delivery['origin_type'] ?? '') === 'warehouse')) {
         $warehouse_for_costs = (int)($delivery['origin_id'] ?? 0);
@@ -611,6 +606,9 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $rates = getWarehouseCostRates($warehouse_for_costs, $conn);
     $is_inbound  = !empty($delivery['warehouse_arrival_date']) && (empty($delivery['origin_type']) || $delivery['origin_type'] !== 'warehouse');
     $is_outbound = !empty($delivery['left_warehouse_date']) && (!empty($delivery['origin_type']) && $delivery['origin_type'] === 'warehouse');
+
+    $fallback_freight_share = 0.0;
+    $fallback_accessorial_share = 0.0;
 
     if ($stmtPallets) {
         $stmtPallets->bind_param("i", $delivery['id']);
@@ -650,19 +648,25 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
             }
 
             $delivery_warehousing_cost += $pallet_wh_cost;
-            $delivery_freight_cost     += $enriched['freight_cost'] ?? 0;
-            $delivery_accessorial_cost += $enriched['accessorial_cost'] ?? 0;
+
+            // Track fallback shares only if base costs are missing
+            if ($delivery_freight_cost <= 0) {
+                $fallback_freight_share += $enriched['freight_cost'] ?? 0;
+            }
+            if ($delivery_accessorial_cost <= 0) {
+                $fallback_accessorial_share += $enriched['accessorial_cost'] ?? 0;
+            }
         }
         $palletCount = count($associatedPallets);
         $total_pallets_count += $palletCount;
     }
 
-    // Fallbacks for older projects
+    // Fallbacks when delivery record lacks costs
     if ($delivery_freight_cost <= 0 && $palletCount > 0) {
-        $delivery_freight_cost = $customer_cost; // total truck cost fallback
+        $delivery_freight_cost = $fallback_freight_share;
     }
     if ($delivery_accessorial_cost <= 0 && $palletCount > 0) {
-        $delivery_accessorial_cost = $accessorial_costs;
+        $delivery_accessorial_cost = $fallback_accessorial_share;
     }
     if ($delivery_warehousing_cost <= 0 && $palletCount > 0) {
         $delivery_warehousing_cost = calculateDeliveryWarehousingCost($delivery, $conn);
@@ -678,15 +682,14 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
 
     $line_total = $delivery_freight_cost + $delivery_accessorial_cost + $delivery_warehousing_cost + $solterraFeeForThisDelivery;
     $display_total_freight_only = $delivery_freight_cost + $delivery_accessorial_cost;
-    $total_logistics_cost += $line_total;
 
     // Calculate cost per pallet for this delivery
     $cost_per_pallet = ($palletCount > 0) ? ($line_total / $palletCount) : 0;
 
-    // Totals rollup
+    // Totals rollup (freight/accessorial direct from deliveries table when present)
     $total_customer_cost     += $delivery_freight_cost;
     $total_accessorial_costs += $delivery_accessorial_cost;
-    $total_warehousing_cost  += $delivery_warehousing_cost;
+    // Warehousing total will be recomputed from pallets later
 
     // For display
     $delivery['warehousing_cost']     = $delivery_warehousing_cost;
@@ -711,23 +714,6 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
 }
 
 if ($stmtPallets) $stmtPallets->close();
-
-// Calculate overall cost per pallet
-$overall_cost_per_pallet = ($total_pallets_count > 0) ? ($total_logistics_cost / $total_pallets_count) : 0;
-
-// Price per watt / module - ensure safe division
-$price_per_watt = 0.0;
-$price_per_module = 0.0;
-
-if ($filter === 'price_per_watt') {
-    if ($total_wattage_quantity > 0 && $total_logistics_cost > 0) {
-        $price_per_watt = $total_logistics_cost / $total_wattage_quantity;
-    }
-} elseif ($filter === 'price_per_module') {
-    if ($total_quantity > 0 && $total_logistics_cost > 0) {
-        $price_per_module = $total_logistics_cost / $total_quantity;
-    }
-}
 
 // --- Delivery Pagination (server-side slice to preserve totals) ---
 $delivery_page  = isset($_GET['delivery_page']) ? max(1, intval($_GET['delivery_page'])) : 1;
@@ -830,6 +816,33 @@ if ($stmt_pallets_page) {
     error_log("Pallet query failed: " . $conn->error);
 }
 
+// Recompute warehousing total from pallet costs (sum of all pallets shown under current filters)
+$total_warehousing_cost = 0.0;
+if (!empty($pallets_data)) {
+    foreach ($pallets_data as $p_row) {
+        $total_warehousing_cost += (float)($p_row['display_warehouse_cost'] ?? 0);
+    }
+}
+
+// Recompute overall total using summed categories
+$total_logistics_cost = $total_customer_cost + $total_accessorial_costs + $total_warehousing_cost + $total_solterra_fee;
+
+// Calculate overall cost per pallet and price metrics with updated totals
+$overall_cost_per_pallet = ($total_pallets_count > 0) ? ($total_logistics_cost / $total_pallets_count) : 0;
+
+$price_per_watt = 0.0;
+$price_per_module = 0.0;
+
+if ($filter === 'price_per_watt') {
+    if ($total_wattage_quantity > 0 && $total_logistics_cost > 0) {
+        $price_per_watt = $total_logistics_cost / $total_wattage_quantity;
+    }
+} elseif ($filter === 'price_per_module') {
+    if ($total_quantity > 0 && $total_logistics_cost > 0) {
+        $price_per_module = $total_logistics_cost / $total_quantity;
+    }
+}
+
 // Pallet CSV Export
 if (isset($_GET['export_pallets']) && $_GET['export_pallets'] == 1) {
     header('Content-Type: text/csv; charset=utf-8');
@@ -909,7 +922,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             number_format($d['accessorial_costs'] ?? 0, 2),
             number_format($d['display_total_freight_only'] ?? (($d['customer_cost'] ?? 0) + ($d['accessorial_costs'] ?? 0)), 2),
             number_format($d['solterra_fee'] ?? 0, 2),
-            number_format($d['total_logistics_cost'] ?? 0, 2)
+            number_format(($d['customer_cost'] ?? 0) + ($d['accessorial_costs'] ?? 0) + ($d['warehousing_cost'] ?? 0) + ($d['solterra_fee'] ?? 0), 2)
         ]);
     }
     fclose($output);
