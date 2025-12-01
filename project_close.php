@@ -902,13 +902,16 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     $costData = fetchPalletCosts($conn, $project_id);
     $costRows = $costData['rows'];
     if (!empty($costRows)) {
-        $headers = ['Pallet ID','Pallet Identifier','Delivery ID','BOL Number','Supplier','Destination','Status','Wattage','Quantity','Warehousing Cost','Truckload Freight','Accessorial Costs','Total Load Cost','Allocated Pallet Cost','Warehouse Arrival','Left Warehouse'];
+        $headers = ['Pallet ID','Pallet Identifier','Delivery ID','BOL Number','Supplier','Destination','Status','Wattage','Quantity','Warehousing Cost','Truckload Freight','Accessorial Costs','Total Load Cost','Total Freight Cost (pallet)','Total Logistics Cost (pallet)','Warehouse Arrival','Left Warehouse'];
         $rows = [];
         foreach ($costRows as $r) {
+            $pallet_freight_total = $r['allocated_pallet_cost'];
+            $pallet_logistics_total = $pallet_freight_total + ($r['warehouse_cost'] ?? 0);
             $rows[] = [
                 $r['pallet_id'], $r['pallet_identifier'], $r['delivery_id'], $r['bol_number'],
                 $r['supplier'], $r['destination'], $r['status'], $r['wattage'], $r['quantity'],
-                $r['warehouse_cost'], $r['truckload_cost'], $r['accessorial_costs'], $r['total_load_cost'], $r['allocated_pallet_cost'],
+                $r['warehouse_cost'], $r['truckload_cost'], $r['accessorial_costs'], $r['total_load_cost'],
+                $pallet_freight_total, $pallet_logistics_total,
                 $r['warehouse_arrival_date'], $r['left_warehouse_date']
             ];
         }
