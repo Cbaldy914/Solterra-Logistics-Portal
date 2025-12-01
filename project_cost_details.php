@@ -408,11 +408,42 @@ function calculatePalletWarehousingCostFallback($pallet_id, $conn) {
     return $total_warehouse_cost;
 }
 
+function getWarehouseCostRates($warehouse_id, $conn) {
+    $rates = ['in_fee' => 0.0, 'out_fee' => 0.0, 'monthly_storage_fee' => 0.0];
+    if (!$warehouse_id || !$conn) {
+        return $rates;
+    }
+
+    $stmt = $conn->prepare("SELECT trigger_event, amount FROM warehouse_cost_items WHERE warehouse_id = ? AND is_active = 1");
+    if ($stmt) {
+        $stmt->bind_param("i", $warehouse_id);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            switch ($row['trigger_event']) {
+                case 'entry':
+                    $rates['in_fee'] = (float)$row['amount'];
+                    break;
+                case 'exit':
+                    $rates['out_fee'] = (float)$row['amount'];
+                    break;
+                case 'monthly':
+                    $rates['monthly_storage_fee'] = (float)$row['amount'];
+                    break;
+            }
+        }
+        $stmt->close();
+    }
+    return $rates;
+}
+
 // Normalize pallet cost figures for display/export
 function enrichPalletCostData(array $row, $conn) {
     $recorded_cost    = isset($row['warehouse_cost']) ? (float)$row['warehouse_cost'] : 0.0;
     $freight_cost     = isset($row['freight_cost']) ? (float)$row['freight_cost'] : 0.0;
     $accessorial_cost = isset($row['accessorial_cost']) ? (float)$row['accessorial_cost'] : 0.0;
+    $fallback_freight = isset($row['fallback_freight_share']) ? (float)$row['fallback_freight_share'] : 0.0;
+    $fallback_accessorial = isset($row['fallback_accessorial_share']) ? (float)$row['fallback_accessorial_share'] : 0.0;
 
     $pending_cost = 0.0;
     if ($recorded_cost > 0 && ($row['status'] ?? '') === 'In Warehouse' && !empty($row['current_warehouse_id']) && !empty($row['arrival_date'])) {
@@ -422,6 +453,14 @@ function enrichPalletCostData(array $row, $conn) {
 
     if ($recorded_cost <= 0) {
         $recorded_cost = calculatePalletWarehousingCostFallback((int)$row['id'], $conn);
+    }
+
+    if ($freight_cost <= 0 && $fallback_freight > 0) {
+        $freight_cost = $fallback_freight;
+    }
+
+    if ($accessorial_cost <= 0 && $fallback_accessorial > 0) {
+        $accessorial_cost = $fallback_accessorial;
     }
 
     $row['pending_warehouse_cost']  = $pending_cost;
@@ -448,7 +487,7 @@ $total_pallets_count    = 0;
 $deliveries = [];
 
 // Prepare statement for fetching pallets for efficiency
-$stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
+$stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.arrival_date, ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
 
 while ($delivery = $deliveries_result->fetch_assoc()) {
     $customer_cost     = (float)$delivery['customer_cost'];
@@ -462,23 +501,57 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $total_quantity         += $quantity;
     $total_wattage_quantity += ($quantity * $wattage);
 
-    // Fetch associated pallets for this delivery
+    // Fetch associated pallets for this delivery and build cost rollups
     $associatedPallets = [];
     $palletCount = 0;
+    $delivery_freight_cost = 0.0;
+    $delivery_accessorial_cost = 0.0;
+    $delivery_warehousing_cost = 0.0;
+    $rates = getWarehouseCostRates((int)($delivery['warehouse_id'] ?? 0), $conn);
+    $is_inbound  = !empty($delivery['warehouse_arrival_date']) && (empty($delivery['origin_type']) || $delivery['origin_type'] !== 'warehouse');
+    $is_outbound = !empty($delivery['left_warehouse_date']) && (!empty($delivery['origin_type']) && $delivery['origin_type'] === 'warehouse');
+
     if ($stmtPallets) {
         $stmtPallets->bind_param("i", $delivery['id']);
         $stmtPallets->execute();
         $palletsResult = $stmtPallets->get_result();
         while ($palletRow = $palletsResult->fetch_assoc()) {
             $associatedPallets[] = $palletRow;
+            $enriched = enrichPalletCostData($palletRow, $conn);
+
+            // Warehousing split: inbound gets entry fee, outbound gets storage+exit, fallback otherwise
+            $pallet_wh_cost = 0.0;
+            if ($is_inbound) {
+                $pallet_wh_cost = $rates['in_fee'];
+            } elseif ($is_outbound) {
+                if (!empty($palletRow['arrival_date']) && !empty($delivery['left_warehouse_date'])) {
+                    $total_cost = calculate_pallet_storage_cost((int)$delivery['warehouse_id'], $palletRow['arrival_date'], $delivery['left_warehouse_date'], $conn);
+                    $pallet_wh_cost = max(0, $total_cost - $rates['in_fee']); // remove entry already counted on inbound
+                } else {
+                    $pallet_wh_cost = $rates['out_fee'];
+                }
+            } else {
+                $pallet_wh_cost = $enriched['display_warehouse_cost'] ?? 0;
+            }
+
+            $delivery_warehousing_cost += $pallet_wh_cost;
+            $delivery_freight_cost     += $enriched['freight_cost'] ?? 0;
+            $delivery_accessorial_cost += $enriched['accessorial_cost'] ?? 0;
         }
         $palletCount = count($associatedPallets);
         $total_pallets_count += $palletCount;
     }
 
-    // Warehousing cost
-    $warehousing_cost = calculateDeliveryWarehousingCost($delivery, $conn);
-    $total_warehousing_cost += $warehousing_cost;
+    // Fallbacks for older projects
+    if ($delivery_freight_cost <= 0 && $palletCount > 0) {
+        $delivery_freight_cost = $customer_cost; // total truck cost fallback
+    }
+    if ($delivery_accessorial_cost <= 0 && $palletCount > 0) {
+        $delivery_accessorial_cost = $accessorial_costs;
+    }
+    if ($delivery_warehousing_cost <= 0 && $palletCount > 0) {
+        $delivery_warehousing_cost = calculateDeliveryWarehousingCost($delivery, $conn);
+    }
 
     // Solterra fee only if actual_delivery_date
     if (!empty($delivery['actual_delivery_date'])) {
@@ -488,14 +561,21 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     }
     $total_solterra_fee += $solterraFeeForThisDelivery;
 
-    $line_total = $customer_cost + $accessorial_costs + $warehousing_cost + $solterraFeeForThisDelivery;
+    $line_total = $delivery_freight_cost + $delivery_accessorial_cost + $delivery_warehousing_cost + $solterraFeeForThisDelivery;
     $total_logistics_cost += $line_total;
 
     // Calculate cost per pallet for this delivery
     $cost_per_pallet = ($palletCount > 0) ? ($line_total / $palletCount) : 0;
 
+    // Totals rollup
+    $total_customer_cost     += $delivery_freight_cost;
+    $total_accessorial_costs += $delivery_accessorial_cost;
+    $total_warehousing_cost  += $delivery_warehousing_cost;
+
     // For display
-    $delivery['warehousing_cost']     = $warehousing_cost;
+    $delivery['warehousing_cost']     = $delivery_warehousing_cost;
+    $delivery['customer_cost']        = $delivery_freight_cost;
+    $delivery['accessorial_costs']    = $delivery_accessorial_cost;
     $delivery['solterra_fee']         = $solterraFeeForThisDelivery;
     $delivery['total_logistics_cost'] = $line_total;
     $delivery['cost_per_pallet']      = $cost_per_pallet;
@@ -532,6 +612,18 @@ if ($filter === 'price_per_watt') {
     }
 }
 
+// --- Delivery Pagination (server-side slice to preserve totals) ---
+$delivery_page  = isset($_GET['delivery_page']) ? max(1, intval($_GET['delivery_page'])) : 1;
+$delivery_limit = isset($_GET['delivery_limit']) ? max(1, min(500, intval($_GET['delivery_limit']))) : 25;
+$delivery_total = count($deliveries);
+$delivery_total_pages = $delivery_total > 0 ? ceil($delivery_total / $delivery_limit) : 1;
+$delivery_offset = ($delivery_page - 1) * $delivery_limit;
+if ($delivery_offset >= $delivery_total) {
+    $delivery_page = 1;
+    $delivery_offset = 0;
+}
+$deliveries_paginated = array_slice($deliveries, $delivery_offset, $delivery_limit);
+
 // --- Pallet Pagination Logic ---
 $pallet_page  = isset($_GET['pallet_page']) ? max(1, intval($_GET['pallet_page'])) : 1;
 $pallet_limit = isset($_GET['pallet_limit']) ? max(1, min(500, intval($_GET['pallet_limit']))) : 50;
@@ -544,11 +636,18 @@ $pallet_base_sql = "
     SELECT 
         ip.id, ip.pallet_identifier, ip.status, ip.manufacturer, ip.quantity, ip.wattage,
         ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost,
-        ip.current_warehouse_id, ip.arrival_date
+        ip.current_warehouse_id, ip.arrival_date,
+        AVG(del.customer_cost / NULLIF(dc.pallet_count, 0)) AS fallback_freight_share,
+        AVG(del.accessorial_costs / NULLIF(dc.pallet_count, 0)) AS fallback_accessorial_share
     FROM inventory_pallets ip
     JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
-    JOIN deliveries ON dp.delivery_id = deliveries.id
-    WHERE deliveries.project_id = ?
+    JOIN deliveries del ON dp.delivery_id = del.id
+    JOIN (
+        SELECT delivery_id, COUNT(DISTINCT inventory_pallet_id) AS pallet_count
+        FROM delivery_pallets
+        GROUP BY delivery_id
+    ) dc ON dc.delivery_id = del.id
+    WHERE del.project_id = ?
           $ytdCondition
           $dateCondition
           $statusCondition
@@ -581,10 +680,28 @@ if ($stmt_pallets_page) {
     }
     $stmt_pallets_page->close();
     
-    // Get total count
-    $result_count = $conn->query("SELECT FOUND_ROWS()");
-    $total_pallets_found = $result_count->fetch_row()[0];
-    $total_pallet_pages = ceil($total_pallets_found / $pallet_limit);
+    // Get total count using explicit COUNT to ensure accuracy with GROUP BY
+    $count_sql = "SELECT COUNT(DISTINCT ip.id) AS total
+                  FROM inventory_pallets ip
+                  JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+                  JOIN deliveries del ON dp.delivery_id = del.id
+                  WHERE del.project_id = ?
+                        $ytdCondition
+                        $dateCondition
+                        $statusCondition
+                        $manufacturerCondition
+                        $searchCondition";
+    $stmt_count = $conn->prepare($count_sql);
+    if ($stmt_count) {
+        $stmt_count->bind_param($paramTypes, ...$params);
+        $stmt_count->execute();
+        $stmt_count->bind_result($total_pallets_found);
+        $stmt_count->fetch();
+        $stmt_count->close();
+    } else {
+        $total_pallets_found = count($pallets_data);
+    }
+    $total_pallet_pages = $total_pallets_found > 0 ? ceil($total_pallets_found / $pallet_limit) : 1;
     if ($total_pallet_pages < 1 && $total_pallets_found > 0) {
         $total_pallet_pages = 1;
     }
@@ -1769,19 +1886,36 @@ $conn->close();
     <div id="tab-deliveries" class="tab-content active">
         <!-- Pagination Controls (Deliveries) -->
         <?php if (!empty($deliveries)): ?>
-        <div class="pagination-container">
-            <div class="pagination-info">
-                <span id="paginationInfo">Showing 0 of 0 deliveries</span>
+            <?php
+                $delivery_start = $delivery_offset + 1;
+                $delivery_end = min($delivery_offset + count($deliveries_paginated), $delivery_total);
+                $delivery_query_params = $_GET;
+                unset($delivery_query_params['delivery_page'], $delivery_query_params['export'], $delivery_query_params['export_pallets']);
+                $delivery_query_params['delivery_limit'] = $delivery_limit;
+                $delivery_query_string = http_build_query($delivery_query_params);
+                $delivery_prev_url = '?' . $delivery_query_string . '&delivery_page=' . max(1, $delivery_page - 1);
+                $delivery_next_url = '?' . $delivery_query_string . '&delivery_page=' . ($delivery_page + 1);
+            ?>
+            <div class="pagination-container">
+                <div class="pagination-info">
+                    <span>Showing <?php echo $delivery_start; ?> - <?php echo $delivery_end; ?> of <?php echo $delivery_total; ?> deliveries</span>
+                </div>
+                <div class="pagination-controls">
+                    <form id="deliveryLimitForm" method="get" style="display: flex; align-items: center; gap: 8px; margin: 0;">
+                        <label for="itemsPerPage">Show:</label>
+                        <input type="number" name="delivery_limit" id="itemsPerPage" value="<?php echo $delivery_limit; ?>" min="1" max="500" style="width: 80px;" onchange="document.getElementById('deliveryLimitForm').submit();">
+                        <label>per page</label>
+                        <input type="hidden" name="delivery_page" value="1">
+                        <?php foreach ($delivery_query_params as $key => $value): ?>
+                            <?php if (in_array($key, ['delivery_limit'])) continue; ?>
+                            <input type="hidden" name="<?php echo htmlspecialchars($key, ENT_QUOTES, 'UTF-8'); ?>" value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>">
+                        <?php endforeach; ?>
+                    </form>
+                    <button type="button" onclick="window.location.href='<?php echo htmlspecialchars($delivery_prev_url, ENT_QUOTES, 'UTF-8'); ?>';" <?php echo $delivery_page <= 1 ? 'disabled' : ''; ?>>Previous</button>
+                    <span id="pageInfo">Page <?php echo $delivery_page; ?> of <?php echo $delivery_total_pages; ?></span>
+                    <button type="button" onclick="window.location.href='<?php echo htmlspecialchars($delivery_next_url, ENT_QUOTES, 'UTF-8'); ?>';" <?php echo ($delivery_page >= $delivery_total_pages) ? 'disabled' : ''; ?>>Next</button>
+                </div>
             </div>
-            <div class="pagination-controls">
-                <label for="itemsPerPage">Show:</label>
-                <input type="number" id="itemsPerPage" value="25" min="1" max="500" style="width: 80px;">
-                <label>per page</label>
-                <button type="button" id="prevPage" disabled>Previous</button>
-                <span id="pageInfo">Page 1 of 1</span>
-                <button type="button" id="nextPage" disabled>Next</button>
-            </div>
-        </div>
         <?php endif; ?>
 
         <!-- Deliveries Table -->
@@ -1857,8 +1991,8 @@ $conn->close();
                     </tr>
                 </thead>
                 <tbody>
-                <?php if (!empty($deliveries)): ?>
-                    <?php foreach ($deliveries as $d): ?>
+                <?php if (!empty($deliveries_paginated)): ?>
+                    <?php foreach ($deliveries_paginated as $d): ?>
                         <tr style="border-bottom: 1px solid #dee2e6;">
                             <td class="col-bol"><?php echo htmlspecialchars($d['bol_number'] ?? ''); ?></td>
                             <td class="col-manufacturer"><?php echo htmlspecialchars($d['supplier'] ?? ''); ?></td>
@@ -1911,8 +2045,8 @@ $conn->close();
     <div id="tab-pallets" class="tab-content">
         <?php if (!empty($pallets_data)): ?>
             <?php
-                $pallet_start = $pallet_offset + 1;
-                $pallet_end = min($pallet_offset + count($pallets_data), $total_pallets_found);
+                $pallet_start = $total_pallets_found > 0 ? ($pallet_offset + 1) : 0;
+                $pallet_end = $total_pallets_found > 0 ? min($pallet_offset + count($pallets_data), $total_pallets_found) : 0;
                 $pallet_query_params = $_GET;
                 unset($pallet_query_params['pallet_page'], $pallet_query_params['export'], $pallet_query_params['export_pallets']);
                 $pallet_query_params['pallet_limit'] = $pallet_limit;

@@ -486,32 +486,65 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $in_fee_cost = 0;
         $out_fee_cost = 0;
         $monthly_storage_rate = 0;
+        $current_monthly_accrual = 0;
+        $departed_storage_cost = 0;
+        $current_storage_cost = 0;
+        $departed_pallets_count = 0;
         
         // Get cost rates from warehouse_cost_items
+        $monthly_rate_per_pallet = !empty($warehouse_costs['monthly']) ? floatval($warehouse_costs['monthly'][0]['amount']) : 0;
+        $daily_rate = $monthly_rate_per_pallet > 0 ? ($monthly_rate_per_pallet / 30) : 0;
+
         if (!empty($warehouse_costs['entry'])) {
             $in_fee_cost = $warehouse_costs['entry'][0]['amount'] * $total_inbound_pallets_count;
         }
         if (!empty($warehouse_costs['exit'])) {
             $out_fee_cost = $warehouse_costs['exit'][0]['amount'] * $total_outbound_pallets_count;
         }
-        if (!empty($warehouse_costs['monthly'])) {
-            $monthly_storage_rate = $warehouse_costs['monthly'][0]['amount'] * $total_pallets_count;
+        if ($monthly_rate_per_pallet > 0) {
+            $monthly_storage_rate = $monthly_rate_per_pallet * $total_pallets_count; // current pallets only
+            $current_monthly_accrual = $monthly_storage_rate;
         }
         
-        // Calculate actual storage costs and average months
+        // Calculate actual storage costs and average months (current + departed pallets)
         $total_storage_cost_actual = 0;
         $total_days_all_pallets = 0;
         
+        // Current pallets accruing
         if (!empty($inventory_pallets)) {
-            $daily_rate = !empty($warehouse_costs['monthly']) ? $warehouse_costs['monthly'][0]['amount'] / 30 : 0;
             foreach ($inventory_pallets as $pallet_calc) {
                 $days = max(0, intval($pallet_calc['days_stored'] ?? 0));
                 $total_days_all_pallets += $days;
-                $total_storage_cost_actual += $days * $daily_rate;
+                $current_storage_cost += $days * $daily_rate;
             }
         }
-        
-        $average_days = $total_pallets_count > 0 ? $total_days_all_pallets / $total_pallets_count : 0;
+
+        // Departed pallets (use delivery dates to approximate storage window)
+        if (!empty($departed_delivery_ids)) {
+            $placeholders_departed = implode(',', array_fill(0, count($departed_delivery_ids), '?'));
+            $sql_departed_storage = "SELECT d.id, d.warehouse_arrival_date, d.left_warehouse_date, COUNT(DISTINCT dp.inventory_pallet_id) AS pallet_count FROM deliveries d JOIN delivery_pallets dp ON d.id = dp.delivery_id WHERE d.id IN ({$placeholders_departed}) GROUP BY d.id, d.warehouse_arrival_date, d.left_warehouse_date";
+            $stmt_departed_storage = $conn->prepare($sql_departed_storage);
+            if ($stmt_departed_storage) {
+                $types_departed = str_repeat('i', count($departed_delivery_ids));
+                $stmt_departed_storage->bind_param($types_departed, ...$departed_delivery_ids);
+                $stmt_departed_storage->execute();
+                $result_departed_storage = $stmt_departed_storage->get_result();
+                while ($row_dep = $result_departed_storage->fetch_assoc()) {
+                    $pallets_on_truck = (int)($row_dep['pallet_count'] ?? 0);
+                    $departed_pallets_count += $pallets_on_truck;
+                    if (!empty($row_dep['warehouse_arrival_date']) && !empty($row_dep['left_warehouse_date'])) {
+                        $days = max(0, (int)floor((strtotime($row_dep['left_warehouse_date']) - strtotime($row_dep['warehouse_arrival_date'])) / (60 * 60 * 24)));
+                        $total_days_all_pallets += ($days * $pallets_on_truck);
+                        $departed_storage_cost += $days * $daily_rate * $pallets_on_truck;
+                    }
+                }
+                $stmt_departed_storage->close();
+            }
+        }
+
+        $total_storage_cost_actual = $current_storage_cost + $departed_storage_cost;
+        $average_divisor = ($total_pallets_count + $departed_pallets_count) > 0 ? ($total_pallets_count + $departed_pallets_count) : 0;
+        $average_days = $average_divisor > 0 ? $total_days_all_pallets / $average_divisor : 0;
         $average_months = $average_days / 30;
         
         $total_cost_to_date = $in_fee_cost + $out_fee_cost + $total_storage_cost_actual;
@@ -1409,6 +1442,10 @@ if ($conn) {
                 <div class="cost-dropdown-arrow">▼</div>
                 <div class="cost-card-dropdown" id="costCardDropdown">
                     <div class="cost-dropdown-item">
+                        <span class="cost-dropdown-label">Current Monthly Accrual:</span>
+                        <span class="cost-dropdown-amount">$<?php echo number_format($current_monthly_accrual, 2); ?> / mo</span>
+                    </div>
+                    <div class="cost-dropdown-item">
                         <span class="cost-dropdown-label">In Fee Cost:</span>
                         <span class="cost-dropdown-amount">$<?php echo number_format($in_fee_cost, 2); ?></span>
                     </div>
@@ -1417,8 +1454,8 @@ if ($conn) {
                         <span class="cost-dropdown-amount">$<?php echo number_format($out_fee_cost, 2); ?></span>
                     </div>
                     <div class="cost-dropdown-item">
-                        <span class="cost-dropdown-label">Est. Monthly Storage:</span>
-                        <span class="cost-dropdown-amount">$<?php echo number_format($monthly_storage_rate, 2); ?> × <?php echo number_format($average_months, 1); ?> mo = $<?php echo number_format($total_storage_cost_actual, 2); ?></span>
+                        <span class="cost-dropdown-label">Storage Cost To Date:</span>
+                        <span class="cost-dropdown-amount">$<?php echo number_format($total_storage_cost_actual, 2); ?> (<?php echo number_format($average_days, 1); ?> days avg × $<?php echo number_format($monthly_rate_per_pallet, 2); ?>/mo per pallet)</span>
                     </div>
                     <div class="cost-dropdown-divider"></div>
                     <div class="cost-dropdown-item total-item">
