@@ -11,6 +11,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 require_once '../config.php';
 require_once 'document_helpers.php';
 require_once 'anticipated_schedule_helpers.php';
+require_once 'cost_helpers.php';
 require __DIR__ . '/vendor/autoload.php';
 
 use Dompdf\Dompdf;
@@ -126,7 +127,7 @@ function buildSummaryHtml($project_row, $summary_text, $user_row, $totals) {
             @page { margin: 0.75in; }
             body { font-family: Arial, sans-serif; color: #1f2a30; }
             .header { margin-bottom:14px; display:flex; flex-direction:column; align-items:flex-start; gap:10px; }
-            .logo { height:75px; margin-bottom:25px; }
+            .logo { height:75px; margin-bottom:35px; }
             .brand { font-size:22px; font-weight:700; color:#1f3b4d; }
             .meta { font-size:12px; color:#4a5b6a; }
             .card { border:1px solid #d9e2ec; border-radius:10px; padding:14px 16px; margin-bottom:12px; }
@@ -197,7 +198,135 @@ function generateSummaryPdf($project_id, $project_row, $summary_text, $user_row,
     return [$pdfPath, $output];
 }
 
+// Borrowed logic from project_cost_details: computes warehousing cost per pallet across warehouse stays
+function calculatePalletWarehousingCostFallback($pallet_id, $conn) {
+    if (!$conn || !$pallet_id) {
+        return 0.0;
+    }
+
+    $sql = "SELECT DISTINCT
+                w.id AS warehouse_id,
+                (SELECT MIN(d_arr.warehouse_arrival_date)
+                 FROM deliveries d_arr
+                 JOIN delivery_pallets dp_arr ON d_arr.id = dp_arr.delivery_id
+                 WHERE dp_arr.inventory_pallet_id = ?
+                   AND d_arr.warehouse_id = w.id
+                   AND d_arr.warehouse_arrival_date IS NOT NULL) AS arrival_date,
+                (SELECT MIN(d_dep.left_warehouse_date)
+                 FROM deliveries d_dep
+                 JOIN delivery_pallets dp_dep ON d_dep.id = dp_dep.delivery_id
+                 WHERE dp_dep.inventory_pallet_id = ?
+                   AND d_dep.origin_type = 'warehouse'
+                   AND d_dep.origin_id = w.id
+                   AND d_dep.left_warehouse_date IS NOT NULL) AS departure_date,
+                (SELECT COUNT(DISTINCT d_in.id)
+                 FROM deliveries d_in
+                 JOIN delivery_pallets dp_in ON d_in.id = dp_in.delivery_id
+                 WHERE dp_in.inventory_pallet_id = ?
+                   AND d_in.warehouse_id = w.id
+                   AND d_in.warehouse_arrival_date IS NOT NULL) AS inbound_deliveries,
+                (SELECT COUNT(DISTINCT d_out.id)
+                 FROM deliveries d_out
+                 JOIN delivery_pallets dp_out ON d_out.id = dp_out.delivery_id
+                 WHERE dp_out.inventory_pallet_id = ?
+                   AND d_out.origin_type = 'warehouse'
+                   AND d_out.origin_id = w.id
+                   AND d_out.left_warehouse_date IS NOT NULL) AS outbound_deliveries
+            FROM warehouses w
+            WHERE w.id IN (
+                SELECT DISTINCT COALESCE(d.warehouse_id, d.origin_id)
+                FROM deliveries d
+                JOIN delivery_pallets dp ON d.id = dp.delivery_id
+                WHERE dp.inventory_pallet_id = ?
+                  AND (d.warehouse_id IS NOT NULL OR (d.origin_type = 'warehouse' AND d.origin_id IS NOT NULL))
+            )
+            ORDER BY arrival_date ASC";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return 0.0;
+    }
+
+    $stmt->bind_param("iiiii", $pallet_id, $pallet_id, $pallet_id, $pallet_id, $pallet_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    if ($result->num_rows === 0) {
+        $stmt->close();
+        return 0.0;
+    }
+
+    $warehouse_rows = [];
+    $warehouse_ids  = [];
+    while ($row = $result->fetch_assoc()) {
+        $warehouse_rows[] = $row;
+        $warehouse_ids[]  = (int)$row['warehouse_id'];
+    }
+    $stmt->close();
+
+    $warehouse_costs = [];
+    if (!empty($warehouse_ids)) {
+        $warehouse_ids_str = implode(',', array_map('intval', $warehouse_ids));
+        $cost_sql = "SELECT warehouse_id, trigger_event, amount
+                     FROM warehouse_cost_items
+                     WHERE warehouse_id IN ({$warehouse_ids_str}) AND is_active = 1";
+        $cost_result = $conn->query($cost_sql);
+        if ($cost_result) {
+            while ($cost = $cost_result->fetch_assoc()) {
+                $wid = (int)$cost['warehouse_id'];
+                if (!isset($warehouse_costs[$wid])) {
+                    $warehouse_costs[$wid] = ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
+                }
+                switch ($cost['trigger_event']) {
+                    case 'entry':
+                        $warehouse_costs[$wid]['in_fee'] = (float)$cost['amount'];
+                        break;
+                    case 'exit':
+                        $warehouse_costs[$wid]['out_fee'] = (float)$cost['amount'];
+                        break;
+                    case 'monthly':
+                        $warehouse_costs[$wid]['monthly_storage_fee'] = (float)$cost['amount'];
+                        break;
+                }
+            }
+        }
+    }
+
+    $total_warehouse_cost = 0.0;
+    foreach ($warehouse_rows as $row) {
+        $wid   = (int)$row['warehouse_id'];
+        $costs = $warehouse_costs[$wid] ?? ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
+
+        $in_fee_cost  = $costs['in_fee'] * (int)($row['inbound_deliveries'] ?? 0);
+        $out_fee_cost = $costs['out_fee'] * (int)($row['outbound_deliveries'] ?? 0);
+
+        $storage_cost = 0.0;
+        if (!empty($row['arrival_date'])) {
+            $arrival   = new DateTime($row['arrival_date']);
+            $departure = !empty($row['departure_date']) ? new DateTime($row['departure_date']) : new DateTime();
+            $days      = max(0, $arrival->diff($departure)->days);
+            $daily_fee = ($costs['monthly_storage_fee'] ?? 0) / 30;
+            $storage_cost = $days * $daily_fee;
+        }
+
+        $total_warehouse_cost += $in_fee_cost + $out_fee_cost + $storage_cost;
+    }
+
+    return $total_warehouse_cost;
+}
+
 function fetchPalletCosts($conn, $project_id) {
+    // Pre-fetch project solterra fee
+    $solterra_fee = 0.0;
+    $stmtFee = $conn->prepare('SELECT solterra_fee FROM projects WHERE id = ?');
+    if ($stmtFee) {
+        $stmtFee->bind_param('i', $project_id);
+        $stmtFee->execute();
+        $stmtFee->bind_result($sf);
+        if ($stmtFee->fetch()) { $solterra_fee = floatval($sf); }
+        $stmtFee->close();
+    }
+
     // Build BOL-level costs and pallet counts
     $bolCost = [];
     $stmtCost = $conn->prepare('SELECT bol_number, COALESCE(freight_cost,0) AS freight_cost, COALESCE(accessorial_costs,0) AS accessorial_costs FROM deliveries WHERE project_id = ?');
@@ -225,7 +354,9 @@ function fetchPalletCosts($conn, $project_id) {
     $sql = "
         SELECT d.id AS delivery_id, d.bol_number, d.supplier, d.status_of_delivery, d.freight_cost, d.accessorial_costs,
                d.warehouse_arrival_date, d.left_warehouse_date, d.actual_delivery_date, d.anticipated_delivery_date,
+               d.warehouse_id, d.origin_type, d.origin_id,
                dp.inventory_pallet_id, ip.pallet_identifier, ip.wattage, ip.quantity,
+               ip.current_warehouse_id, ip.arrival_date,
                w.name AS warehouse_name, p.project_name
         FROM deliveries d
         JOIN delivery_pallets dp ON dp.delivery_id = d.id
@@ -245,8 +376,13 @@ function fetchPalletCosts($conn, $project_id) {
         'pallet_count' => 0,
         'total_load_cost' => 0,
         'allocated_pallet_cost' => 0,
+        'freight_total' => 0,
+        'accessorial_total' => 0,
+        'warehousing_total' => 0,
+        'solterra_total' => 0,
     ];
     $seenBol = [];
+    $warehouseCostCache = [];
 
     while ($r = $res->fetch_assoc()) {
         $bol = $r['bol_number'] ?? '';
@@ -254,11 +390,17 @@ function fetchPalletCosts($conn, $project_id) {
         $loadCost = $bolCost[$bol] ?? (floatval($r['freight_cost'] ?? 0) + floatval($r['accessorial_costs'] ?? 0));
         $allocated = $loadCost / $count;
 
+        $pallet_id = $r['inventory_pallet_id'];
+        if (!isset($warehouseCostCache[$pallet_id])) {
+            $warehouseCostCache[$pallet_id] = calculatePalletWarehousingCostFallback($pallet_id, $conn);
+        }
+        $warehouse_cost = $warehouseCostCache[$pallet_id];
+
         $destination = $r['project_name'] ? ('Project: ' . $r['project_name']) : '';
         if (!empty($r['warehouse_name'])) { $destination = 'Warehouse: ' . $r['warehouse_name']; }
 
         $rows[] = [
-            'pallet_id' => $r['inventory_pallet_id'],
+            'pallet_id' => $pallet_id,
             'pallet_identifier' => $r['pallet_identifier'],
             'delivery_id' => $r['delivery_id'],
             'bol_number' => $bol,
@@ -269,6 +411,7 @@ function fetchPalletCosts($conn, $project_id) {
             'quantity' => $r['quantity'] ?? '',
             'truckload_cost' => $r['freight_cost'] ?? 0,
             'accessorial_costs' => $r['accessorial_costs'] ?? 0,
+            'warehouse_cost' => $warehouse_cost,
             'total_load_cost' => $loadCost,
             'allocated_pallet_cost' => $allocated,
             'warehouse_arrival_date' => $r['warehouse_arrival_date'] ?? '',
@@ -277,12 +420,19 @@ function fetchPalletCosts($conn, $project_id) {
 
         $summary['pallet_count'] += 1;
         $summary['allocated_pallet_cost'] += $allocated;
+        $summary['warehousing_total'] += $warehouse_cost;
+        $summary['freight_total'] += floatval($r['freight_cost'] ?? 0);
+        $summary['accessorial_total'] += floatval($r['accessorial_costs'] ?? 0);
+        if (!empty($r['actual_delivery_date']) && $solterra_fee > 0 && !empty($r['wattage']) && !empty($r['quantity'])) {
+            $summary['solterra_total'] += $solterra_fee * floatval($r['wattage']) * floatval($r['quantity']);
+        }
         if (!in_array($bol, $seenBol, true)) {
             $summary['total_load_cost'] += $loadCost;
             $seenBol[] = $bol;
         }
     }
     $stmt->close();
+    $summary['total_cost'] = $summary['freight_total'] + $summary['accessorial_total'] + $summary['warehousing_total'] + $summary['solterra_total'];
     return ['rows' => $rows, 'summary' => $summary];
 }
 
@@ -752,19 +902,19 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     $costData = fetchPalletCosts($conn, $project_id);
     $costRows = $costData['rows'];
     if (!empty($costRows)) {
-        $headers = ['Pallet ID','Pallet Identifier','Delivery ID','BOL Number','Supplier','Destination','Status','Wattage','Quantity','Truckload Freight','Accessorial Costs','Total Load Cost','Allocated Pallet Cost','Warehouse Arrival','Left Warehouse'];
+        $headers = ['Pallet ID','Pallet Identifier','Delivery ID','BOL Number','Supplier','Destination','Status','Wattage','Quantity','Warehousing Cost','Truckload Freight','Accessorial Costs','Total Load Cost','Allocated Pallet Cost','Warehouse Arrival','Left Warehouse'];
         $rows = [];
         foreach ($costRows as $r) {
             $rows[] = [
                 $r['pallet_id'], $r['pallet_identifier'], $r['delivery_id'], $r['bol_number'],
                 $r['supplier'], $r['destination'], $r['status'], $r['wattage'], $r['quantity'],
-                $r['truckload_cost'], $r['accessorial_costs'], $r['total_load_cost'], $r['allocated_pallet_cost'],
+                $r['warehouse_cost'], $r['truckload_cost'], $r['accessorial_costs'], $r['total_load_cost'], $r['allocated_pallet_cost'],
                 $r['warehouse_arrival_date'], $r['left_warehouse_date']
             ];
         }
         writeCsv($finDir . '/cost_details.csv', $headers, $rows);
         $totals = $costData['summary'];
-        $totals['average_cost_per_pallet'] = $totals['pallet_count'] > 0 ? $totals['allocated_pallet_cost'] / $totals['pallet_count'] : 0;
+        $totals['average_cost_per_pallet'] = $totals['pallet_count'] > 0 ? $totals['total_cost'] / $totals['pallet_count'] : 0;
         file_put_contents($finDir . '/cost_summary.json', json_encode($totals, JSON_PRETTY_PRINT));
     } else {
         writeCsv($finDir . '/cost_details.csv', ['message'], [['No pallet costs found']]);
