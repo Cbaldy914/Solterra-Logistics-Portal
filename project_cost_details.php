@@ -590,6 +590,13 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $total_quantity         += $quantity;
     $total_wattage_quantity += ($quantity * $wattage);
 
+    if (!empty($delivery['warehouse_id'])) {
+        $warehouse_ids_for_lookup[(int)$delivery['warehouse_id']] = true;
+    }
+    if (!empty($delivery['origin_type']) && $delivery['origin_type'] === 'warehouse' && !empty($delivery['origin_id'])) {
+        $warehouse_ids_for_lookup[(int)$delivery['origin_id']] = true;
+    }
+
     // Base costs straight from deliveries table
     $delivery_freight_cost     = (float)($delivery['freight_cost'] ?? $delivery['customer_cost'] ?? 0);
     $delivery_accessorial_cost = (float)($delivery['accessorial_costs'] ?? 0);
@@ -622,6 +629,9 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
             }
             if ($palletId) {
                 $seenPallets[$palletId] = true;
+                if (!empty($palletRow['current_warehouse_id'])) {
+                    $warehouse_ids_for_lookup[(int)$palletRow['current_warehouse_id']] = true;
+                }
             }
 
             $associatedPallets[] = $palletRow;
@@ -732,6 +742,9 @@ $pallet_page  = isset($_GET['pallet_page']) ? max(1, intval($_GET['pallet_page']
 $pallet_limit = isset($_GET['pallet_limit']) ? max(1, min(500, intval($_GET['pallet_limit']))) : 50;
 $pallet_offset = ($pallet_page - 1) * $pallet_limit;
 
+// Track warehouse IDs for pretty status labels
+$warehouse_ids_for_lookup = [];
+
 // Build Pallet Query
 // We want pallets associated with the *filtered* deliveries to match the "breakdown" concept.
 // We reuse the same parameters as the delivery query, but we need to adjust the query structure.
@@ -780,6 +793,9 @@ if ($stmt_pallets_page) {
     $pallets_data = [];
     while ($p_row = $result_pallets_page->fetch_assoc()) {
         $pallets_data[] = enrichPalletCostData($p_row, $conn);
+        if (!empty($p_row['current_warehouse_id'])) {
+            $warehouse_ids_for_lookup[(int)$p_row['current_warehouse_id']] = true;
+        }
     }
     $stmt_pallets_page->close();
     
@@ -832,6 +848,19 @@ if (!empty($pallets_data)) {
 
 // Recompute overall total using summed categories
 $total_logistics_cost = $total_customer_cost + $total_accessorial_costs + $total_warehousing_cost + $total_solterra_fee;
+
+// Warehouse name lookup for status display
+$warehouse_name_map = [];
+if (!empty($warehouse_ids_for_lookup)) {
+    $ids_list = implode(',', array_keys($warehouse_ids_for_lookup));
+    $sql_wh = "SELECT id, name FROM warehouses WHERE id IN ($ids_list)";
+    $res_wh = $conn->query($sql_wh);
+    if ($res_wh) {
+        while ($row = $res_wh->fetch_assoc()) {
+            $warehouse_name_map[(int)$row['id']] = $row['name'];
+        }
+    }
+}
 
 // Calculate overall cost per pallet and price metrics with updated totals
 $overall_cost_per_pallet = ($total_pallets_count > 0) ? ($total_logistics_cost / $total_pallets_count) : 0;
@@ -1227,6 +1256,18 @@ $conn->close();
         .tab-btn.active {
             color: #488C9A;
             border-bottom-color: #488C9A;
+        }
+
+        .status-cell {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+        }
+
+        .status-subtext {
+            font-size: 0.85em;
+            color: #6c757d;
         }
         
         .tab-content {
@@ -2142,7 +2183,30 @@ $conn->close();
                                     <span style="color: #6c757d;">—</span>
                                 <?php endif; ?>
                             </td>
-                            <td class="col-status"><?php echo htmlspecialchars($d['status_of_delivery'] ?? ''); ?></td>
+                            <?php
+                                $status_text = htmlspecialchars($d['status_of_delivery'] ?? '');
+                                $status_lower = strtolower($d['status_of_delivery'] ?? '');
+                                $wh_label = '';
+                                if (in_array($status_lower, ['in warehouse', 'delivered to warehouse'])) {
+                                    $wh_id = 0;
+                                    if (!empty($d['warehouse_id'])) {
+                                        $wh_id = (int)$d['warehouse_id'];
+                                    } elseif (!empty($d['origin_type']) && $d['origin_type'] === 'warehouse' && !empty($d['origin_id'])) {
+                                        $wh_id = (int)$d['origin_id'];
+                                    }
+                                    if ($wh_id && isset($warehouse_name_map[$wh_id])) {
+                                        $wh_label = $warehouse_name_map[$wh_id];
+                                    }
+                                }
+                            ?>
+                            <td class="col-status">
+                                <div class="status-cell">
+                                    <span class="status-text"><?php echo $status_text; ?></span>
+                                    <?php if (!empty($wh_label)): ?>
+                                        <span class="status-subtext">(<?php echo htmlspecialchars($wh_label); ?>)</span>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
                             <td class="col-delivery-date"><?php echo $d['actual_delivery_date_formatted']; ?></td>
                             <td class="col-freight-cost" style="text-align: right;">$<?php echo number_format($d['customer_cost'] ?? 0, 2); ?></td>
                             <td class="col-accessorial-cost" style="text-align: right;">$<?php echo number_format($d['accessorial_costs'] ?? 0, 2); ?></td>
@@ -2245,9 +2309,25 @@ $conn->close();
                                     <td><?php echo htmlspecialchars($p['wattage']); ?>W</td>
                                     <td><?php echo number_format($p['quantity']); ?></td>
                                     <td>
-                                        <span class="status-badge status-<?php echo strtolower(str_replace(' ', '-', $p['status'])); ?>">
-                                            <?php echo htmlspecialchars($p['status']); ?>
-                                        </span>
+                                        <?php
+                                            $p_status = $p['status'] ?? '';
+                                            $p_status_lower = strtolower($p_status);
+                                            $p_wh_label = '';
+                                            if (in_array($p_status_lower, ['in warehouse', 'delivered to warehouse']) && !empty($p['current_warehouse_id'])) {
+                                                $pid = (int)$p['current_warehouse_id'];
+                                                if (isset($warehouse_name_map[$pid])) {
+                                                    $p_wh_label = $warehouse_name_map[$pid];
+                                                }
+                                            }
+                                        ?>
+                                        <div class="status-cell">
+                                            <span class="status-badge status-<?php echo strtolower(str_replace(' ', '-', $p_status)); ?>">
+                                                <?php echo htmlspecialchars($p_status); ?>
+                                            </span>
+                                            <?php if (!empty($p_wh_label)): ?>
+                                                <span class="status-subtext">(<?php echo htmlspecialchars($p_wh_label); ?>)</span>
+                                            <?php endif; ?>
+                                        </div>
                                     </td>
                                     <td>
                                         $<?php echo number_format($p['display_warehouse_cost'] ?? 0, 2); ?>
