@@ -25,6 +25,7 @@ $associated_deliveries = [];
 $errorMessage = '';
 $breadcrumbProjectId = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
 $fromWarehouseInfo = (($_GET['from'] ?? '') === 'warehouse_info');
+$fromCostDetails   = (($_GET['from'] ?? '') === 'cost_details');
 $breadcrumbWarehouseId = isset($_GET['warehouse_id']) ? (int)$_GET['warehouse_id'] : 0;
 $breadcrumbWarehouseName = '';
 $originBatchId = isset($_GET['origin_batch_id']) ? (int)$_GET['origin_batch_id'] : 0;
@@ -488,6 +489,12 @@ $conn->close();
             $extraCrumbs[] = [
                 'label' => !empty($breadcrumbWarehouseName) ? $breadcrumbWarehouseName : 'Warehouse Details',
                 'url' => $warehouseBackUrl
+            ];
+        } elseif ($fromCostDetails && $breadcrumbProjectId > 0) {
+            $costUrl = 'project_cost_details.php?project_id=' . (int)$breadcrumbProjectId;
+            $extraCrumbs[] = [
+                'label' => 'Cost Details',
+                'url' => $costUrl
             ];
         } else {
             $mpUrl = '';

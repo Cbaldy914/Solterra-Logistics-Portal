@@ -2298,6 +2298,7 @@ $conn->close();
                             <th>Freight Cost</th>
                             <th>Accessorial Cost</th>
                             <th>Total Cost</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -2340,6 +2341,12 @@ $conn->close();
                                     <td>$<?php echo number_format($p['freight_cost'] ?? 0, 2); ?></td>
                                     <td>$<?php echo number_format($p['accessorial_cost'] ?? 0, 2); ?></td>
                                     <td style="font-weight: 600; color: #488C9A;">$<?php echo number_format($p['total_cost'] ?? 0, 2); ?></td>
+                                    <td>
+                                        <a class="action-btn action-btn-primary" href="pallet_details.php?pallet_id=<?php echo (int)$p['id']; ?>&project_id=<?php echo (int)$project_id; ?>&from=cost_details">
+                                            <i class="fas fa-eye"></i>
+                                            Pallet Details
+                                        </a>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
@@ -2370,6 +2377,8 @@ $conn->close();
 </div>
 
 <script>
+    const projectIdForLinks = <?php echo (int)$project_id; ?>;
+
     function showPalletModal(button) {
         const modal = document.getElementById('associatedPalletsModal');
         const list = document.getElementById('palletList');
@@ -2384,45 +2393,41 @@ $conn->close();
         }
 
         if (!Array.isArray(pallets) || pallets.length === 0) {
-            list.innerHTML = '<p style="margin: 0;">No pallet details available for this delivery.</p>';
+            list.innerHTML = '<p style="text-align: center; color: #6c757d; margin: 0;">No pallets found.</p>';
         } else {
-            const rows = pallets.map(pallet => {
-                const id = pallet.id ?? '';
-                const identifier = pallet.pallet_identifier ?? '';
-                const qty = pallet.quantity ?? '';
-                const wattage = pallet.wattage ? `${pallet.wattage}W` : '';
-                const status = pallet.status ?? '';
-                const arrivalDate = pallet.arrival_date ? new Date(pallet.arrival_date) : null;
-                const arrival = arrivalDate && !isNaN(arrivalDate.getTime()) ? arrivalDate.toLocaleDateString() : '—';
-                return `<tr>
-                            <td>${id}</td>
-                            <td>${identifier}</td>
-                            <td>${qty}</td>
-                            <td>${wattage}</td>
-                            <td>${status}</td>
-                            <td>${arrival}</td>
-                        </tr>`;
-            }).join('');
+            const table = document.createElement('table');
+            table.className = 'modal-table';
 
-            list.innerHTML = `
-                <div style="overflow-x: auto;">
-                    <table class="modal-table" style="width: 100%; border-collapse: collapse;">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Pallet</th>
-                                <th>Qty</th>
-                                <th>Wattage</th>
-                                <th>Status</th>
-                                <th>Arrival</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${rows}
-                        </tbody>
-                    </table>
-                </div>
-            `;
+            const thead = table.createTHead();
+            const hr = thead.insertRow();
+            ['Identifier', 'Wattage', 'Quantity', 'Actions'].forEach(h => {
+                const th = document.createElement('th');
+                th.textContent = h;
+                hr.appendChild(th);
+            });
+
+            const tbody = table.createTBody();
+            pallets.forEach(p => {
+                const r = tbody.insertRow();
+                const idCell = r.insertCell();
+                idCell.textContent = p.pallet_identifier || `ID: ${p.id}`;
+
+                const wattCell = r.insertCell();
+                wattCell.textContent = p.wattage ? `${p.wattage}W` : '—';
+
+                const qtyCell = r.insertCell();
+                qtyCell.textContent = p.quantity ?? '—';
+
+                const actCell = r.insertCell();
+                const link = document.createElement('a');
+                link.href = `pallet_details.php?pallet_id=${p.id}&project_id=${projectIdForLinks}&from=cost_details`;
+                link.className = 'action-btn action-btn-primary';
+                link.innerHTML = '<i class="fas fa-eye"></i> View Details';
+                actCell.appendChild(link);
+            });
+
+            list.innerHTML = '';
+            list.appendChild(table);
         }
 
         modal.style.display = 'block';
@@ -2430,8 +2435,12 @@ $conn->close();
 
     function closeAssociatedPalletModal() {
         const modal = document.getElementById('associatedPalletsModal');
+        const list = document.getElementById('palletList');
         if (modal) {
             modal.style.display = 'none';
+        }
+        if (list) {
+            list.innerHTML = '';
         }
     }
 
