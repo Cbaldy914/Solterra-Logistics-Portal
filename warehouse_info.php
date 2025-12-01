@@ -519,39 +519,45 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
             }
         }
 
-        // Departed pallets (calculate storage using actual pallet arrival and departure dates)
-        if (!empty($departed_delivery_ids)) {
-            $placeholders_departed = implode(',', array_fill(0, count($departed_delivery_ids), '?'));
-            $sql_departed_storage = "
-                SELECT DISTINCT dp.inventory_pallet_id, ip.arrival_date, d.left_warehouse_date
-                FROM deliveries d
-                JOIN delivery_pallets dp ON d.id = dp.delivery_id
-                JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
-                WHERE d.id IN ({$placeholders_departed})
-                  AND d.left_warehouse_date IS NOT NULL
-                  AND ip.arrival_date IS NOT NULL
-            ";
+        // Departed pallets (calculate storage using actual stay at this warehouse)
+        $departed_sql = "
+            SELECT dp.inventory_pallet_id AS pallet_id,
+                   MIN(CASE WHEN d.warehouse_id = ? THEN d.warehouse_arrival_date END) AS arrival_date,
+                   MIN(CASE WHEN d.origin_type = 'warehouse' AND d.origin_id = ? THEN d.left_warehouse_date END) AS departure_date
+            FROM deliveries d
+            JOIN delivery_pallets dp ON d.id = dp.delivery_id
+            WHERE (d.warehouse_id = ? OR (d.origin_type = 'warehouse' AND d.origin_id = ?))
+        ";
+        $departed_params = [$warehouse_id, $warehouse_id, $warehouse_id, $warehouse_id];
+        $departed_types  = "iiii";
+        if ($project_id) {
+            $departed_sql .= " AND d.project_id = ?";
+            $departed_params[] = $project_id;
+            $departed_types   .= "i";
+        }
+        $departed_sql .= " GROUP BY dp.inventory_pallet_id";
 
-            $stmt_departed_storage = $conn->prepare($sql_departed_storage);
-            if ($stmt_departed_storage) {
-                $types_departed = str_repeat('i', count($departed_delivery_ids));
-                $stmt_departed_storage->bind_param($types_departed, ...$departed_delivery_ids);
-                $stmt_departed_storage->execute();
-                $result_departed_storage = $stmt_departed_storage->get_result();
-                while ($row_dep = $result_departed_storage->fetch_assoc()) {
-                    $departed_pallets_count++;
+        $stmt_departed_storage = $conn->prepare($departed_sql);
+        if ($stmt_departed_storage) {
+            $stmt_departed_storage->bind_param($departed_types, ...$departed_params);
+            $stmt_departed_storage->execute();
+            $result_departed_storage = $stmt_departed_storage->get_result();
+            while ($row_dep = $result_departed_storage->fetch_assoc()) {
+                $arrival     = $row_dep['arrival_date'] ?? null;
+                $departure   = $row_dep['departure_date'] ?? null;
 
-                    $arrival_ts = strtotime($row_dep['arrival_date']);
-                    $left_ts    = strtotime($row_dep['left_warehouse_date']);
-
+                if ($arrival && $departure) {
+                    $arrival_ts = strtotime($arrival);
+                    $left_ts    = strtotime($departure);
                     if ($arrival_ts !== false && $left_ts !== false && $left_ts >= $arrival_ts) {
+                        $departed_pallets_count++;
                         $days = max(0, (int)ceil(($left_ts - $arrival_ts) / (60 * 60 * 24)));
                         $total_days_all_pallets += $days;
                         $departed_storage_cost  += $days * $daily_rate;
                     }
                 }
-                $stmt_departed_storage->close();
             }
+            $stmt_departed_storage->close();
         }
 
         $total_storage_cost_actual = $current_storage_cost + $departed_storage_cost;
