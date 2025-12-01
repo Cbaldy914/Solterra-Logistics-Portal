@@ -816,11 +816,17 @@ if ($stmt_pallets_page) {
     error_log("Pallet query failed: " . $conn->error);
 }
 
-// Recompute warehousing total from pallet costs (sum of all pallets shown under current filters)
-$total_warehousing_cost = 0.0;
+// Recompute totals from pallet set to align with filtered view
+$total_customer_cost     = 0.0;
+$total_accessorial_costs = 0.0;
+$total_warehousing_cost  = 0.0;
+$total_pallets_count     = !empty($pallets_data) ? count($pallets_data) : 0;
+
 if (!empty($pallets_data)) {
     foreach ($pallets_data as $p_row) {
-        $total_warehousing_cost += (float)($p_row['display_warehouse_cost'] ?? 0);
+        $total_customer_cost     += (float)($p_row['freight_cost'] ?? 0);
+        $total_accessorial_costs += (float)($p_row['accessorial_cost'] ?? 0);
+        $total_warehousing_cost  += (float)($p_row['display_warehouse_cost'] ?? 0);
     }
 }
 
