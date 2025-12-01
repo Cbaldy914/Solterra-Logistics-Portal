@@ -519,10 +519,19 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
             }
         }
 
-        // Departed pallets (use delivery dates to approximate storage window)
+        // Departed pallets (calculate storage using actual pallet arrival and departure dates)
         if (!empty($departed_delivery_ids)) {
             $placeholders_departed = implode(',', array_fill(0, count($departed_delivery_ids), '?'));
-            $sql_departed_storage = "SELECT d.id, d.warehouse_arrival_date, d.left_warehouse_date, COUNT(DISTINCT dp.inventory_pallet_id) AS pallet_count FROM deliveries d JOIN delivery_pallets dp ON d.id = dp.delivery_id WHERE d.id IN ({$placeholders_departed}) GROUP BY d.id, d.warehouse_arrival_date, d.left_warehouse_date";
+            $sql_departed_storage = "
+                SELECT DISTINCT dp.inventory_pallet_id, ip.arrival_date, d.left_warehouse_date
+                FROM deliveries d
+                JOIN delivery_pallets dp ON d.id = dp.delivery_id
+                JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+                WHERE d.id IN ({$placeholders_departed})
+                  AND d.left_warehouse_date IS NOT NULL
+                  AND ip.arrival_date IS NOT NULL
+            ";
+
             $stmt_departed_storage = $conn->prepare($sql_departed_storage);
             if ($stmt_departed_storage) {
                 $types_departed = str_repeat('i', count($departed_delivery_ids));
@@ -530,12 +539,15 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
                 $stmt_departed_storage->execute();
                 $result_departed_storage = $stmt_departed_storage->get_result();
                 while ($row_dep = $result_departed_storage->fetch_assoc()) {
-                    $pallets_on_truck = (int)($row_dep['pallet_count'] ?? 0);
-                    $departed_pallets_count += $pallets_on_truck;
-                    if (!empty($row_dep['warehouse_arrival_date']) && !empty($row_dep['left_warehouse_date'])) {
-                        $days = max(0, (int)floor((strtotime($row_dep['left_warehouse_date']) - strtotime($row_dep['warehouse_arrival_date'])) / (60 * 60 * 24)));
-                        $total_days_all_pallets += ($days * $pallets_on_truck);
-                        $departed_storage_cost += $days * $daily_rate * $pallets_on_truck;
+                    $departed_pallets_count++;
+
+                    $arrival_ts = strtotime($row_dep['arrival_date']);
+                    $left_ts    = strtotime($row_dep['left_warehouse_date']);
+
+                    if ($arrival_ts !== false && $left_ts !== false && $left_ts >= $arrival_ts) {
+                        $days = max(0, (int)ceil(($left_ts - $arrival_ts) / (60 * 60 * 24)));
+                        $total_days_all_pallets += $days;
+                        $departed_storage_cost  += $days * $daily_rate;
                     }
                 }
                 $stmt_departed_storage->close();

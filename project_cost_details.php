@@ -194,13 +194,22 @@ $stmt_deliveries->close();
 
 // Helper for warehousing cost - now calculates based on actual pallet data like warehouse_info.php
 function calculateDeliveryWarehousingCost($delivery, $conn) {
-    if (!$conn || empty($delivery['warehouse_id'])) {
+    if (!$conn) {
         return 0;
     }
-    
-    $delivery_id = $delivery['id'];
-    $warehouse_id = $delivery['warehouse_id'];
-    
+
+    $delivery_id = $delivery['id'] ?? null;
+    $warehouse_id = $delivery['warehouse_id'] ?? null;
+
+    // Use origin warehouse when this delivery represents pallets leaving storage
+    if ((!$warehouse_id || $warehouse_id <= 0) && (($delivery['origin_type'] ?? '') === 'warehouse')) {
+        $warehouse_id = $delivery['origin_id'] ?? null;
+    }
+
+    if (empty($delivery_id) || empty($warehouse_id)) {
+        return 0;
+    }
+
     // Get warehouse cost items for this specific delivery
     $stmt_warehouse = $conn->prepare("
         SELECT label, trigger_event, amount, unit_type
@@ -437,6 +446,86 @@ function getWarehouseCostRates($warehouse_id, $conn) {
     return $rates;
 }
 
+// Calculate freight/accessorial share for a pallet using BOL-level totals (matches pallet_details.php logic)
+function calculatePalletFreightAccessorialShares($pallet_id, $conn) {
+    $shares = ['freight' => 0.0, 'accessorial' => 0.0];
+    if (!$pallet_id || !$conn) {
+        return $shares;
+    }
+
+    $bol_sql = "
+        SELECT d.bol_number,
+               COALESCE((SELECT SUM(COALESCE(d2.freight_cost, 0))
+                         FROM deliveries d2
+                         WHERE d2.bol_number = d.bol_number AND d2.bol_number IS NOT NULL AND d2.bol_number != ''), 0) AS bol_total_freight,
+               COALESCE((SELECT SUM(COALESCE(d2.accessorial_costs, 0))
+                         FROM deliveries d2
+                         WHERE d2.bol_number = d.bol_number AND d2.bol_number IS NOT NULL AND d2.bol_number != ''), 0) AS bol_total_accessorial,
+               COALESCE((SELECT COUNT(DISTINCT dp2.inventory_pallet_id)
+                         FROM deliveries d3
+                         JOIN delivery_pallets dp2 ON d3.id = dp2.delivery_id
+                         WHERE d3.bol_number = d.bol_number AND d3.bol_number IS NOT NULL AND d3.bol_number != ''), 0) AS bol_total_pallets
+        FROM deliveries d
+        JOIN delivery_pallets dp ON d.id = dp.delivery_id
+        WHERE dp.inventory_pallet_id = ?
+          AND d.bol_number IS NOT NULL AND d.bol_number != ''
+        GROUP BY d.bol_number
+    ";
+
+    $seen_bols = [];
+    $stmt_bol = $conn->prepare($bol_sql);
+    if ($stmt_bol) {
+        $stmt_bol->bind_param("i", $pallet_id);
+        $stmt_bol->execute();
+        $res_bol = $stmt_bol->get_result();
+        while ($row = $res_bol->fetch_assoc()) {
+            $bol = $row['bol_number'];
+            if (!$bol || isset($seen_bols[$bol])) {
+                continue;
+            }
+            $seen_bols[$bol] = true;
+
+            $pallets_in_bol = (int)$row['bol_total_pallets'];
+            if ($pallets_in_bol > 0) {
+                $shares['freight']     += ((float)$row['bol_total_freight']) / $pallets_in_bol;
+                $shares['accessorial'] += ((float)$row['bol_total_accessorial']) / $pallets_in_bol;
+            }
+        }
+        $stmt_bol->close();
+    }
+
+    // Fallback for deliveries without BOL numbers
+    if ($shares['freight'] <= 0 && $shares['accessorial'] <= 0) {
+        $del_sql = "
+            SELECT d.id,
+                   COALESCE(d.freight_cost, 0) AS freight_cost,
+                   COALESCE(d.accessorial_costs, 0) AS accessorial_cost,
+                   (SELECT COUNT(DISTINCT dp2.inventory_pallet_id)
+                    FROM delivery_pallets dp2
+                    WHERE dp2.delivery_id = d.id) AS pallet_count
+            FROM deliveries d
+            JOIN delivery_pallets dp ON d.id = dp.delivery_id
+            WHERE dp.inventory_pallet_id = ?
+        ";
+        $stmt_del = $conn->prepare($del_sql);
+        if ($stmt_del) {
+            $stmt_del->bind_param("i", $pallet_id);
+            $stmt_del->execute();
+            $res_del = $stmt_del->get_result();
+            while ($row = $res_del->fetch_assoc()) {
+                $count = (int)($row['pallet_count'] ?? 0);
+                if ($count > 0) {
+                    $shares['freight']     += ((float)$row['freight_cost']) / $count;
+                    $shares['accessorial'] += ((float)$row['accessorial_cost']) / $count;
+                }
+            }
+            $stmt_del->close();
+        }
+    }
+
+    return $shares;
+}
+
 // Normalize pallet cost figures for display/export
 function enrichPalletCostData(array $row, $conn) {
     $recorded_cost    = isset($row['warehouse_cost']) ? (float)$row['warehouse_cost'] : 0.0;
@@ -455,12 +544,18 @@ function enrichPalletCostData(array $row, $conn) {
         $recorded_cost = calculatePalletWarehousingCostFallback((int)$row['id'], $conn);
     }
 
-    if ($freight_cost <= 0 && $fallback_freight > 0) {
-        $freight_cost = $fallback_freight;
-    }
-
-    if ($accessorial_cost <= 0 && $fallback_accessorial > 0) {
-        $accessorial_cost = $fallback_accessorial;
+    // Prefer BOL-based freight/accessorial shares (matches pallet_details.php)
+    $computed_shares = calculatePalletFreightAccessorialShares((int)($row['id'] ?? 0), $conn);
+    if ($computed_shares['freight'] > 0 || $computed_shares['accessorial'] > 0) {
+        $freight_cost     = $computed_shares['freight'];
+        $accessorial_cost = $computed_shares['accessorial'];
+    } else {
+        if ($freight_cost <= 0 && $fallback_freight > 0) {
+            $freight_cost = $fallback_freight;
+        }
+        if ($accessorial_cost <= 0 && $fallback_accessorial > 0) {
+            $accessorial_cost = $fallback_accessorial;
+        }
     }
 
     $row['pending_warehouse_cost']  = $pending_cost;
@@ -507,7 +602,13 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $delivery_freight_cost = 0.0;
     $delivery_accessorial_cost = 0.0;
     $delivery_warehousing_cost = 0.0;
-    $rates = getWarehouseCostRates((int)($delivery['warehouse_id'] ?? 0), $conn);
+
+    $warehouse_for_costs = (int)($delivery['warehouse_id'] ?? 0);
+    if (!$warehouse_for_costs && (($delivery['origin_type'] ?? '') === 'warehouse')) {
+        $warehouse_for_costs = (int)($delivery['origin_id'] ?? 0);
+    }
+
+    $rates = getWarehouseCostRates($warehouse_for_costs, $conn);
     $is_inbound  = !empty($delivery['warehouse_arrival_date']) && (empty($delivery['origin_type']) || $delivery['origin_type'] !== 'warehouse');
     $is_outbound = !empty($delivery['left_warehouse_date']) && (!empty($delivery['origin_type']) && $delivery['origin_type'] === 'warehouse');
 
@@ -515,21 +616,35 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
         $stmtPallets->bind_param("i", $delivery['id']);
         $stmtPallets->execute();
         $palletsResult = $stmtPallets->get_result();
+        $seenPallets = [];
         while ($palletRow = $palletsResult->fetch_assoc()) {
+            $palletId = $palletRow['id'] ?? null;
+            if ($palletId && isset($seenPallets[$palletId])) {
+                continue;
+            }
+            if ($palletId) {
+                $seenPallets[$palletId] = true;
+            }
+
             $associatedPallets[] = $palletRow;
             $enriched = enrichPalletCostData($palletRow, $conn);
 
-            // Warehousing split: inbound gets entry fee, outbound gets storage+exit, fallback otherwise
+            // Warehousing split: outbound shows storage+exit, inbound shows entry, active storage shows accrual
             $pallet_wh_cost = 0.0;
-            if ($is_inbound) {
-                $pallet_wh_cost = $rates['in_fee'];
-            } elseif ($is_outbound) {
-                if (!empty($palletRow['arrival_date']) && !empty($delivery['left_warehouse_date'])) {
-                    $total_cost = calculate_pallet_storage_cost((int)$delivery['warehouse_id'], $palletRow['arrival_date'], $delivery['left_warehouse_date'], $conn);
+            $pallet_status = strtolower($palletRow['status'] ?? '');
+            $is_currently_stored = ($pallet_status === 'in warehouse');
+
+            if ($is_outbound) {
+                if (!empty($palletRow['arrival_date']) && !empty($delivery['left_warehouse_date']) && $warehouse_for_costs) {
+                    $total_cost = calculate_pallet_storage_cost($warehouse_for_costs, $palletRow['arrival_date'], $delivery['left_warehouse_date'], $conn);
                     $pallet_wh_cost = max(0, $total_cost - $rates['in_fee']); // remove entry already counted on inbound
                 } else {
                     $pallet_wh_cost = $rates['out_fee'];
                 }
+            } elseif ($is_currently_stored) {
+                $pallet_wh_cost = $enriched['display_warehouse_cost'] ?? $rates['in_fee'];
+            } elseif ($is_inbound) {
+                $pallet_wh_cost = $rates['in_fee'];
             } else {
                 $pallet_wh_cost = $enriched['display_warehouse_cost'] ?? 0;
             }
@@ -562,6 +677,7 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $total_solterra_fee += $solterraFeeForThisDelivery;
 
     $line_total = $delivery_freight_cost + $delivery_accessorial_cost + $delivery_warehousing_cost + $solterraFeeForThisDelivery;
+    $display_total_freight_only = $delivery_freight_cost + $delivery_accessorial_cost;
     $total_logistics_cost += $line_total;
 
     // Calculate cost per pallet for this delivery
@@ -578,6 +694,7 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $delivery['accessorial_costs']    = $delivery_accessorial_cost;
     $delivery['solterra_fee']         = $solterraFeeForThisDelivery;
     $delivery['total_logistics_cost'] = $line_total;
+    $delivery['display_total_freight_only'] = $display_total_freight_only;
     $delivery['cost_per_pallet']      = $cost_per_pallet;
     $delivery['pallet_count']         = $palletCount;
     $delivery['associated_pallets']   = $associatedPallets;
@@ -772,9 +889,9 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         'Pallet Count',
         'Status of Delivery',
         'Delivered to Site Date',
-        'Warehousing Cost',
         'Freight Cost',
         'Accessorial Cost',
+        'Total Freight Cost',
         'Solterra Fee',
         'Total Cost'
     ]);
@@ -788,9 +905,9 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             $d['pallet_count'] ?? 0,
             $d['status_of_delivery'] ?? '',
             $d['actual_delivery_date_formatted'] ?? '',
-            number_format($d['warehousing_cost'] ?? 0, 2),
             number_format($d['customer_cost'] ?? 0, 2),
             number_format($d['accessorial_costs'] ?? 0, 2),
+            number_format($d['display_total_freight_only'] ?? (($d['customer_cost'] ?? 0) + ($d['accessorial_costs'] ?? 0)), 2),
             number_format($d['solterra_fee'] ?? 0, 2),
             number_format($d['total_logistics_cost'] ?? 0, 2)
         ]);
@@ -1878,12 +1995,12 @@ $conn->close();
 
     <!-- Tabs Navigation -->
     <div class="tabs-nav">
-        <button class="tab-btn active" onclick="switchTab('deliveries')">Delivery Breakdown</button>
-        <button class="tab-btn" onclick="switchTab('pallets')">Pallet Details</button>
+        <button class="tab-btn active" onclick="switchTab('pallets')">Pallet Details</button>
+        <button class="tab-btn" onclick="switchTab('deliveries')">Delivery Breakdown</button>
     </div>
 
     <!-- Deliveries Tab -->
-    <div id="tab-deliveries" class="tab-content active">
+    <div id="tab-deliveries" class="tab-content">
         <!-- Pagination Controls (Deliveries) -->
         <?php if (!empty($deliveries)): ?>
             <?php
@@ -1958,16 +2075,13 @@ $conn->close();
                             <label><input type="checkbox" class="column-toggle" data-column="col-delivery-date" checked> Delivered to Site Date</label>
                         </div>
                         <div class="column-item">
-                            <label><input type="checkbox" class="column-toggle" data-column="col-warehousing-cost" checked> Warehousing Cost</label>
-                        </div>
-                        <div class="column-item">
                             <label><input type="checkbox" class="column-toggle" data-column="col-freight-cost" checked> Freight Cost</label>
                         </div>
                         <div class="column-item">
                             <label><input type="checkbox" class="column-toggle" data-column="col-accessorial-cost" checked> Accessorial Cost</label>
                         </div>
                         <div class="column-item">
-                            <label><input type="checkbox" class="column-toggle" data-column="col-total-cost" checked> Total Cost</label>
+                            <label><input type="checkbox" class="column-toggle" data-column="col-total-cost" checked> Total Freight Cost</label>
                         </div>
                     </div>
                     </div>
@@ -1984,10 +2098,9 @@ $conn->close();
                         <th class="col-pallets">Associated Pallets</th>
                         <th class="col-status">Status of Delivery</th>
                         <th class="col-delivery-date">Delivered to Site Date</th>
-                        <th class="col-warehousing-cost">Warehousing Cost</th>
                         <th class="col-freight-cost">Freight Cost</th>
                         <th class="col-accessorial-cost">Accessorial Cost</th>
-                        <th class="col-total-cost">Total Cost</th>
+                        <th class="col-total-cost">Total Freight Cost</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -2012,10 +2125,9 @@ $conn->close();
                             </td>
                             <td class="col-status"><?php echo htmlspecialchars($d['status_of_delivery'] ?? ''); ?></td>
                             <td class="col-delivery-date"><?php echo $d['actual_delivery_date_formatted']; ?></td>
-                            <td class="col-warehousing-cost" style="text-align: right;">$<?php echo number_format($d['warehousing_cost'] ?? 0, 2); ?></td>
                             <td class="col-freight-cost" style="text-align: right;">$<?php echo number_format($d['customer_cost'] ?? 0, 2); ?></td>
                             <td class="col-accessorial-cost" style="text-align: right;">$<?php echo number_format($d['accessorial_costs'] ?? 0, 2); ?></td>
-                            <td class="col-total-cost" style="text-align: right; font-weight: bold; background-color: #f8f9fa;">$<?php echo number_format($d['total_logistics_cost'] ?? 0, 2); ?></td>
+                            <td class="col-total-cost" style="text-align: right; font-weight: bold; background-color: #f8f9fa;">$<?php echo number_format($d['display_total_freight_only'] ?? ($d['customer_cost'] ?? 0) + ($d['accessorial_costs'] ?? 0), 2); ?></td>
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
@@ -2042,7 +2154,7 @@ $conn->close();
     </div>
 
     <!-- Pallets Tab -->
-    <div id="tab-pallets" class="tab-content">
+    <div id="tab-pallets" class="tab-content active">
         <?php if (!empty($pallets_data)): ?>
             <?php
                 $pallet_start = $total_pallets_found > 0 ? ($pallet_offset + 1) : 0;
@@ -2159,6 +2271,84 @@ $conn->close();
 </div>
 
 <script>
+    function showPalletModal(button) {
+        const modal = document.getElementById('associatedPalletsModal');
+        const list = document.getElementById('palletList');
+
+        if (!modal || !list || !button) return;
+
+        let pallets = [];
+        try {
+            pallets = JSON.parse(button.getAttribute('data-pallets') || '[]');
+        } catch (e) {
+            pallets = [];
+        }
+
+        if (!Array.isArray(pallets) || pallets.length === 0) {
+            list.innerHTML = '<p style="margin: 0;">No pallet details available for this delivery.</p>';
+        } else {
+            const rows = pallets.map(pallet => {
+                const id = pallet.id ?? '';
+                const identifier = pallet.pallet_identifier ?? '';
+                const qty = pallet.quantity ?? '';
+                const wattage = pallet.wattage ? `${pallet.wattage}W` : '';
+                const status = pallet.status ?? '';
+                const arrivalDate = pallet.arrival_date ? new Date(pallet.arrival_date) : null;
+                const arrival = arrivalDate && !isNaN(arrivalDate.getTime()) ? arrivalDate.toLocaleDateString() : '—';
+                return `<tr>
+                            <td>${id}</td>
+                            <td>${identifier}</td>
+                            <td>${qty}</td>
+                            <td>${wattage}</td>
+                            <td>${status}</td>
+                            <td>${arrival}</td>
+                        </tr>`;
+            }).join('');
+
+            list.innerHTML = `
+                <div style="overflow-x: auto;">
+                    <table class="modal-table" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Pallet</th>
+                                <th>Qty</th>
+                                <th>Wattage</th>
+                                <th>Status</th>
+                                <th>Arrival</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        modal.style.display = 'block';
+    }
+
+    function closeAssociatedPalletModal() {
+        const modal = document.getElementById('associatedPalletsModal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+    }
+
+    window.addEventListener('click', function(event) {
+        const modal = document.getElementById('associatedPalletsModal');
+        if (modal && event.target === modal) {
+            closeAssociatedPalletModal();
+        }
+    });
+
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            closeAssociatedPalletModal();
+        }
+    });
+
     function switchTab(tabName) {
         // Hide all tabs
         document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -2182,9 +2372,7 @@ $conn->close();
     // Restore tab on load
     document.addEventListener('DOMContentLoaded', () => {
         const savedTab = localStorage.getItem('cost_details_tab');
-        if (savedTab) {
-            switchTab(savedTab);
-        }
+        switchTab(savedTab || 'pallets');
     });
 </script>
 </body>
