@@ -441,6 +441,17 @@ $stmt_warranty->close();
 $delivery_totals = [];
 $delivered_raw_total = 0; // Raw module count for timeline calculations
 $delivered_damaged_total = 0; // Count of damaged modules that were delivered to project
+$replacement_status_totals = [
+    'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
+    'On Water' => ['pallets' => 0, 'modules' => 0],
+    'Delivered to Project' => ['pallets' => 0, 'modules' => 0],
+    'Cleared Customs' => ['pallets' => 0, 'modules' => 0],
+    'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
+    'In Warehouse' => ['pallets' => 0, 'modules' => 0],
+    'In Transit to Project' => ['pallets' => 0, 'modules' => 0],
+    'Damaged' => ['pallets' => 0, 'modules' => 0]
+];
+$replacement_detailed_breakdown = [];
 
 while ($row = $res_status->fetch_assoc()) {
     $palletId = (int)$row['pallet_id'];
@@ -478,7 +489,7 @@ while ($row = $res_status->fetch_assoc()) {
         }
     }
 
-    // Build status_totals for overall tracking (exclude replacements)
+    // Build status_totals for overall tracking (base vs replacements)
     if (!$isReplacement) {
         if (!isset($status_totals[$status])) {
             $status_totals[$status] = ['pallets' => 0, 'modules' => 0];
@@ -490,9 +501,13 @@ while ($row = $res_status->fetch_assoc()) {
             $damaged_by_wattage[$wattage]['pallets'] += 1;
             $damaged_by_wattage[$wattage]['modules'] += $qty;
         }
+    } else {
+        if (!isset($replacement_status_totals[$status])) { $replacement_status_totals[$status] = ['pallets'=>0,'modules'=>0]; }
+        $replacement_status_totals[$status]['pallets'] += 1;
+        $replacement_status_totals[$status]['modules'] += $qty;
     }
 
-    // Build detailed_breakdown for the overview section (exclude replacements)
+    // Build detailed_breakdown for the overview section (base vs replacements)
     if ($status === 'In Warehouse' && $wh_name) {
         $key = 'In Warehouse - ' . $wh_name;
     } elseif ($status === 'In Transit to Warehouse' && $wh_name) {
@@ -505,7 +520,25 @@ while ($row = $res_status->fetch_assoc()) {
         $key = $status;
     }
 
-    if (!$isReplacement) {
+    $targetBreakdown = $isReplacement ? 'replacement_detailed_breakdown' : 'detailed_breakdown';
+    if ($isReplacement) {
+        if (!isset($replacement_detailed_breakdown[$key])) {
+            $replacement_detailed_breakdown[$key] = [
+                'pallet_count' => 0,
+                'total_modules' => 0,
+                'wattage_breakdown' => [],
+                'warehouse_id' => $wh_id,
+                'project_id' => $proj_id
+            ];
+        }
+        $replacement_detailed_breakdown[$key]['pallet_count']++;
+        $replacement_detailed_breakdown[$key]['total_modules'] += $qty;
+        if (!isset($replacement_detailed_breakdown[$key]['wattage_breakdown'][$wattage])) {
+            $replacement_detailed_breakdown[$key]['wattage_breakdown'][$wattage] = ['pallets' => 0, 'modules' => 0];
+        }
+        $replacement_detailed_breakdown[$key]['wattage_breakdown'][$wattage]['pallets']++;
+        $replacement_detailed_breakdown[$key]['wattage_breakdown'][$wattage]['modules'] += $qty;
+    } else {
         if (!isset($detailed_breakdown[$key])) {
             $detailed_breakdown[$key] = [
                 'pallet_count' => 0,
@@ -551,7 +584,20 @@ foreach ($warranty_damaged_pallets as $damaged_pallet) {
     }
 }
 
-// Calculate combined totals - use status_totals for status data, total_orders for total_order
+// Helper to sum converted quantity for a status across breakdowns
+function sumStatusConverted(array $breakdown, string $status, string $view_mode): float {
+    $total = 0;
+    foreach ($breakdown as $key => $info) {
+        if (strpos($key, $status) !== 0 && $key !== $status) { continue; }
+        foreach ($info['wattage_breakdown'] as $w => $wd) {
+            $mods = (int)($wd['modules'] ?? 0);
+            $total += calculateQuantity($mods, (int)$w, $view_mode);
+        }
+    }
+    return $total;
+}
+
+// Calculate combined totals - use base + replacements for status data; total_orders stays original
 $total_order_combined             = 0;
 $at_manufacturer_combined         = 0;
 $on_water_combined                = 0;
@@ -562,54 +608,47 @@ $in_transit_to_project_combined   = 0;
 $delivered_combined               = 0;
 $exceptions_combined              = 0;
 
+$replacement_delta_display = [
+    'At Manufacturer' => 0,
+    'On Water' => 0,
+    'Cleared Customs' => 0,
+    'In Transit to Warehouse' => 0,
+    'In Warehouse' => 0,
+    'In Transit to Project' => 0,
+    'Delivered to Project' => 0,
+    'Damaged' => 0
+];
 
-// Calculate combined totals by properly aggregating from the raw status data
-// This approach calculates MW correctly by using actual wattage for each module group
-foreach ($status_totals as $status => $data) {
-    $modules = $data['modules'] ?? 0;
-    
-    if ($modules > 0) {
-        // Calculate the actual MW by looking at the wattage breakdown in detailed_breakdown
-        $total_mw_for_status = 0;
-        
-        // Find the corresponding detailed breakdown entries for this status
-        foreach ($detailed_breakdown as $key => $breakdown) {
-            if (strpos($key, $status) === 0 || $key === $status) {
-                foreach ($breakdown['wattage_breakdown'] as $wattage => $watt_data) {
-                    $watt_modules = $watt_data['modules'];
-                    $mw_for_this_wattage = calculateQuantity($watt_modules, $wattage, $view_mode);
-                    $total_mw_for_status += $mw_for_this_wattage;
-                }
-            }
-        }
-        
-        switch ($status) {
-            case 'At Manufacturer':
-                $at_manufacturer_combined = $total_mw_for_status;
-                break;
-            case 'On Water':
-                $on_water_combined = $total_mw_for_status;
-                break;
-            case 'Cleared Customs':
-                $cleared_customs_combined = $total_mw_for_status;
-                break;
-            case 'In Transit to Warehouse':
-                $in_transit_to_warehouse_combined = $total_mw_for_status;
-                break;
-            case 'In Warehouse':
-                $in_warehouse_combined = $total_mw_for_status;
-                break;
-            case 'In Transit to Project':
-                $in_transit_to_project_combined = $total_mw_for_status;
-                break;
-            case 'Delivered to Project':
-                $delivered_combined = $total_mw_for_status;
-                break;
-            case 'Damaged':
-                $exceptions_combined += $total_mw_for_status;
-                break;
-        }
+$statuses_calc = ['At Manufacturer','On Water','Cleared Customs','In Transit to Warehouse','In Warehouse','In Transit to Project','Delivered to Project','Damaged'];
+foreach ($statuses_calc as $status) {
+    $base_val = sumStatusConverted($detailed_breakdown, $status, $view_mode);
+    $repl_val = sumStatusConverted($replacement_detailed_breakdown, $status, $view_mode);
+    $combined = $base_val + $repl_val;
+    $replacement_delta_display[$status] = $repl_val;
+    switch ($status) {
+        case 'At Manufacturer': $at_manufacturer_combined = $combined; break;
+        case 'On Water': $on_water_combined = $combined; break;
+        case 'Cleared Customs': $cleared_customs_combined = $combined; break;
+        case 'In Transit to Warehouse': $in_transit_to_warehouse_combined = $combined; break;
+        case 'In Warehouse': $in_warehouse_combined = $combined; break;
+        case 'In Transit to Project': $in_transit_to_project_combined = $combined; break;
+        case 'Delivered to Project': $delivered_combined = $combined; break;
+        case 'Damaged': $exceptions_combined = $combined; break;
     }
+}
+
+// Also adjust pallet counts for display (base + replacements)
+foreach ($replacement_status_totals as $st => $arr) {
+    if (!isset($status_totals[$st])) { $status_totals[$st] = ['pallets'=>0,'modules'=>0]; }
+    $status_totals[$st]['pallets'] += (int)($arr['pallets'] ?? 0);
+    $status_totals[$st]['modules'] += (int)($arr['modules'] ?? 0);
+}
+
+$replacement_total_pallets = 0;
+$replacement_total_modules = 0;
+foreach ($replacement_status_totals as $rt) {
+    $replacement_total_pallets += (int)($rt['pallets'] ?? 0);
+    $replacement_total_modules += (int)($rt['modules'] ?? 0);
 }
 
 $pieChartData = [
@@ -1193,7 +1232,7 @@ $stmt_palletized->bind_result($actual_palletized_count);
 $stmt_palletized->fetch();
 $stmt_palletized->close();
 // Remove replacement pallets from palletized count for progress
-$actual_palletized_count = max(0, (int)$actual_palletized_count - count($replacement_pallet_ids));
+$actual_palletized_count = (int)$actual_palletized_count;
 
 // Calculate total EXPECTED pallets based on total modules / modules per pallet
 // This shows what SHOULD be palletized, not what IS palletized
@@ -3932,7 +3971,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                     
                     <div class="timeline-container">
-                        
+                        <?php if ($replacement_total_pallets > 0): ?>
+                        <div style="font-size:0.9em; color:#0f5132; margin-bottom:6px;">Includes <?php echo (int)$replacement_total_pallets; ?> replacement pallet<?php echo $replacement_total_pallets===1?'':'s'; ?> (<?php echo number_format($replacement_total_modules); ?> modules) in status counts.</div>
+                        <?php endif; ?>
                         
                         <ul class="timeline" style="--progress-width: <?php echo $progress_percentage; ?>%">
                         <li class="timeline-item<?php echo $step1_completed ? ' completed' : ''; ?><?php echo $current_step == 1 ? ' current' : ''; ?>">
@@ -4838,7 +4879,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <tr onclick="toggleSubRows('delivery-row')">
                                     <td><?php echo htmlspecialchars($module_type_combined);?></td>
                                     <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['Delivered to Project'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['Delivered to Project'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                     <?php foreach($anticipated_quantities_combined as $qq): ?>
                                         <td><?php echo number_format($qq,($view_mode=='mw')?2:0);?></td>
                                     <?php endforeach;?>
@@ -4892,23 +4933,23 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <tr onclick="toggleSubRows('status-row')">
                                     <td><?php echo htmlspecialchars($module_type_combined);?></td>
                                     <td><?php echo number_format($total_order_combined,($view_mode=='mw')?2:0);?></td>
-                                    <td><?php echo number_format($at_manufacturer_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($at_manufacturer_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['At Manufacturer'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['At Manufacturer'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                     <?php if ($on_water_combined > 0): ?>
-                                    <td><?php echo number_format($on_water_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($on_water_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['On Water'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['On Water'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                     <?php endif; ?>
                                     <?php if ($cleared_customs_combined > 0): ?>
-                                    <td><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($cleared_customs_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['Cleared Customs'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['Cleared Customs'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                     <?php endif; ?>
                                     <?php if ($in_transit_to_warehouse_combined > 0): ?>
-                                    <td><?php echo number_format($in_transit_to_warehouse_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($in_transit_to_warehouse_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['In Transit to Warehouse'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['In Transit to Warehouse'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                     <?php endif; ?>
                                     <?php if ($in_warehouse_combined > 0): ?>
-                                    <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($in_warehouse_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['In Warehouse'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['In Warehouse'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                     <?php endif; ?>
                                     <?php if ($in_transit_to_project_combined > 0): ?>
-                                    <td><?php echo number_format($in_transit_to_project_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($in_transit_to_project_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['In Transit to Project'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['In Transit to Project'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                     <?php endif; ?>
-                                    <td><?php echo number_format($exceptions_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($exceptions_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['Damaged'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['Damaged'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                     <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
                                 </tr>
                                 <?php foreach($sub_rows_status as $lbl=>$srs): ?>
