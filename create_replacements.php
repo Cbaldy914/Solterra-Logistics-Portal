@@ -39,7 +39,18 @@ foreach ($palletNotes as $row) {
     $dam = (int)($row['damaged'] ?? 0);
     if ($pid > 0 && $watt > 0 && $dam > 0) {
         $palletIds[] = $pid;
-        if (!isset($damagedByGroup[$watt])) { $damagedByGroup[$watt] = [ 'total_damaged' => 0, 'quantities' => [], 'manufacturers' => [], 'locations' => [] ]; }
+        if (!isset($damagedByGroup[$watt])) {
+            $damagedByGroup[$watt] = [
+                'total_damaged' => 0,
+                'quantities' => [],
+                'manufacturers' => [],
+                'locations' => [],
+                'modules_per_pallets' => [],
+                'pallets_per_truck' => [],
+                'modules_per_truck' => [],
+                'module_ids' => [],
+            ];
+        }
         $damagedByGroup[$watt]['total_damaged'] += $dam;
     }
 }
@@ -48,7 +59,7 @@ foreach ($palletNotes as $row) {
 if (!empty($palletIds)) {
     $ph = implode(',', array_fill(0, count($palletIds), '?'));
     $types = str_repeat('i', count($palletIds));
-    $q = $conn->prepare("SELECT id, wattage, quantity, manufacturer, manufacturer_location_id FROM inventory_pallets WHERE id IN ($ph)");
+    $q = $conn->prepare("SELECT ip.id, ip.wattage, ip.quantity, ip.manufacturer, ip.manufacturer_location_id, ip.unassigned_module_item_id, umi.unassigned_module_id AS module_id, m.modules_per_pallet, m.pallets_per_truck, m.modules_per_truck FROM inventory_pallets ip LEFT JOIN unassigned_module_items umi ON umi.id = ip.unassigned_module_item_id LEFT JOIN modules m ON m.id = umi.unassigned_module_id WHERE ip.id IN ($ph)");
     $q->bind_param($types, ...$palletIds);
     $q->execute();
     $rs = $q->get_result();
@@ -58,6 +69,10 @@ if (!empty($palletIds)) {
         $damagedByGroup[$w]['quantities'][] = (int)$r['quantity'];
         if (!empty($r['manufacturer'])) { $damagedByGroup[$w]['manufacturers'][] = (string)$r['manufacturer']; }
         $damagedByGroup[$w]['locations'][] = is_null($r['manufacturer_location_id']) ? null : (int)$r['manufacturer_location_id'];
+        if (!empty($r['modules_per_pallet'])) { $damagedByGroup[$w]['modules_per_pallets'][] = (int)$r['modules_per_pallet']; }
+        if (!empty($r['pallets_per_truck'])) { $damagedByGroup[$w]['pallets_per_truck'][] = (int)$r['pallets_per_truck']; }
+        if (!empty($r['modules_per_truck'])) { $damagedByGroup[$w]['modules_per_truck'][] = (int)$r['modules_per_truck']; }
+        if (!empty($r['module_id'])) { $damagedByGroup[$w]['module_ids'][] = (int)$r['module_id']; }
     }
     $q->close();
 }
@@ -67,8 +82,13 @@ $quickPlan = [];
 foreach ($damagedByGroup as $watt => $info) {
     $total = (int)$info['total_damaged'];
     $mpp = 0;
-    if (!empty($info['quantities'])) {
-        // Use statistical mode of quantities; fallback to first
+    if (!empty($info['modules_per_pallets'])) {
+        $countsMpp = array_count_values(array_filter($info['modules_per_pallets'], function($v){ return $v > 0; }));
+        arsort($countsMpp);
+        $mpp = (int)array_key_first($countsMpp);
+    }
+    if ($mpp <= 0 && !empty($info['quantities'])) {
+        // Use statistical mode of pallet quantities when module spec missing; fallback to first
         $counts = array_count_values($info['quantities']);
         arsort($counts);
         $mpp = (int)array_key_first($counts);
@@ -89,6 +109,23 @@ foreach ($damagedByGroup as $watt => $info) {
         $locationId = array_key_first($countsL);
         $locationId = ($locationId === '') ? null : (int)$locationId; // handle null keys
     }
+    $ppt = null;
+    if (!empty($info['pallets_per_truck'])) {
+        $countsPpt = array_count_values(array_filter($info['pallets_per_truck'], function($v){ return $v > 0; }));
+        arsort($countsPpt);
+        $ppt = array_key_first($countsPpt);
+        $ppt = ($ppt === '') ? null : (int)$ppt;
+    }
+    $mpt = null;
+    if (!empty($info['modules_per_truck'])) {
+        $countsMpt = array_count_values(array_filter($info['modules_per_truck'], function($v){ return $v > 0; }));
+        arsort($countsMpt);
+        $mpt = array_key_first($countsMpt);
+        $mpt = ($mpt === '') ? null : (int)$mpt;
+    } elseif (!is_null($ppt) && $mpp > 0) {
+        $mpt = $ppt * $mpp;
+    }
+    $totalModules = ($full * $mpp) + $rem;
     $quickPlan[] = [
         'wattage' => (int)$watt,
         'modules_per_pallet' => (int)$mpp,
@@ -96,6 +133,9 @@ foreach ($damagedByGroup as $watt => $info) {
         'partial_modules' => (int)$rem,
         'manufacturer' => $manufacturer,
         'manufacturer_location_id' => $locationId,
+        'pallets_per_truck' => $ppt,
+        'modules_per_truck' => $mpt,
+        'total_modules' => $totalModules,
     ];
 }
 
@@ -377,7 +417,7 @@ $conn->close();
     <p>Project: <?php echo htmlspecialchars($projectName); ?> · Claim #<?php echo (int)$claimId; ?></p>
   </div>
   <div class="body">
-    <div class="notice">Quick Replace will create pallets with status <strong>At Manufacturer</strong>. Manufacturer location is taken from the damaged pallets; pallets are packed as full pallets first with a partial pallet for any remaining modules.</div>
+    <div class="notice">Quick Replace will stage replacement pallets. They will be created as <strong>At Manufacturer</strong> when you approve this ticket (Apply Decision). Manufacturer location and packing details come from the damaged pallets; pallets are packed as full pallets first with a partial pallet for any remaining modules.</div>
     <?php if (empty($quickPlan)) : ?>
       <div class="notice" style="background:#fff3cd; border-color:#ffe69c;">No damaged pallet details available on this claim. Quick Replace is unavailable.</div>
     <?php else: ?>
@@ -388,6 +428,9 @@ $conn->close();
             <th>Modules per Pallet</th>
             <th>Full Pallets</th>
             <th>Partial Modules</th>
+            <th>Total Modules</th>
+            <th>Pallets/Truck</th>
+            <th>Modules/Truck</th>
             <th>Manufacturer</th>
             <th>Location ID</th>
           </tr>
@@ -399,6 +442,9 @@ $conn->close();
             <td><?php echo (int)$row['modules_per_pallet']; ?></td>
             <td><?php echo (int)$row['full_pallets']; ?></td>
             <td><?php echo (int)$row['partial_modules']; ?></td>
+            <td><?php echo (int)$row['total_modules']; ?></td>
+            <td><?php echo is_null($row['pallets_per_truck']) ? '—' : (int)$row['pallets_per_truck']; ?></td>
+            <td><?php echo is_null($row['modules_per_truck']) ? '—' : (int)$row['modules_per_truck']; ?></td>
             <td><?php echo htmlspecialchars((string)$row['manufacturer']); ?></td>
             <td><?php echo is_null($row['manufacturer_location_id']) ? '—' : (int)$row['manufacturer_location_id']; ?></td>
           </tr>
@@ -412,14 +458,14 @@ $conn->close();
         <input type="hidden" name="plan_json" value='<?php echo json_encode($quickPlan, JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_TAG | JSON_UNESCAPED_SLASHES); ?>'>
         <div class="actions">
           <a class="btn btn-secondary" href="warranty_detail.php?id=<?php echo (int)$claimId; ?>">Cancel</a>
-          <button type="submit" class="btn btn-primary">Quick Replace</button>
+          <button type="submit" class="btn btn-primary">Stage Quick Plan</button>
         </div>
       </form>
       
       <!-- Manual Builder Section -->
       <div class="form-section">
         <h2>Manual Builder</h2>
-        <div class="notice">Add one or more replacement entries. Enter wattage, total module quantity, and modules per pallet. Full pallets will be generated automatically with a partial pallet for any remainder.</div>
+        <div class="notice">Add one or more replacement entries. Enter wattage, total module quantity, and modules per pallet. Full pallets will be generated automatically with a partial pallet for any remainder. Entries are staged here and created once you approve the claim.</div>
         
         <form method="post" action="process_create_replacements.php" onsubmit="return showConfirmationModal(event);" id="manualForm">
           <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf); ?>">
@@ -468,7 +514,7 @@ $conn->close();
           
           <div class="actions">
             <a class="btn btn-secondary" href="warranty_detail.php?id=<?php echo (int)$claimId; ?>">Cancel</a>
-            <button type="submit" class="btn btn-primary">Create Replacements</button>
+            <button type="submit" class="btn btn-primary">Stage Replacements</button>
           </div>
         </form>
       </div>
@@ -480,16 +526,16 @@ $conn->close();
 <div id="confirmationModal" class="modal">
   <div class="modal-content">
     <div class="modal-header">
-      <h2>Confirm Replacement Creation</h2>
+      <h2>Confirm Replacement Plan</h2>
     </div>
     <div class="modal-body">
-      <p>You are about to create the following replacement pallets:</p>
+      <p>You are about to stage the following replacement pallets (they will be created after approval):</p>
       <div id="modalSummary"></div>
       <p><strong>Are you sure you want to proceed?</strong></p>
     </div>
     <div class="modal-footer">
       <button type="button" class="modal-btn modal-btn-cancel" onclick="closeConfirmationModal()">Cancel</button>
-      <button type="button" class="modal-btn modal-btn-confirm" onclick="confirmSubmission()">Create Pallets</button>
+      <button type="button" class="modal-btn modal-btn-confirm" onclick="confirmSubmission()">Stage Pallets</button>
     </div>
   </div>
 </div>

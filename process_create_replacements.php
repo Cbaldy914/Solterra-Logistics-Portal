@@ -31,13 +31,12 @@ $res = $stmt->get_result();
 $claim = $res->fetch_assoc();
 $stmt->close();
 if (!$claim) { $conn->close(); die('Claim not found'); }
-$projectId = (int)$claim['project_id'];
-$accountId = (int)$claim['account_id'];
 
-$conn->begin_transaction();
+$notesArr = jsonToArray($claim['notes'] ?? '');
+
+$planItems = [];
 
 try {
-    $createdPalletIds = [];
     if ($mode === 'quick') {
         $planJson = $_POST['plan_json'] ?? '[]';
         $plan = json_decode($planJson, true);
@@ -50,61 +49,28 @@ try {
             $part = max(0, (int)($item['partial_modules'] ?? 0));
             $manufacturer = trim((string)($item['manufacturer'] ?? ''));
             $locationId = isset($item['manufacturer_location_id']) && $item['manufacturer_location_id'] !== '' ? (int)$item['manufacturer_location_id'] : null;
+            $ppt = isset($item['pallets_per_truck']) && $item['pallets_per_truck'] !== '' ? (int)$item['pallets_per_truck'] : null;
+            $mpt = isset($item['modules_per_truck']) && $item['modules_per_truck'] !== '' ? (int)$item['modules_per_truck'] : null;
 
-            if ($watt <= 0) continue;
+            if ($watt <= 0) { continue; }
 
-            // Create minimal modules batch row for this group to satisfy FK
-            $vendorName = ($manufacturer !== '') ? $manufacturer : 'Replacement';
-            $initialLocation = 'Manufacturer';
-            $stmtMod = $conn->prepare('INSERT INTO modules (account_id, vendor_name, initial_location, project_id) VALUES (?, ?, ?, ?)');
-            $stmtMod->bind_param('issi', $accountId, $vendorName, $initialLocation, $projectId);
-            $stmtMod->execute();
-            $moduleId = (int)$conn->insert_id;
-            $stmtMod->close();
+            $totalModules = ($full * $mpp) + $part;
+            if ($totalModules <= 0) { continue; }
 
-            // Create a UMI entry tied to the modules batch
-            $stmtUmi = $conn->prepare('INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) VALUES (?, ?, ?)');
-            $umiQty = $mpp; // template modules-per-pallet
-            $stmtUmi->bind_param('iii', $moduleId, $watt, $umiQty);
-            $stmtUmi->execute();
-            $umiId = (int)$conn->insert_id;
-            $stmtUmi->close();
-
-            // Helper to insert one pallet row with status At Manufacturer and optional location
-            $ins = $conn->prepare('INSERT INTO inventory_pallets (pallet_identifier, unassigned_module_item_id, assigned_project_id, wattage, quantity, status, manufacturer, manufacturer_location_id) VALUES (?, ?, ?, ?, ?, "At Manufacturer", ?, ?)');
-            // Full pallets
-            for ($i=0; $i<$full; $i++) {
-                $empty = '';
-                $q = $mpp;
-                $ins->bind_param('siiidsi', $empty, $umiId, $projectId, $watt, $q, $manufacturer, $locationId);
-                $ins->execute();
-                $newId = (int)$conn->insert_id;
-                // Set pallet_identifier
-                $pid = 'P' . $newId;
-                $u = $conn->prepare('UPDATE inventory_pallets SET pallet_identifier = ? WHERE id = ?');
-                $u->bind_param('si', $pid, $newId);
-                $u->execute();
-                $u->close();
-                $createdPalletIds[] = $newId;
-            }
-            // Partial pallet
-            if ($part > 0) {
-                $empty = '';
-                $q = $part;
-                $ins->bind_param('siiidsi', $empty, $umiId, $projectId, $watt, $q, $manufacturer, $locationId);
-                $ins->execute();
-                $newId = (int)$conn->insert_id;
-                $pid = 'P' . $newId;
-                $u = $conn->prepare('UPDATE inventory_pallets SET pallet_identifier = ? WHERE id = ?');
-                $u->bind_param('si', $pid, $newId);
-                $u->execute();
-                $u->close();
-                $createdPalletIds[] = $newId;
-            }
-            $ins->close();
+            $planItems[] = [
+                'mode' => 'quick',
+                'wattage' => $watt,
+                'modules_per_pallet' => $mpp,
+                'full_pallets' => $full,
+                'partial_modules' => $part,
+                'manufacturer' => $manufacturer,
+                'manufacturer_location_id' => $locationId,
+                'pallets_per_truck' => $ppt,
+                'modules_per_truck' => $mpt,
+                'total_modules' => $totalModules,
+            ];
         }
-    } else if ($mode === 'manual') {
-        // New manual mode: wattage + comma-separated list of modules-per-pallet; manufacturer and location required
+    } elseif ($mode === 'manual') {
         $wattages = isset($_POST['wattage']) ? (array)$_POST['wattage'] : [];
         $quantities = isset($_POST['quantity']) ? (array)$_POST['quantity'] : [];
         $mpps = isset($_POST['modules_per_pallet']) ? (array)$_POST['modules_per_pallet'] : [];
@@ -130,79 +96,56 @@ try {
             $resName->fetch();
             $resName->close();
 
-            // Create a module batch and UMI for this row
-            $vendorName = $manufacturer;
-            $initialLocation = 'Manufacturer';
-            $stmtMod = $conn->prepare('INSERT INTO modules (account_id, vendor_name, initial_location, project_id) VALUES (?, ?, ?, ?)');
-            $stmtMod->bind_param('issi', $accountId, $vendorName, $initialLocation, $projectId);
-            $stmtMod->execute();
-            $moduleId = (int)$conn->insert_id;
-            $stmtMod->close();
-
-            $stmtUmi = $conn->prepare('INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) VALUES (?, ?, ?)');
-            $umiQty = 0; // template; real quantity is per pallet
-            $stmtUmi->bind_param('iii', $moduleId, $watt, $umiQty);
-            $stmtUmi->execute();
-            $umiId = (int)$conn->insert_id;
-            $stmtUmi->close();
-
-            $ins = $conn->prepare('INSERT INTO inventory_pallets (pallet_identifier, unassigned_module_item_id, assigned_project_id, wattage, quantity, status, manufacturer, manufacturer_location_id) VALUES (?, ?, ?, ?, ?, "At Manufacturer", ?, ?)');
             $full = intdiv($qtyTotal, $mpp);
             $rem = $qtyTotal - ($full * $mpp);
-            for ($j=0; $j<$full; $j++) {
-                $empty = '';
-                $q = $mpp;
-                $ins->bind_param('siiidsi', $empty, $umiId, $projectId, $watt, $q, $manufacturer, $locationId);
-                $ins->execute();
-                $newId = (int)$conn->insert_id;
-                $pid = 'P' . $newId;
-                $u = $conn->prepare('UPDATE inventory_pallets SET pallet_identifier = ? WHERE id = ?');
-                $u->bind_param('si', $pid, $newId);
-                $u->execute();
-                $u->close();
-                $createdPalletIds[] = $newId;
-            }
-            if ($rem > 0) {
-                $empty = '';
-                $q = $rem;
-                $ins->bind_param('siiidsi', $empty, $umiId, $projectId, $watt, $q, $manufacturer, $locationId);
-                $ins->execute();
-                $newId = (int)$conn->insert_id;
-                $pid = 'P' . $newId;
-                $u = $conn->prepare('UPDATE inventory_pallets SET pallet_identifier = ? WHERE id = ?');
-                $u->bind_param('si', $pid, $newId);
-                $u->execute();
-                $u->close();
-                $createdPalletIds[] = $newId;
-            }
-            $ins->close();
+
+            $planItems[] = [
+                'mode' => 'manual',
+                'wattage' => $watt,
+                'modules_per_pallet' => $mpp,
+                'full_pallets' => $full,
+                'partial_modules' => $rem,
+                'manufacturer' => $manufacturer,
+                'manufacturer_id' => $manufacturerId,
+                'manufacturer_location_id' => $locationId,
+                'pallets_per_truck' => null,
+                'modules_per_truck' => null,
+                'total_modules' => $qtyTotal,
+            ];
         }
     } else {
         throw new Exception('Unsupported mode');
     }
 
-    // Link created pallets to the claim
-    if (!empty($createdPalletIds)) {
-        $insL = $conn->prepare('INSERT INTO warranty_claim_replacements (claim_id, pallet_id) VALUES (?, ?)');
-        foreach ($createdPalletIds as $pid) {
-            $insL->bind_param('ii', $claimId, $pid);
-            $insL->execute();
-        }
-        $insL->close();
+    if (empty($planItems)) {
+        throw new Exception('No replacement entries provided');
     }
 
-    $conn->commit();
+    $notesArr['replacement_plan'] = [
+        'items' => array_values($planItems),
+        'created_by' => $userId,
+        'created_at' => date('c'),
+    ];
 
-    // Do NOT post to public timeline now. Instead, set a flash message and
-    // pre-fill approve state on the claim page via query string flags.
-    $createdCount = count($createdPalletIds);
-    $_SESSION['flash_success'] = $createdCount . ' replacement pallet' . ($createdCount===1?'':'s') . ' created and linked to this claim. To officially create the pallets, select "Approve" and "Replacement", then click "Apply Decision".';
+    $notesJson = json_encode($notesArr, JSON_UNESCAPED_SLASHES);
+    $stmtSave = $conn->prepare('UPDATE warranty_claims SET notes = ?, updated_at = NOW() WHERE id = ?');
+    $stmtSave->bind_param('si', $notesJson, $claimId);
+    $stmtSave->execute();
+    $stmtSave->close();
+
+    $totalModules = 0; $totalPallets = 0;
+    foreach ($planItems as $pi) {
+        $totalModules += (int)($pi['total_modules'] ?? 0);
+        $totalPallets += (int)($pi['full_pallets'] ?? 0);
+        if (!empty($pi['partial_modules'])) { $totalPallets += 1; }
+    }
+
+    $_SESSION['flash_success'] = 'Replacement plan staged: ' . $totalPallets . ' pallet' . ($totalPallets === 1 ? '' : 's') . ' / ' . $totalModules . ' modules. Choose "Approve" → "Replacement" and click Apply Decision to create the pallets at Manufacturer.';
 
     $conn->close();
     header('Location: warranty_detail.php?id=' . $claimId . '&prefill=approve_replacement');
     exit();
 } catch (Exception $e) {
-    $conn->rollback();
     $conn->close();
     http_response_code(500);
     echo 'Error: ' . htmlspecialchars($e->getMessage());
@@ -210,5 +153,3 @@ try {
 }
 
 ?>
-
-
