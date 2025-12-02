@@ -120,15 +120,36 @@ $forecasted_accessorial = $forecasted_costs['accessorial'] ?? 0;
 // Ensure project_wattage_orders reflects all module batches assigned to this project
 // We compare against actual batch items, and if mismatched, we rebuild the totals.
 try {
+
+$replacement_pallet_ids = [];$replacement_umi_ids = [];$replacement_module_ids = [];
+$stmt_repl_sets = $conn->prepare("SELECT DISTINCT ip.id AS pallet_id, ip.unassigned_module_item_id AS umi_id, umi.unassigned_module_id AS module_id\n FROM warranty_claim_replacements wcr\n JOIN inventory_pallets ip ON wcr.pallet_id = ip.id\n LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id\n LEFT JOIN modules m ON umi.unassigned_module_id = m.id\n WHERE (ip.assigned_project_id = ? OR ip.current_project_id = ? OR m.project_id = ?)");
+if ($stmt_repl_sets) {
+    $stmt_repl_sets->bind_param('iii', $project_id, $project_id, $project_id);
+    $stmt_repl_sets->execute();
+    $resReplSets = $stmt_repl_sets->get_result();
+    while ($row = $resReplSets->fetch_assoc()) {
+        if (!empty($row['pallet_id'])) $replacement_pallet_ids[(int)$row['pallet_id']] = true;
+        if (!empty($row['umi_id'])) $replacement_umi_ids[(int)$row['umi_id']] = true;
+        if (!empty($row['module_id'])) $replacement_module_ids[(int)$row['module_id']] = true;
+    }
+    $stmt_repl_sets->close();
+}
+
     $actual_totals = [];
-    if ($stmtA = $conn->prepare("\n        SELECT umi.wattage, SUM(umi.quantity) AS total_qty\n        FROM unassigned_module_items umi\n        JOIN modules m ON umi.unassigned_module_id = m.id\n        WHERE m.project_id = ?\n        GROUP BY umi.wattage\n    ")) {
-        $stmtA->bind_param("i", $project_id);
+    $stmtA = $conn->prepare("SELECT umi.id, umi.wattage, umi.quantity FROM unassigned_module_items umi JOIN modules m ON umi.unassigned_module_id = m.id WHERE m.project_id = ?");
+    if ($stmtA) {
+        $stmtA->bind_param('i', $project_id);
         $stmtA->execute();
         $resA = $stmtA->get_result();
         while ($row = $resA->fetch_assoc()) {
+            $umiId = (int)$row['id'];
+            if (isset($replacement_umi_ids[$umiId])) { continue; }
             $w = (int)$row['wattage'];
-            $q = (int)$row['total_qty'];
-            if ($w > 0 && $q > 0) { $actual_totals[$w] = $q; }
+            $q = (int)$row['quantity'];
+            if ($w > 0 && $q > 0) {
+                if (!isset($actual_totals[$w])) { $actual_totals[$w] = 0; }
+                $actual_totals[$w] += $q;
+            }
         }
         $stmtA->close();
     }
@@ -368,8 +389,10 @@ $status_totals = [
 ];
 $detailed_breakdown = [];
 
+$damaged_by_wattage = [];
+$replacement_status_totals = [];
 $stmt_status = $conn->prepare(
-    "SELECT ip.status, ip.wattage, ip.quantity, ip.current_warehouse_id, w.name AS warehouse_name,
+    "SELECT ip.id AS pallet_id, ip.unassigned_module_item_id AS umi_id, ip.status, ip.wattage, ip.quantity, ip.current_warehouse_id, w.name AS warehouse_name,
             ip.current_project_id, p.project_name
        FROM inventory_pallets ip
        LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
@@ -420,6 +443,8 @@ $delivered_raw_total = 0; // Raw module count for timeline calculations
 $delivered_damaged_total = 0; // Count of damaged modules that were delivered to project
 
 while ($row = $res_status->fetch_assoc()) {
+    $palletId = (int)$row['pallet_id'];
+    $umiId = (int)($row['umi_id'] ?? 0);
     $status  = $row['status'];
     $wattage = (int)$row['wattage'];
     $qty     = (int)$row['quantity'];
@@ -427,8 +452,9 @@ while ($row = $res_status->fetch_assoc()) {
     $wh_name = $row['warehouse_name'];
     $proj_id = $row['current_project_id'];
     $proj_name = $row['project_name'];
+    $isReplacement = isset($replacement_pallet_ids[$palletId]);
 
-    // Build delivery_totals by wattage for the main table
+    // Build delivery_totals by wattage for the main table (exclude replacements)
     $w = (float)$wattage;
     $lbl = $w . 'W';
     $q_calc = calculateQuantity($qty, $w, $view_mode);
@@ -445,24 +471,28 @@ while ($row = $res_status->fetch_assoc()) {
         ];
     }
     
-    // Only count healthy pallets toward delivery totals
-    if ($status !== 'Damaged') {
+    if (!$isReplacement && $status !== 'Damaged') {
         $delivery_totals[$lbl][$status] += $q_calc;
         if ($status === 'Delivered to Project') {
             $delivered_raw_total += $qty;
         }
     }
 
-    // Build status_totals for overall tracking
-    if (!isset($status_totals[$status])) {
-        $status_totals[$status] = ['pallets' => 0, 'modules' => 0];
+    // Build status_totals for overall tracking (exclude replacements)
+    if (!$isReplacement) {
+        if (!isset($status_totals[$status])) {
+            $status_totals[$status] = ['pallets' => 0, 'modules' => 0];
+        }
+        $status_totals[$status]['pallets'] += 1;
+        $status_totals[$status]['modules'] += $qty;
+        if ($status === 'Damaged') {
+            if (!isset($damaged_by_wattage[$wattage])) { $damaged_by_wattage[$wattage] = ['pallets'=>0,'modules'=>0]; }
+            $damaged_by_wattage[$wattage]['pallets'] += 1;
+            $damaged_by_wattage[$wattage]['modules'] += $qty;
+        }
     }
-    $status_totals[$status]['pallets'] += 1;
-    $status_totals[$status]['modules'] += $qty;
-    
 
-
-    // Build detailed_breakdown for the overview section
+    // Build detailed_breakdown for the overview section (exclude replacements)
     if ($status === 'In Warehouse' && $wh_name) {
         $key = 'In Warehouse - ' . $wh_name;
     } elseif ($status === 'In Transit to Warehouse' && $wh_name) {
@@ -475,22 +505,24 @@ while ($row = $res_status->fetch_assoc()) {
         $key = $status;
     }
 
-    if (!isset($detailed_breakdown[$key])) {
-        $detailed_breakdown[$key] = [
-            'pallet_count' => 0,
-            'total_modules' => 0,
-            'wattage_breakdown' => [],
-            'warehouse_id' => $wh_id,
-            'project_id' => $proj_id
-        ];
+    if (!$isReplacement) {
+        if (!isset($detailed_breakdown[$key])) {
+            $detailed_breakdown[$key] = [
+                'pallet_count' => 0,
+                'total_modules' => 0,
+                'wattage_breakdown' => [],
+                'warehouse_id' => $wh_id,
+                'project_id' => $proj_id
+            ];
+        }
+        $detailed_breakdown[$key]['pallet_count']++;
+        $detailed_breakdown[$key]['total_modules'] += $qty;
+        if (!isset($detailed_breakdown[$key]['wattage_breakdown'][$wattage])) {
+            $detailed_breakdown[$key]['wattage_breakdown'][$wattage] = ['pallets' => 0, 'modules' => 0];
+        }
+        $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['pallets']++;
+        $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['modules'] += $qty;
     }
-    $detailed_breakdown[$key]['pallet_count']++;
-    $detailed_breakdown[$key]['total_modules'] += $qty;
-    if (!isset($detailed_breakdown[$key]['wattage_breakdown'][$wattage])) {
-        $detailed_breakdown[$key]['wattage_breakdown'][$wattage] = ['pallets' => 0, 'modules' => 0];
-    }
-    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['pallets']++;
-    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['modules'] += $qty;
 }
 $stmt_status->close();
 
@@ -1160,6 +1192,8 @@ $stmt_palletized->execute();
 $stmt_palletized->bind_result($actual_palletized_count);
 $stmt_palletized->fetch();
 $stmt_palletized->close();
+// Remove replacement pallets from palletized count for progress
+$actual_palletized_count = max(0, (int)$actual_palletized_count - count($replacement_pallet_ids));
 
 // Calculate total EXPECTED pallets based on total modules / modules per pallet
 // This shows what SHOULD be palletized, not what IS palletized
@@ -1409,6 +1443,7 @@ $pallets_status_main = [
     'in_transit_to_warehouse' => 0,
     'in_warehouse' => 0,
     'in_transit_to_project' => 0,
+    'exceptions' => 0,
 ];
 foreach ($statuses_of_interest as $s) {
     $count = (int)($status_totals[$s]['pallets'] ?? 0);
@@ -1423,6 +1458,8 @@ foreach ($statuses_of_interest as $s) {
     }
     $pallets_status_main['total_order'] += $count;
 }
+$damaged_pallets_main = (int)($status_totals['Damaged']['pallets'] ?? 0);
+$pallets_status_main['exceptions'] = $damaged_pallets_main;
 
 // Build per-wattage pallets for sub rows using detailed_breakdown actuals
 $pallets_sub_rows_status = [];
@@ -1443,6 +1480,7 @@ foreach ($statuses_of_interest as $s) {
                     'in_transit_to_warehouse' => 0,
                     'in_warehouse' => 0,
                     'in_transit_to_project' => 0,
+                    'exceptions' => 0,
                 ];
             }
             $pal = (int)($wd['pallets'] ?? 0);
@@ -1457,6 +1495,27 @@ foreach ($statuses_of_interest as $s) {
             }
             $pallets_sub_rows_status[$label]['total_order'] += $pal;
         }
+    }
+}
+
+// Map damaged counts into sub rows
+if (!empty($damaged_by_wattage)) {
+    foreach ($damaged_by_wattage as $w => $info) {
+        $label = $w . 'W';
+        if (!isset($pallets_sub_rows_status[$label])) {
+            $pallets_sub_rows_status[$label] = [
+                'total_order' => 0,
+                'delivered' => 0,
+                'at_manufacturer' => 0,
+                'on_water' => 0,
+                'cleared_customs' => 0,
+                'in_transit_to_warehouse' => 0,
+                'in_warehouse' => 0,
+                'in_transit_to_project' => 0,
+                'exceptions' => 0,
+            ];
+        }
+        $pallets_sub_rows_status[$label]['exceptions'] = (int)($info['pallets'] ?? 0);
     }
 }
 
@@ -4332,7 +4391,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                         <?php if (!empty($module_batches)): ?>
                                             <div style="border-top:1px solid #e5e7eb; margin:6px 0;"></div>
                                             <?php foreach ($module_batches as $i => $b): ?>
-                                                <a href="edit_module_batch.php?batch_id=<?php echo (int)$b['id']; ?>&project_id=<?php echo (int)$project_id; ?>">Edit Batch <?php echo $i+1; ?>: <?php echo htmlspecialchars($b['vendor_name']); ?></a>
+                                                <a href="edit_module_batch.php?batch_id=<?php echo (int)$b['id']; ?>&project_id=<?php echo (int)$project_id; ?>">Edit Batch <?php echo $i+1; ?>: <?php echo htmlspecialchars($b['vendor_name']); ?><?php echo !empty($replacement_module_ids[$b['id']] ?? null) ? ' (replacements)' : ''; ?></a>
                                             <?php endforeach; ?>
                                         <?php endif; ?>
                                     </div>
@@ -4343,7 +4402,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             <?php foreach ($module_batches as $index => $batch): ?>
                                 <div class="module-batch-section" style="<?php echo $index > 0 ? 'margin-top: 30px; border-top: 2px solid #e9ecef; padding-top: 20px;' : ''; ?>">
                                     <div class="batch-header">
-                                        <h3>Module Batch <?php echo $index + 1; ?>: <?php echo htmlspecialchars($batch['vendor_name']); ?></h3>
+                                        <h3>Module Batch <?php echo $index + 1; ?>: <?php echo htmlspecialchars($batch['vendor_name']); ?><?php echo !empty($replacement_module_ids[$batch['id']] ?? null) ? ' (replacements)' : ''; ?></h3>
                                         <div class="batch-meta">
                                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                                 <span style="color: #666; font-size: 0.9em;">
@@ -4359,7 +4418,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                             <h4>Basic Information</h4>
                                             <div class="info-item">
                                                 <label>Vendor/Manufacturer:</label>
-                                                <span><?php echo htmlspecialchars($batch['vendor_name']); ?></span>
+                                                <span><?php echo htmlspecialchars($batch['vendor_name']); ?><?php echo !empty($replacement_module_ids[$batch['id']] ?? null) ? ' (replacements)' : ''; ?></span>
                                             </div>
                                             <div class="info-item">
                                                 <label>Location:</label>
@@ -4825,6 +4884,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                     <?php if ($in_transit_to_project_combined > 0): ?>
                                     <th data-full="In Transit to Project"><span class="th-short">To Proj</span></th>
                                     <?php endif; ?>
+                                    <th data-full="Exceptions"><span class="th-short">Exceptions</span></th>
                                     <th data-full="Delivered to Project"><span class="th-short">Delivered</span></th>
                                 </tr>
                             </thead>
@@ -4848,6 +4908,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                     <?php if ($in_transit_to_project_combined > 0): ?>
                                     <td><?php echo number_format($in_transit_to_project_combined,($view_mode=='mw')?2:0);?></td>
                                     <?php endif; ?>
+                                    <td><?php echo number_format($exceptions_combined,($view_mode=='mw')?2:0);?></td>
                                     <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
                                 </tr>
                                 <?php foreach($sub_rows_status as $lbl=>$srs): ?>
@@ -4870,6 +4931,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                         <?php if ($in_transit_to_project_combined > 0): ?>
                                         <td><?php echo number_format(($srs['in_transit_to_project'] ?? 0),($view_mode=='mw')?2:0);?></td>
                                         <?php endif; ?>
+                                        <td><?php echo number_format(($srs['exceptions'] ?? 0),($view_mode=='mw')?2:0);?></td>
                                         <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
                                     </tr>
                                 <?php endforeach;?>
