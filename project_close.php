@@ -383,6 +383,7 @@ function fetchPalletCosts($conn, $project_id) {
     ];
     $seenBol = [];
     $warehouseCostCache = [];
+    $palletMap = [];
 
     while ($r = $res->fetch_assoc()) {
         $bol = $r['bol_number'] ?? '';
@@ -399,28 +400,41 @@ function fetchPalletCosts($conn, $project_id) {
         $destination = $r['project_name'] ? ('Project: ' . $r['project_name']) : '';
         if (!empty($r['warehouse_name'])) { $destination = 'Warehouse: ' . $r['warehouse_name']; }
 
-        $rows[] = [
-            'pallet_id' => $pallet_id,
-            'pallet_identifier' => $r['pallet_identifier'],
-            'delivery_id' => $r['delivery_id'],
-            'bol_number' => $bol,
-            'supplier' => $r['supplier'] ?? '',
-            'destination' => $destination,
-            'status' => $r['status_of_delivery'] ?? '',
-            'wattage' => $r['wattage'] ?? '',
-            'quantity' => $r['quantity'] ?? '',
-            'truckload_cost' => $r['freight_cost'] ?? 0,
-            'accessorial_costs' => $r['accessorial_costs'] ?? 0,
-            'warehouse_cost' => $warehouse_cost,
-            'total_load_cost' => $loadCost,
-            'allocated_pallet_cost' => $allocated,
-            'warehouse_arrival_date' => $r['warehouse_arrival_date'] ?? '',
-            'left_warehouse_date' => $r['left_warehouse_date'] ?? '',
-        ];
+        // Aggregate per pallet
+        if (!isset($palletMap[$pallet_id])) {
+            $palletMap[$pallet_id] = [
+                'pallet_id' => $pallet_id,
+                'pallet_identifier' => $r['pallet_identifier'],
+                'delivery_id' => $r['delivery_id'],
+                'bol_number' => $bol,
+                'supplier' => $r['supplier'] ?? '',
+                'destination' => $destination,
+                'status' => $r['status_of_delivery'] ?? '',
+                'wattage' => $r['wattage'] ?? '',
+                'quantity' => $r['quantity'] ?? '',
+                'truckload_cost' => 0.0,
+                'accessorial_costs' => 0.0,
+                'warehouse_cost' => $warehouse_cost,
+                'total_load_cost' => 0.0,
+                'allocated_pallet_cost' => 0.0,
+                'warehouse_arrival_date' => $r['warehouse_arrival_date'] ?? '',
+                'left_warehouse_date' => $r['left_warehouse_date'] ?? '',
+            ];
+        }
 
-        $summary['pallet_count'] += 1;
-        $summary['allocated_pallet_cost'] += $allocated;
-        $summary['warehousing_total'] += $warehouse_cost;
+        $palletMap[$pallet_id]['truckload_cost'] += floatval($r['freight_cost'] ?? 0);
+        $palletMap[$pallet_id]['accessorial_costs'] += floatval($r['accessorial_costs'] ?? 0);
+        $palletMap[$pallet_id]['total_load_cost'] += $loadCost;
+        $palletMap[$pallet_id]['allocated_pallet_cost'] += $allocated;
+        // Update dates/status to the latest available
+        if (!empty($r['warehouse_arrival_date'])) {
+            $palletMap[$pallet_id]['warehouse_arrival_date'] = $r['warehouse_arrival_date'];
+        }
+        if (!empty($r['left_warehouse_date'])) {
+            $palletMap[$pallet_id]['left_warehouse_date'] = $r['left_warehouse_date'];
+        }
+
+        // Delivery-level totals for freight/accessorial/solterra
         $summary['freight_total'] += floatval($r['freight_cost'] ?? 0);
         $summary['accessorial_total'] += floatval($r['accessorial_costs'] ?? 0);
         if (!empty($r['actual_delivery_date']) && $solterra_fee > 0 && !empty($r['wattage']) && !empty($r['quantity'])) {
@@ -432,8 +446,18 @@ function fetchPalletCosts($conn, $project_id) {
         }
     }
     $stmt->close();
+
+    // Build final rows and pallet-level summaries without duplicates
+    $rows = [];
+    foreach ($palletMap as $p) {
+        $rows[] = $p;
+        $summary['pallet_count'] += 1;
+        $summary['allocated_pallet_cost'] += $p['allocated_pallet_cost'];
+        $summary['warehousing_total'] += $p['warehouse_cost'];
+    }
+
     $summary['total_cost'] = $summary['freight_total'] + $summary['accessorial_total'] + $summary['warehousing_total'] + $summary['solterra_total'];
-    return ['rows' => $rows, 'summary' => $summary];
+    return ['rows' => array_values($rows), 'summary' => $summary];
 }
 
 function fetchPalletJourney($conn, $project_id) {
