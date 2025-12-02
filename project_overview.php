@@ -121,7 +121,7 @@ $forecasted_accessorial = $forecasted_costs['accessorial'] ?? 0;
 // We compare against actual batch items, and if mismatched, we rebuild the totals.
 try {
     $actual_totals = [];
-    if ($stmtA = $conn->prepare("\n        SELECT umi.wattage, SUM(umi.quantity) AS total_qty\n        FROM unassigned_module_items umi\n        JOIN modules m ON umi.unassigned_module_id = m.id\n        WHERE m.project_id = ?\n        GROUP BY umi.wattage\n    ")) {
+    if ($stmtA = $conn->prepare("\n        SELECT umi.wattage, SUM(umi.quantity) AS total_qty\n        FROM unassigned_module_items umi\n        JOIN modules m ON umi.unassigned_module_id = m.id\n        WHERE m.project_id = ?\n          AND NOT EXISTS (\n              SELECT 1\n              FROM inventory_pallets ip\n              JOIN warranty_claim_replacements wcr ON wcr.pallet_id = ip.id\n              WHERE ip.unassigned_module_item_id = umi.id\n          )\n        GROUP BY umi.wattage\n    ")) {
         $stmtA->bind_param("i", $project_id);
         $stmtA->execute();
         $resA = $stmtA->get_result();
@@ -1280,7 +1280,14 @@ if ($total_raw_modules > 0) {
 // Fetch module batches for this project with wattage information
 $module_batches = [];
 $stmt_modules = $conn->prepare("
-    SELECT m.*, c.name as account_name
+    SELECT m.*, c.name as account_name,
+        EXISTS (
+            SELECT 1
+            FROM unassigned_module_items umi2
+            JOIN inventory_pallets ip2 ON ip2.unassigned_module_item_id = umi2.id
+            JOIN warranty_claim_replacements wcr2 ON wcr2.pallet_id = ip2.id
+            WHERE umi2.unassigned_module_id = m.id
+        ) AS is_replacement_batch
     FROM modules m 
     JOIN customer_accounts c ON m.account_id = c.id
     WHERE m.project_id = ?
@@ -4332,7 +4339,8 @@ document.addEventListener('DOMContentLoaded', function() {
                                         <?php if (!empty($module_batches)): ?>
                                             <div style="border-top:1px solid #e5e7eb; margin:6px 0;"></div>
                                             <?php foreach ($module_batches as $i => $b): ?>
-                                                <a href="edit_module_batch.php?batch_id=<?php echo (int)$b['id']; ?>&project_id=<?php echo (int)$project_id; ?>">Edit Batch <?php echo $i+1; ?>: <?php echo htmlspecialchars($b['vendor_name']); ?></a>
+                                                <?php $batchLabel = htmlspecialchars($b['vendor_name']) . (!empty($b['is_replacement_batch']) ? ' (replacement)' : ''); ?>
+                                                <a href="edit_module_batch.php?batch_id=<?php echo (int)$b['id']; ?>&project_id=<?php echo (int)$project_id; ?>">Edit Batch <?php echo $i+1; ?>: <?php echo $batchLabel; ?></a>
                                             <?php endforeach; ?>
                                         <?php endif; ?>
                                     </div>
@@ -4343,7 +4351,8 @@ document.addEventListener('DOMContentLoaded', function() {
                             <?php foreach ($module_batches as $index => $batch): ?>
                                 <div class="module-batch-section" style="<?php echo $index > 0 ? 'margin-top: 30px; border-top: 2px solid #e9ecef; padding-top: 20px;' : ''; ?>">
                                     <div class="batch-header">
-                                        <h3>Module Batch <?php echo $index + 1; ?>: <?php echo htmlspecialchars($batch['vendor_name']); ?></h3>
+                                        <?php $batchLabel = htmlspecialchars($batch['vendor_name']) . (!empty($batch['is_replacement_batch']) ? ' (replacement)' : ''); ?>
+                                        <h3>Module Batch <?php echo $index + 1; ?>: <?php echo $batchLabel; ?></h3>
                                         <div class="batch-meta">
                                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                                 <span style="color: #666; font-size: 0.9em;">
@@ -5555,7 +5564,7 @@ function updateTimelineRemainingText(filterType) {
     
     switch(filterType) {
         case 'modules':
-            remaining = totalModules - deliveredModules;
+            remaining = Math.max(0, totalModules - deliveredModules);
             unit = 'modules';
             break;
             
@@ -5570,7 +5579,7 @@ function updateTimelineRemainingText(filterType) {
             const actualPalletData = <?php echo json_encode($pallets_status_main ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
             const totalActualPallets = actualPalletData.total_order;
             const deliveredActualPallets = actualPalletData.delivered;
-            remaining = totalActualPallets - deliveredActualPallets;
+            remaining = Math.max(0, totalActualPallets - deliveredActualPallets);
             unit = 'pallets';
             break;
             
@@ -5579,12 +5588,12 @@ function updateTimelineRemainingText(filterType) {
             const avgModulesPerTruck = <?php echo !empty($weighted_avg_modules_per_truck) ? $weighted_avg_modules_per_truck : 500; ?>;
             const totalTrucks = Math.ceil(totalModules / avgModulesPerTruck);
             const deliveredTrucks = Math.floor(deliveredModules / avgModulesPerTruck);
-            remaining = totalTrucks - deliveredTrucks;
+            remaining = Math.max(0, totalTrucks - deliveredTrucks);
             unit = 'truckloads';
             break;
             
         default:
-            remaining = totalModules - deliveredModules;
+            remaining = Math.max(0, totalModules - deliveredModules);
             unit = 'modules';
     }
     
@@ -6697,7 +6706,7 @@ function updateTimelineRemainingTextAdmin() {
     
     switch(currentAdminFilter) {
         case 'modules':
-            remaining = totalModules - deliveredModules;
+            remaining = Math.max(0, totalModules - deliveredModules);
             unit = 'modules';
             break;
             
@@ -6712,7 +6721,7 @@ function updateTimelineRemainingTextAdmin() {
             const actualPalletData = <?php echo json_encode($pallets_status_main ?? [], JSON_UNESCAPED_UNICODE | JSON_HEX_APOS) ?: '{}'; ?>;
             const totalActualPallets = actualPalletData.total_order;
             const deliveredActualPallets = actualPalletData.delivered;
-            remaining = totalActualPallets - deliveredActualPallets;
+            remaining = Math.max(0, totalActualPallets - deliveredActualPallets);
             unit = 'pallets';
             break;
             
@@ -6721,12 +6730,12 @@ function updateTimelineRemainingTextAdmin() {
             const avgModulesPerTruck = <?php echo !empty($weighted_avg_modules_per_truck) ? $weighted_avg_modules_per_truck : 500; ?>;
             const totalTrucks = Math.ceil(totalModules / avgModulesPerTruck);
             const deliveredTrucks = Math.floor(deliveredModules / avgModulesPerTruck);
-            remaining = totalTrucks - deliveredTrucks;
+            remaining = Math.max(0, totalTrucks - deliveredTrucks);
             unit = 'truckloads';
             break;
             
         default:
-            remaining = totalModules - deliveredModules;
+            remaining = Math.max(0, totalModules - deliveredModules);
             unit = 'modules';
     }
     
