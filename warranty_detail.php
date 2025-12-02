@@ -65,6 +65,10 @@ if ($isAdmin) {
 // Attachments
 $pictures = jsonToArray($claim['pictures'] ?? '');
 $proofPrimary = $claim['proof_of_completion_path'] ?? '';
+$notesArr = jsonToArray($claim['notes'] ?? '');
+$replacementPlan = isset($notesArr['replacement_plan']) && is_array($notesArr['replacement_plan']) ? $notesArr['replacement_plan'] : [];
+$replacementPlanItems = (isset($replacementPlan['items']) && is_array($replacementPlan['items'])) ? $replacementPlan['items'] : [];
+$hasReplacementPlan = !empty($replacementPlanItems);
 
 // Replacement pallets linked
 $linkedIds = listLinkedReplacementPalletIds($conn, $claimId);
@@ -862,13 +866,43 @@ async function irUpload(){
                                         <div class="admin-form-group">
                                             <label class="form-label">Replacement Pallets</label>
                                             <div style="display: flex; flex-direction: column; gap: 15px;">
+                                                <?php $planPallets = 0; $planModules = 0; if ($hasReplacementPlan) { foreach ($replacementPlanItems as $rp) { $planModules += (int)($rp['total_modules'] ?? 0); $planPallets += (int)($rp['full_pallets'] ?? 0); if (!empty($rp['partial_modules'])) { $planPallets++; } } } ?>
                                                 <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
                                                     <div>
                                                         <div class="form-hint" style="margin: 0;">Currently linked: <strong><?php echo (int)count($linkedIds); ?> pallet(s)</strong></div>
+                                                        <?php if ($hasReplacementPlan): ?>
+                                                            <div class="form-hint" style="margin: 2px 0 0 0; color:#0f5132;">Staged plan: <strong><?php echo (int)$planPallets; ?> pallet<?php echo $planPallets===1?'':'s'; ?></strong> / <?php echo number_format((int)$planModules); ?> modules</div>
+                                                        <?php endif; ?>
                                                     </div>
                                                     <a class="btn btn-secondary" href="create_replacements.php?claim_id=<?php echo (int)$claimId; ?>" style="white-space: nowrap;">+ Create More Pallets</a>
                                                 </div>
-                                                
+
+                                                <?php if ($hasReplacementPlan): ?>
+                                                    <div style="background: #e8f4f6; border: 1px solid #cde6ea; border-radius: 10px; padding: 15px;">
+                                                        <h6 style="margin: 0 0 10px 0; color: #1f3b4d; font-weight: 700;">Staged Replacement Plan</h6>
+                                                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px;">
+                                                            <?php foreach ($replacementPlanItems as $rp): ?>
+                                                                <div style="background:#fff; border:1px solid #dbe9ed; border-radius:8px; padding:10px 12px;">
+                                                                    <div style="font-weight:700;"><?php echo (int)($rp['wattage'] ?? 0); ?>W</div>
+                                                                    <div style="color:#2c3e50; font-size:0.95em;">Modules/pallet: <?php echo (int)($rp['modules_per_pallet'] ?? 0); ?></div>
+                                                                    <div style="color:#2c3e50; font-size:0.95em;">Pallets: <?php echo (int)($rp['full_pallets'] ?? 0); ?> full<?php echo !empty($rp['partial_modules']) ? ' + 1 partial' : ''; ?></div>
+                                                                    <div style="color:#2c3e50; font-size:0.95em;">Total modules: <?php echo number_format((int)($rp['total_modules'] ?? 0)); ?></div>
+                                                                    <?php if (!empty($rp['pallets_per_truck']) || !empty($rp['modules_per_truck'])): ?>
+                                                                        <div style="color:#2c3e50; font-size:0.95em;">Truck load: <?php echo (int)($rp['pallets_per_truck'] ?? 0); ?> pallets / <?php echo (int)($rp['modules_per_truck'] ?? 0); ?> modules</div>
+                                                                    <?php endif; ?>
+                                                                    <?php if (!empty($rp['manufacturer'])): ?>
+                                                                        <div style="color:#2c3e50; font-size:0.95em;">Manufacturer: <?php echo htmlspecialchars((string)$rp['manufacturer']); ?></div>
+                                                                    <?php endif; ?>
+                                                                    <?php if (array_key_exists('manufacturer_location_id', $rp)): ?>
+                                                                        <div style="color:#2c3e50; font-size:0.95em;">Location ID: <?php echo ($rp['manufacturer_location_id'] === null || $rp['manufacturer_location_id'] === '') ? '—' : (int)$rp['manufacturer_location_id']; ?></div>
+                                                                    <?php endif; ?>
+                                                                </div>
+                                                            <?php endforeach; ?>
+                                                        </div>
+                                                        <div style="margin-top:10px; color:#0f5132; font-size:0.9em; font-weight:600;">Pallets will be created and linked when you apply a Replacement approval.</div>
+                                                    </div>
+                                                <?php endif; ?>
+
                                                 <?php if (!empty($linkedIds)): ?>
                                                     <div style="background: #f8f9fa; border: 1px solid #e8edf2; border-radius: 10px; padding: 15px;">
                                                         <h6 style="margin: 0 0 10px 0; color: #293E4C; font-weight: 600;">Linked Pallets:</h6>
@@ -900,7 +934,7 @@ async function irUpload(){
                                                             </div>
                                                         <?php endif; ?>
                                                     </div>
-                                                <?php else: ?>
+                                                <?php elseif (!$hasReplacementPlan): ?>
                                                     <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 10px; padding: 15px; text-align: center; color: #856404;">
                                                         <strong>No replacement pallets linked yet.</strong><br>
                                                         <span style="font-size: 0.9em;">Create replacement pallets to proceed with this resolution.</span>
@@ -1317,7 +1351,8 @@ document.addEventListener('DOMContentLoaded', () => {
       // For Replacement approvals, require at least one linked pallet
       if (rt === 'Replacement') {
         const hasLinked = <?php echo !empty($linkedIds) ? 'true' : 'false'; ?>;
-        if (!hasLinked) { showError('Replacement requires at least one linked pallet'); return; }
+        const hasPlan = <?php echo $hasReplacementPlan ? 'true' : 'false'; ?>;
+        if (!hasLinked && !hasPlan) { showError('Replacement requires a linked pallet or a staged replacement plan'); return; }
       }
       // Approval requires either a public update or at least one uploaded file
       const publicNotes = (document.querySelector('textarea[name="public_notes"]')?.value || '').trim();
