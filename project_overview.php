@@ -585,13 +585,35 @@ foreach ($warranty_damaged_pallets as $damaged_pallet) {
 }
 
 // Helper to sum converted quantity for a status across breakdowns
-function sumStatusConverted(array $breakdown, string $status, string $view_mode): float {
+function sumStatusConverted(array $breakdown, string $status, string $view_mode, ?float $avg_pallets_per_truck = null, ?float $avg_modules_per_truck = null, ?float $default_mpp = null): float {
     $total = 0;
     foreach ($breakdown as $key => $info) {
         if (strpos($key, $status) !== 0 && $key !== $status) { continue; }
         foreach ($info['wattage_breakdown'] as $w => $wd) {
             $mods = (int)($wd['modules'] ?? 0);
-            $total += calculateQuantity($mods, (int)$w, $view_mode);
+            $pals = (int)($wd['pallets'] ?? 0);
+            switch ($view_mode) {
+                case 'modules':
+                    $total += $mods;
+                    break;
+                case 'pallets':
+                    $total += $pals;
+                    break;
+                case 'truckloads':
+                    if ($avg_modules_per_truck && $avg_modules_per_truck > 0) {
+                        $total += $mods / $avg_modules_per_truck;
+                    } elseif ($avg_pallets_per_truck && $avg_pallets_per_truck > 0) {
+                        $total += $pals / $avg_pallets_per_truck;
+                    } elseif ($default_mpp && $default_mpp > 0) {
+                        $total += ($mods / $default_mpp) / ($avg_pallets_per_truck && $avg_pallets_per_truck>0 ? $avg_pallets_per_truck : 1);
+                    }
+                    break;
+                case 'mw':
+                case 'mws':
+                default:
+                    $total += calculateQuantity($mods, (int)$w, $view_mode);
+                    break;
+            }
         }
     }
     return $total;
@@ -621,8 +643,8 @@ $replacement_delta_display = [
 
 $statuses_calc = ['At Manufacturer','On Water','Cleared Customs','In Transit to Warehouse','In Warehouse','In Transit to Project','Delivered to Project','Damaged'];
 foreach ($statuses_calc as $status) {
-    $base_val = sumStatusConverted($detailed_breakdown, $status, $view_mode);
-    $repl_val = sumStatusConverted($replacement_detailed_breakdown, $status, $view_mode);
+    $base_val = sumStatusConverted($detailed_breakdown, $status, $view_mode, $average_pallets_per_truck ?? null, $average_modules_per_truck ?? null, $modules_per_pallet ?? null);
+    $repl_val = sumStatusConverted($replacement_detailed_breakdown, $status, $view_mode, $average_pallets_per_truck ?? null, $average_modules_per_truck ?? null, $modules_per_pallet ?? null);
     $combined = $base_val + $repl_val;
     $replacement_delta_display[$status] = $repl_val;
     switch ($status) {
@@ -639,6 +661,9 @@ foreach ($statuses_calc as $status) {
 
 // Also adjust pallet counts for display (base + replacements)
 foreach ($replacement_status_totals as $st => $arr) {
+// Combined delivered modules (base + replacements) for timeline/truckloads
+$delivered_modules_combined = (int)($status_totals['Delivered to Project']['modules'] ?? 0);
+
     if (!isset($status_totals[$st])) { $status_totals[$st] = ['pallets'=>0,'modules'=>0]; }
     $status_totals[$st]['pallets'] += (int)($arr['pallets'] ?? 0);
     $status_totals[$st]['modules'] += (int)($arr['modules'] ?? 0);
@@ -1500,50 +1525,50 @@ foreach ($statuses_of_interest as $s) {
 $damaged_pallets_main = (int)($status_totals['Damaged']['pallets'] ?? 0);
 $pallets_status_main['exceptions'] = $damaged_pallets_main;
 
-// Build per-wattage pallets for sub rows using detailed_breakdown actuals
+// Build per-wattage pallets for sub rows using combined (base + replacement) breakdowns
 $pallets_sub_rows_status = [];
-foreach ($statuses_of_interest as $s) {
-    foreach ($detailed_breakdown as $key => $breakdown) {
-        // Normalize key to base status (strip location suffixes like " - <name>")
-        $base = explode(' - ', $key)[0];
-        if ($base !== $s) continue;
-        foreach ($breakdown['wattage_breakdown'] as $w => $wd) {
-            $label = $w . 'W';
-            if (!isset($pallets_sub_rows_status[$label])) {
-                $pallets_sub_rows_status[$label] = [
-                    'total_order' => 0,
-                    'delivered' => 0,
-                    'at_manufacturer' => 0,
-                    'on_water' => 0,
-                    'cleared_customs' => 0,
-                    'in_transit_to_warehouse' => 0,
-                    'in_warehouse' => 0,
-                    'in_transit_to_project' => 0,
-                    'exceptions' => 0,
-                ];
-            }
-            $pal = (int)($wd['pallets'] ?? 0);
-            switch ($s) {
-                case 'At Manufacturer': $pallets_sub_rows_status[$label]['at_manufacturer'] += $pal; break;
-                case 'On Water': $pallets_sub_rows_status[$label]['on_water'] += $pal; break;
-                case 'Cleared Customs': $pallets_sub_rows_status[$label]['cleared_customs'] += $pal; break;
-                case 'In Transit to Warehouse': $pallets_sub_rows_status[$label]['in_transit_to_warehouse'] += $pal; break;
-                case 'In Warehouse': $pallets_sub_rows_status[$label]['in_warehouse'] += $pal; break;
-                case 'In Transit to Project': $pallets_sub_rows_status[$label]['in_transit_to_project'] += $pal; break;
-                case 'Delivered to Project': $pallets_sub_rows_status[$label]['delivered'] += $pal; break;
-            }
-            $pallets_sub_rows_status[$label]['total_order'] += $pal;
+$statuses_for_sub = ['At Manufacturer','On Water','Cleared Customs','In Transit to Warehouse','In Warehouse','In Transit to Project','Delivered to Project','Damaged'];
+
+// Helper to pull wattage totals for a status from a breakdown set
+function collectStatusWattageTotals(array $breakdown, string $status): array {
+    $out = [];
+    foreach ($breakdown as $key => $info) {
+        if (strpos($key, $status) !== 0 && $key !== $status) { continue; }
+        foreach ($info['wattage_breakdown'] as $w => $wd) {
+            if (!isset($out[$w])) { $out[$w] = ['pallets'=>0,'modules'=>0]; }
+            $out[$w]['pallets'] += (int)($wd['pallets'] ?? 0);
+            $out[$w]['modules'] += (int)($wd['modules'] ?? 0);
         }
+    }
+    return $out;
+}
+
+// Precompute combined wattage totals per status
+$combined_status_wattage = [];
+foreach ($statuses_for_sub as $st) {
+    $base = collectStatusWattageTotals($detailed_breakdown, $st);
+    $repl = collectStatusWattageTotals($replacement_detailed_breakdown, $st);
+    $combined_status_wattage[$st] = [];
+    foreach ($base as $w => $vals) {
+        if (!isset($combined_status_wattage[$st][$w])) { $combined_status_wattage[$st][$w] = ['pallets'=>0,'modules'=>0,'repl_pallets'=>0,'repl_modules'=>0]; }
+        $combined_status_wattage[$st][$w]['pallets'] += $vals['pallets'];
+        $combined_status_wattage[$st][$w]['modules'] += $vals['modules'];
+    }
+    foreach ($repl as $w => $vals) {
+        if (!isset($combined_status_wattage[$st][$w])) { $combined_status_wattage[$st][$w] = ['pallets'=>0,'modules'=>0,'repl_pallets'=>0,'repl_modules'=>0]; }
+        $combined_status_wattage[$st][$w]['pallets'] += $vals['pallets'];
+        $combined_status_wattage[$st][$w]['modules'] += $vals['modules'];
+        $combined_status_wattage[$st][$w]['repl_pallets'] += $vals['pallets'];
+        $combined_status_wattage[$st][$w]['repl_modules'] += $vals['modules'];
     }
 }
 
-// Map damaged counts into sub rows
-if (!empty($damaged_by_wattage)) {
-    foreach ($damaged_by_wattage as $w => $info) {
-        $label = $w . 'W';
+foreach ($combined_status_wattage as $statusKey => $wMap) {
+    foreach ($wMap as $wattage => $vals) {
+        $label = $wattage . 'W';
         if (!isset($pallets_sub_rows_status[$label])) {
             $pallets_sub_rows_status[$label] = [
-                'total_order' => 0,
+                'total_order' => isset($total_orders[$label]) ? $total_orders[$label]['total_order'] : 0,
                 'delivered' => 0,
                 'at_manufacturer' => 0,
                 'on_water' => 0,
@@ -1552,9 +1577,30 @@ if (!empty($damaged_by_wattage)) {
                 'in_warehouse' => 0,
                 'in_transit_to_project' => 0,
                 'exceptions' => 0,
+                'repl_deltas' => [
+                    'at_manufacturer' => 0,
+                    'on_water' => 0,
+                    'cleared_customs' => 0,
+                    'in_transit_to_warehouse' => 0,
+                    'in_warehouse' => 0,
+                    'in_transit_to_project' => 0,
+                    'delivered' => 0,
+                    'exceptions' => 0,
+                ]
             ];
         }
-        $pallets_sub_rows_status[$label]['exceptions'] = (int)($info['pallets'] ?? 0);
+        $converted = calculateQuantity($vals['modules'], $wattage, $view_mode);
+        $repl_converted = calculateQuantity($vals['repl_modules'] ?? 0, $wattage, $view_mode);
+        switch ($statusKey) {
+            case 'At Manufacturer': $pallets_sub_rows_status[$label]['at_manufacturer'] += $converted; $pallets_sub_rows_status[$label]['repl_deltas']['at_manufacturer'] += $repl_converted; break;
+            case 'On Water': $pallets_sub_rows_status[$label]['on_water'] += $converted; $pallets_sub_rows_status[$label]['repl_deltas']['on_water'] += $repl_converted; break;
+            case 'Cleared Customs': $pallets_sub_rows_status[$label]['cleared_customs'] += $converted; $pallets_sub_rows_status[$label]['repl_deltas']['cleared_customs'] += $repl_converted; break;
+            case 'In Transit to Warehouse': $pallets_sub_rows_status[$label]['in_transit_to_warehouse'] += $converted; $pallets_sub_rows_status[$label]['repl_deltas']['in_transit_to_warehouse'] += $repl_converted; break;
+            case 'In Warehouse': $pallets_sub_rows_status[$label]['in_warehouse'] += $converted; $pallets_sub_rows_status[$label]['repl_deltas']['in_warehouse'] += $repl_converted; break;
+            case 'In Transit to Project': $pallets_sub_rows_status[$label]['in_transit_to_project'] += $converted; $pallets_sub_rows_status[$label]['repl_deltas']['in_transit_to_project'] += $repl_converted; break;
+            case 'Delivered to Project': $pallets_sub_rows_status[$label]['delivered'] += $converted; $pallets_sub_rows_status[$label]['repl_deltas']['delivered'] += $repl_converted; break;
+            case 'Damaged': $pallets_sub_rows_status[$label]['exceptions'] += $converted; $pallets_sub_rows_status[$label]['repl_deltas']['exceptions'] += $repl_converted; break;
+        }
     }
 }
 
@@ -4950,30 +4996,30 @@ document.addEventListener('DOMContentLoaded', function() {
                                     <td><?php echo number_format($in_transit_to_project_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['In Transit to Project'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['In Transit to Project'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                     <?php endif; ?>
                                     <td><?php echo number_format($exceptions_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['Damaged'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['Damaged'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
-                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?></td>
+                                    <td><?php echo number_format($delivered_combined,($view_mode=='mw')?2:0);?><?php if (($replacement_delta_display['Delivered to Project'] ?? 0) > 0): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($replacement_delta_display['Delivered to Project'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                 </tr>
                                 <?php foreach($sub_rows_status as $lbl=>$srs): ?>
                                     <tr class="status-row" style="display:none;">
                                         <td><?php echo htmlspecialchars($srs['wattage_label']);?></td>
                                         <td><?php echo number_format($srs['total_order'],($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format(($srs['at_manufacturer'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(($srs['at_manufacturer'] ?? 0),($view_mode=='mw')?2:0);?><?php if (!empty($srs['repl_deltas']['at_manufacturer'])): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($srs['repl_deltas']['at_manufacturer'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                         <?php if ($on_water_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['on_water'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(($srs['on_water'] ?? 0),($view_mode=='mw')?2:0);?><?php if (!empty($srs['repl_deltas']['on_water'])): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($srs['repl_deltas']['on_water'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                         <?php endif; ?>
                                         <?php if ($cleared_customs_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['cleared_customs'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(($srs['cleared_customs'] ?? 0),($view_mode=='mw')?2:0);?><?php if (!empty($srs['repl_deltas']['cleared_customs'])): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($srs['repl_deltas']['cleared_customs'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                         <?php endif; ?>
                                         <?php if ($in_transit_to_warehouse_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['in_transit_to_warehouse'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(($srs['in_transit_to_warehouse'] ?? 0),($view_mode=='mw')?2:0);?><?php if (!empty($srs['repl_deltas']['in_transit_to_warehouse'])): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($srs['repl_deltas']['in_transit_to_warehouse'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                         <?php endif; ?>
                                         <?php if ($in_warehouse_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['in_warehouse'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(($srs['in_warehouse'] ?? 0),($view_mode=='mw')?2:0);?><?php if (!empty($srs['repl_deltas']['in_warehouse'])): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($srs['repl_deltas']['in_warehouse'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                         <?php endif; ?>
                                         <?php if ($in_transit_to_project_combined > 0): ?>
-                                        <td><?php echo number_format(($srs['in_transit_to_project'] ?? 0),($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(($srs['in_transit_to_project'] ?? 0),($view_mode=='mw')?2:0);?><?php if (!empty($srs['repl_deltas']['in_transit_to_project'])): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($srs['repl_deltas']['in_transit_to_project'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                         <?php endif; ?>
-                                        <td><?php echo number_format(($srs['exceptions'] ?? 0),($view_mode=='mw')?2:0);?></td>
-                                        <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?></td>
+                                        <td><?php echo number_format(($srs['exceptions'] ?? 0),($view_mode=='mw')?2:0);?><?php if (!empty($srs['repl_deltas']['exceptions'])): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($srs['repl_deltas']['exceptions'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
+                                        <td><?php echo number_format($srs['delivered'],($view_mode=='mw')?2:0);?><?php if (!empty($srs['repl_deltas']['delivered'])): ?><span style="color:#0f5132;font-size:0.85em;margin-left:4px;">(+<?php echo number_format($srs['repl_deltas']['delivered'],($view_mode=='mw')?2:0); ?> repl)</span><?php endif; ?></td>
                                     </tr>
                                 <?php endforeach;?>
                             </tbody>
@@ -5646,7 +5692,7 @@ function updateTimelineRemainingText(filterType) {
     
     // Get project data for calculations  
     const totalModules = <?php echo (int)($total_raw_modules ?? 0); ?>;
-    const deliveredModules = <?php echo (int)($delivered_raw_total ?? 0); ?>;
+    const deliveredModules = <?php echo (int)($delivered_modules_combined ?? 0); ?>;
     const projectSizeMW = <?php echo is_numeric($project_size_mw) ? round($project_size_mw, 2) : 0; ?>;
     
     // Calculate delivered MW (approximate based on delivered/total ratio)
@@ -5678,11 +5724,10 @@ function updateTimelineRemainingText(filterType) {
             break;
             
         case 'truckloads':
-            // Estimate truckloads based on modules (using average modules per truck if available)  
-            const avgModulesPerTruck = <?php echo !empty($weighted_avg_modules_per_truck) ? $weighted_avg_modules_per_truck : 500; ?>;
-            const totalTrucks = Math.ceil(totalModules / avgModulesPerTruck);
-            const deliveredTrucks = Math.floor(deliveredModules / avgModulesPerTruck);
-            remaining = totalTrucks - deliveredTrucks;
+            const avgModulesPerTruck = <?php echo ($average_modules_per_truck ?? 0) > 0 ? $average_modules_per_truck : 500; ?>;
+            const totalTrucks = avgModulesPerTruck > 0 ? (totalModules / avgModulesPerTruck) : 0;
+            const deliveredTrucks = avgModulesPerTruck > 0 ? (deliveredModules / avgModulesPerTruck) : 0;
+            remaining = Math.max(0, parseFloat((totalTrucks - deliveredTrucks).toFixed(1)));
             unit = 'truckloads';
             break;
             
@@ -6820,11 +6865,10 @@ function updateTimelineRemainingTextAdmin() {
             break;
             
         case 'truckloads':
-            // Estimate truckloads based on modules (using average modules per truck if available)  
-            const avgModulesPerTruck = <?php echo !empty($weighted_avg_modules_per_truck) ? $weighted_avg_modules_per_truck : 500; ?>;
-            const totalTrucks = Math.ceil(totalModules / avgModulesPerTruck);
-            const deliveredTrucks = Math.floor(deliveredModules / avgModulesPerTruck);
-            remaining = totalTrucks - deliveredTrucks;
+            const avgModulesPerTruck = <?php echo ($average_modules_per_truck ?? 0) > 0 ? $average_modules_per_truck : 500; ?>;
+            const totalTrucks = avgModulesPerTruck > 0 ? (totalModules / avgModulesPerTruck) : 0;
+            const deliveredTrucks = avgModulesPerTruck > 0 ? (deliveredModules / avgModulesPerTruck) : 0;
+            remaining = Math.max(0, parseFloat((totalTrucks - deliveredTrucks).toFixed(1)));
             unit = 'truckloads';
             break;
             
