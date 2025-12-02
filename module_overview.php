@@ -475,6 +475,12 @@ $item_wattage_by_id = [];
 $replacement_totals = ['pallets' => 0, 'modules' => 0];
 // Replacement module totals by wattage (to subtract from 'ordered')
 $replacement_modules_by_wattage = [];
+// Damaged tracking for display
+$damaged_totals = ['pallets' => 0, 'modules' => 0];
+$damaged_by_batch_wattage = [];
+$damaged_by_wattage = [];
+// Replacement batch flags for labeling
+$replacement_batch_set = [];
 
 $account_id_for_admin = null;
 $errorMessage = '';
@@ -756,6 +762,7 @@ try {
             if ($batchId !== null && isset($batch_wattage_summary[$batchId][$wattage])) {
                 // Exclude pallets created as replacements from palletization math, but still display below
                 $isReplacement = isset($replacement_pallet_id_set[(int)$pallet['id']]);
+                if ($isReplacement && $batchId !== null) { $replacement_batch_set[$batchId] = true; }
                 // Always count pallets (including replacements) toward display palletization
                 $qty = (int)$pallet['quantity'];
                 $batch_wattage_summary[$batchId][$wattage]['palletized_quantity'] += $qty;
@@ -856,6 +863,31 @@ try {
             $wattage = $pallet['wattage'];
             $status = $pallet['status'];
             $quantity = $pallet['quantity'];
+            $umiId = (int)$pallet['unassigned_module_item_id'];
+            $batchId = $umi_id_to_batch_id[$umiId] ?? null;
+            $isReplacementDamaged = isset($replacement_pallet_id_set[(int)$pallet['id']]);
+            if ($isReplacementDamaged && $batchId !== null) { $replacement_batch_set[$batchId] = true; }
+            if ($batchId !== null && isset($batch_wattage_summary[$batchId][$wattage])) {
+                $batch_wattage_summary[$batchId][$wattage]['palletized_quantity'] += (int)$quantity;
+                if (!isset($batch_wattage_summary[$batchId][$wattage]['pallet_distribution'][$quantity])) {
+                    $batch_wattage_summary[$batchId][$wattage]['pallet_distribution'][$quantity] = 0;
+                }
+                $batch_wattage_summary[$batchId][$wattage]['pallet_distribution'][$quantity]++;
+                if (!isset($wattage_summary[$wattage]['pallet_distribution'][$quantity])) {
+                    $wattage_summary[$wattage]['pallet_distribution'][$quantity] = 0;
+                }
+                $wattage_summary[$wattage]['pallet_distribution'][$quantity]++;
+                $wattage_summary[$wattage]['palletized_quantity'] += (int)$quantity;
+                if (!isset($damaged_by_batch_wattage[$batchId])) { $damaged_by_batch_wattage[$batchId] = []; }
+                if (!isset($damaged_by_batch_wattage[$batchId][$wattage])) { $damaged_by_batch_wattage[$batchId][$wattage] = ['pallets' => 0, 'modules' => 0]; }
+                $damaged_by_batch_wattage[$batchId][$wattage]['pallets'] += 1;
+                $damaged_by_batch_wattage[$batchId][$wattage]['modules'] += (int)$quantity;
+            }
+            if (!isset($damaged_by_wattage[$wattage])) { $damaged_by_wattage[$wattage] = ['pallets' => 0, 'modules' => 0]; }
+            $damaged_by_wattage[$wattage]['pallets'] += 1;
+            $damaged_by_wattage[$wattage]['modules'] += (int)$quantity;
+            $damaged_totals['pallets'] += 1;
+            $damaged_totals['modules'] += (int)$quantity;
             
             // Add to pallets array for display
             if ($pallet['status'] === 'Damaged') {
@@ -1528,7 +1560,7 @@ $conn->close();
                         <h3 style="margin-top: 0; color: #293E4C;">Module Batch Details:</h3>
                         <?php foreach ($module_batches as $batch): ?>
                             <div style="margin-bottom: 10px; padding: 10px; background-color: white; border-left: 4px solid #488C9A; border-radius: 4px;">
-                                <strong>Batch:</strong> <?php echo htmlspecialchars($batch['vendor_name']); ?> 
+                                <strong>Batch:</strong> <?php echo htmlspecialchars($batch['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch['id']]) ? ' (replacements)' : ''; ?> 
                                 <span style="color: #666;">(ID: <?php echo $batch['id']; ?>)</span><br>
                                 <strong>Initial Location:</strong> <?php echo htmlspecialchars($batch['initial_location']); ?><br>
                                 <strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($batch['created_at'])); ?>
@@ -1539,7 +1571,7 @@ $conn->close();
                         <?php endforeach; ?>
                     </div>
                 <?php elseif (count($module_batches) === 1): ?>
-                    <p><strong>Batch:</strong> <?php echo htmlspecialchars($module_batches[0]['vendor_name']); ?></p>
+                    <p><strong>Batch:</strong> <?php echo htmlspecialchars($module_batches[0]['vendor_name']); ?><?php echo !empty($replacement_batch_set[$module_batches[0]['id']] ?? null) ? ' (replacements)' : ''; ?></p>
                     <p><strong>Account:</strong> <?php echo htmlspecialchars($module_batches[0]['account_name']); ?></p>
                     <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($module_batches[0]['initial_location']); ?></p>
                     <p><strong>Date Added:</strong> <?php echo date('Y-m-d H:i', strtotime($module_batches[0]['created_at'])); ?></p>
@@ -1549,7 +1581,7 @@ $conn->close();
                 <?php endif; ?>
                 
             <?php else: ?>
-                <h1>Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?></h1>
+                <h1>Module Batch: <?php echo htmlspecialchars($batch_data['vendor_name']); ?><?php echo !empty($replacement_batch_set[$batch_data['id']] ?? null) ? ' (replacements)' : ''; ?></h1>
                 <p><strong>Account:</strong> <?php echo htmlspecialchars($batch_data['account_name']); ?></p>
                 <p><strong>Initial Location:</strong> <?php echo htmlspecialchars($batch_data['initial_location']); ?></p>
                 <p><strong>Assigned Project:</strong> 
@@ -1577,7 +1609,7 @@ $conn->close();
                 <?php if ($view_mode === 'project' && !empty($batch_wattage_summary)): ?>
                     <?php foreach ($module_batches as $batch): $bId = (int)$batch['id']; ?>
                         <div style="width: 100%; background:#f7fbfc; border:1px solid #e2ecef; padding:12px; border-radius:8px; margin-bottom: 20px;">
-                            <h3 style="margin-top:0; color:#293E4C;">Batch #<?php echo $bId; ?> — <?php echo htmlspecialchars($batch['vendor_name'] ?? ''); ?></h3>
+                            <h3 style="margin-top:0; color:#293E4C;">Batch #<?php echo $bId; ?> — <?php echo htmlspecialchars($batch['vendor_name'] ?? ''); ?><?php echo !empty($replacement_batch_set[$bId]) ? ' (replacements)' : ''; ?></h3>
                             <?php if (!empty($batch_wattage_summary[$bId])): ?>
                                 <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-top: 15px;">
                                 <?php foreach ($batch_wattage_summary[$bId] as $wattage => $data): ?>
@@ -1585,6 +1617,9 @@ $conn->close();
                                         <h4><?php echo htmlspecialchars($wattage); ?>W Modules</h4>
                                         <p><strong>Ordered:</strong> <?php echo number_format($data['ordered_quantity']); ?></p>
                                         <p><strong>On Pallets:</strong> <?php echo number_format($data['palletized_quantity']); ?></p>
+                                        <?php $damP = $damaged_by_batch_wattage[$bId][$wattage]['pallets'] ?? 0; $damM = $damaged_by_batch_wattage[$bId][$wattage]['modules'] ?? 0; if ($damM > 0): ?>
+                                            <p style="color:#b45309; font-size:0.92em;"><strong>Includes Damaged:</strong> <?php echo (int)$damP; ?> pallet<?php echo $damP===1?'':'s'; ?> (<?php echo number_format($damM); ?> modules)</p>
+                                        <?php endif; ?>
                                         <?php if ($data['palletized_quantity'] > 0 && !empty($data['pallet_distribution'])): ?>
                                             <div style="margin: 8px 0; padding: 8px; background-color: #f8f9fa; border-radius: 4px; border-left: 3px solid #488C9A;">
                                                 <strong>Pallet Distribution:</strong><br>
@@ -1648,6 +1683,9 @@ $conn->close();
                             <h4><?php echo htmlspecialchars($wattage); ?>W Modules</h4>
                             <p><strong>Ordered:</strong> <?php echo number_format($data['ordered_quantity']); ?></p>
                             <p><strong>On Pallets:</strong> <?php echo number_format($data['palletized_quantity']); ?></p>
+                            <?php $damP2 = $damaged_by_wattage[$wattage]['pallets'] ?? 0; $damM2 = $damaged_by_wattage[$wattage]['modules'] ?? 0; if ($damM2 > 0): ?>
+                                <p style="color:#b45309; font-size:0.92em;"><strong>Includes Damaged:</strong> <?php echo (int)$damP2; ?> pallet<?php echo $damP2===1?'':'s'; ?> (<?php echo number_format($damM2); ?> modules)</p>
+                            <?php endif; ?>
                             
                             <?php if ($data['palletized_quantity'] > 0 && !empty($data['pallet_distribution'])): ?>
                                 <div style="margin: 8px 0; padding: 8px; background-color: #f8f9fa; border-radius: 4px; border-left: 3px solid #488C9A;">
