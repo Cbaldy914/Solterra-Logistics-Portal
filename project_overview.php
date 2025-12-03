@@ -1390,6 +1390,7 @@ if ($total_modules_for_mpt > 0 && $weighted_mpt_sum > 0) {
 } else {
     $average_modules_per_truck = null;
 }
+$weighted_avg_modules_per_truck = $average_modules_per_truck;
 
 $average_modules_per_pallet = null;
 if ($has_modules_per_pallet_data && $total_modules_for_mpp > 0) {
@@ -5249,29 +5250,14 @@ function generateShippingContent(filter){
         const totalDeliveredMW = <?php echo $delivered_combined; ?>;
         const totalPallets = Math.round(totalDeliveredRaw / 30);
         
-        const deliveredDamagedTotal = <?php echo $delivered_damaged_total; ?>;
-        const deliveredPalletsText = deliveredDamagedTotal > 0 ? 
-            `${totalPallets} pallets (${Math.ceil(deliveredDamagedTotal / 30)} damaged)` : 
-            `${totalPallets} pallets`;
-        const deliveredModulesText = deliveredDamagedTotal > 0 ? 
-            `${totalDeliveredRaw.toLocaleString()} modules (${deliveredDamagedTotal} damaged)` : 
-            `${totalDeliveredRaw.toLocaleString()} modules`;
-        
-        const palletDisplay = deliveredDamagedTotal > 0 ? 
-            `${totalPallets}<br><small style="color:#e65100;">(${Math.ceil(deliveredDamagedTotal / 30)} damaged)</small>` : 
-            totalPallets;
-        const moduleDisplay = deliveredDamagedTotal > 0 ? 
-            `${totalDeliveredRaw.toLocaleString()}<br><small style="color:#e65100;">(${deliveredDamagedTotal} damaged)</small>` : 
-            totalDeliveredRaw.toLocaleString();
-        
         html += `<div style="margin-bottom:20px;padding:20px;background:#e8f5e8;border-radius:12px;border-left:4px solid #28a745;">` +
                `<h4 style="margin-top:0;color:#28a745;">🎉 Delivered to Project</h4>` +
                `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin:15px 0;">` +
                `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
-               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${palletDisplay}</div>` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalPallets}</div>` +
                `<div style="font-size:0.9rem;color:#666;">Pallets</div></div>` +
                `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
-               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${moduleDisplay}</div>` +
+               `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalDeliveredRaw.toLocaleString()}</div>` +
                `<div style="font-size:0.9rem;color:#666;">Modules</div></div>` +
                `<div style="text-align:center;padding:15px;background:white;border-radius:8px;">` +
                `<div style="font-size:1.8rem;font-weight:700;color:#28a745;">${totalDeliveredMW.toFixed(2)}</div>` +
@@ -5585,7 +5571,7 @@ function updateTimelineRemainingText(filterType) {
             
         case 'truckloads':
             // Estimate truckloads based on modules (using average modules per truck if available)  
-            const avgModulesPerTruck = <?php echo !empty($weighted_avg_modules_per_truck) ? $weighted_avg_modules_per_truck : 500; ?>;
+            const avgModulesPerTruck = <?php echo ($weighted_avg_modules_per_truck !== null && $weighted_avg_modules_per_truck > 0) ? (int)$weighted_avg_modules_per_truck : 500; ?>;
             const totalTrucks = Math.ceil(totalModules / avgModulesPerTruck);
             const deliveredTrucks = Math.floor(deliveredModules / avgModulesPerTruck);
             remaining = Math.max(0, totalTrucks - deliveredTrucks);
@@ -5672,7 +5658,8 @@ function updateCustomerShippingBoxes(filterType, section) {
             if (isNaN(value)) {
                 statusCount.textContent = 'N/A';
             } else if (filterType === 'truckloads' || filterType === 'mws') {
-                statusCount.textContent = value % 1 === 0 ? value.toString() : value.toFixed(1);
+                const decimals = filterType === 'mws' ? 2 : 1;
+                statusCount.textContent = value % 1 === 0 ? value.toString() : value.toFixed(decimals);
             } else {
                 statusCount.textContent = Math.round(value).toLocaleString();
             }
@@ -6619,7 +6606,8 @@ function updateShippingBoxes(filterType) {
             if (isNaN(value)) {
                 statusCount.textContent = 'N/A';
             } else if (filterType === 'truckloads' || filterType === 'mws') {
-                statusCount.textContent = value % 1 === 0 ? value.toString() : value.toFixed(1);
+                const decimals = filterType === 'mws' ? 2 : 1;
+                statusCount.textContent = value % 1 === 0 ? value.toString() : value.toFixed(decimals);
             } else {
                 statusCount.textContent = Math.round(value).toLocaleString();
             }
@@ -6727,7 +6715,7 @@ function updateTimelineRemainingTextAdmin() {
             
         case 'truckloads':
             // Estimate truckloads based on modules (using average modules per truck if available)  
-            const avgModulesPerTruck = <?php echo !empty($weighted_avg_modules_per_truck) ? $weighted_avg_modules_per_truck : 500; ?>;
+            const avgModulesPerTruck = <?php echo ($weighted_avg_modules_per_truck !== null && $weighted_avg_modules_per_truck > 0) ? (int)$weighted_avg_modules_per_truck : 500; ?>;
             const totalTrucks = Math.ceil(totalModules / avgModulesPerTruck);
             const deliveredTrucks = Math.floor(deliveredModules / avgModulesPerTruck);
             remaining = Math.max(0, totalTrucks - deliveredTrucks);
