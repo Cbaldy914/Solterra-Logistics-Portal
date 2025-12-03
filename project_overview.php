@@ -6230,13 +6230,8 @@ function generateCustomerShippingContent(status) {
             totalMWs = ((totalDeliveredRaw * avgWattage) / 1000000).toFixed(2);
         }
         
-        const customerDeliveredDamagedTotal = <?php echo (int)($delivered_damaged_total ?? 0); ?>;
-        const palletDisplay = customerDeliveredDamagedTotal > 0 ? 
-            `${totalPallets}<br><small style="color:#e65100;">(${Math.ceil(customerDeliveredDamagedTotal / 30)} damaged)</small>` : 
-            totalPallets;
-        const moduleDisplay = customerDeliveredDamagedTotal > 0 ? 
-            `${totalDeliveredRaw.toLocaleString()}<br><small style="color:#e65100;">(${customerDeliveredDamagedTotal} damaged)</small>` : 
-            totalDeliveredRaw.toLocaleString();
+        const palletDisplay = totalPallets;
+        const moduleDisplay = totalDeliveredRaw.toLocaleString();
         
         html += `<div style="margin-bottom:20px;padding:20px;background:#e8f5e8;border-radius:12px;border-left:4px solid #28a745;">` +
                `<h4 style="margin-top:0;color:#28a745;">🎉 Delivered to Project</h4>` +
