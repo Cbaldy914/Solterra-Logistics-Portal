@@ -2093,7 +2093,6 @@ $conn->close();
                     <button type="button" onclick="window.location.href='<?php echo htmlspecialchars($delivery_next_url, ENT_QUOTES, 'UTF-8'); ?>';" <?php echo ($delivery_page >= $delivery_total_pages) ? 'disabled' : ''; ?>>Next</button>
                 </div>
             </div>
-        <?php endif; ?>
 
         <!-- Deliveries Table -->
         <div class="table-container">
@@ -2234,6 +2233,7 @@ $conn->close();
                 </tbody>
             </table>
         </div>
+        <?php endif; ?>
     </div>
 
     <!-- Pallets Tab -->
