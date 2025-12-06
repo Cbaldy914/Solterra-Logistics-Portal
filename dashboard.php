@@ -563,6 +563,49 @@ $conn->close();
             font-size: 1.2em;
             font-weight: 600;
         }
+
+        /* View Toggle Styles */
+        .view-toggle-container {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+
+        .view-toggle {
+            display: inline-flex;
+            background: #f1f3f4;
+            border-radius: 12px;
+            padding: 4px;
+            gap: 4px;
+        }
+
+        .view-toggle a {
+            padding: 12px 24px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.95em;
+            text-decoration: none;
+            color: #6c757d;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .view-toggle a:hover {
+            color: #293E4C;
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        .view-toggle a.active {
+            background: #ffffff;
+            color: #293E4C;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .view-toggle-icon {
+            font-size: 1.1em;
+        }
     </style>
 </head>
 <body>
@@ -572,6 +615,20 @@ $conn->close();
     <div class="dashboard-header">
         <h1>Welcome back, <?php echo htmlspecialchars($displayName); ?>!</h1>
         <p>Here's an overview of your projects and recent activity</p>
+    </div>
+
+    <!-- View Toggle -->
+    <div class="view-toggle-container">
+        <div class="view-toggle">
+            <a href="dashboard.php" class="active">
+                <span class="view-toggle-icon">📊</span>
+                Active Projects
+            </a>
+            <a href="project_planning.php">
+                <span class="view-toggle-icon">📋</span>
+                Project Planning
+            </a>
+        </div>
     </div>
 
     <!-- Dashboard Statistics -->
