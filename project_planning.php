@@ -84,8 +84,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $stmt = $conn->prepare("INSERT INTO planning_scenarios (account_id, name, description, created_by) VALUES (?, ?, ?, ?)");
             $stmt->bind_param("issi", $primaryAccountId, $scenarioName, $scenarioDesc, $user_id);
             if ($stmt->execute()) {
-                $message = "Scenario '{$scenarioName}' created successfully!";
-                $messageType = 'success';
+                $newScenarioId = $conn->insert_id;
+                $stmt->close();
+                $conn->close();
+                // Redirect to the new scenario detail page
+                header("Location: scenario_detail.php?id=" . $newScenarioId);
+                exit();
             } else {
                 $message = "Error creating scenario: " . $conn->error;
                 $messageType = 'error';
@@ -538,8 +542,8 @@ $conn->close();
             font-weight: 600;
         }
 
-        /* Modal Styles */
-        .modal-overlay {
+        /* Planning Modal Styles - scoped to avoid portal.css conflicts */
+        .planning-modal-overlay {
             display: none;
             position: fixed;
             top: 0;
@@ -552,22 +556,29 @@ $conn->close();
             justify-content: center;
         }
 
-        .modal-overlay.active {
+        .planning-modal-overlay.active {
             display: flex;
         }
 
-        .modal {
-            background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2);
-            max-width: 500px;
-            width: 90%;
-            max-height: 90vh;
-            overflow-y: auto;
-            z-index: 2001;
+        .planning-modal {
+            background: #ffffff !important;
+            border-radius: 16px !important;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2) !important;
+            max-width: 500px !important;
+            width: 90% !important;
+            max-height: 90vh !important;
+            z-index: 2001 !important;
+            display: block !important;
+            position: relative !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            left: auto !important;
+            top: auto !important;
+            height: auto !important;
+            overflow: visible !important;
         }
 
-        .modal-header {
+        .planning-modal-header {
             padding: 20px 25px;
             border-bottom: 1px solid #e9ecef;
             display: flex;
@@ -575,13 +586,13 @@ $conn->close();
             align-items: center;
         }
 
-        .modal-header h2 {
+        .planning-modal-header h2 {
             margin: 0;
             font-size: 1.3em;
             color: #293E4C;
         }
 
-        .modal-close {
+        .planning-modal-close {
             background: none;
             border: none;
             font-size: 1.5em;
@@ -591,27 +602,27 @@ $conn->close();
             line-height: 1;
         }
 
-        .modal-close:hover {
+        .planning-modal-close:hover {
             color: #293E4C;
         }
 
-        .modal-body {
+        .planning-modal-body {
             padding: 25px;
         }
 
-        .form-group {
+        .planning-form-group {
             margin-bottom: 20px;
         }
 
-        .form-group label {
+        .planning-form-group label {
             display: block;
             margin-bottom: 8px;
             font-weight: 600;
             color: #293E4C;
         }
 
-        .form-group input,
-        .form-group textarea {
+        .planning-form-group input,
+        .planning-form-group textarea {
             width: 100%;
             padding: 12px 15px;
             border: 1px solid #e9ecef;
@@ -619,20 +630,21 @@ $conn->close();
             font-size: 1em;
             font-family: inherit;
             transition: border-color 0.3s ease;
+            box-sizing: border-box;
         }
 
-        .form-group input:focus,
-        .form-group textarea:focus {
+        .planning-form-group input:focus,
+        .planning-form-group textarea:focus {
             outline: none;
             border-color: #488C9A;
         }
 
-        .form-group textarea {
+        .planning-form-group textarea {
             resize: vertical;
             min-height: 100px;
         }
 
-        .modal-footer {
+        .planning-modal-footer {
             padding: 20px 25px;
             border-top: 1px solid #e9ecef;
             display: flex;
@@ -640,7 +652,7 @@ $conn->close();
             gap: 10px;
         }
 
-        .modal-footer button {
+        .planning-modal-footer button {
             padding: 12px 24px;
             border-radius: 8px;
             font-weight: 600;
@@ -648,23 +660,23 @@ $conn->close();
             transition: all 0.3s ease;
         }
 
-        .modal-footer .btn-cancel {
+        .planning-modal-footer .btn-cancel {
             background: #f1f3f4;
             border: none;
             color: #6c757d;
         }
 
-        .modal-footer .btn-cancel:hover {
+        .planning-modal-footer .btn-cancel:hover {
             background: #e9ecef;
         }
 
-        .modal-footer .btn-submit {
+        .planning-modal-footer .btn-submit {
             background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
             border: none;
             color: white;
         }
 
-        .modal-footer .btn-submit:hover {
+        .planning-modal-footer .btn-submit:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4);
         }
@@ -783,14 +795,14 @@ $conn->close();
     <!-- Scenarios Section -->
     <h2 class="section-header">
         Your Scenarios
-        <button class="btn-primary" onclick="openModal()" style="padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.9em;">
+        <button class="btn-primary" onclick="openCreateScenarioModal()" style="padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.9em;">
             + New Scenario
         </button>
     </h2>
 
     <?php if (empty($scenarios)): ?>
         <div class="scenarios-grid">
-            <div class="scenario-card scenario-card--add" onclick="openModal()">
+            <div class="scenario-card scenario-card--add" onclick="openCreateScenarioModal()">
                 <div class="add-icon">+</div>
                 <div class="add-text">Create Your First Scenario</div>
             </div>
@@ -832,7 +844,7 @@ $conn->close();
             <?php endforeach; ?>
 
             <!-- Add New Scenario Card -->
-            <div class="scenario-card scenario-card--add" onclick="openModal()">
+            <div class="scenario-card scenario-card--add" onclick="openCreateScenarioModal()">
                 <div class="add-icon">+</div>
                 <div class="add-text">New Scenario</div>
             </div>
@@ -873,26 +885,26 @@ $conn->close();
 </main>
 
 <!-- Create Scenario Modal -->
-<div class="modal-overlay" id="createScenarioModal">
-    <div class="modal">
-        <div class="modal-header">
+<div class="planning-modal-overlay" id="createScenarioModal">
+    <div class="planning-modal">
+        <div class="planning-modal-header">
             <h2>Create New Scenario</h2>
-            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <button class="planning-modal-close" onclick="closeCreateScenarioModal()">&times;</button>
         </div>
         <form method="POST">
             <input type="hidden" name="action" value="create_scenario">
-            <div class="modal-body">
-                <div class="form-group">
+            <div class="planning-modal-body">
+                <div class="planning-form-group">
                     <label for="scenario_name">Scenario Name *</label>
                     <input type="text" id="scenario_name" name="scenario_name" required placeholder="e.g., Q2 2027 Allocation Plan">
                 </div>
-                <div class="form-group">
+                <div class="planning-form-group">
                     <label for="scenario_description">Description (Optional)</label>
                     <textarea id="scenario_description" name="scenario_description" placeholder="Describe the purpose of this scenario..."></textarea>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn-cancel" onclick="closeModal()">Cancel</button>
+            <div class="planning-modal-footer">
+                <button type="button" class="btn-cancel" onclick="closeCreateScenarioModal()">Cancel</button>
                 <button type="submit" class="btn-submit">Create Scenario</button>
             </div>
         </form>
@@ -900,26 +912,41 @@ $conn->close();
 </div>
 
 <script>
-function openModal() {
-    document.getElementById('createScenarioModal').classList.add('active');
+function openCreateScenarioModal() {
+    var modal = document.getElementById('createScenarioModal');
+    if (modal) {
+        modal.classList.add('active');
+        console.log('Modal opened');
+    } else {
+        console.error('Modal not found');
+    }
 }
 
-function closeModal() {
-    document.getElementById('createScenarioModal').classList.remove('active');
+function closeCreateScenarioModal() {
+    var modal = document.getElementById('createScenarioModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
 }
 
-// Close modal when clicking outside
-document.getElementById('createScenarioModal').addEventListener('click', function(e) {
-    if (e.target === this) {
-        closeModal();
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    var modal = document.getElementById('createScenarioModal');
+    if (modal) {
+        // Close modal when clicking outside
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeCreateScenarioModal();
+            }
+        });
     }
-});
 
-// Close modal with Escape key
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-        closeModal();
-    }
+    // Close modal with Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeCreateScenarioModal();
+        }
+    });
 });
 </script>
 </body>
