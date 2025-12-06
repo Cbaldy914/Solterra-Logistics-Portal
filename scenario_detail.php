@@ -94,13 +94,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         case 'add_manufacturer':
             $name = trim($_POST['manufacturer_name'] ?? '');
             if (!empty($name)) {
-                $stmt = $conn->prepare("INSERT INTO planning_manufacturers (scenario_id, account_id, name) VALUES (?, ?, ?)");
-                $stmt->bind_param("iis", $scenario_id, $scenario['account_id'], $name);
+                $stmt = $conn->prepare("INSERT INTO planning_manufacturers (scenario_id, account_id, name, created_by) VALUES (?, ?, ?, ?)");
+                $stmt->bind_param("iisi", $scenario_id, $scenario['account_id'], $name, $user_id);
                 if ($stmt->execute()) {
                     $message = "Manufacturer added successfully!";
                     $messageType = 'success';
                 } else {
-                    $message = "Error adding manufacturer.";
+                    $message = "Error adding manufacturer: " . $conn->error;
                     $messageType = 'error';
                 }
                 $stmt->close();
@@ -111,21 +111,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $manufacturerId = (int)($_POST['manufacturer_id'] ?? 0);
             $contractName = trim($_POST['contract_name'] ?? '');
             $totalMw = (float)($_POST['total_mw'] ?? 0);
-            $startDate = $_POST['start_date'] ?? '';
-            $endDate = $_POST['end_date'] ?? '';
+            $startDate = $_POST['start_date'] ?? null;
+            $endDate = $_POST['end_date'] ?? null;
 
-            if (!empty($contractName) && $manufacturerId > 0) {
+            // Set defaults if dates are empty
+            if (empty($startDate)) $startDate = date('Y-m-d');
+            if (empty($endDate)) $endDate = date('Y-m-d', strtotime('+1 year'));
+
+            if (!empty($contractName)) {
                 $stmt = $conn->prepare("
                     INSERT INTO planning_framework_contracts
-                    (scenario_id, account_id, manufacturer_id, contract_name, total_mw_dc, start_date, end_date)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (scenario_id, account_id, planning_manufacturer_id, name, total_mw_dc, contract_start_date, contract_end_date, created_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ");
-                $stmt->bind_param("iiisdss", $scenario_id, $scenario['account_id'], $manufacturerId, $contractName, $totalMw, $startDate, $endDate);
+                $mfrId = $manufacturerId > 0 ? $manufacturerId : null;
+                $stmt->bind_param("iiisdssi", $scenario_id, $scenario['account_id'], $mfrId, $contractName, $totalMw, $startDate, $endDate, $user_id);
                 if ($stmt->execute()) {
                     $message = "Contract added successfully!";
                     $messageType = 'success';
                 } else {
-                    $message = "Error adding contract.";
+                    $message = "Error adding contract: " . $conn->error;
                     $messageType = 'error';
                 }
                 $stmt->close();
@@ -135,22 +140,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         case 'add_project':
             $projectName = trim($_POST['project_name'] ?? '');
             $requiredMw = (float)($_POST['required_mw'] ?? 0);
-            $deliveryStart = $_POST['delivery_start'] ?? '';
-            $deliveryEnd = $_POST['delivery_end'] ?? '';
+            $deliveryStart = $_POST['delivery_start'] ?? null;
+            $deliveryEnd = $_POST['delivery_end'] ?? null;
             $location = trim($_POST['location'] ?? '');
+
+            // Set defaults if dates are empty
+            if (empty($deliveryStart)) $deliveryStart = date('Y-m-d');
+            if (empty($deliveryEnd)) $deliveryEnd = date('Y-m-d', strtotime('+6 months'));
 
             if (!empty($projectName)) {
                 $stmt = $conn->prepare("
                     INSERT INTO planning_projects
-                    (scenario_id, account_id, project_name, required_mw_dc, primary_delivery_start, primary_delivery_end, location)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (scenario_id, account_id, name, required_mw_dc, primary_delivery_start, primary_delivery_end, location_region, created_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ");
-                $stmt->bind_param("iisdsss", $scenario_id, $scenario['account_id'], $projectName, $requiredMw, $deliveryStart, $deliveryEnd, $location);
+                $stmt->bind_param("iisdsssi", $scenario_id, $scenario['account_id'], $projectName, $requiredMw, $deliveryStart, $deliveryEnd, $location, $user_id);
                 if ($stmt->execute()) {
                     $message = "Project added successfully!";
                     $messageType = 'success';
                 } else {
-                    $message = "Error adding project.";
+                    $message = "Error adding project: " . $conn->error;
                     $messageType = 'error';
                 }
                 $stmt->close();
@@ -161,23 +170,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $projectId = (int)($_POST['project_id'] ?? 0);
             $contractId = (int)($_POST['contract_id'] ?? 0);
             $allocatedMw = (float)($_POST['allocated_mw'] ?? 0);
-            $periodStart = $_POST['period_start'] ?? '';
-            $periodEnd = $_POST['period_end'] ?? '';
+            $periodStart = $_POST['period_start'] ?? null;
+            $periodEnd = $_POST['period_end'] ?? null;
+
+            // Set defaults if dates are empty
+            if (empty($periodStart)) $periodStart = date('Y-m-d');
+            if (empty($periodEnd)) $periodEnd = date('Y-m-d', strtotime('+3 months'));
 
             if ($projectId > 0 && $contractId > 0 && $allocatedMw > 0) {
                 $stmt = $conn->prepare("
                     INSERT INTO planning_allocations
-                    (scenario_id, project_id, contract_id, period_start, period_end, allocated_mw_dc, created_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (scenario_id, planning_project_id, contract_id, period_start, period_end, allocated_mw_dc, source_type)
+                    VALUES (?, ?, ?, ?, ?, ?, 'contract')
                 ");
-                $stmt->bind_param("iiissdi", $scenario_id, $projectId, $contractId, $periodStart, $periodEnd, $allocatedMw, $user_id);
+                $stmt->bind_param("iiissd", $scenario_id, $projectId, $contractId, $periodStart, $periodEnd, $allocatedMw);
                 if ($stmt->execute()) {
                     $message = "Allocation added successfully!";
                     $messageType = 'success';
-                    // Update scenario totals
                     updateScenarioTotals($conn, $scenario_id);
                 } else {
-                    $message = "Error adding allocation.";
+                    $message = "Error adding allocation: " . $conn->error;
                     $messageType = 'error';
                 }
                 $stmt->close();
@@ -226,7 +238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $message = "Activation request submitted! An admin will review your scenario.";
                 $messageType = 'success';
             } else {
-                $message = "Error submitting activation request.";
+                $message = "Error submitting activation request: " . $conn->error;
                 $messageType = 'error';
             }
             $stmt->close();
@@ -266,9 +278,9 @@ $contracts = [];
 $stmt = $conn->prepare("
     SELECT pfc.*, pm.name as manufacturer_name
     FROM planning_framework_contracts pfc
-    LEFT JOIN planning_manufacturers pm ON pfc.manufacturer_id = pm.id
+    LEFT JOIN planning_manufacturers pm ON pfc.planning_manufacturer_id = pm.id
     WHERE pfc.scenario_id = ?
-    ORDER BY pfc.contract_name
+    ORDER BY pfc.name
 ");
 $stmt->bind_param("i", $scenario_id);
 $stmt->execute();
@@ -282,10 +294,10 @@ $stmt->close();
 $plannedProjects = [];
 $stmt = $conn->prepare("
     SELECT pp.*,
-           (SELECT COALESCE(SUM(allocated_mw_dc), 0) FROM planning_allocations pa WHERE pa.project_id = pp.id) as allocated_mw
+           (SELECT COALESCE(SUM(allocated_mw_dc), 0) FROM planning_allocations pa WHERE pa.planning_project_id = pp.id) as allocated_mw
     FROM planning_projects pp
     WHERE pp.scenario_id = ?
-    ORDER BY pp.project_name
+    ORDER BY pp.name
 ");
 $stmt->bind_param("i", $scenario_id);
 $stmt->execute();
@@ -298,13 +310,13 @@ $stmt->close();
 // Fetch allocations for this scenario
 $allocations = [];
 $stmt = $conn->prepare("
-    SELECT pa.*, pp.project_name, pfc.contract_name, pm.name as manufacturer_name
+    SELECT pa.*, pp.name as project_name, pfc.name as contract_name, pm.name as manufacturer_name
     FROM planning_allocations pa
-    JOIN planning_projects pp ON pa.project_id = pp.id
+    JOIN planning_projects pp ON pa.planning_project_id = pp.id
     JOIN planning_framework_contracts pfc ON pa.contract_id = pfc.id
-    LEFT JOIN planning_manufacturers pm ON pfc.manufacturer_id = pm.id
+    LEFT JOIN planning_manufacturers pm ON pfc.planning_manufacturer_id = pm.id
     WHERE pa.scenario_id = ?
-    ORDER BY pp.project_name, pa.period_start
+    ORDER BY pp.name, pa.period_start
 ");
 $stmt->bind_param("i", $scenario_id);
 $stmt->execute();
@@ -601,11 +613,11 @@ $conn->close();
             margin-bottom: 20px;
         }
 
-        .form-group {
+        .planning-form-group {
             margin-bottom: 15px;
         }
 
-        .form-group label {
+        .planning-form-group label {
             display: block;
             margin-bottom: 6px;
             font-weight: 600;
@@ -613,9 +625,9 @@ $conn->close();
             font-size: 0.9em;
         }
 
-        .form-group input,
-        .form-group select,
-        .form-group textarea {
+        .planning-form-group input,
+        .planning-form-group select,
+        .planning-form-group textarea {
             width: 100%;
             padding: 10px 14px;
             border: 1px solid #e9ecef;
@@ -623,11 +635,12 @@ $conn->close();
             font-size: 0.95em;
             font-family: inherit;
             transition: border-color 0.3s ease;
+            box-sizing: border-box;
         }
 
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
+        .planning-form-group input:focus,
+        .planning-form-group select:focus,
+        .planning-form-group textarea:focus {
             outline: none;
             border-color: #488C9A;
         }
@@ -637,14 +650,16 @@ $conn->close();
             display: flex;
             gap: 10px;
             align-items: flex-end;
+            flex-wrap: wrap;
             padding: 20px;
             background: #f8f9fa;
             border-top: 1px solid #e9ecef;
         }
 
-        .inline-form .form-group {
+        .inline-form .planning-form-group {
             margin-bottom: 0;
             flex: 1;
+            min-width: 150px;
         }
 
         /* Alert Messages */
@@ -754,8 +769,8 @@ $conn->close();
             text-align: right;
         }
 
-        /* Modal */
-        .modal-overlay {
+        /* Planning Modal Styles - scoped to avoid portal.css conflicts */
+        .planning-modal-overlay {
             display: none;
             position: fixed;
             top: 0;
@@ -768,22 +783,29 @@ $conn->close();
             justify-content: center;
         }
 
-        .modal-overlay.active {
+        .planning-modal-overlay.active {
             display: flex;
         }
 
-        .modal {
-            background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2);
-            max-width: 500px;
-            width: 90%;
-            max-height: 90vh;
-            overflow-y: auto;
-            z-index: 2001;
+        .planning-modal {
+            background: #ffffff !important;
+            border-radius: 16px !important;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2) !important;
+            max-width: 500px !important;
+            width: 90% !important;
+            max-height: 90vh !important;
+            z-index: 2001 !important;
+            display: block !important;
+            position: relative !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            left: auto !important;
+            top: auto !important;
+            height: auto !important;
+            overflow: visible !important;
         }
 
-        .modal-header {
+        .planning-modal-header {
             padding: 20px 25px;
             border-bottom: 1px solid #e9ecef;
             display: flex;
@@ -791,13 +813,13 @@ $conn->close();
             align-items: center;
         }
 
-        .modal-header h2 {
+        .planning-modal-header h2 {
             margin: 0;
             font-size: 1.3em;
             color: #293E4C;
         }
 
-        .modal-close {
+        .planning-modal-close {
             background: none;
             border: none;
             font-size: 1.5em;
@@ -805,11 +827,11 @@ $conn->close();
             cursor: pointer;
         }
 
-        .modal-body {
+        .planning-modal-body {
             padding: 25px;
         }
 
-        .modal-footer {
+        .planning-modal-footer {
             padding: 20px 25px;
             border-top: 1px solid #e9ecef;
             display: flex;
@@ -839,10 +861,6 @@ $conn->close();
             .tab {
                 padding: 10px 16px;
                 font-size: 0.85em;
-            }
-
-            .form-row {
-                grid-template-columns: 1fr;
             }
 
             .inline-form {
@@ -955,7 +973,7 @@ $conn->close();
                                 if ($percentage > 100) $progressClass = 'over';
                             ?>
                                 <tr>
-                                    <td><strong><?php echo htmlspecialchars($project['project_name']); ?></strong></td>
+                                    <td><strong><?php echo htmlspecialchars($project['name']); ?></strong></td>
                                     <td><?php echo number_format($project['required_mw_dc'], 2); ?> MW</td>
                                     <td><?php echo number_format($project['allocated_mw'], 2); ?> MW</td>
                                     <td>
@@ -1022,7 +1040,7 @@ $conn->close();
                         </thead>
                         <tbody>
                             <?php foreach ($manufacturers as $mfr):
-                                $mfrContractCount = count(array_filter($contracts, fn($c) => $c['manufacturer_id'] == $mfr['id']));
+                                $mfrContractCount = count(array_filter($contracts, fn($c) => $c['planning_manufacturer_id'] == $mfr['id']));
                             ?>
                                 <tr>
                                     <td><strong><?php echo htmlspecialchars($mfr['name']); ?></strong></td>
@@ -1035,7 +1053,7 @@ $conn->close();
             <?php endif; ?>
             <form method="POST" class="inline-form">
                 <input type="hidden" name="action" value="add_manufacturer">
-                <div class="form-group">
+                <div class="planning-form-group">
                     <label>Add Manufacturer</label>
                     <input type="text" name="manufacturer_name" placeholder="e.g., JA Solar" required>
                 </div>
@@ -1062,13 +1080,13 @@ $conn->close();
                         <tbody>
                             <?php foreach ($contracts as $contract): ?>
                                 <tr>
-                                    <td><strong><?php echo htmlspecialchars($contract['contract_name']); ?></strong></td>
+                                    <td><strong><?php echo htmlspecialchars($contract['name']); ?></strong></td>
                                     <td><?php echo htmlspecialchars($contract['manufacturer_name'] ?? 'N/A'); ?></td>
                                     <td><?php echo number_format($contract['total_mw_dc'], 2); ?> MW</td>
                                     <td>
                                         <?php
-                                        $start = $contract['start_date'] ? date('M Y', strtotime($contract['start_date'])) : 'N/A';
-                                        $end = $contract['end_date'] ? date('M Y', strtotime($contract['end_date'])) : 'N/A';
+                                        $start = $contract['contract_start_date'] ? date('M Y', strtotime($contract['contract_start_date'])) : 'N/A';
+                                        $end = $contract['contract_end_date'] ? date('M Y', strtotime($contract['contract_end_date'])) : 'N/A';
                                         echo "$start - $end";
                                         ?>
                                     </td>
@@ -1079,43 +1097,35 @@ $conn->close();
                 </div>
             <?php endif; ?>
 
-            <?php if (!empty($manufacturers)): ?>
-                <form method="POST" class="inline-form">
-                    <input type="hidden" name="action" value="add_contract">
-                    <div class="form-group">
-                        <label>Contract Name</label>
-                        <input type="text" name="contract_name" placeholder="e.g., 2025 Supply Agreement" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Manufacturer</label>
-                        <select name="manufacturer_id" required>
-                            <option value="">Select...</option>
-                            <?php foreach ($manufacturers as $mfr): ?>
-                                <option value="<?php echo $mfr['id']; ?>"><?php echo htmlspecialchars($mfr['name']); ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Total MW</label>
-                        <input type="number" name="total_mw" step="0.01" placeholder="100.00" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Start Date</label>
-                        <input type="date" name="start_date">
-                    </div>
-                    <div class="form-group">
-                        <label>End Date</label>
-                        <input type="date" name="end_date">
-                    </div>
-                    <button type="submit" class="btn btn-primary">Add Contract</button>
-                </form>
-            <?php else: ?>
-                <div class="card-body">
-                    <div class="empty-state">
-                        <p>Add a manufacturer first before creating contracts.</p>
-                    </div>
+            <form method="POST" class="inline-form">
+                <input type="hidden" name="action" value="add_contract">
+                <div class="planning-form-group">
+                    <label>Contract Name</label>
+                    <input type="text" name="contract_name" placeholder="e.g., 2025 Supply Agreement" required>
                 </div>
-            <?php endif; ?>
+                <div class="planning-form-group">
+                    <label>Manufacturer</label>
+                    <select name="manufacturer_id">
+                        <option value="">Select (optional)...</option>
+                        <?php foreach ($manufacturers as $mfr): ?>
+                            <option value="<?php echo $mfr['id']; ?>"><?php echo htmlspecialchars($mfr['name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="planning-form-group">
+                    <label>Total MW</label>
+                    <input type="number" name="total_mw" step="0.01" placeholder="100.00" required>
+                </div>
+                <div class="planning-form-group">
+                    <label>Start Date</label>
+                    <input type="date" name="start_date">
+                </div>
+                <div class="planning-form-group">
+                    <label>End Date</label>
+                    <input type="date" name="end_date">
+                </div>
+                <button type="submit" class="btn btn-primary">Add Contract</button>
+            </form>
         </div>
 
     <?php elseif ($activeTab === 'projects'): ?>
@@ -1139,9 +1149,9 @@ $conn->close();
                         <tbody>
                             <?php foreach ($plannedProjects as $project): ?>
                                 <tr>
-                                    <td><strong><?php echo htmlspecialchars($project['project_name']); ?></strong></td>
+                                    <td><strong><?php echo htmlspecialchars($project['name']); ?></strong></td>
                                     <td><?php echo number_format($project['required_mw_dc'], 2); ?> MW</td>
-                                    <td><?php echo htmlspecialchars($project['location'] ?? 'N/A'); ?></td>
+                                    <td><?php echo htmlspecialchars($project['location_region'] ?? 'N/A'); ?></td>
                                     <td>
                                         <?php
                                         $start = $project['primary_delivery_start'] ? date('M Y', strtotime($project['primary_delivery_start'])) : 'TBD';
@@ -1167,23 +1177,23 @@ $conn->close();
             <?php endif; ?>
             <form method="POST" class="inline-form">
                 <input type="hidden" name="action" value="add_project">
-                <div class="form-group">
+                <div class="planning-form-group">
                     <label>Project Name</label>
                     <input type="text" name="project_name" placeholder="e.g., Solar Farm Alpha" required>
                 </div>
-                <div class="form-group">
+                <div class="planning-form-group">
                     <label>Required MW</label>
                     <input type="number" name="required_mw" step="0.01" placeholder="50.00" required>
                 </div>
-                <div class="form-group">
+                <div class="planning-form-group">
                     <label>Location</label>
                     <input type="text" name="location" placeholder="City, State">
                 </div>
-                <div class="form-group">
+                <div class="planning-form-group">
                     <label>Delivery Start</label>
                     <input type="date" name="delivery_start">
                 </div>
-                <div class="form-group">
+                <div class="planning-form-group">
                     <label>Delivery End</label>
                     <input type="date" name="delivery_end">
                 </div>
@@ -1242,39 +1252,39 @@ $conn->close();
             <?php if (!empty($plannedProjects) && !empty($contracts)): ?>
                 <form method="POST" class="inline-form">
                     <input type="hidden" name="action" value="add_allocation">
-                    <div class="form-group">
+                    <div class="planning-form-group">
                         <label>Project</label>
                         <select name="project_id" required>
                             <option value="">Select project...</option>
                             <?php foreach ($plannedProjects as $project): ?>
                                 <option value="<?php echo $project['id']; ?>">
-                                    <?php echo htmlspecialchars($project['project_name']); ?>
+                                    <?php echo htmlspecialchars($project['name']); ?>
                                     (<?php echo number_format($project['required_mw_dc'], 1); ?> MW)
                                 </option>
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="form-group">
+                    <div class="planning-form-group">
                         <label>Contract</label>
                         <select name="contract_id" required>
                             <option value="">Select contract...</option>
                             <?php foreach ($contracts as $contract): ?>
                                 <option value="<?php echo $contract['id']; ?>">
-                                    <?php echo htmlspecialchars($contract['contract_name']); ?>
+                                    <?php echo htmlspecialchars($contract['name']); ?>
                                     (<?php echo number_format($contract['total_mw_dc'], 1); ?> MW)
                                 </option>
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="form-group">
+                    <div class="planning-form-group">
                         <label>Allocated MW</label>
                         <input type="number" name="allocated_mw" step="0.01" placeholder="25.00" required>
                     </div>
-                    <div class="form-group">
+                    <div class="planning-form-group">
                         <label>Period Start</label>
                         <input type="date" name="period_start" required>
                     </div>
-                    <div class="form-group">
+                    <div class="planning-form-group">
                         <label>Period End</label>
                         <input type="date" name="period_end" required>
                     </div>
@@ -1299,11 +1309,11 @@ $conn->close();
             <div class="card-body">
                 <form method="POST">
                     <input type="hidden" name="action" value="update_scenario">
-                    <div class="form-group">
+                    <div class="planning-form-group">
                         <label>Scenario Name</label>
                         <input type="text" name="scenario_name" value="<?php echo htmlspecialchars($scenario['name']); ?>" required>
                     </div>
-                    <div class="form-group">
+                    <div class="planning-form-group">
                         <label>Description</label>
                         <textarea name="scenario_description" rows="4"><?php echo htmlspecialchars($scenario['description'] ?? ''); ?></textarea>
                     </div>
@@ -1327,24 +1337,24 @@ $conn->close();
 </main>
 
 <!-- Activation Request Modal -->
-<div class="modal-overlay" id="activationModal">
-    <div class="modal">
-        <div class="modal-header">
+<div class="planning-modal-overlay" id="activationModal">
+    <div class="planning-modal">
+        <div class="planning-modal-header">
             <h2>Request Activation</h2>
-            <button class="modal-close" onclick="closeActivationModal()">&times;</button>
+            <button class="planning-modal-close" onclick="closeActivationModal()">&times;</button>
         </div>
         <form method="POST">
             <input type="hidden" name="action" value="request_activation">
-            <div class="modal-body">
+            <div class="planning-modal-body">
                 <p style="margin-bottom: 20px; color: #6c757d;">
                     Submitting an activation request will notify Solterra administrators to review your scenario and convert it to active projects.
                 </p>
-                <div class="form-group">
+                <div class="planning-form-group">
                     <label>Notes for Admin (Optional)</label>
                     <textarea name="activation_notes" rows="4" placeholder="Any additional notes or context for the review..."></textarea>
                 </div>
             </div>
-            <div class="modal-footer">
+            <div class="planning-modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeActivationModal()">Cancel</button>
                 <button type="submit" class="btn btn-activate">Submit Request</button>
             </div>
