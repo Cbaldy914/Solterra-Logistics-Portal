@@ -32,6 +32,9 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// Get Google Maps API key for location autocomplete
+$google_maps_api_key = getGoogleMapsApiKey();
+
 // Get scenario ID
 $scenario_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $activeTab = isset($_GET['tab']) ? $_GET['tab'] : 'overview';
@@ -273,10 +276,11 @@ while ($row = $result->fetch_assoc()) {
 }
 $stmt->close();
 
-// Fetch contracts for this scenario
+// Fetch contracts for this scenario with allocation totals
 $contracts = [];
 $stmt = $conn->prepare("
-    SELECT pfc.*, pm.name as manufacturer_name
+    SELECT pfc.*, pm.name as manufacturer_name,
+           (SELECT COALESCE(SUM(allocated_mw_dc), 0) FROM planning_allocations pa WHERE pa.contract_id = pfc.id) as allocated_mw
     FROM planning_framework_contracts pfc
     LEFT JOIN planning_manufacturers pm ON pfc.planning_manufacturer_id = pm.id
     WHERE pfc.scenario_id = ?
@@ -369,51 +373,66 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        /* Breadcrumb */
-        .breadcrumb {
+        body { background: #f7f9fb; }
+
+        /* Page Header - Freight Style */
+        .planning-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 28px;
+            margin-bottom: 22px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .planning-header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #fbb040 0%, #f7931e 100%);
+        }
+        .planning-header__content {
             display: flex;
             align-items: center;
-            gap: 10px;
-            margin-bottom: 20px;
-            font-size: 0.95em;
-        }
-
-        .breadcrumb a {
-            color: #488C9A;
-            text-decoration: none;
-        }
-
-        .breadcrumb a:hover {
-            text-decoration: underline;
-        }
-
-        .breadcrumb span {
-            color: #6c757d;
-        }
-
-        /* Scenario Header */
-        .scenario-header {
-            background: #ffffff;
-            padding: 25px 30px;
-            border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-            border: 1px solid #e9ecef;
-            border-left: 6px solid #fbb040;
-            margin-bottom: 25px;
-            display: flex;
             justify-content: space-between;
-            align-items: flex-start;
+            gap: 20px;
+            flex-wrap: wrap;
         }
-
-        .scenario-header-info h1 {
-            margin: 0 0 8px 0;
-            font-size: 1.8em;
-            color: #293E4C;
+        .planning-header__left {
+            display: flex;
+            align-items: center;
+            gap: 18px;
         }
-
-        .scenario-header-info p {
+        .planning-icon {
+            width: 70px;
+            height: 70px;
+            background: linear-gradient(135deg, #fbb040 0%, #f7931e 100%);
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 34px;
+            box-shadow: 0 12px 24px rgba(251, 176, 64, 0.3);
+        }
+        .planning-title {
             margin: 0;
-            color: #6c757d;
+            font-size: 2em;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .planning-sub {
+            margin: 6px 0 0;
+            color: #556;
+            max-width: 520px;
+        }
+        .planning-actions {
+            display: flex;
+            gap: 10px;
         }
 
         .scenario-header-actions {
@@ -872,12 +891,15 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Breadcrumb -->
-    <div class="breadcrumb">
-        <a href="project_planning.php">Project Planning</a>
-        <span>/</span>
-        <span><?php echo htmlspecialchars($scenario['name']); ?></span>
-    </div>
+    <?php
+    require_once 'components/breadcrumbs.php';
+    echo slp_render_breadcrumbs([
+        'current_label' => htmlspecialchars($scenario['name']),
+        'extra' => [
+            ['label' => 'Project Planning', 'url' => 'project_planning.php']
+        ]
+    ]);
+    ?>
 
     <!-- Alert Messages -->
     <?php if (!empty($message)): ?>
@@ -893,24 +915,29 @@ $conn->close();
         </div>
     <?php endif; ?>
 
-    <!-- Scenario Header -->
-    <div class="scenario-header">
-        <div class="scenario-header-info">
-            <h1>
-                <?php echo htmlspecialchars($scenario['name']); ?>
-                <span class="badge <?php echo $scenario['is_active'] ? 'badge-active' : 'badge-draft'; ?>">
-                    <?php echo $scenario['is_active'] ? 'Active' : 'Draft'; ?>
-                </span>
-            </h1>
-            <p><?php echo htmlspecialchars($scenario['description'] ?? 'No description'); ?></p>
+    <!-- Page Header - Freight Style -->
+    <section class="planning-header">
+        <div class="planning-header__content">
+            <div class="planning-header__left">
+                <div class="planning-icon">📋</div>
+                <div>
+                    <h1 class="planning-title"><?php echo htmlspecialchars($scenario['name']); ?></h1>
+                    <p class="planning-sub">
+                        <?php echo htmlspecialchars($scenario['description'] ?? 'Plan your module allocations, manage contracts, and optimize your project pipeline.'); ?>
+                        <span class="badge <?php echo $scenario['is_active'] ? 'badge-active' : 'badge-draft'; ?>" style="margin-left: 10px;">
+                            <?php echo $scenario['is_active'] ? 'Active' : 'Draft'; ?>
+                        </span>
+                    </p>
+                </div>
+            </div>
+            <div class="planning-actions">
+                <?php if (!$pendingActivation && !$scenario['is_active']): ?>
+                    <button class="btn btn-activate" onclick="openActivationModal()">Request Activation</button>
+                <?php endif; ?>
+                <a href="?id=<?php echo $scenario_id; ?>&tab=settings" class="btn btn-secondary">Settings</a>
+            </div>
         </div>
-        <div class="scenario-header-actions">
-            <?php if (!$pendingActivation && !$scenario['is_active']): ?>
-                <button class="btn btn-activate" onclick="openActivationModal()">Request Activation</button>
-            <?php endif; ?>
-            <a href="?id=<?php echo $scenario_id; ?>&tab=settings" class="btn btn-secondary">Settings</a>
-        </div>
-    </div>
+    </section>
 
     <!-- Stats Summary -->
     <div class="stats-row">
@@ -1073,16 +1100,33 @@ $conn->close();
                             <tr>
                                 <th>Contract Name</th>
                                 <th>Manufacturer</th>
-                                <th>Total MW</th>
+                                <th>Committed MW</th>
+                                <th>Allocated MW</th>
+                                <th>Utilization</th>
                                 <th>Period</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($contracts as $contract): ?>
+                            <?php foreach ($contracts as $contract):
+                                $contractAllocated = (float)($contract['allocated_mw'] ?? 0);
+                                $contractTotal = (float)$contract['total_mw_dc'];
+                                $contractPct = $contractTotal > 0 ? ($contractAllocated / $contractTotal) * 100 : 0;
+                                $contractProgressClass = $contractPct >= 100 ? '' : ($contractPct >= 50 ? 'warning' : 'warning');
+                                if ($contractPct > 100) $contractProgressClass = 'over';
+                            ?>
                                 <tr>
                                     <td><strong><?php echo htmlspecialchars($contract['name']); ?></strong></td>
                                     <td><?php echo htmlspecialchars($contract['manufacturer_name'] ?? 'N/A'); ?></td>
                                     <td><?php echo number_format($contract['total_mw_dc'], 2); ?> MW</td>
+                                    <td><?php echo number_format($contractAllocated, 2); ?> MW</td>
+                                    <td>
+                                        <div class="allocation-progress">
+                                            <div class="progress-bar-container">
+                                                <div class="progress-bar-fill <?php echo $contractProgressClass; ?>" style="width: <?php echo min(100, $contractPct); ?>%"></div>
+                                            </div>
+                                            <span class="progress-percentage"><?php echo number_format($contractPct, 0); ?>%</span>
+                                        </div>
+                                    </td>
                                     <td>
                                         <?php
                                         $start = $contract['contract_start_date'] ? date('M Y', strtotime($contract['contract_start_date'])) : 'N/A';
@@ -1187,7 +1231,7 @@ $conn->close();
                 </div>
                 <div class="planning-form-group">
                     <label>Location</label>
-                    <input type="text" name="location" placeholder="City, State">
+                    <input type="text" name="location" id="project_location" placeholder="City, State" autocomplete="off">
                 </div>
                 <div class="planning-form-group">
                     <label>Delivery Start</label>
@@ -1362,6 +1406,9 @@ $conn->close();
     </div>
 </div>
 
+<!-- Google Maps API for location autocomplete -->
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
+
 <script>
 function openActivationModal() {
     document.getElementById('activationModal').classList.add('active');
@@ -1382,6 +1429,25 @@ document.addEventListener('keydown', function(e) {
         closeActivationModal();
     }
 });
+
+// Initialize Google Places Autocomplete for location fields
+function initLocationAutocomplete() {
+    const locationInput = document.getElementById('project_location');
+    if (locationInput && typeof google !== 'undefined' && google.maps && google.maps.places) {
+        const options = {
+            types: ['geocode'],
+            componentRestrictions: { country: 'us' }
+        };
+        new google.maps.places.Autocomplete(locationInput, options);
+    }
+}
+
+// Initialize on page load
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initLocationAutocomplete);
+} else {
+    initLocationAutocomplete();
+}
 </script>
 </body>
 </html>

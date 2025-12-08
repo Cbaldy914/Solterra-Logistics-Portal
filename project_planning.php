@@ -192,6 +192,8 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        body { background: #f7f9fb; }
+
         /* View Toggle Styles */
         .view-toggle-container {
             display: flex;
@@ -228,32 +230,67 @@ $conn->close();
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
 
-        /* Dashboard Header */
-        .dashboard-header {
-            background: #ffffff;
-            color: #293E4C;
-            padding: 30px 20px;
-            border-radius: 16px;
-            margin: 0 0 30px 0;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-            border: 1px solid #e9ecef;
-            border-left: 6px solid #fbb040;
+        /* Page Header - Freight Style */
+        .planning-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 28px;
+            margin-bottom: 22px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
         }
-
-        .dashboard-header h1 {
-            margin: 0 0 8px 0;
-            font-size: 2.2em;
-            font-weight: 600;
-            color: #293E4C;
+        .planning-header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #fbb040 0%, #f7931e 100%);
         }
-
-        .dashboard-header p {
+        .planning-header__content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .planning-header__left {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+        }
+        .planning-icon {
+            width: 70px;
+            height: 70px;
+            background: linear-gradient(135deg, #fbb040 0%, #f7931e 100%);
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 34px;
+            box-shadow: 0 12px 24px rgba(251, 176, 64, 0.3);
+        }
+        .planning-title {
             margin: 0;
-            font-size: 1.1em;
-            color: #6c757d;
+            font-size: 2.2em;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .planning-sub {
+            margin: 6px 0 0;
+            color: #556;
+            max-width: 520px;
+        }
+        .planning-actions {
+            display: flex;
+            gap: 10px;
         }
 
-        .dashboard-header .beta-badge {
+        .beta-badge {
             display: inline-block;
             background: linear-gradient(135deg, #fbb040, #f7931e);
             color: white;
@@ -747,6 +784,8 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Project Planning']); ?>
+
     <!-- View Toggle -->
     <div class="view-toggle-container">
         <div class="view-toggle">
@@ -755,11 +794,23 @@ $conn->close();
         </div>
     </div>
 
-    <!-- Header -->
-    <div class="dashboard-header">
-        <h1>Project Planning <span class="beta-badge">BETA</span></h1>
-        <p>Plan your module allocations, manage framework contracts, and optimize your project pipeline</p>
-    </div>
+    <!-- Header - Freight Style -->
+    <section class="planning-header">
+        <div class="planning-header__content">
+            <div class="planning-header__left">
+                <div class="planning-icon">📋</div>
+                <div>
+                    <h1 class="planning-title">Project Planning <span class="beta-badge">BETA</span></h1>
+                    <p class="planning-sub">Plan your module allocations, manage framework contracts, and optimize your project pipeline.</p>
+                </div>
+            </div>
+            <div class="planning-actions">
+                <button class="btn-primary" onclick="openCreateScenarioModal()" style="padding: 12px 24px; border: none; border-radius: 10px; cursor: pointer; font-weight: 600;">
+                    + New Scenario
+                </button>
+            </div>
+        </div>
+    </section>
 
     <!-- Alert Messages -->
     <?php if (!empty($message)): ?>
@@ -795,9 +846,6 @@ $conn->close();
     <!-- Scenarios Section -->
     <h2 class="section-header">
         Your Scenarios
-        <button class="btn-primary" onclick="openCreateScenarioModal()" style="padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 0.9em;">
-            + New Scenario
-        </button>
     </h2>
 
     <?php if (empty($scenarios)): ?>
