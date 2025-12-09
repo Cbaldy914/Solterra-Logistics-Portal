@@ -259,6 +259,31 @@ $conn->close();
             max-height: 700px;
             overflow-y: auto;
         }
+
+        /* Select All Row */
+        .select-all-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 30px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .select-all-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            font-weight: 500;
+            color: #293E4C;
+        }
+
+        .selected-count {
+            font-size: 0.9em;
+            color: #6c757d;
+            font-weight: 500;
+        }
         
         .notification-item {
             padding: 20px 30px;
@@ -510,7 +535,18 @@ $conn->close();
                     </button>
                 </div>
             </div>
-            
+
+            <!-- Select All Row -->
+            <?php if (!empty($notifications)): ?>
+            <div class="select-all-row">
+                <label class="select-all-label">
+                    <input type="checkbox" id="selectAllCheckbox" class="notification-checkbox" onchange="toggleSelectAll(this)" />
+                    <span>Select All</span>
+                </label>
+                <span class="selected-count" id="selectedCount">0 selected</span>
+            </div>
+            <?php endif; ?>
+
             <div class="notifications-list">
                 <?php if (empty($notifications)): ?>
                     <div class="empty-state">
@@ -520,7 +556,7 @@ $conn->close();
                 <?php else: ?>
                     <?php foreach ($notifications as $notif): ?>
                         <div class="notification-item <?php echo $notif['read_at'] ? '' : 'unread'; ?>">
-                            <input type="checkbox" class="notification-checkbox" value="<?php echo $notif['id']; ?>" />
+                            <input type="checkbox" class="notification-checkbox notification-item-checkbox" value="<?php echo $notif['id']; ?>" onchange="updateSelectedCount()" />
                             
                             <div class="notification-icon <?php echo htmlspecialchars($notif['type']); ?>">
                                 <?php
@@ -715,9 +751,34 @@ document.getElementById('email_enabled').addEventListener('change', function() {
     document.getElementById('email_warranty_claim').disabled = !enabled;
 });
 
+// Toggle select all checkboxes
+function toggleSelectAll(masterCheckbox) {
+    const checkboxes = document.querySelectorAll('.notification-item-checkbox');
+    checkboxes.forEach(cb => {
+        cb.checked = masterCheckbox.checked;
+    });
+    updateSelectedCount();
+}
+
+// Update the selected count display
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('.notification-item-checkbox');
+    const checkedCount = document.querySelectorAll('.notification-item-checkbox:checked').length;
+    const totalCount = checkboxes.length;
+
+    document.getElementById('selectedCount').textContent = checkedCount + ' selected';
+
+    // Update select all checkbox state
+    const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.checked = checkedCount === totalCount && totalCount > 0;
+        selectAllCheckbox.indeterminate = checkedCount > 0 && checkedCount < totalCount;
+    }
+}
+
 // Mark selected notifications as read
 function markSelectedAsRead() {
-    const selected = Array.from(document.querySelectorAll('.notification-checkbox:checked')).map(cb => cb.value);
+    const selected = Array.from(document.querySelectorAll('.notification-item-checkbox:checked')).map(cb => cb.value);
     if (selected.length === 0) {
         alert('Please select at least one notification');
         return;
@@ -741,7 +802,7 @@ function markSelectedAsRead() {
 
 // Delete selected notifications
 function deleteSelected() {
-    const selected = Array.from(document.querySelectorAll('.notification-checkbox:checked')).map(cb => cb.value);
+    const selected = Array.from(document.querySelectorAll('.notification-item-checkbox:checked')).map(cb => cb.value);
     if (selected.length === 0) {
         alert('Please select at least one notification');
         return;

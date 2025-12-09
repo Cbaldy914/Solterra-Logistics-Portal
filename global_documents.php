@@ -1571,7 +1571,7 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
         <div class="filter-header">
             <h2 class="filter-title">
                 <i class="fas fa-filter"></i>
-                Advanced Filters
+                Document Filters
             </h2>
             <div class="filter-actions">
                 <button type="button" class="clear-filters" onclick="clearAllFilters()">
@@ -1598,13 +1598,27 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
 
             <div class="filter-group">
                 <label class="filter-label" for="documentTypeFilter">Document Type</label>
-                <select id="documentTypeFilter" class="filter-select">
+                <select id="documentTypeFilter" class="filter-select" onchange="updateDocumentSubTypeFilter()">
                     <option value="">All Document Types</option>
                     <?php foreach ($document_types as $type => $info): ?>
                         <option value="<?php echo $type; ?>"><?php echo htmlspecialchars($info['name']); ?></option>
                     <?php endforeach; ?>
                 </select>
-                
+            </div>
+
+            <div class="filter-group" id="subTypeFilterGroup" style="display: none;">
+                <label class="filter-label" for="documentSubTypeFilter">Document Sub-Type</label>
+                <select id="documentSubTypeFilter" class="filter-select">
+                    <option value="">All Sub-Types</option>
+                </select>
+            </div>
+
+            <div class="filter-group" id="warehouseFilterGroup" style="display: none;">
+                <label class="filter-label" for="warehouseFilterContext">Warehouse</label>
+                <select id="warehouseFilterContext" class="filter-select">
+                    <option value="">All Warehouses</option>
+                    <!-- Populated dynamically -->
+                </select>
             </div>
 
             <div class="filter-group">
@@ -1824,6 +1838,40 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
      'safe_harbor_evidence': [],
      'other': []
  };
+
+// Update document sub-type filter based on selected document type
+function updateDocumentSubTypeFilter() {
+    const docType = document.getElementById('documentTypeFilter').value;
+    const subTypeGroup = document.getElementById('subTypeFilterGroup');
+    const subTypeSelect = document.getElementById('documentSubTypeFilter');
+    const warehouseGroup = document.getElementById('warehouseFilterGroup');
+
+    // Reset sub-type select
+    subTypeSelect.innerHTML = '<option value="">All Sub-Types</option>';
+
+    // Show/hide sub-type filter based on whether there are sub-filters
+    if (docType && subFilters[docType] && subFilters[docType].length > 0) {
+        subFilters[docType].forEach(subType => {
+            const option = document.createElement('option');
+            option.value = subType;
+            option.textContent = subType;
+            subTypeSelect.appendChild(option);
+        });
+        subTypeGroup.style.display = 'block';
+    } else {
+        subTypeGroup.style.display = 'none';
+    }
+
+    // Show warehouse filter for warehousing or shipments (for PODs)
+    if (docType === 'warehousing' || docType === 'shipments') {
+        warehouseGroup.style.display = 'block';
+    } else {
+        warehouseGroup.style.display = 'none';
+        // Reset warehouse selection when hidden
+        const warehouseSelect = document.getElementById('warehouseFilterContext');
+        if (warehouseSelect) warehouseSelect.value = '';
+    }
+}
 
 // Load warehouses for filter
 async function loadWarehouseFilter() {
@@ -2402,19 +2450,32 @@ function clearAllFilters() {
     document.getElementById('startDate').value = '';
     document.getElementById('endDate').value = '';
     document.getElementById('searchFilter').value = '';
-    
+
+    // Clear sub-type filter and hide it
+    const subTypeSelect = document.getElementById('documentSubTypeFilter');
+    if (subTypeSelect) {
+        subTypeSelect.value = '';
+        subTypeSelect.innerHTML = '<option value="">All Sub-Types</option>';
+    }
+    document.getElementById('subTypeFilterGroup').style.display = 'none';
+
+    // Clear warehouse filter and hide it
+    const warehouseSelect = document.getElementById('warehouseFilterContext');
+    if (warehouseSelect) warehouseSelect.value = '';
+    document.getElementById('warehouseFilterGroup').style.display = 'none';
+
     // Clear remaining filter field values (context subfilters have been removed)
     const clearIfExists = (id) => { const el = document.getElementById(id); if (el && el.type === 'checkbox') el.checked = false; else if (el) el.value = ''; };
-    
+
     // Clear any leftover filter values if they exist
     ['podsDeliveryStart', 'podsDeliveryEnd', 'podsBolNumber', 'podsManufacturerSelect', 'podsWattageSelect',
      'shipClearedStart', 'shipClearedEnd', 'shipContainerNumber', 'shipManufacturerSelect',
      'whPodsDeliveryStart', 'whPodsDeliveryEnd', 'whPodsBolNumber', 'whPodsManufacturerSelect',
      'whWarehouseSelect', 'whManufacturerSelect', 'modManufacturerSelect'].forEach(clearIfExists);
-    
+
     // Reset pagination
     currentPage = 1;
-    
+
     // Reload documents
     filtersApplied = false;
     loadDocuments();
@@ -2447,9 +2508,11 @@ async function loadDocuments() {
         
         // Collect filter values
         const warehouseFilterEl = document.getElementById('warehouseFilterContext');
+        const subTypeFilterEl = document.getElementById('documentSubTypeFilter');
         const filters = {
             project_id: document.getElementById('projectFilter').value,
             document_type: document.getElementById('documentTypeFilter').value,
+            document_sub_type: subTypeFilterEl ? subTypeFilterEl.value : '',
             warehouse_id: warehouseFilterEl ? warehouseFilterEl.value : '',
             start_date: document.getElementById('startDate').value,
             end_date: document.getElementById('endDate').value,
