@@ -129,7 +129,7 @@ $folder_mapping = [
         'damage_photo' => 'Damage Photo'
     ]],
     'exception_reports' => ['document_type' => 'exception_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'proof_of_completion' => 'Proof of Completion', 'safety_incident' => 'Safety Incident', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
-    'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']],
+    'safe_harbor' => ['document_type' => 'safe_harbor_evidence', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']],
     'other' => ['document_type' => 'other', 'subfolders' => ['general' => 'General']]
 ];
 
@@ -1829,7 +1829,7 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
 
  // Document type sub-filters
  const subFilters = {
-     'invoices': ['Solterra Invoice', 'Module Invoice'],
+     'invoices': ['Solterra Invoice', 'Module Invoice', 'Freight Invoice'],
      'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP', 'Project POD', 'Warehouse POD'],
      'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos', 'Quote'],
      'modules': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
@@ -1932,12 +1932,19 @@ document.addEventListener('DOMContentLoaded', function() {
     <?php endif; ?>
     <?php if (!empty($pre_selected_document_type)): ?>
       document.getElementById('documentTypeFilter').value = '<?php echo $pre_selected_document_type; ?>';
-    <?php endif; ?>
-
-
-    // Initial state if coming from folder context
-    <?php if ($pre_selected_document_type === 'pods' || $is_pods_context): ?>
-        // Do not auto-show subfilters until Apply is used
+      // Update sub-type dropdown based on selected document type
+      updateDocumentSubTypeFilter();
+      <?php if (!empty($pre_selected_document_sub_type)): ?>
+        // Set the pre-selected sub-type
+        document.getElementById('documentSubTypeFilter').value = '<?php echo addslashes($pre_selected_document_sub_type); ?>';
+      <?php endif; ?>
+      // Auto-apply filters when coming from project_documents with folder/subfolder context
+      <?php if (!empty($pre_selected_folder)): ?>
+        setTimeout(() => {
+          console.log('Auto-applying filters for folder context: <?php echo $pre_selected_document_type; ?>' + <?php echo !empty($pre_selected_document_sub_type) ? "' / " . addslashes($pre_selected_document_sub_type) . "'" : "''"; ?>);
+          applyFilters();
+        }, 300);
+      <?php endif; ?>
     <?php endif; ?>
 
     loadDocuments();
