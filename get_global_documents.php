@@ -35,6 +35,7 @@ $user_role = $_SESSION['role'];
 $project_id = intval($_GET['project_id'] ?? 0);
 $warehouse_id = intval($_GET['warehouse_id'] ?? 0);
 $document_type = trim($_GET['document_type'] ?? '');
+$document_sub_type = trim($_GET['document_sub_type'] ?? '');
 $start_date = trim($_GET['start_date'] ?? '');
 $end_date = trim($_GET['end_date'] ?? '');
 $search = trim($_GET['search'] ?? '');
@@ -241,6 +242,21 @@ if (!empty($search)) {
     $params[] = $search_param;
     $params[] = $search_param;
     $param_types .= "ss";
+}
+
+// Handle single document_sub_type filter from dropdown
+if (!empty($document_sub_type)) {
+    // Special handling for POD sub-types - include legacy 'pods' document_type records
+    if ($document_sub_type === 'Project POD' || $document_sub_type === 'Warehouse POD') {
+        $where_conditions[] = "(pd.document_sub_type = ? OR (pd.document_type = 'pods' AND pd.document_sub_type = ?))";
+        $params[] = $document_sub_type;
+        $params[] = $document_sub_type;
+        $param_types .= "ss";
+    } else {
+        $where_conditions[] = "pd.document_sub_type = ?";
+        $params[] = $document_sub_type;
+        $param_types .= "s";
+    }
 }
 
 // Handle sub-filters using the new document_sub_type field
