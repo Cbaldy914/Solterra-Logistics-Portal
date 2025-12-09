@@ -328,6 +328,16 @@ sort($date_labels);
 
 $today = new DateTime();
 $today_str = $today->format('Y-m-d');
+$current_week_ending = getWeekEndingSunday($today_str);
+
+// Check if there are any actual deliveries in the future
+$has_future_actual_deliveries = false;
+foreach ($actual_deliveries as $delivery_date => $qty) {
+    if ($delivery_date > $current_week_ending && $qty > 0) {
+        $has_future_actual_deliveries = true;
+        break;
+    }
+}
 
 $cumulative_ant = 0;
 $cumulative_act = 0;
@@ -339,10 +349,23 @@ foreach ($date_labels as $dt) {
     $cumulative_ant += $val_ant;
     $lineChartData_anticipated[] = $cumulative_ant;
 
-    // Always include actuals that have been marked Delivered to Project, even for future weeks
+    // For actuals: if there are future deliveries marked as Delivered to Project, show them
+    // Otherwise, stop the line at the current week (use null for future data points)
     $val_act = $actual_deliveries[$dt] ?? 0;
     $cumulative_act += $val_act;
-    $lineChartData_actual[] = $cumulative_act;
+
+    if ($has_future_actual_deliveries) {
+        // Show all actuals including future ones (demo mode)
+        $lineChartData_actual[] = $cumulative_act;
+    } else {
+        // Only show actuals up to the current week
+        if ($dt <= $current_week_ending) {
+            $lineChartData_actual[] = $cumulative_act;
+        } else {
+            // Use null to stop the line (Chart.js will not draw a line to null points)
+            $lineChartData_actual[] = null;
+        }
+    }
 }
 
 $lineChartData = [
