@@ -359,7 +359,13 @@ $stmt->close();
 $totalPlannedMw = array_sum(array_column($plannedProjects, 'required_mw_dc'));
 $totalAllocatedMw = array_sum(array_column($allocations, 'allocated_mw_dc'));
 $totalContractedMw = array_sum(array_column($contracts, 'total_mw_dc'));
-$allocationGap = $totalPlannedMw - $totalAllocatedMw;
+
+// Calculate what's still needed
+// Projects still need: total required by projects - what's been allocated to them
+$projectsUnallocatedMw = $totalPlannedMw - $totalAllocatedMw;
+
+// Contracts still available: total contracted - what's been allocated from them
+$contractsUnallocatedMw = $totalContractedMw - $totalAllocatedMw;
 
 $conn->close();
 ?>
@@ -590,8 +596,27 @@ $conn->close();
             color: #293E4C;
         }
 
+        .card-header .header-subtitle {
+            font-size: 0.85em;
+            color: #6c757d;
+            font-weight: 400;
+        }
+
         .card-body {
             padding: 25px;
+        }
+
+        /* Text color utilities */
+        .text-success {
+            color: #28a745 !important;
+        }
+
+        .text-warning {
+            color: #f7931e !important;
+        }
+
+        .text-danger {
+            color: #dc3545 !important;
         }
 
         /* Tables */
@@ -942,20 +967,20 @@ $conn->close();
     <!-- Stats Summary -->
     <div class="stats-row">
         <div class="stat-box">
-            <p class="value"><?php echo number_format($totalPlannedMw, 1); ?></p>
-            <p class="label">Planned MW</p>
-        </div>
-        <div class="stat-box">
             <p class="value"><?php echo number_format($totalContractedMw, 1); ?></p>
             <p class="label">Contracted MW</p>
         </div>
-        <div class="stat-box <?php echo $allocationGap > 0 ? 'warning' : 'success'; ?>">
-            <p class="value"><?php echo number_format($totalAllocatedMw, 1); ?></p>
-            <p class="label">Allocated MW</p>
+        <div class="stat-box">
+            <p class="value"><?php echo number_format($totalPlannedMw, 1); ?></p>
+            <p class="label">Projects MW</p>
         </div>
-        <div class="stat-box <?php echo $allocationGap > 0 ? 'danger' : 'success'; ?>">
-            <p class="value"><?php echo number_format($allocationGap, 1); ?></p>
-            <p class="label">Unallocated MW</p>
+        <div class="stat-box <?php echo $contractsUnallocatedMw != 0 ? 'danger' : 'success'; ?>">
+            <p class="value"><?php echo number_format($contractsUnallocatedMw, 1); ?></p>
+            <p class="label">Modules Unallocated</p>
+        </div>
+        <div class="stat-box <?php echo $projectsUnallocatedMw > 0 ? 'danger' : 'success'; ?>">
+            <p class="value"><?php echo number_format($projectsUnallocatedMw, 1); ?></p>
+            <p class="label">Projects Unallocated</p>
         </div>
     </div>
 
@@ -971,9 +996,83 @@ $conn->close();
     <!-- Tab Content -->
     <?php if ($activeTab === 'overview'): ?>
         <!-- Overview Tab -->
+
+        <!-- Contract Overview - Shows contract commitments vs allocations -->
         <div class="content-card">
             <div class="card-header">
-                <h2>Projects Overview</h2>
+                <h2>Contract Commitments</h2>
+                <span class="header-subtitle">Manufacturer commitments that need to be fulfilled</span>
+            </div>
+            <div class="card-body">
+                <?php if (empty($contracts)): ?>
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📝</div>
+                        <p>No contracts added yet. Go to the Contracts tab to add framework contracts.</p>
+                    </div>
+                <?php else: ?>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Contract</th>
+                                <th>Manufacturer</th>
+                                <th>Committed MW</th>
+                                <th>Allocated MW</th>
+                                <th>Remaining MW</th>
+                                <th>Utilization</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($contracts as $contract):
+                                $contractAllocated = (float)($contract['allocated_mw'] ?? 0);
+                                $contractTotal = (float)$contract['total_mw_dc'];
+                                $contractRemaining = $contractTotal - $contractAllocated;
+                                $contractPct = $contractTotal > 0 ? ($contractAllocated / $contractTotal) * 100 : 0;
+                                $progressClass = $contractPct >= 100 ? '' : ($contractPct >= 50 ? 'warning' : 'warning');
+                                if ($contractPct > 100) $progressClass = 'over';
+                            ?>
+                                <tr>
+                                    <td><strong><?php echo htmlspecialchars($contract['name']); ?></strong></td>
+                                    <td><?php echo htmlspecialchars($contract['manufacturer_name'] ?? 'N/A'); ?></td>
+                                    <td><?php echo number_format($contractTotal, 2); ?> MW</td>
+                                    <td><?php echo number_format($contractAllocated, 2); ?> MW</td>
+                                    <td class="<?php echo $contractRemaining > 0 ? 'text-warning' : 'text-success'; ?>">
+                                        <strong><?php echo number_format($contractRemaining, 2); ?> MW</strong>
+                                    </td>
+                                    <td>
+                                        <div class="allocation-progress">
+                                            <div class="progress-bar-container">
+                                                <div class="progress-bar-fill <?php echo $progressClass; ?>" style="width: <?php echo min(100, $contractPct); ?>%"></div>
+                                            </div>
+                                            <span class="progress-percentage"><?php echo number_format($contractPct, 0); ?>%</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                        <tfoot>
+                            <tr style="background: #f8f9fa; font-weight: 600;">
+                                <td colspan="2">Total</td>
+                                <td><?php echo number_format($totalContractedMw, 2); ?> MW</td>
+                                <td><?php echo number_format($totalAllocatedMw, 2); ?> MW</td>
+                                <td class="<?php echo $contractsUnallocatedMw > 0 ? 'text-warning' : 'text-success'; ?>">
+                                    <strong><?php echo number_format($contractsUnallocatedMw, 2); ?> MW</strong>
+                                </td>
+                                <td>
+                                    <?php $totalContractPct = $totalContractedMw > 0 ? ($totalAllocatedMw / $totalContractedMw) * 100 : 0; ?>
+                                    <strong><?php echo number_format($totalContractPct, 0); ?>%</strong>
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- Projects Overview - Shows project needs vs allocations -->
+        <div class="content-card">
+            <div class="card-header">
+                <h2>Project Requirements</h2>
+                <span class="header-subtitle">Projects that need modules allocated</span>
             </div>
             <div class="card-body">
                 <?php if (empty($plannedProjects)): ?>
@@ -988,21 +1087,28 @@ $conn->close();
                                 <th>Project</th>
                                 <th>Required MW</th>
                                 <th>Allocated MW</th>
-                                <th>Allocation Progress</th>
+                                <th>Still Needed</th>
+                                <th>Progress</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($plannedProjects as $project):
-                                $percentage = $project['required_mw_dc'] > 0
-                                    ? min(100, ($project['allocated_mw'] / $project['required_mw_dc']) * 100)
+                                $projectRequired = (float)$project['required_mw_dc'];
+                                $projectAllocated = (float)$project['allocated_mw'];
+                                $projectRemaining = $projectRequired - $projectAllocated;
+                                $percentage = $projectRequired > 0
+                                    ? min(100, ($projectAllocated / $projectRequired) * 100)
                                     : 0;
                                 $progressClass = $percentage >= 100 ? '' : ($percentage >= 50 ? 'warning' : 'warning');
                                 if ($percentage > 100) $progressClass = 'over';
                             ?>
                                 <tr>
                                     <td><strong><?php echo htmlspecialchars($project['name']); ?></strong></td>
-                                    <td><?php echo number_format($project['required_mw_dc'], 2); ?> MW</td>
-                                    <td><?php echo number_format($project['allocated_mw'], 2); ?> MW</td>
+                                    <td><?php echo number_format($projectRequired, 2); ?> MW</td>
+                                    <td><?php echo number_format($projectAllocated, 2); ?> MW</td>
+                                    <td class="<?php echo $projectRemaining > 0 ? 'text-danger' : 'text-success'; ?>">
+                                        <strong><?php echo number_format($projectRemaining, 2); ?> MW</strong>
+                                    </td>
                                     <td>
                                         <div class="allocation-progress">
                                             <div class="progress-bar-container">
@@ -1014,6 +1120,20 @@ $conn->close();
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
+                        <tfoot>
+                            <tr style="background: #f8f9fa; font-weight: 600;">
+                                <td>Total</td>
+                                <td><?php echo number_format($totalPlannedMw, 2); ?> MW</td>
+                                <td><?php echo number_format($totalAllocatedMw, 2); ?> MW</td>
+                                <td class="<?php echo $projectsUnallocatedMw > 0 ? 'text-danger' : 'text-success'; ?>">
+                                    <strong><?php echo number_format($projectsUnallocatedMw, 2); ?> MW</strong>
+                                </td>
+                                <td>
+                                    <?php $totalProjectPct = $totalPlannedMw > 0 ? ($totalAllocatedMw / $totalPlannedMw) * 100 : 0; ?>
+                                    <strong><?php echo number_format($totalProjectPct, 0); ?>%</strong>
+                                </td>
+                            </tr>
+                        </tfoot>
                     </table>
                 <?php endif; ?>
             </div>
