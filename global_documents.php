@@ -687,13 +687,28 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
         }
 
                  .date-range-group {
-             display: grid;
-             grid-template-columns: 1fr 1fr;
-             gap: 12px;
+             display: flex;
+             flex-direction: column;
+             gap: 8px;
              width: 100%;
          }
 
-         .date-range-group .filter-input {
+         .date-range-row {
+             display: flex;
+             align-items: center;
+             gap: 8px;
+         }
+
+         .date-range-row .date-label {
+             font-size: 0.8em;
+             font-weight: 500;
+             color: #6c757d;
+             min-width: 40px;
+             flex-shrink: 0;
+         }
+
+         .date-range-row .filter-input {
+             flex: 1;
              margin: 0;
          }
 
@@ -1040,8 +1055,12 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
             }
 
             .date-range-group {
-                grid-template-columns: 1fr;
-                gap: 8px;
+                gap: 6px;
+            }
+
+            .date-range-row .date-label {
+                min-width: 35px;
+                font-size: 0.75em;
             }
 
             .filter-actions {
@@ -1088,10 +1107,6 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
         @media (max-width: 480px) {
             .filter-grid {
                 gap: 12px;
-            }
-
-            .date-range-group {
-                grid-template-columns: 1fr;
             }
 
             .filter-input, .filter-select {
@@ -1623,12 +1638,18 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
 
             <div class="filter-group">
                 <label class="filter-label">
-                    <i class="fas fa-calendar-upload" style="margin-right: 6px;"></i>
-                    Filter by Upload Date
+                    <i class="fas fa-calendar-alt" style="margin-right: 6px; margin-left: 50px;"></i>
+                    Upload Date Range
                 </label>
                 <div class="date-range-group">
-                    <input type="date" id="startDate" class="filter-input" placeholder="From date">
-                    <input type="date" id="endDate" class="filter-input" placeholder="To date">
+                    <div class="date-range-row">
+                        <span class="date-label">From</span>
+                        <input type="date" id="startDate" class="filter-input" title="Start date (documents uploaded on or after this date)">
+                    </div>
+                    <div class="date-range-row">
+                        <span class="date-label">To</span>
+                        <input type="date" id="endDate" class="filter-input" title="End date (documents uploaded on or before this date)">
+                    </div>
                 </div>
             </div>
 
