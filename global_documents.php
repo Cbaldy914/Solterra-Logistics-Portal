@@ -3204,6 +3204,8 @@ async function deleteSelected() {
 
 // Helper functions
 function getDocumentTypeIcon(type) {
+    // Treat legacy 'pods' as 'shipments' for display
+    if (type === 'pods') type = 'shipments';
     const icons = <?php echo json_encode(array_column($document_types, 'icon')); ?>;
     const types = <?php echo json_encode(array_keys($document_types)); ?>;
     const index = types.indexOf(type);
@@ -3211,6 +3213,8 @@ function getDocumentTypeIcon(type) {
 }
 
 function getDocumentTypeName(type) {
+    // Treat legacy 'pods' as 'shipments' for display
+    if (type === 'pods') type = 'shipments';
     const names = <?php echo json_encode(array_column($document_types, 'name')); ?>;
     const types = <?php echo json_encode(array_keys($document_types)); ?>;
     const index = types.indexOf(type);
@@ -3218,6 +3222,8 @@ function getDocumentTypeName(type) {
 }
 
 function getDocumentTypeColor(type) {
+    // Treat legacy 'pods' as 'shipments' for display
+    if (type === 'pods') type = 'shipments';
     const colors = <?php echo json_encode(array_column($document_types, 'color')); ?>;
     const types = <?php echo json_encode(array_keys($document_types)); ?>;
     const index = types.indexOf(type);
