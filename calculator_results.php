@@ -85,7 +85,7 @@ function calculateWarehouseCosts($warehouse, $schedule) {
         ]
     ];
 
-    $current_inventory = $warehouse['currentInventory'] ?? 0;
+    $current_inventory = 0; // Inventory starts at 0, pallets are added via schedule
     $inventory_sum = 0;
 
     // Get fee rates
@@ -495,7 +495,7 @@ $conn->close();
             border-color: #488C9A;
         }
 
-        /* Charts Section */
+        /* Charts Section - prefixed to avoid portal.css conflicts */
         .charts-section {
             background: #fff;
             border-radius: 20px;
@@ -508,10 +508,16 @@ $conn->close();
             font-size: 1.4rem;
             color: #293E4C;
         }
-        .chart-container {
+        .calc-chart-container {
             position: relative;
             height: 300px;
-            margin-bottom: 24px;
+            width: 100%;
+            max-width: none;
+            margin: 0 auto 24px auto;
+        }
+        .calc-chart-container canvas {
+            width: 100% !important;
+            height: 100% !important;
         }
         .chart-row {
             display: grid;
@@ -625,39 +631,138 @@ $conn->close();
         .simulator-section .subtitle {
             color: #6c757d;
             font-size: 0.95rem;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
         }
         .simulator-controls {
             display: flex;
-            align-items: center;
-            gap: 16px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            gap: 20px;
         }
-        .delay-buttons {
+        .slider-container {
+            background: #fff;
+            border-radius: 16px;
+            padding: 24px;
+            border: 1px solid #e9ecef;
+        }
+        .slider-header {
             display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .slider-label {
+            font-weight: 500;
+            color: #293E4C;
+            font-size: 1rem;
+        }
+        .delay-value-display {
+            display: flex;
+            align-items: center;
             gap: 8px;
         }
-        .delay-btn {
-            padding: 10px 16px;
-            border: 1px solid #e0e0e0;
-            background: #fff;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 500;
+        .delay-value-display span {
+            font-size: 0.9rem;
             color: #6c757d;
-            transition: all 0.2s;
         }
-        .delay-btn:hover {
+        .delay-input {
+            width: 80px;
+            padding: 8px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            text-align: center;
+            color: #293E4C;
+            transition: border-color 0.2s;
+        }
+        .delay-input:focus {
+            outline: none;
             border-color: #488C9A;
+        }
+        .delay-input.pull-in {
+            border-color: #28a745;
+            color: #28a745;
+        }
+        .delay-input.delay {
+            border-color: #dc3545;
+            color: #dc3545;
+        }
+        .slider-track-container {
+            position: relative;
+            padding: 20px 0;
+        }
+        .slider-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+        .slider-track {
+            position: relative;
+            height: 12px;
+            background: linear-gradient(90deg, #28a745 0%, #28a745 50%, #dc3545 50%, #dc3545 100%);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .slider-track::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: -6px;
+            bottom: -6px;
+            width: 2px;
+            background: #293E4C;
+            transform: translateX(-50%);
+            z-index: 1;
+        }
+        .slider-thumb {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 28px;
+            height: 28px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            cursor: grab;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4);
+            transition: box-shadow 0.2s, transform 0.1s;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .slider-thumb:hover {
+            box-shadow: 0 6px 16px rgba(72, 140, 154, 0.5);
+        }
+        .slider-thumb:active {
+            cursor: grabbing;
+            transform: translate(-50%, -50%) scale(1.1);
+        }
+        .slider-thumb::after {
+            content: '⟷';
+            color: #fff;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .slider-ticks {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            padding: 0 14px;
+        }
+        .slider-tick {
+            font-size: 0.75rem;
+            color: #999;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+        .slider-tick:hover {
             color: #488C9A;
         }
-        .delay-btn.active {
-            background: #488C9A;
-            color: #fff;
-            border-color: #488C9A;
-        }
         .simulator-results {
-            margin-top: 20px;
+            margin-top: 24px;
             display: none;
         }
         .simulator-results.active {
@@ -665,30 +770,41 @@ $conn->close();
         }
         .sim-comparison-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             gap: 16px;
             margin-top: 16px;
         }
         .sim-card {
             background: #fff;
             border-radius: 12px;
-            padding: 16px;
+            padding: 20px;
             text-align: center;
             border: 1px solid #e9ecef;
+            transition: all 0.2s;
+        }
+        .sim-card:hover {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
         }
         .sim-card h4 {
             margin: 0 0 8px 0;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
             color: #6c757d;
         }
+        .sim-card .sim-original {
+            font-size: 0.85rem;
+            color: #999;
+            text-decoration: line-through;
+            margin-bottom: 4px;
+        }
         .sim-card .sim-total {
-            font-size: 1.5rem;
+            font-size: 1.6rem;
             font-weight: 700;
             color: #293E4C;
         }
         .sim-card .sim-diff {
             font-size: 0.9rem;
-            margin-top: 4px;
+            margin-top: 6px;
+            font-weight: 500;
         }
         .sim-card .sim-diff.positive {
             color: #dc3545;
@@ -915,13 +1031,13 @@ $conn->close();
         <div class="chart-row">
             <div>
                 <h4 style="margin: 0 0 16px 0; color: #6c757d; font-weight: 500;">Monthly Cost Trend</h4>
-                <div class="chart-container">
+                <div class="calc-chart-container">
                     <canvas id="trendChart"></canvas>
                 </div>
             </div>
             <div>
                 <h4 style="margin: 0 0 16px 0; color: #6c757d; font-weight: 500;">Cost Breakdown</h4>
-                <div class="chart-container">
+                <div class="calc-chart-container">
                     <canvas id="breakdownChart"></canvas>
                 </div>
             </div>
@@ -993,17 +1109,38 @@ $conn->close();
     <!-- Delay Simulator -->
     <div class="simulator-section">
         <h2>🔄 Schedule Delay Simulator</h2>
-        <p class="subtitle">See how project delays or pull-ins affect your warehouse costs</p>
+        <p class="subtitle">Drag the slider or enter a value to see how schedule changes affect your warehouse costs</p>
 
         <div class="simulator-controls">
-            <span style="font-weight: 500; color: #293E4C;">Adjust schedule by:</span>
-            <div class="delay-buttons">
-                <button type="button" class="delay-btn" data-delay="-3">-3 mo</button>
-                <button type="button" class="delay-btn" data-delay="-1">-1 mo</button>
-                <button type="button" class="delay-btn active" data-delay="0">Original</button>
-                <button type="button" class="delay-btn" data-delay="1">+1 mo</button>
-                <button type="button" class="delay-btn" data-delay="3">+3 mo</button>
-                <button type="button" class="delay-btn" data-delay="6">+6 mo</button>
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span class="slider-label">Schedule Adjustment</span>
+                    <div class="delay-value-display">
+                        <input type="number" id="delayInput" class="delay-input" value="0" min="-12" max="12" onchange="updateFromInput()">
+                        <span>months</span>
+                    </div>
+                </div>
+                <div class="slider-labels">
+                    <span>← Pull In (Earlier)</span>
+                    <span>Original</span>
+                    <span>Delay (Later) →</span>
+                </div>
+                <div class="slider-track-container">
+                    <div class="slider-track" id="sliderTrack">
+                        <div class="slider-thumb" id="sliderThumb"></div>
+                    </div>
+                </div>
+                <div class="slider-ticks">
+                    <span class="slider-tick" onclick="setDelay(-12)">-12</span>
+                    <span class="slider-tick" onclick="setDelay(-9)">-9</span>
+                    <span class="slider-tick" onclick="setDelay(-6)">-6</span>
+                    <span class="slider-tick" onclick="setDelay(-3)">-3</span>
+                    <span class="slider-tick" onclick="setDelay(0)" style="font-weight: bold; color: #293E4C;">0</span>
+                    <span class="slider-tick" onclick="setDelay(3)">+3</span>
+                    <span class="slider-tick" onclick="setDelay(6)">+6</span>
+                    <span class="slider-tick" onclick="setDelay(9)">+9</span>
+                    <span class="slider-tick" onclick="setDelay(12)">+12</span>
+                </div>
             </div>
         </div>
 
@@ -1163,23 +1300,100 @@ function showWarehouseDetails(index) {
     document.querySelector('.details-section').scrollIntoView({ behavior: 'smooth' });
 }
 
-// Delay simulator
+// Delay simulator with draggable slider
+let currentDelay = 0;
+let isDragging = false;
+
 function initDelaySimulator() {
-    document.querySelectorAll('.delay-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const delay = parseInt(this.dataset.delay);
+    const track = document.getElementById('sliderTrack');
+    const thumb = document.getElementById('sliderThumb');
 
-            document.querySelectorAll('.delay-btn').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
+    // Mouse events
+    thumb.addEventListener('mousedown', startDrag);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', endDrag);
 
-            if (delay === 0) {
-                document.getElementById('simulatorResults').classList.remove('active');
-                return;
-            }
+    // Touch events
+    thumb.addEventListener('touchstart', startDrag);
+    document.addEventListener('touchmove', drag);
+    document.addEventListener('touchend', endDrag);
 
-            simulateDelay(delay);
-        });
+    // Click on track to set position
+    track.addEventListener('click', function(e) {
+        if (e.target === thumb) return;
+        const rect = track.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const percentage = x / rect.width;
+        const delay = Math.round((percentage - 0.5) * 24); // -12 to +12 range
+        setDelay(Math.max(-12, Math.min(12, delay)));
     });
+}
+
+function startDrag(e) {
+    isDragging = true;
+    e.preventDefault();
+}
+
+function drag(e) {
+    if (!isDragging) return;
+
+    const track = document.getElementById('sliderTrack');
+    const rect = track.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    let x = clientX - rect.left;
+
+    // Clamp to track bounds
+    x = Math.max(0, Math.min(rect.width, x));
+
+    const percentage = x / rect.width;
+    const delay = Math.round((percentage - 0.5) * 24); // -12 to +12 range
+    setDelay(Math.max(-12, Math.min(12, delay)));
+}
+
+function endDrag() {
+    isDragging = false;
+}
+
+function setDelay(months) {
+    currentDelay = months;
+
+    // Update thumb position
+    const thumb = document.getElementById('sliderThumb');
+    const percentage = ((months + 12) / 24) * 100;
+    thumb.style.left = `${percentage}%`;
+
+    // Update input field
+    const input = document.getElementById('delayInput');
+    input.value = months;
+
+    // Update input styling
+    input.classList.remove('pull-in', 'delay');
+    if (months < 0) {
+        input.classList.add('pull-in');
+    } else if (months > 0) {
+        input.classList.add('delay');
+    }
+
+    // Show/hide results
+    if (months === 0) {
+        document.getElementById('simulatorResults').classList.remove('active');
+    } else {
+        simulateDelay(months);
+    }
+}
+
+function updateFromInput() {
+    const input = document.getElementById('delayInput');
+    let value = parseInt(input.value) || 0;
+
+    // Allow values beyond slider range but still show results
+    setDelay(Math.max(-12, Math.min(12, value)));
+
+    // If manually entered value is beyond slider range, still simulate
+    if (Math.abs(value) > 12) {
+        simulateDelay(value);
+        input.value = value;
+    }
 }
 
 function simulateDelay(delayMonths) {
@@ -1204,9 +1418,12 @@ function simulateDelay(delayMonths) {
         const newTotal = delayMonths > 0 ? originalTotal + additionalCost : Math.max(0, originalTotal - additionalCost);
         const diff = newTotal - originalTotal;
 
+        const delayLabel = delayMonths > 0 ? `+${delayMonths} month delay` : `${delayMonths} month pull-in`;
+
         html += `
             <div class="sim-card">
                 <h4>${escapeHtml(wr.warehouse.name)}</h4>
+                <div class="sim-original">Was: $${originalTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
                 <div class="sim-total">$${newTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
                 <div class="sim-diff ${diff >= 0 ? 'positive' : 'negative'}">
                     ${diff >= 0 ? '+' : ''}$${diff.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
