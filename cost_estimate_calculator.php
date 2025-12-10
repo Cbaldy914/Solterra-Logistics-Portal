@@ -46,7 +46,13 @@ $stmt->close();
 
 // Check if we're loading an existing estimate for editing
 $editing_estimate = null;
-if (isset($_GET['edit_id'])) {
+
+// First check if data is being passed back from results page via POST
+if (isset($_POST['edit_data'])) {
+    $editing_estimate = json_decode($_POST['edit_data'], true);
+}
+// Then check if we're loading from database via edit_id
+elseif (isset($_GET['edit_id'])) {
     $edit_id = intval($_GET['edit_id']);
     $stmt = $conn->prepare("SELECT * FROM warehouse_estimates WHERE id = ? AND user_id = ?");
     $stmt->bind_param("ii", $edit_id, $user_id);
@@ -447,7 +453,7 @@ $conn->close();
             background: #f8f9fa;
         }
         .fee-table input, .fee-table select {
-            width: 100%;
+            width: 90%;
             padding: 8px 12px;
             border: 1px solid #e0e0e0;
             border-radius: 6px;
@@ -552,7 +558,7 @@ $conn->close();
             margin-bottom: 8px;
         }
         .date-field input, .date-field select {
-            width: 100%;
+            width: 90%;
             padding: 12px 16px;
             border: 1px solid #e0e0e0;
             border-radius: 8px;

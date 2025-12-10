@@ -975,9 +975,12 @@ $conn->close();
                 </p>
             </div>
             <div class="header-actions">
-                <a href="cost_estimate_calculator.php" class="btn-action btn-secondary">
-                    ← Edit Estimate
-                </a>
+                <form method="POST" action="cost_estimate_calculator.php" style="display: inline;">
+                    <input type="hidden" name="edit_data" value='<?php echo htmlspecialchars(json_encode($calculator_data)); ?>'>
+                    <button type="submit" class="btn-action btn-secondary">
+                        ← Edit Estimate
+                    </button>
+                </form>
                 <button type="button" class="btn-action btn-primary" onclick="openSaveModal()">
                     💾 Save Estimate
                 </button>
