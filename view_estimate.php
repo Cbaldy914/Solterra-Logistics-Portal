@@ -71,7 +71,7 @@ if ($is_new_format) {
                 ]
             ];
 
-            $current_inventory = $warehouse['currentInventory'] ?? 0;
+            $current_inventory = 0; // Inventory starts at 0
             $inventory_sum = 0;
 
             $in_fee_rate = 0;
@@ -433,7 +433,7 @@ $conn->close();
             color: #293E4C;
         }
 
-        /* Charts Section */
+        /* Charts Section - prefixed to avoid portal.css conflicts */
         .charts-section {
             background: #fff;
             border-radius: 20px;
@@ -446,10 +446,16 @@ $conn->close();
             font-size: 1.4rem;
             color: #293E4C;
         }
-        .chart-container {
+        .calc-chart-container {
             position: relative;
             height: 300px;
-            margin-bottom: 24px;
+            width: 100%;
+            max-width: none;
+            margin: 0 auto 24px auto;
+        }
+        .calc-chart-container canvas {
+            width: 100% !important;
+            height: 100% !important;
         }
         .chart-row {
             display: grid;
@@ -670,17 +676,17 @@ $conn->close();
 
     <!-- Charts Section -->
     <div class="charts-section">
-        <h2>Cost Analysis</h2>
+        <h2>📈 Cost Analysis</h2>
         <div class="chart-row">
             <div>
                 <h4 style="margin: 0 0 16px 0; color: #6c757d; font-weight: 500;">Monthly Cost Trend</h4>
-                <div class="chart-container">
+                <div class="calc-chart-container">
                     <canvas id="trendChart"></canvas>
                 </div>
             </div>
             <div>
                 <h4 style="margin: 0 0 16px 0; color: #6c757d; font-weight: 500;">Cost Breakdown</h4>
-                <div class="chart-container">
+                <div class="calc-chart-container">
                     <canvas id="breakdownChart"></canvas>
                 </div>
             </div>
