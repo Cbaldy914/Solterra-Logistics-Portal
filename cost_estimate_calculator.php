@@ -261,36 +261,38 @@ $conn->close();
             max-height: 2000px;
         }
 
-        /* Warehouse Cards */
-        .warehouses-grid {
+        /* Warehouse Cards - prefixed to avoid portal.css conflicts */
+        .calc-warehouses-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
             gap: 20px;
             margin-bottom: 20px;
         }
-        .warehouse-card {
+        .calc-warehouse-card {
             background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
             border: 2px solid #e9ecef;
             border-radius: 16px;
             padding: 20px;
             position: relative;
             transition: all 0.3s ease;
+            width: auto;
+            overflow: visible;
         }
-        .warehouse-card:hover {
+        .calc-warehouse-card:hover {
             border-color: #488C9A;
             box-shadow: 0 4px 20px rgba(72, 140, 154, 0.15);
         }
-        .warehouse-card.active {
+        .calc-warehouse-card.active {
             border-color: #488C9A;
             box-shadow: 0 4px 20px rgba(72, 140, 154, 0.2);
         }
-        .warehouse-card-header {
+        .calc-warehouse-card-header {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
             margin-bottom: 16px;
         }
-        .warehouse-icon {
+        .calc-warehouse-icon {
             width: 48px;
             height: 48px;
             background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
@@ -300,7 +302,7 @@ $conn->close();
             justify-content: center;
             font-size: 1.5rem;
         }
-        .warehouse-remove {
+        .calc-warehouse-remove {
             background: none;
             border: none;
             color: #dc3545;
@@ -310,10 +312,10 @@ $conn->close();
             opacity: 0.6;
             transition: opacity 0.2s;
         }
-        .warehouse-remove:hover {
+        .calc-warehouse-remove:hover {
             opacity: 1;
         }
-        .warehouse-name-input {
+        .calc-warehouse-name-input {
             width: 100%;
             padding: 10px 14px;
             border: 1px solid #e0e0e0;
@@ -321,19 +323,20 @@ $conn->close();
             font-size: 1rem;
             font-weight: 500;
             transition: border-color 0.2s;
+            box-sizing: border-box;
         }
-        .warehouse-name-input:focus {
+        .calc-warehouse-name-input:focus {
             outline: none;
             border-color: #488C9A;
         }
-        .warehouse-card .warehouse-summary {
+        .calc-warehouse-card .calc-warehouse-summary {
             margin-top: 12px;
             padding-top: 12px;
             border-top: 1px solid #e9ecef;
             font-size: 0.85rem;
             color: #6c757d;
         }
-        .add-warehouse-card {
+        .calc-add-warehouse-card {
             background: #fff;
             border: 2px dashed #ccc;
             border-radius: 16px;
@@ -345,12 +348,13 @@ $conn->close();
             cursor: pointer;
             transition: all 0.3s ease;
             min-height: 180px;
+            width: auto;
         }
-        .add-warehouse-card:hover {
+        .calc-add-warehouse-card:hover {
             border-color: #488C9A;
             background: #f8f9fa;
         }
-        .add-warehouse-card .add-icon {
+        .calc-add-warehouse-card .add-icon {
             width: 56px;
             height: 56px;
             background: #e9ecef;
@@ -363,11 +367,11 @@ $conn->close();
             margin-bottom: 12px;
             transition: all 0.3s ease;
         }
-        .add-warehouse-card:hover .add-icon {
+        .calc-add-warehouse-card:hover .add-icon {
             background: #488C9A;
             color: #fff;
         }
-        .add-warehouse-card span {
+        .calc-add-warehouse-card span {
             color: #6c757d;
             font-weight: 500;
         }
@@ -553,9 +557,6 @@ $conn->close();
             border: 1px solid #e0e0e0;
             border-radius: 8px;
             font-size: 1rem;
-        }
-        .current-inventory-field {
-            max-width: 200px;
         }
         .schedule-table-container {
             overflow-x: auto;
@@ -984,7 +985,7 @@ $conn->close();
             <div class="accordion-content open">
                 <p style="color: #6c757d; margin-bottom: 20px;">Add the warehouses you want to compare. Give each a name to easily identify them in results.</p>
 
-                <div class="warehouses-grid" id="warehousesGrid">
+                <div class="calc-warehouses-grid" id="warehousesGrid">
                     <!-- Warehouse cards will be added here by JavaScript -->
                 </div>
 
@@ -1272,14 +1273,14 @@ function renderWarehouses() {
     calculatorData.warehouses.forEach((wh, index) => {
         const feeCount = wh.fees.length;
         html += `
-            <div class="warehouse-card" data-id="${wh.id}">
-                <div class="warehouse-card-header">
-                    <div class="warehouse-icon">🏭</div>
-                    ${calculatorData.warehouses.length > 1 ? `<button type="button" class="warehouse-remove" onclick="removeWarehouse(${wh.id})">✕</button>` : ''}
+            <div class="calc-warehouse-card" data-id="${wh.id}">
+                <div class="calc-warehouse-card-header">
+                    <div class="calc-warehouse-icon">🏭</div>
+                    ${calculatorData.warehouses.length > 1 ? `<button type="button" class="calc-warehouse-remove" onclick="removeWarehouse(${wh.id})">✕</button>` : ''}
                 </div>
-                <input type="text" class="warehouse-name-input" value="${escapeHtml(wh.name)}"
+                <input type="text" class="calc-warehouse-name-input" value="${escapeHtml(wh.name)}"
                        onchange="updateWarehouseName(${wh.id}, this.value)" placeholder="Warehouse name">
-                <div class="warehouse-summary">
+                <div class="calc-warehouse-summary">
                     ${feeCount} fee${feeCount !== 1 ? 's' : ''} configured
                 </div>
             </div>
@@ -1289,7 +1290,7 @@ function renderWarehouses() {
     // Add warehouse card (max 5)
     if (calculatorData.warehouses.length < 5) {
         html += `
-            <div class="add-warehouse-card" onclick="addWarehouse()">
+            <div class="calc-add-warehouse-card" onclick="addWarehouse()">
                 <div class="add-icon">+</div>
                 <span>Add Warehouse</span>
             </div>
@@ -1389,12 +1390,6 @@ function renderFeeTable(warehouse, whIndex) {
                 + Add Fee
             </button>
         </div>
-
-        <div class="date-field current-inventory-field" style="margin-top: 20px;">
-            <label>Current Inventory (pallets already in storage)</label>
-            <input type="number" min="0" value="${warehouse.currentInventory || 0}"
-                   onchange="updateCurrentInventory(${whIndex}, parseInt(this.value) || 0)">
-        </div>
     `;
 }
 
@@ -1418,21 +1413,14 @@ function removeFee(whIndex, feeIndex) {
     renderFeeTabs();
 }
 
-function updateCurrentInventory(whIndex, value) {
-    calculatorData.warehouses[whIndex].currentInventory = value;
-    updateReviewSummary();
-}
-
 function copyFeesToAllWarehouses() {
     const checkbox = document.getElementById('copyFeesToAll');
     if (checkbox.checked && calculatorData.warehouses.length > 1) {
         const sourceFees = JSON.parse(JSON.stringify(calculatorData.warehouses[activeFeeTab].fees));
-        const sourceInventory = calculatorData.warehouses[activeFeeTab].currentInventory;
 
         calculatorData.warehouses.forEach((wh, index) => {
             if (index !== activeFeeTab) {
                 wh.fees = JSON.parse(JSON.stringify(sourceFees));
-                wh.currentInventory = sourceInventory;
             }
         });
 
@@ -1635,7 +1623,6 @@ function updateReviewSummary() {
                 </h4>
                 <div style="font-size: 0.9rem; color: #6c757d;">
                     <p><strong>Fees:</strong><br>${feeSummary || 'No fees configured'}</p>
-                    <p><strong>Current Inventory:</strong> ${wh.currentInventory || 0} pallets</p>
                     <p><strong>Storage Period:</strong> ${months.length} months</p>
                     <p><strong>Total In:</strong> ${totalIn} pallets</p>
                     <p><strong>Total Out:</strong> ${totalOut} pallets</p>
