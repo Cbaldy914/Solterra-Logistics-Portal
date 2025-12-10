@@ -1335,6 +1335,10 @@ function switchFeeTab(index) {
 function renderFeeTable(warehouse, whIndex) {
     let rowsHtml = '';
     warehouse.fees.forEach((fee, feeIndex) => {
+        // Determine if we need to show extra parameter fields
+        const showPalletsPerTruck = fee.unit === 'per_truck';
+        const showSqftPerPallet = fee.unit === 'per_sqft';
+
         rowsHtml += `
             <tr>
                 <td>
@@ -1346,12 +1350,28 @@ function renderFeeTable(warehouse, whIndex) {
                            onchange="updateFee(${whIndex}, ${feeIndex}, 'amount', parseFloat(this.value) || 0)">
                 </td>
                 <td>
-                    <select onchange="updateFee(${whIndex}, ${feeIndex}, 'unit', this.value)">
+                    <select onchange="updateFeeUnit(${whIndex}, ${feeIndex}, this.value)">
                         <option value="per_pallet" ${fee.unit === 'per_pallet' ? 'selected' : ''}>Per Pallet</option>
+                        <option value="per_truck" ${fee.unit === 'per_truck' ? 'selected' : ''}>Per Truck</option>
                         <option value="per_sqft" ${fee.unit === 'per_sqft' ? 'selected' : ''}>Per Sq. Ft.</option>
-                        <option value="per_module" ${fee.unit === 'per_module' ? 'selected' : ''}>Per Module</option>
                         <option value="flat" ${fee.unit === 'flat' ? 'selected' : ''}>Flat Rate</option>
                     </select>
+                    ${showPalletsPerTruck ? `
+                        <div class="unit-param" style="margin-top: 6px;">
+                            <label style="font-size: 0.75rem; color: #6c757d;">Pallets/Truck:</label>
+                            <input type="number" min="1" value="${fee.palletsPerTruck || 26}"
+                                   style="width: 60px; padding: 4px 6px; font-size: 0.85rem;"
+                                   onchange="updateFee(${whIndex}, ${feeIndex}, 'palletsPerTruck', parseInt(this.value) || 26)">
+                        </div>
+                    ` : ''}
+                    ${showSqftPerPallet ? `
+                        <div class="unit-param" style="margin-top: 6px;">
+                            <label style="font-size: 0.75rem; color: #6c757d;">Sq.ft./Pallet:</label>
+                            <input type="number" step="0.1" min="0.1" value="${fee.sqftPerPallet || 13.33}"
+                                   style="width: 60px; padding: 4px 6px; font-size: 0.85rem;"
+                                   onchange="updateFee(${whIndex}, ${feeIndex}, 'sqftPerPallet', parseFloat(this.value) || 13.33)">
+                        </div>
+                    ` : ''}
                 </td>
                 <td>
                     <select onchange="updateFee(${whIndex}, ${feeIndex}, 'trigger', this.value)">
@@ -1391,6 +1411,22 @@ function renderFeeTable(warehouse, whIndex) {
             </button>
         </div>
     `;
+}
+
+function updateFeeUnit(whIndex, feeIndex, value) {
+    const fee = calculatorData.warehouses[whIndex].fees[feeIndex];
+    fee.unit = value;
+
+    // Set default values for new unit types
+    if (value === 'per_truck' && !fee.palletsPerTruck) {
+        fee.palletsPerTruck = 26; // Default pallets per truck
+    }
+    if (value === 'per_sqft' && !fee.sqftPerPallet) {
+        fee.sqftPerPallet = 13.33; // Default sqft per pallet (40"x48" = 13.33 sqft)
+    }
+
+    renderFeeTabs();
+    updateReviewSummary();
 }
 
 function updateFee(whIndex, feeIndex, field, value) {
@@ -1447,19 +1483,33 @@ function setScheduleMode(mode) {
 
 function getMonthsBetween(start, end) {
     const months = [];
-    const startDate = new Date(start + '-01');
-    const endDate = new Date(end + '-01');
+    // Parse year and month separately to avoid timezone issues
+    const [startYear, startMonth] = start.split('-').map(Number);
+    const [endYear, endMonth] = end.split('-').map(Number);
 
-    while (startDate <= endDate) {
-        months.push(startDate.toISOString().slice(0, 7));
-        startDate.setMonth(startDate.getMonth() + 1);
+    let currentYear = startYear;
+    let currentMonth = startMonth;
+
+    while (currentYear < endYear || (currentYear === endYear && currentMonth <= endMonth)) {
+        // Format as YYYY-MM
+        const monthStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+        months.push(monthStr);
+
+        // Increment month
+        currentMonth++;
+        if (currentMonth > 12) {
+            currentMonth = 1;
+            currentYear++;
+        }
     }
 
     return months;
 }
 
 function formatMonth(monthStr) {
-    const date = new Date(monthStr + '-01');
+    // Parse manually to avoid timezone issues
+    const [year, month] = monthStr.split('-').map(Number);
+    const date = new Date(year, month - 1, 1); // month is 0-indexed in Date constructor
     return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
