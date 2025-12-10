@@ -82,11 +82,26 @@ function calculateWarehouseCosts($warehouse, $schedule) {
             'total_pallets_out' => 0,
             'peak_inventory' => 0,
             'avg_inventory' => 0
-        ]
+        ],
+        'fee_breakdown' => [] // Track each fee's total with calculation details
     ];
 
     $current_inventory = 0; // Inventory starts at 0, pallets are added via schedule
     $inventory_sum = 0;
+
+    // Initialize fee breakdown tracking for each fee
+    foreach ($warehouse['fees'] as $idx => $fee) {
+        $results['fee_breakdown'][$idx] = [
+            'name' => $fee['name'],
+            'unit' => $fee['unit'] ?? 'per_pallet',
+            'amount' => $fee['amount'] ?? 0,
+            'trigger' => $fee['trigger'],
+            'palletsPerTruck' => $fee['palletsPerTruck'] ?? null,
+            'sqftPerPallet' => $fee['sqftPerPallet'] ?? null,
+            'total' => 0,
+            'calculation_details' => []
+        ];
+    }
 
     // Categorize fees by trigger, storing full fee info for unit calculations
     $in_fees_config = [];
@@ -94,7 +109,8 @@ function calculateWarehouseCosts($warehouse, $schedule) {
     $storage_fees_config = [];
     $other_fees = [];
 
-    foreach ($warehouse['fees'] as $fee) {
+    foreach ($warehouse['fees'] as $idx => $fee) {
+        $fee['_idx'] = $idx; // Track original index for fee_breakdown
         if ($fee['trigger'] === 'on_entry') {
             $in_fees_config[] = $fee;
         } elseif ($fee['trigger'] === 'on_exit') {
@@ -106,34 +122,48 @@ function calculateWarehouseCosts($warehouse, $schedule) {
         }
     }
 
-    // Helper function to calculate fee based on unit type
+    // Helper function to calculate fee based on unit type - returns amount and details
     $calculateFeeAmount = function($fee, $pallets) {
         $unit = $fee['unit'] ?? 'per_pallet';
         $amount = $fee['amount'] ?? 0;
+        $details = [];
 
         switch ($unit) {
             case 'per_pallet':
-                return $amount * $pallets;
+                $total = $amount * $pallets;
+                $details = ['pallets' => $pallets, 'rate' => $amount];
+                break;
 
             case 'per_truck':
                 $palletsPerTruck = $fee['palletsPerTruck'] ?? 26;
                 if ($palletsPerTruck > 0 && $pallets > 0) {
                     $trucks = ceil($pallets / $palletsPerTruck);
-                    return $amount * $trucks;
+                    $total = $amount * $trucks;
+                    $details = ['pallets' => $pallets, 'palletsPerTruck' => $palletsPerTruck, 'trucks' => $trucks, 'rate' => $amount];
+                } else {
+                    $total = 0;
+                    $details = ['pallets' => $pallets, 'trucks' => 0];
                 }
-                return 0;
+                break;
 
             case 'per_sqft':
                 $sqftPerPallet = $fee['sqftPerPallet'] ?? 13.33;
                 $totalSqft = $pallets * $sqftPerPallet;
-                return $amount * $totalSqft;
+                $total = $amount * $totalSqft;
+                $details = ['pallets' => $pallets, 'sqftPerPallet' => $sqftPerPallet, 'totalSqft' => $totalSqft, 'rate' => $amount];
+                break;
 
             case 'flat':
-                return $pallets > 0 ? $amount : 0; // Only charge if there's activity
+                $total = $pallets > 0 ? $amount : 0;
+                $details = ['flatRate' => $amount, 'applied' => $pallets > 0];
+                break;
 
             default:
-                return $amount * $pallets;
+                $total = $amount * $pallets;
+                $details = ['pallets' => $pallets, 'rate' => $amount];
         }
+
+        return ['total' => $total, 'details' => $details];
     };
 
     // Calculate for each month
@@ -177,17 +207,23 @@ function calculateWarehouseCosts($warehouse, $schedule) {
         // Calculate fees using unit-aware calculation
         $in_fees = 0;
         foreach ($in_fees_config as $fee) {
-            $in_fees += $calculateFeeAmount($fee, $pallets_in);
+            $calc = $calculateFeeAmount($fee, $pallets_in);
+            $in_fees += $calc['total'];
+            $results['fee_breakdown'][$fee['_idx']]['total'] += $calc['total'];
         }
 
         $out_fees = 0;
         foreach ($out_fees_config as $fee) {
-            $out_fees += $calculateFeeAmount($fee, $pallets_out);
+            $calc = $calculateFeeAmount($fee, $pallets_out);
+            $out_fees += $calc['total'];
+            $results['fee_breakdown'][$fee['_idx']]['total'] += $calc['total'];
         }
 
         $storage_fees = 0;
         foreach ($storage_fees_config as $fee) {
-            $storage_fees += $calculateFeeAmount($fee, $end_inventory);
+            $calc = $calculateFeeAmount($fee, $end_inventory);
+            $storage_fees += $calc['total'];
+            $results['fee_breakdown'][$fee['_idx']]['total'] += $calc['total'];
         }
 
         $monthly_total = $in_fees + $out_fees + $storage_fees;
@@ -224,6 +260,7 @@ function calculateWarehouseCosts($warehouse, $schedule) {
             if ($unit === 'flat') {
                 $results['totals']['other_fees'] += $fee['amount'];
                 $results['totals']['total'] += $fee['amount'];
+                $results['fee_breakdown'][$fee['_idx']]['total'] = $fee['amount'];
             }
         }
     }
@@ -503,24 +540,97 @@ $conn->close();
             margin-top: 8px;
         }
         .cost-breakdown {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }
-        .cost-item {
-            padding: 12px;
+        .fee-item {
             background: #f8f9fa;
-            border-radius: 8px;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #e9ecef;
+            transition: all 0.2s;
         }
-        .cost-item .label {
-            font-size: 0.8rem;
+        .fee-item:hover {
+            border-color: #488C9A;
+        }
+        .fee-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 14px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .fee-item-header:hover {
+            background: #f0f0f0;
+        }
+        .fee-item-name {
+            font-size: 0.85rem;
             color: #6c757d;
-            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
-        .cost-item .value {
-            font-size: 1.1rem;
+        .fee-item-name .trigger-badge {
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+        .trigger-badge.on_entry { background: #d4edda; color: #155724; }
+        .trigger-badge.on_exit { background: #fff3cd; color: #856404; }
+        .trigger-badge.monthly { background: #cce5ff; color: #004085; }
+        .trigger-badge.one_time { background: #e2e3e5; color: #383d41; }
+        .fee-item-value {
+            font-size: 1rem;
             font-weight: 600;
             color: #293E4C;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .fee-item-toggle {
+            font-size: 0.7rem;
+            color: #999;
+            transition: transform 0.2s;
+        }
+        .fee-item.expanded .fee-item-toggle {
+            transform: rotate(180deg);
+        }
+        .fee-item-details {
+            display: none;
+            padding: 0 14px 12px 14px;
+            font-size: 0.8rem;
+            color: #6c757d;
+            background: #fff;
+            border-top: 1px solid #e9ecef;
+        }
+        .fee-item.expanded .fee-item-details {
+            display: block;
+        }
+        .fee-calc-formula {
+            background: #f8f9fa;
+            padding: 8px 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            margin-top: 8px;
+        }
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: linear-gradient(135deg, #293E4C 0%, #3a5a6a 100%);
+            border-radius: 10px;
+            margin-top: 4px;
+        }
+        .summary-row .label {
+            color: rgba(255,255,255,0.8);
+            font-size: 0.85rem;
+        }
+        .summary-row .value {
+            color: #fff;
+            font-weight: 600;
         }
         .view-details-btn {
             width: 100%;
@@ -1048,21 +1158,74 @@ $conn->close();
                 </div>
 
                 <div class="cost-breakdown">
-                    <div class="cost-item">
-                        <div class="label">In Fees</div>
-                        <div class="value">$<?php echo number_format($wr['results']['totals']['in_fees'], 2); ?></div>
-                    </div>
-                    <div class="cost-item">
-                        <div class="label">Out Fees</div>
-                        <div class="value">$<?php echo number_format($wr['results']['totals']['out_fees'], 2); ?></div>
-                    </div>
-                    <div class="cost-item">
-                        <div class="label">Storage Fees</div>
-                        <div class="value">$<?php echo number_format($wr['results']['totals']['storage_fees'], 2); ?></div>
-                    </div>
-                    <div class="cost-item">
-                        <div class="label">Peak Inventory</div>
-                        <div class="value"><?php echo number_format($wr['results']['summary']['peak_inventory']); ?> pallets</div>
+                    <?php
+                    $triggerLabels = [
+                        'on_entry' => 'Entry',
+                        'on_exit' => 'Exit',
+                        'monthly' => 'Monthly',
+                        'one_time' => 'One-Time'
+                    ];
+                    foreach ($wr['results']['fee_breakdown'] as $feeIdx => $feeData):
+                        if ($feeData['total'] <= 0) continue; // Skip fees with no cost
+
+                        // Build calculation explanation
+                        $calcExplanation = '';
+                        $unit = $feeData['unit'];
+                        $summary = $wr['results']['summary'];
+
+                        if ($unit === 'per_pallet') {
+                            if ($feeData['trigger'] === 'on_entry') {
+                                $calcExplanation = number_format($summary['total_pallets_in']) . ' pallets × $' . number_format($feeData['amount'], 2) . '/pallet';
+                            } elseif ($feeData['trigger'] === 'on_exit') {
+                                $calcExplanation = number_format($summary['total_pallets_out']) . ' pallets × $' . number_format($feeData['amount'], 2) . '/pallet';
+                            } else {
+                                $calcExplanation = 'Avg ' . number_format($summary['avg_inventory'], 1) . ' pallets × $' . number_format($feeData['amount'], 2) . '/pallet × ' . count($calculator_data['schedule']['months']) . ' months';
+                            }
+                        } elseif ($unit === 'per_truck') {
+                            $palletsPerTruck = $feeData['palletsPerTruck'] ?? 26;
+                            if ($feeData['trigger'] === 'on_entry') {
+                                $trucks = ceil($summary['total_pallets_in'] / $palletsPerTruck);
+                                $calcExplanation = number_format($summary['total_pallets_in']) . ' pallets ÷ ' . $palletsPerTruck . ' plt/truck = ' . $trucks . ' trucks × $' . number_format($feeData['amount'], 2);
+                            } elseif ($feeData['trigger'] === 'on_exit') {
+                                $trucks = ceil($summary['total_pallets_out'] / $palletsPerTruck);
+                                $calcExplanation = number_format($summary['total_pallets_out']) . ' pallets ÷ ' . $palletsPerTruck . ' plt/truck = ' . $trucks . ' trucks × $' . number_format($feeData['amount'], 2);
+                            }
+                        } elseif ($unit === 'per_sqft') {
+                            $sqftPerPallet = $feeData['sqftPerPallet'] ?? 13.33;
+                            $calcExplanation = 'Avg ' . number_format($summary['avg_inventory'], 1) . ' pallets × ' . number_format($sqftPerPallet, 2) . ' sqft × $' . number_format($feeData['amount'], 2) . '/sqft';
+                        } elseif ($unit === 'flat') {
+                            $calcExplanation = 'Flat rate: $' . number_format($feeData['amount'], 2);
+                        }
+                    ?>
+                        <div class="fee-item" onclick="this.classList.toggle('expanded')">
+                            <div class="fee-item-header">
+                                <div class="fee-item-name">
+                                    <?php echo htmlspecialchars($feeData['name']); ?>
+                                    <span class="trigger-badge <?php echo $feeData['trigger']; ?>">
+                                        <?php echo $triggerLabels[$feeData['trigger']] ?? $feeData['trigger']; ?>
+                                    </span>
+                                </div>
+                                <div class="fee-item-value">
+                                    $<?php echo number_format($feeData['total'], 2); ?>
+                                    <span class="fee-item-toggle">▼</span>
+                                </div>
+                            </div>
+                            <div class="fee-item-details">
+                                <div><strong>Rate:</strong> $<?php echo number_format($feeData['amount'], 2); ?>/<?php echo str_replace('_', ' ', $unit); ?></div>
+                                <?php if ($unit === 'per_truck' && $feeData['palletsPerTruck']): ?>
+                                    <div><strong>Pallets per truck:</strong> <?php echo $feeData['palletsPerTruck']; ?></div>
+                                <?php endif; ?>
+                                <?php if ($unit === 'per_sqft' && $feeData['sqftPerPallet']): ?>
+                                    <div><strong>Sq.ft. per pallet:</strong> <?php echo number_format($feeData['sqftPerPallet'], 2); ?></div>
+                                <?php endif; ?>
+                                <div class="fee-calc-formula"><?php echo $calcExplanation; ?> = $<?php echo number_format($feeData['total'], 2); ?></div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+
+                    <div class="summary-row">
+                        <span class="label">Peak Inventory</span>
+                        <span class="value"><?php echo number_format($wr['results']['summary']['peak_inventory']); ?> pallets</span>
                     </div>
                 </div>
 
@@ -1375,6 +1538,9 @@ function initDelaySimulator() {
         const delay = Math.round((percentage - 0.5) * 24); // -12 to +12 range
         setDelay(Math.max(-12, Math.min(12, delay)));
     });
+
+    // Show original costs on page load
+    simulateDelay(0);
 }
 
 function startDrag(e) {
@@ -1422,12 +1588,8 @@ function setDelay(months) {
         input.classList.add('delay');
     }
 
-    // Show/hide results
-    if (months === 0) {
-        document.getElementById('simulatorResults').classList.remove('active');
-    } else {
-        simulateDelay(months);
-    }
+    // Always show results (including at 0 for original costs)
+    simulateDelay(months);
 }
 
 function updateFromInput() {
@@ -1466,18 +1628,30 @@ function simulateDelay(delayMonths) {
         const newTotal = delayMonths > 0 ? originalTotal + additionalCost : Math.max(0, originalTotal - additionalCost);
         const diff = newTotal - originalTotal;
 
-        const delayLabel = delayMonths > 0 ? `+${delayMonths} month delay` : `${delayMonths} month pull-in`;
-
-        html += `
-            <div class="sim-card">
-                <h4>${escapeHtml(wr.warehouse.name)}</h4>
-                <div class="sim-original">Was: $${originalTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                <div class="sim-total">$${newTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                <div class="sim-diff ${diff >= 0 ? 'positive' : 'negative'}">
-                    ${diff >= 0 ? '+' : ''}$${diff.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+        // Different display for original (0) vs adjusted
+        if (delayMonths === 0) {
+            html += `
+                <div class="sim-card" style="border-color: #488C9A;">
+                    <h4>${escapeHtml(wr.warehouse.name)}</h4>
+                    <div class="sim-total">$${originalTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    <div class="sim-diff" style="color: #488C9A; font-weight: 500;">
+                        Original Estimate
+                    </div>
                 </div>
-            </div>
-        `;
+            `;
+        } else {
+            html += `
+                <div class="sim-card">
+                    <h4>${escapeHtml(wr.warehouse.name)}</h4>
+                    <div class="sim-original">Was: $${originalTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    <div class="sim-total">$${newTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    <div class="sim-diff ${diff >= 0 ? 'positive' : 'negative'}">
+                        ${diff >= 0 ? '+' : ''}$${diff.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        <span style="font-weight: normal; color: #6c757d; margin-left: 4px;">(${delayMonths > 0 ? '+' : ''}${delayMonths} mo)</span>
+                    </div>
+                </div>
+            `;
+        }
     });
 
     resultsContainer.innerHTML = html;
