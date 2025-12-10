@@ -540,9 +540,17 @@ $conn->close();
             margin-top: 8px;
         }
         .cost-breakdown {
-            display: flex;
-            flex-direction: column;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
             gap: 8px;
+        }
+        @media (max-width: 600px) {
+            .cost-breakdown {
+                grid-template-columns: 1fr;
+            }
+        }
+        .cost-breakdown .summary-row {
+            grid-column: 1 / -1; /* Summary row spans full width */
         }
         .fee-item {
             background: #f8f9fa;
@@ -1442,33 +1450,46 @@ function initTrendChart() {
 function initBreakdownChart() {
     const ctx = document.getElementById('breakdownChart').getContext('2d');
 
-    // Prepare data for stacked bar chart
+    // Prepare data for stacked bar chart - show each individual fee
     const labels = warehouseResults.map(wr => wr.warehouse.name);
-    const inFees = warehouseResults.map(wr => wr.results.totals.in_fees);
-    const outFees = warehouseResults.map(wr => wr.results.totals.out_fees);
-    const storageFees = warehouseResults.map(wr => wr.results.totals.storage_fees);
+
+    // Collect all unique fee names across all warehouses
+    const allFeeNames = [];
+    warehouseResults.forEach(wr => {
+        if (wr.results.fee_breakdown) {
+            wr.results.fee_breakdown.forEach(fee => {
+                if (fee.total > 0 && !allFeeNames.includes(fee.name)) {
+                    allFeeNames.push(fee.name);
+                }
+            });
+        }
+    });
+
+    // Color palette for fees
+    const colors = ['#488C9A', '#293E4C', '#fbb040', '#28a745', '#dc3545', '#6f42c1', '#fd7e14', '#20c997'];
+
+    // Create datasets for each fee type
+    const datasets = allFeeNames.map((feeName, index) => {
+        const data = warehouseResults.map(wr => {
+            if (wr.results.fee_breakdown) {
+                const fee = wr.results.fee_breakdown.find(f => f.name === feeName);
+                return fee ? fee.total : 0;
+            }
+            return 0;
+        });
+
+        return {
+            label: feeName,
+            data: data,
+            backgroundColor: colors[index % colors.length]
+        };
+    });
 
     new Chart(ctx, {
         type: 'bar',
         data: {
             labels: labels,
-            datasets: [
-                {
-                    label: 'In Fees',
-                    data: inFees,
-                    backgroundColor: '#488C9A'
-                },
-                {
-                    label: 'Out Fees',
-                    data: outFees,
-                    backgroundColor: '#293E4C'
-                },
-                {
-                    label: 'Storage Fees',
-                    data: storageFees,
-                    backgroundColor: '#fbb040'
-                }
-            ]
+            datasets: datasets
         },
         options: {
             responsive: true,
@@ -1476,6 +1497,13 @@ function initBreakdownChart() {
             plugins: {
                 legend: {
                     position: 'top'
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.dataset.label + ': $' + context.raw.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                        }
+                    }
                 }
             },
             scales: {
