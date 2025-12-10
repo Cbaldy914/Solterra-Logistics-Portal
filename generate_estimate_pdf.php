@@ -374,8 +374,8 @@ function generateEstimatePdfHtml($calculator_data, $warehouse_results, $best_war
         foreach ($wr['warehouse']['fees'] as $fee) {
             $unitLabels = [
                 'per_pallet' => 'Per Pallet',
+                'per_truck' => 'Per Truck',
                 'per_sqft' => 'Per Sq. Ft.',
-                'per_module' => 'Per Module',
                 'flat' => 'Flat Rate'
             ];
             $triggerLabels = [
@@ -385,10 +385,19 @@ function generateEstimatePdfHtml($calculator_data, $warehouse_results, $best_war
                 'one_time' => 'One-Time'
             ];
 
+            // Build unit label with extra info if applicable
+            $unitLabel = $unitLabels[$fee['unit']] ?? $fee['unit'];
+            if ($fee['unit'] === 'per_truck' && isset($fee['palletsPerTruck'])) {
+                $unitLabel .= ' (' . $fee['palletsPerTruck'] . ' plt/truck)';
+            }
+            if ($fee['unit'] === 'per_sqft' && isset($fee['sqftPerPallet'])) {
+                $unitLabel .= ' (' . number_format($fee['sqftPerPallet'], 2) . ' sqft/plt)';
+            }
+
             $html .= '<tr>
                 <td>' . htmlspecialchars($fee['name']) . '</td>
                 <td>$' . number_format($fee['amount'], 2) . '</td>
-                <td>' . ($unitLabels[$fee['unit']] ?? $fee['unit']) . '</td>
+                <td>' . $unitLabel . '</td>
                 <td>' . ($triggerLabels[$fee['trigger']] ?? $fee['trigger']) . '</td>
             </tr>';
         }

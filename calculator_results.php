@@ -88,23 +88,53 @@ function calculateWarehouseCosts($warehouse, $schedule) {
     $current_inventory = 0; // Inventory starts at 0, pallets are added via schedule
     $inventory_sum = 0;
 
-    // Get fee rates
-    $in_fee_rate = 0;
-    $out_fee_rate = 0;
-    $storage_fee_rate = 0;
+    // Categorize fees by trigger, storing full fee info for unit calculations
+    $in_fees_config = [];
+    $out_fees_config = [];
+    $storage_fees_config = [];
     $other_fees = [];
 
     foreach ($warehouse['fees'] as $fee) {
         if ($fee['trigger'] === 'on_entry') {
-            $in_fee_rate += $fee['amount'];
+            $in_fees_config[] = $fee;
         } elseif ($fee['trigger'] === 'on_exit') {
-            $out_fee_rate += $fee['amount'];
+            $out_fees_config[] = $fee;
         } elseif ($fee['trigger'] === 'monthly') {
-            $storage_fee_rate += $fee['amount'];
+            $storage_fees_config[] = $fee;
         } else {
             $other_fees[] = $fee;
         }
     }
+
+    // Helper function to calculate fee based on unit type
+    $calculateFeeAmount = function($fee, $pallets) {
+        $unit = $fee['unit'] ?? 'per_pallet';
+        $amount = $fee['amount'] ?? 0;
+
+        switch ($unit) {
+            case 'per_pallet':
+                return $amount * $pallets;
+
+            case 'per_truck':
+                $palletsPerTruck = $fee['palletsPerTruck'] ?? 26;
+                if ($palletsPerTruck > 0 && $pallets > 0) {
+                    $trucks = ceil($pallets / $palletsPerTruck);
+                    return $amount * $trucks;
+                }
+                return 0;
+
+            case 'per_sqft':
+                $sqftPerPallet = $fee['sqftPerPallet'] ?? 13.33;
+                $totalSqft = $pallets * $sqftPerPallet;
+                return $amount * $totalSqft;
+
+            case 'flat':
+                return $pallets > 0 ? $amount : 0; // Only charge if there's activity
+
+            default:
+                return $amount * $pallets;
+        }
+    };
 
     // Calculate for each month
     foreach ($months as $index => $month) {
@@ -144,10 +174,22 @@ function calculateWarehouseCosts($warehouse, $schedule) {
         $current_inventory = max(0, $current_inventory + $pallets_in - $pallets_out);
         $end_inventory = $current_inventory;
 
-        // Calculate fees
-        $in_fees = $in_fee_rate * $pallets_in;
-        $out_fees = $out_fee_rate * $pallets_out;
-        $storage_fees = $storage_fee_rate * $end_inventory;
+        // Calculate fees using unit-aware calculation
+        $in_fees = 0;
+        foreach ($in_fees_config as $fee) {
+            $in_fees += $calculateFeeAmount($fee, $pallets_in);
+        }
+
+        $out_fees = 0;
+        foreach ($out_fees_config as $fee) {
+            $out_fees += $calculateFeeAmount($fee, $pallets_out);
+        }
+
+        $storage_fees = 0;
+        foreach ($storage_fees_config as $fee) {
+            $storage_fees += $calculateFeeAmount($fee, $end_inventory);
+        }
+
         $monthly_total = $in_fees + $out_fees + $storage_fees;
 
         $results['monthly'][] = [
@@ -178,8 +220,11 @@ function calculateWarehouseCosts($warehouse, $schedule) {
     // Calculate one-time fees
     foreach ($other_fees as $fee) {
         if ($fee['trigger'] === 'one_time') {
-            $results['totals']['other_fees'] += $fee['amount'];
-            $results['totals']['total'] += $fee['amount'];
+            $unit = $fee['unit'] ?? 'flat';
+            if ($unit === 'flat') {
+                $results['totals']['other_fees'] += $fee['amount'];
+                $results['totals']['total'] += $fee['amount'];
+            }
         }
     }
 
