@@ -122,8 +122,37 @@ $conn->close();
         .breadcrumb a { color: #488C9A; text-decoration: none; }
         .breadcrumb .separator { margin: 0 8px; color: #6c757d; }
 
-        /* Header + badges */
-        .page-header { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; justify-content:space-between; margin: 12px 20px 18px; }
+        /* Modern Page Header */
+        .page-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin: 12px 20px 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .page-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+        .page-header h1 {
+            font-size: 2.2em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 16px 0;
+            line-height: 1.2;
+        }
+        .badge-container { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
         .badge-chip { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:24px; font-weight:600; font-size:0.85rem; border:1px solid #e6edf1; background:linear-gradient(135deg,#F5FAFB,#FFFFFF); color:#253b49; }
         .badge-issue { background:linear-gradient(135deg,#E8F4F6,#F5FAFB); }
         .badge-ticket { background:#f7f9fb; }
@@ -210,26 +239,24 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
+    <?php
+        require_once 'components/breadcrumbs.php';
+        $projId = (int)$claim['project_id'];
+        echo slp_render_breadcrumbs([
+            'current_label' => 'Ticket #'.htmlspecialchars($claimId),
+            'project_id' => $projId,
+            'extra' => [ ['label' => 'Exceptions Report', 'url' => 'warranty.php?project_id='.$projId] ]
+        ]);
+    ?>
     <div class="page-header">
-        <div>
-            <?php
-                require_once 'components/breadcrumbs.php';
-                $projId = (int)$claim['project_id'];
-                echo slp_render_breadcrumbs([
-                    'current_label' => 'Ticket #'.htmlspecialchars($claimId),
-                    'project_id' => $projId,
-                    'extra' => [ ['label' => 'Exceptions Report', 'url' => 'warranty.php?project_id='.$projId] ]
-                ]);
-            ?>
-            <h1 style="margin:0 0 6px 0;">Ticket #<?php echo htmlspecialchars($claimId); ?> · <?php echo htmlspecialchars($claim['project_name']); ?></h1>
-            <div class="d-flex flex-wrap" style="gap:8px;">
-                <span class="badge-chip badge-issue">Issue: <?php echo htmlspecialchars(str_replace('_',' ', (string)$claim['issue_type'])); ?></span>
-                <span class="status-badge" style="background:#E8F4F6;color:#2C3E50;">Status: <?php echo htmlspecialchars($claim['status']); ?></span>
-                <span class="badge-chip badge-ticket">Opened: <?php echo htmlspecialchars($claim['created_at']); ?></span>
-                <?php if ($claim['credit_amount'] !== null): ?>
-                    <span class="badge-chip" style="background:#d4edda;color:#0f5132;">Credit: $<?php echo number_format((float)$claim['credit_amount'], 2); ?></span>
-                <?php endif; ?>
-            </div>
+        <h1>Ticket #<?php echo htmlspecialchars($claimId); ?> · <?php echo htmlspecialchars($claim['project_name']); ?></h1>
+        <div class="badge-container">
+            <span class="badge-chip badge-issue">Issue: <?php echo htmlspecialchars(str_replace('_',' ', (string)$claim['issue_type'])); ?></span>
+            <span class="status-badge" style="background:#E8F4F6;color:#2C3E50;">Status: <?php echo htmlspecialchars($claim['status']); ?></span>
+            <span class="badge-chip badge-ticket">Opened: <?php echo htmlspecialchars($claim['created_at']); ?></span>
+            <?php if ($claim['credit_amount'] !== null): ?>
+                <span class="badge-chip" style="background:#d4edda;color:#0f5132;">Credit: $<?php echo number_format((float)$claim['credit_amount'], 2); ?></span>
+            <?php endif; ?>
         </div>
     </div>
 
