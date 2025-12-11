@@ -686,8 +686,8 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
         .delivery-tracker-header { background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 24px; padding: 32px; margin: 16px 0 20px 0; box-shadow: 0 8px 32px rgba(0,0,0,0.06); border: 1px solid rgba(72,140,154,0.08); position: relative; overflow: hidden; }
         .delivery-tracker-header::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
         .header-content { display:flex; align-items:center; justify-content: space-between; flex-wrap:wrap; gap:24px; }
-        .header-info h1 { font-size: 2.2em; font-weight: 700; background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0 0 6px 0; line-height: 1.2; }
-        .header-subtitle { color:#6c757d; font-size:1.05em; font-weight:500; margin:0; }
+        .header-info h1 { font-size: 2.5em; font-weight: 700; background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0 0 8px 0; line-height: 1.2; }
+        .header-subtitle { color:#6c757d; font-size:1.1em; font-weight:500; margin:0; }
     </style>
     <div class="delivery-tracker-header">
         <div class="header-content">

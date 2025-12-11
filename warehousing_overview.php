@@ -336,19 +336,50 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        .breadcrumb {
+        /* Modern Page Header */
+        .page-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .page-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+        .page-header-content {
             display: flex;
-            margin-bottom: 20px;
-            margin-top: 10px;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
         }
-        .breadcrumb a {
-            color: #488C9A;
-            text-decoration: none;
+        .page-header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
         }
-        .breadcrumb .separator {
-            margin: 0 8px;
+        .page-header .subtitle {
             color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
         }
+
         .key-figures {
             display: flex;
             flex-wrap: wrap;
@@ -477,7 +508,15 @@ $conn->close();
 <main>
     <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Warehousing Overview']); ?>
 
-    <h1>Warehousing Overview</h1>
+    <!-- Modern Page Header -->
+    <div class="page-header">
+        <div class="page-header-content">
+            <div>
+                <h1>Warehousing Overview</h1>
+                <p class="subtitle">Monitor inventory across all warehouses</p>
+            </div>
+        </div>
+    </div>
 
     <div class="key-figures">
         <div class="figure">
