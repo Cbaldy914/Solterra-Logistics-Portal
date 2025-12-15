@@ -1662,6 +1662,28 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
 
 
     <div class="documents-container">
+        <div class="pagination-container">
+            <div class="pagination-info" id="paginationInfo">
+                Showing 0 of 0 documents
+            </div>
+            <div class="pagination-controls">
+                <div class="page-size-selector">
+                    <label>Show:</label>
+                    <select id="pageSizeSelect" class="page-size-select" onchange="changePageSize()">
+                        <option value="25">25</option>
+                        <option value="50">50</option>
+                        <option value="100" selected>100</option>
+                        <option value="200">200</option>
+                        <option value="500">500</option>
+                    </select>
+                    <span>per page</span>
+                </div>
+                <div class="pagination-buttons" id="paginationButtons">
+                    <!-- Will be populated dynamically -->
+                </div>
+            </div>
+        </div>
+
         <div class="table-header">
             <div class="table-header-left">
                 <h3 class="table-title">
@@ -1701,28 +1723,6 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
                 <i class="fas fa-spinner fa-spin"></i>
                 <h3>Loading Documents</h3>
                 <p>Please wait while we fetch your documents...</p>
-            </div>
-        </div>
-
-        <div class="pagination-container">
-            <div class="pagination-info" id="paginationInfo">
-                Showing 0 of 0 documents
-            </div>
-            <div class="pagination-controls">
-                <div class="page-size-selector">
-                    <label>Show:</label>
-                    <select id="pageSizeSelect" class="page-size-select" onchange="changePageSize()">
-                        <option value="25">25</option>
-                        <option value="50">50</option>
-                        <option value="100" selected>100</option>
-                        <option value="200">200</option>
-                        <option value="500">500</option>
-                    </select>
-                    <span>per page</span>
-                </div>
-                <div class="pagination-buttons" id="paginationButtons">
-                    <!-- Will be populated dynamically -->
-                </div>
             </div>
         </div>
     </div>
