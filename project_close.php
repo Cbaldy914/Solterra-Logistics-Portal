@@ -72,22 +72,133 @@ function saveStoredSummaryText($project_id, $text) {
     file_put_contents($dir . '/summary.txt', $text);
 }
 
-function buildDefaultSummaryText($project_row, $totals) {
+function buildDefaultSummaryText($project_row, $totals, $conn = null, $project_id = null) {
     [$total_order, $delivered, $percent] = $totals;
     $percentDisplay = number_format($percent, 2);
     $deliveredDisplay = number_format($delivered);
     $totalDisplay = number_format($total_order);
+
     $lines = [];
-    $lines[] = 'Project summary for ' . ($project_row['project_name'] ?? 'this project') . ' (' . ($project_row['account_name'] ?? 'Account unknown') . ').';
+    $lines[] = 'PROJECT SUMMARY';
+    $lines[] = str_repeat('=', 50);
+    $lines[] = '';
+    $lines[] = 'Project: ' . ($project_row['project_name'] ?? 'N/A');
+    $lines[] = 'Account: ' . ($project_row['account_name'] ?? 'N/A');
+    $lines[] = 'Location: ' . trim(($project_row['city'] ?? '') . ', ' . ($project_row['state'] ?? ''), ', ');
+    $lines[] = '';
+
+    // Delivery Progress
+    $lines[] = 'DELIVERY PROGRESS';
+    $lines[] = str_repeat('-', 30);
     if ($total_order > 0) {
-        $lines[] = 'Delivery progress: ' . $percentDisplay . '% (' . $deliveredDisplay . ' of ' . $totalDisplay . ' modules delivered).';
+        $lines[] = 'Completion: ' . $percentDisplay . '%';
+        $lines[] = 'Delivered: ' . $deliveredDisplay . ' of ' . $totalDisplay . ' modules';
+        if ($percent >= 100) {
+            $lines[] = 'Status: Project fully delivered';
+        } elseif ($percent >= 75) {
+            $lines[] = 'Status: Nearing completion';
+        } elseif ($percent >= 50) {
+            $lines[] = 'Status: Over halfway complete';
+        } else {
+            $lines[] = 'Status: In progress';
+        }
     } else {
-        $lines[] = 'Delivery progress: No wattage orders recorded.';
+        $lines[] = 'No wattage orders recorded for this project.';
     }
-    $lines[] = 'Use this space to capture highlights, risks, and client-facing notes:';
-    $lines[] = '- Outstanding items: ______';
-    $lines[] = '- Safety / quality notes: ______';
-    $lines[] = '- Customer follow-ups: ______';
+    $lines[] = '';
+
+    // Fetch additional data using lightweight queries (avoid heavy fetchPalletCosts)
+    if ($conn && $project_id) {
+        // Lightweight Financial Summary from deliveries table
+        $stmtCost = $conn->prepare('SELECT
+            COUNT(DISTINCT id) as delivery_count,
+            COALESCE(SUM(freight_cost), 0) as total_freight,
+            COALESCE(SUM(accessorial_costs), 0) as total_accessorial,
+            COALESCE(SUM(miles), 0) as total_miles
+            FROM deliveries WHERE project_id = ?');
+        $stmtCost->bind_param('i', $project_id);
+        $stmtCost->execute();
+        $costStats = $stmtCost->get_result()->fetch_assoc();
+        $stmtCost->close();
+
+        if ($costStats) {
+            $totalFreight = floatval($costStats['total_freight'] ?? 0);
+            $totalAccessorial = floatval($costStats['total_accessorial'] ?? 0);
+            $grandTotal = $totalFreight + $totalAccessorial;
+
+            if ($grandTotal > 0) {
+                $lines[] = 'FINANCIAL SUMMARY';
+                $lines[] = str_repeat('-', 30);
+                $lines[] = 'Total Freight Cost: $' . number_format($totalFreight, 2);
+                $lines[] = 'Total Accessorial Costs: $' . number_format($totalAccessorial, 2);
+                $lines[] = 'Grand Total (Freight + Accessorial): $' . number_format($grandTotal, 2);
+                $lines[] = '';
+            }
+
+            // Sustainability Metrics (calculated from deliveries)
+            $totalMiles = floatval($costStats['total_miles'] ?? 0);
+            if ($totalMiles > 0) {
+                $fuelConsumption = $totalMiles * 0.1667;
+                $emissions = $fuelConsumption * 10.21;
+
+                $lines[] = 'SUSTAINABILITY METRICS';
+                $lines[] = str_repeat('-', 30);
+                $lines[] = 'Total Miles Driven: ' . number_format($totalMiles, 1) . ' mi';
+                $lines[] = 'Est. Fuel Consumption: ' . number_format($fuelConsumption, 1) . ' gallons';
+                $lines[] = 'Est. CO2 Emissions: ' . number_format($emissions, 1) . ' kg';
+                $lines[] = '';
+            }
+
+            // Delivery Stats
+            $deliveryCount = intval($costStats['delivery_count'] ?? 0);
+            if ($deliveryCount > 0) {
+                $stmtDel = $conn->prepare('SELECT SUM(CASE WHEN status_of_delivery = "Delivered to Project" THEN 1 ELSE 0 END) as delivered_count FROM deliveries WHERE project_id = ?');
+                $stmtDel->bind_param('i', $project_id);
+                $stmtDel->execute();
+                $delStats = $stmtDel->get_result()->fetch_assoc();
+                $stmtDel->close();
+
+                $lines[] = 'DELIVERY STATISTICS';
+                $lines[] = str_repeat('-', 30);
+                $lines[] = 'Total Deliveries: ' . number_format($deliveryCount);
+                $lines[] = 'Completed Deliveries: ' . number_format($delStats['delivered_count'] ?? 0);
+                $lines[] = '';
+            }
+        }
+
+        // Warehouse Activity
+        $stmtWh = $conn->prepare('SELECT COUNT(DISTINCT warehouse_id) as wh_count FROM deliveries WHERE project_id = ? AND warehouse_id IS NOT NULL');
+        $stmtWh->bind_param('i', $project_id);
+        $stmtWh->execute();
+        $whStats = $stmtWh->get_result()->fetch_assoc();
+        $stmtWh->close();
+
+        if ($whStats && ($whStats['wh_count'] ?? 0) > 0) {
+            $lines[] = 'WAREHOUSING';
+            $lines[] = str_repeat('-', 30);
+            $lines[] = 'Warehouses Used: ' . number_format($whStats['wh_count']);
+            $lines[] = '';
+        }
+    }
+
+    // Notes Section (for user to fill in)
+    $lines[] = 'PROJECT NOTES';
+    $lines[] = str_repeat('-', 30);
+    $lines[] = 'Key Highlights:';
+    $lines[] = '- ';
+    $lines[] = '';
+    $lines[] = 'Challenges & Resolutions:';
+    $lines[] = '- ';
+    $lines[] = '';
+    $lines[] = 'Outstanding Items:';
+    $lines[] = '- ';
+    $lines[] = '';
+    $lines[] = 'Safety / Quality Notes:';
+    $lines[] = '- ';
+    $lines[] = '';
+    $lines[] = 'Customer Follow-ups:';
+    $lines[] = '- ';
+
     return implode("\n", $lines);
 }
 
@@ -1091,7 +1202,7 @@ if ($project_id > 0) {
 
 $project_row = $project_id ? fetchProjectRow($conn, $project_id) : null;
 $totals = $project_id ? fetchTotals($conn, $project_id) : [0,0,0];
-$default_summary_text = ($project_id && $project_row) ? buildDefaultSummaryText($project_row, $totals) : '';
+$default_summary_text = ($project_id && $project_row) ? buildDefaultSummaryText($project_row, $totals, $conn, $project_id) : '';
 
 if ($action === 'preview_summary' && $project_id > 0) {
     $summary_text = trim($posted_summary_text ?? '');
@@ -1132,7 +1243,16 @@ if ($action === 'export' && $project_id > 0) {
         header('Content-Type: application/zip');
         header('Content-Disposition: attachment; filename="' . basename($zipPath) . '"');
         header('Content-Length: ' . filesize($zipPath));
-        readfile($zipPath);
+
+        // Use chunked reading to avoid memory exhaustion on large files
+        $handle = fopen($zipPath, 'rb');
+        if ($handle) {
+            while (!feof($handle)) {
+                echo fread($handle, 8192); // Read 8KB at a time
+                flush();
+            }
+            fclose($handle);
+        }
 
         // Cleanup
         @unlink($zipPath);
