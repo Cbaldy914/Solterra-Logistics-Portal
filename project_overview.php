@@ -476,16 +476,19 @@ while ($row = $res_status->fetch_assoc()) {
         }
     }
 
-    // Build status_totals for overall tracking
+    // Build status_totals for overall tracking (include all pallets for status counts)
     if (!isset($status_totals[$status])) {
         $status_totals[$status] = ['pallets' => 0, 'modules' => 0];
     }
     $status_totals[$status]['pallets'] += 1;
     $status_totals[$status]['modules'] += $qty;
-    
-
 
     // Build detailed_breakdown for the overview section
+    // Only include non-damaged pallets to match delivery_totals (sub rows)
+    if ($status === 'Damaged') {
+        continue; // Skip damaged pallets for detailed_breakdown to match sub row calculations
+    }
+
     if ($status === 'In Warehouse' && $wh_name) {
         $key = 'In Warehouse - ' . $wh_name;
     } elseif ($status === 'In Transit to Warehouse' && $wh_name) {
