@@ -557,51 +557,18 @@ $delivered_combined               = 0;
 $exceptions_combined              = 0;
 
 
-// Calculate combined totals by properly aggregating from the raw status data
-// This approach calculates MW correctly by using actual wattage for each module group
+// Calculate exceptions (damaged) from detailed_breakdown since they're not in delivery_totals
+// Other combined values will be calculated by summing sub rows below
 foreach ($status_totals as $status => $data) {
-    $modules = $data['modules'] ?? 0;
-    
-    if ($modules > 0) {
-        // Calculate the actual MW by looking at the wattage breakdown in detailed_breakdown
-        $total_mw_for_status = 0;
-        
-        // Find the corresponding detailed breakdown entries for this status
+    if ($status === 'Damaged' && ($data['modules'] ?? 0) > 0) {
         foreach ($detailed_breakdown as $key => $breakdown) {
-            if (strpos($key, $status) === 0 || $key === $status) {
+            if ($key === 'Damaged') {
                 foreach ($breakdown['wattage_breakdown'] as $wattage => $watt_data) {
                     $watt_modules = $watt_data['modules'];
                     $mw_for_this_wattage = calculateQuantity($watt_modules, $wattage, $view_mode);
-                    $total_mw_for_status += $mw_for_this_wattage;
+                    $exceptions_combined += $mw_for_this_wattage;
                 }
             }
-        }
-        
-        switch ($status) {
-            case 'At Manufacturer':
-                $at_manufacturer_combined = $total_mw_for_status;
-                break;
-            case 'On Water':
-                $on_water_combined = $total_mw_for_status;
-                break;
-            case 'Cleared Customs':
-                $cleared_customs_combined = $total_mw_for_status;
-                break;
-            case 'In Transit to Warehouse':
-                $in_transit_to_warehouse_combined = $total_mw_for_status;
-                break;
-            case 'In Warehouse':
-                $in_warehouse_combined = $total_mw_for_status;
-                break;
-            case 'In Transit to Project':
-                $in_transit_to_project_combined = $total_mw_for_status;
-                break;
-            case 'Delivered to Project':
-                $delivered_combined = $total_mw_for_status;
-                break;
-            case 'Damaged':
-                $exceptions_combined += $total_mw_for_status;
-                break;
         }
     }
 }
@@ -671,16 +638,28 @@ foreach ($all_wattages as $lbl => $info) {
     ];
 
     $total_order_combined             += $to;
-    // Status combined values are calculated from status_totals above - don't override them here
-    // $at_manufacturer_combined         += $atman;
-    // $on_water_combined                += $onw;
-    // $cleared_customs_combined         += $clr;
-    // $in_transit_to_warehouse_combined += $itw;
-    // $in_warehouse_combined            += $inw;
-    // $in_transit_to_project_combined   += $itp;
-    // $delivered_combined               += $del;
+}
 
-    // pieChartData will be calculated after the loop using the correct combined values
+// Calculate combined values by explicitly summing from the sub_rows arrays
+// This guarantees the main row exactly matches the sum of sub rows
+$delivered_combined = 0;
+$at_manufacturer_combined = 0;
+$on_water_combined = 0;
+$cleared_customs_combined = 0;
+$in_transit_to_warehouse_combined = 0;
+$in_warehouse_combined = 0;
+$in_transit_to_project_combined = 0;
+
+foreach ($sub_rows as $sr) {
+    $delivered_combined += $sr['delivered'];
+}
+foreach ($sub_rows_status as $srs) {
+    $at_manufacturer_combined += ($srs['at_manufacturer'] ?? 0);
+    $on_water_combined += ($srs['on_water'] ?? 0);
+    $cleared_customs_combined += ($srs['cleared_customs'] ?? 0);
+    $in_transit_to_warehouse_combined += ($srs['in_transit_to_warehouse'] ?? 0);
+    $in_warehouse_combined += ($srs['in_warehouse'] ?? 0);
+    $in_transit_to_project_combined += ($srs['in_transit_to_project'] ?? 0);
 }
 
 // Calculate pieChartData using the correct combined values
