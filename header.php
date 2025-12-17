@@ -270,12 +270,8 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             </div>
           </li>
 
-          <li class="slp-item slp-has-dropdown" role="none">
-            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Users</a>
-            <div class="slp-submenu" role="menu">
-              <a href="admin_management" role="menuitem">Admin Management</a>
-              <a href="invite_user" role="menuitem">Invite User</a>
-            </div>
+          <li class="slp-item" role="none">
+            <a href="admin_management" class="slp-link" role="menuitem">Users & Accounts</a>
           </li>
 
           <li class="slp-item slp-has-dropdown" role="none">

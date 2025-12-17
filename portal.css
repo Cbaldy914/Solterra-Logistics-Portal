@@ -1,9 +1,14 @@
 /* Styles for the login page */
 
+/* Global box-sizing fix - prevents padding from extending elements past their container */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
 body {
     font-family: 'Poppins', sans-serif;
     padding: 0;
-    box-sizing: border-box;
+    margin: 0;
     background-color: white;
     color: #293E4C;
 }
