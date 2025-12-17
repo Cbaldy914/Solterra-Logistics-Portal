@@ -275,6 +275,7 @@ $conn->close();
                 <label for="role">Role <span class="required-indicator">*</span></label>
                 <select id="role" name="role" required>
                     <option value="user" <?php echo ($form_data['role'] === 'user') ? 'selected' : ''; ?>>User</option>
+                    <option value="customer_admin" <?php echo ($form_data['role'] === 'customer_admin') ? 'selected' : ''; ?>>Customer Admin</option>
                     <option value="admin" <?php echo ($form_data['role'] === 'admin') ? 'selected' : ''; ?>>Admin</option>
                     <option value="DDPm" <?php echo ($form_data['role'] === 'DDPm') ? 'selected' : ''; ?>>DDPm</option>
                     <option value="global_admin" <?php echo ($form_data['role'] === 'global_admin') ? 'selected' : ''; ?>>Global Admin</option>
