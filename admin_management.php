@@ -365,7 +365,7 @@ $conn->close();
             opacity: 1;
         }
 
-        /* Modal */
+        /* Modal - Override portal.css styles */
         .modal {
             display: none;
             position: fixed;
@@ -382,6 +382,10 @@ $conn->close();
             overflow-y: auto;
             opacity: 0;
             transition: all 0.3s ease;
+            /* Override portal.css modal styles */
+            height: auto !important;
+            margin: 0 !important;
+            padding: 0 !important;
         }
         .modal.active {
             display: block;
@@ -445,6 +449,7 @@ $conn->close();
             border-radius: 8px;
             font-size: 15px;
             transition: border-color 0.2s, box-shadow 0.2s;
+            box-sizing: border-box; /* Prevents input from extending past container */
         }
         .form-control:focus {
             border-color: #488C9A;
@@ -746,6 +751,20 @@ $conn->close();
     </div>
     <form id="addUserForm" onsubmit="submitAddUser(event)">
         <div class="modal-body">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label>First Name</label>
+                    <input type="text" class="form-control" name="first_name">
+                </div>
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label>Last Name</label>
+                    <input type="text" class="form-control" name="last_name">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" class="form-control" name="email" placeholder="user@example.com">
+            </div>
             <div class="form-group">
                 <label>Username <span class="required">*</span></label>
                 <input type="text" class="form-control" name="username" required>
