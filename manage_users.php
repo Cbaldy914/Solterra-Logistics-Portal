@@ -67,7 +67,7 @@ if (isset($_POST['edit_role'])) {
     $new_role = $_POST['new_role'];
 
     // Basic validation
-    if (!in_array($new_role, ['admin','user','DDPm','global_admin'])) {
+    if (!in_array($new_role, ['admin','user','customer_admin','DDPm','global_admin'])) {
         $error_message = "Invalid role selected.";
     } else {
         if ($user_id_to_edit == $_SESSION['user_id']) {
@@ -316,6 +316,7 @@ $conn->close();
                                         <input type="hidden" name="user_id" value="<?php echo $user['user_id']; ?>">
                                         <select name="new_role" class="role-select">
                                             <option value="user"  <?php if ($user['account_role'] == 'user') echo 'selected'; ?>>User</option>
+                                            <option value="customer_admin" <?php if ($user['account_role'] == 'customer_admin') echo 'selected'; ?>>Customer Admin</option>
                                             <option value="admin" <?php if ($user['account_role'] == 'admin') echo 'selected'; ?>>Admin</option>
                                             <option value="DDPm"  <?php if ($user['account_role'] == 'DDPm') echo 'selected'; ?>>DDPm</option>
                                             <option value="global_admin" <?php if ($user['account_role'] == 'global_admin') echo 'selected'; ?>>Global Admin</option>
