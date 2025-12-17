@@ -96,6 +96,114 @@ try {
             $response = ['success' => true, 'message' => "User '$username' created successfully", 'user_id' => $user_id];
             break;
 
+        case 'invite_user':
+            $username = trim($_POST['username'] ?? '');
+            $email = trim($_POST['email'] ?? '');
+            $account_id = intval($_POST['account_id'] ?? 0);
+            $role = trim($_POST['role'] ?? 'user');
+
+            // Validation
+            if (empty($username) || empty($email) || empty($account_id)) {
+                $response = ['success' => false, 'message' => 'Username, email, and account are required'];
+                break;
+            }
+
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $response = ['success' => false, 'message' => 'Please enter a valid email address'];
+                break;
+            }
+
+            if (!in_array($role, ['user', 'customer_admin', 'admin', 'DDPm', 'global_admin'])) {
+                $response = ['success' => false, 'message' => 'Invalid role selected'];
+                break;
+            }
+
+            // Check if username exists
+            $stmt = $conn->prepare("SELECT id FROM users WHERE username = ? LIMIT 1");
+            $stmt->bind_param("s", $username);
+            $stmt->execute();
+            $stmt->store_result();
+            if ($stmt->num_rows > 0) {
+                $stmt->close();
+                $response = ['success' => false, 'message' => "Username '$username' already exists. Please choose a different username."];
+                break;
+            }
+            $stmt->close();
+
+            $conn->begin_transaction();
+
+            try {
+                // Create user with temporary random password
+                $tempPassword = bin2hex(random_bytes(8));
+                $hashed = password_hash($tempPassword, PASSWORD_DEFAULT);
+                $stmt = $conn->prepare("INSERT INTO users (username, email, password) VALUES (?, ?, ?)");
+                $stmt->bind_param("sss", $username, $email, $hashed);
+                if (!$stmt->execute()) {
+                    throw new Exception($stmt->error);
+                }
+                $user_id = $stmt->insert_id;
+                $stmt->close();
+
+                // Map to account with selected role
+                $stmt = $conn->prepare("INSERT INTO customer_account_users (user_id, account_id, role) VALUES (?, ?, ?)");
+                $stmt->bind_param("iis", $user_id, $account_id, $role);
+                if (!$stmt->execute()) {
+                    throw new Exception($stmt->error);
+                }
+                $stmt->close();
+
+                // Create a password set token (reuse reset flow)
+                $token = bin2hex(random_bytes(32)); // 64 chars
+                $expires_at = date('Y-m-d H:i:s', strtotime('+72 hours'));
+
+                // Clean old tokens just in case
+                $stmt = $conn->prepare("DELETE FROM password_reset_tokens WHERE user_id = ? AND used = 0");
+                $stmt->bind_param("i", $user_id);
+                $stmt->execute();
+                $stmt->close();
+
+                $stmt = $conn->prepare("INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)");
+                $stmt->bind_param("iss", $user_id, $token, $expires_at);
+                if (!$stmt->execute()) {
+                    throw new Exception($stmt->error);
+                }
+                $stmt->close();
+
+                $conn->commit();
+
+                // Send invite email
+                require_once __DIR__ . '/../Mailer.php';
+                $reset_link = "https://" . $_SERVER['HTTP_HOST'] . "/reset_password?token=" . $token;
+                $subject = "You're invited to Solterra Solutions Portal";
+                $body = "Hello,\n\n" .
+                    "You have been invited to the Solterra Solutions Logistics Portal.\n\n" .
+                    "Username: " . $username . "\n" .
+                    "To set your password and activate your account, click the link below:\n" .
+                    $reset_link . "\n\n" .
+                    "This link expires in 72 hours and can be used once.\n\n" .
+                    "If you weren't expecting this invitation, please ignore this email.\n\n" .
+                    "— Solterra Solutions Team";
+
+                $emailSent = true;
+                try {
+                    Mailer::send($email, $subject, $body);
+                } catch (Exception $e) {
+                    error_log('Invite email failed: ' . $e->getMessage());
+                    $emailSent = false;
+                }
+
+                if ($emailSent) {
+                    $response = ['success' => true, 'message' => "Invitation sent to $email. They will receive a password setup link."];
+                } else {
+                    $response = ['success' => true, 'message' => "User created but email could not be sent. Please provide them with the password reset link manually."];
+                }
+
+            } catch (Exception $e) {
+                $conn->rollback();
+                $response = ['success' => false, 'message' => 'Error creating invite: ' . $e->getMessage()];
+            }
+            break;
+
         case 'update_user':
             $user_id = intval($_POST['user_id'] ?? 0);
             $password = $_POST['password'] ?? '';

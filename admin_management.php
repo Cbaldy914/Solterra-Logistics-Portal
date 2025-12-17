@@ -714,14 +714,14 @@ $conn->close();
     <div class="tab-content <?php echo $activeTab === 'invitations' ? 'active' : ''; ?>" id="tab-invitations">
         <div class="card">
             <div class="card-header">
-                <h3>User Invitations</h3>
-                <a href="invite_user.php" class="btn btn-primary">
+                <h3>Invite Users</h3>
+                <button class="btn btn-primary" onclick="openModal('inviteUserModal')">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
                         <polyline points="22,6 12,13 2,6"></polyline>
                     </svg>
-                    Invite User
-                </a>
+                    Send Invitation
+                </button>
             </div>
             <div class="card-body">
                 <div class="empty-state">
@@ -729,11 +729,12 @@ $conn->close();
                         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
                         <polyline points="22,6 12,13 2,6"></polyline>
                     </svg>
-                    <p>Use the Invite User page to send email invitations to new users.</p>
+                    <p>Send email invitations to new users</p>
                     <p style="color: #6c757d; font-size: 14px; margin-top: 8px;">
-                        Invitations create a new user account and send them a password setup link via email.
+                        Invitations create a new user account and send them a password setup link via email.<br>
+                        The link expires after 72 hours.
                     </p>
-                    <a href="invite_user.php" class="btn btn-primary" style="margin-top: 16px;">Go to Invite User</a>
+                    <button class="btn btn-primary" onclick="openModal('inviteUserModal')" style="margin-top: 16px;">Send an Invitation</button>
                 </div>
             </div>
         </div>
@@ -901,6 +902,52 @@ $conn->close();
         <button type="button" class="btn btn-secondary" onclick="closeModal('deleteConfirmModal')">Cancel</button>
         <button type="button" class="btn btn-danger" id="deleteConfirmBtn">Delete</button>
     </div>
+</div>
+
+<!-- Invite User Modal -->
+<div class="modal" id="inviteUserModal">
+    <div class="modal-header">
+        <h3>Send Invitation</h3>
+        <button class="modal-close" onclick="closeModal('inviteUserModal')">&times;</button>
+    </div>
+    <form id="inviteUserForm" onsubmit="submitInviteUser(event)">
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Email Address <span class="required">*</span></label>
+                <input type="email" class="form-control" name="email" id="inviteEmail" required placeholder="user@example.com" onblur="suggestUsernameFromEmail()">
+                <div class="form-hint">We will send the invite and password setup link to this email.</div>
+            </div>
+            <div class="form-group">
+                <label>Username <span class="required">*</span></label>
+                <input type="text" class="form-control" name="username" id="inviteUsername" required>
+                <div class="form-hint">Used to log in. Auto-filled from email when possible.</div>
+            </div>
+            <div class="form-group">
+                <label>Account <span class="required">*</span></label>
+                <select class="form-control" name="account_id" required>
+                    <option value="">-- Select Account --</option>
+                    <?php foreach ($accountOptions as $acc): ?>
+                        <option value="<?php echo $acc['id']; ?>"><?php echo htmlspecialchars($acc['name']); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Role <span class="required">*</span></label>
+                <select class="form-control" name="role" required>
+                    <option value="user" selected>User</option>
+                    <option value="customer_admin">Customer Admin</option>
+                    <option value="admin">Admin</option>
+                    <option value="DDPm">DDPm</option>
+                    <option value="global_admin">Global Admin</option>
+                </select>
+                <div class="form-hint">The role determines what permissions the user will have.</div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeModal('inviteUserModal')">Cancel</button>
+            <button type="submit" class="btn btn-primary">Send Invitation</button>
+        </div>
+    </form>
 </div>
 
 <script>
@@ -1133,6 +1180,55 @@ function deleteAccount(accountId) {
 }
 
 
+// Invite User functions
+function suggestUsernameFromEmail() {
+    const email = document.getElementById('inviteEmail').value.trim();
+    const usernameInput = document.getElementById('inviteUsername');
+    if (email && !usernameInput.value) {
+        const local = email.split('@')[0];
+        usernameInput.value = local.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    }
+}
+
+function submitInviteUser(event) {
+    event.preventDefault();
+    const form = event.target;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const originalText = submitBtn.innerHTML;
+
+    // Disable button and show loading state
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span style="display: inline-flex; align-items: center; gap: 8px;"><svg width="16" height="16" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"/></svg> Sending...</span>';
+
+    const formData = new FormData(form);
+    formData.append('action', 'invite_user');
+
+    fetch('api/admin_management.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+
+        if (data.success) {
+            showAlert('success', data.message);
+            closeModal('inviteUserModal');
+            form.reset();
+            // Reload to show the new user in the Users tab
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showAlert('error', data.message);
+        }
+    })
+    .catch(err => {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+        showAlert('error', 'An error occurred. Please try again.');
+    });
+}
+
 // Close modals on Escape key
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
@@ -1140,6 +1236,13 @@ document.addEventListener('keydown', function(e) {
     }
 });
 </script>
+
+<style>
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+</style>
 
 </body>
 </html>

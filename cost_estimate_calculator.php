@@ -558,11 +558,12 @@ $conn->close();
             margin-bottom: 8px;
         }
         .date-field input, .date-field select {
-            width: 90%;
+            width: 100%;
             padding: 12px 16px;
             border: 1px solid #e0e0e0;
             border-radius: 8px;
             font-size: 1rem;
+            box-sizing: border-box;
         }
         .schedule-table-container {
             overflow-x: auto;
