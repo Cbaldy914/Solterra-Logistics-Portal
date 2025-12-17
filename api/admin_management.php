@@ -35,10 +35,13 @@ try {
             $password = $_POST['password'] ?? '';
             $account_id = intval($_POST['account_id'] ?? 0);
             $role = trim($_POST['role'] ?? 'user');
+            $first_name = trim($_POST['first_name'] ?? '');
+            $last_name = trim($_POST['last_name'] ?? '');
+            $email = trim($_POST['email'] ?? '');
 
             // Validation
             if (empty($username) || empty($password) || empty($account_id) || empty($role)) {
-                $response = ['success' => false, 'message' => 'All fields are required'];
+                $response = ['success' => false, 'message' => 'Username, password, account, and role are required'];
                 break;
             }
 
@@ -49,6 +52,12 @@ try {
 
             if (strlen($password) < 8) {
                 $response = ['success' => false, 'message' => 'Password must be at least 8 characters'];
+                break;
+            }
+
+            // Validate email format if provided
+            if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $response = ['success' => false, 'message' => 'Invalid email format'];
                 break;
             }
 
@@ -65,10 +74,14 @@ try {
             }
             $stmt->close();
 
-            // Insert user
+            // Insert user with all fields
             $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare("INSERT INTO users (username, password) VALUES (?, ?)");
-            $stmt->bind_param("ss", $username, $hashed_password);
+            $email_value = !empty($email) ? $email : null;
+            $first_name_value = !empty($first_name) ? $first_name : null;
+            $last_name_value = !empty($last_name) ? $last_name : null;
+
+            $stmt = $conn->prepare("INSERT INTO users (username, password, email, first_name, last_name) VALUES (?, ?, ?, ?, ?)");
+            $stmt->bind_param("sssss", $username, $hashed_password, $email_value, $first_name_value, $last_name_value);
             $stmt->execute();
             $user_id = $stmt->insert_id;
             $stmt->close();
