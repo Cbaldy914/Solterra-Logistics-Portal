@@ -663,7 +663,7 @@ if (empty($displayName)) {
                 </div>
                 <div class="header-info">
                     <h1><?php echo htmlspecialchars($displayName); ?></h1>
-                    <p class="header-subtitle"><?php echo ucfirst(htmlspecialchars($role)); ?> • Manage your profile and preferences</p>
+                    <p class="header-subtitle">Manage your profile and preferences</p>
                 </div>
             </div>
             <div class="header-stats">
