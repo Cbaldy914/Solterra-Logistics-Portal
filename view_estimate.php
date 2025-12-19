@@ -2,8 +2,6 @@
 session_name("logistics_session");
 session_start();
 
-
-
 // Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: login");
@@ -19,595 +17,891 @@ if (!$conn) {
     die("Connection failed");
 }
 
-// Check for an 'id' GET parameter (the ID of the saved estimate)
-if (!isset($_GET['id']) || empty($_GET['id'])) {
-    echo "No estimate ID specified.";
+// Get estimate ID
+if (!isset($_GET['id'])) {
+    header("Location: cost_estimate_calculator.php");
     exit();
 }
 
 $estimate_id = intval($_GET['id']);
 
-// Retrieve the estimate from the database
+// Fetch the estimate
 $stmt = $conn->prepare("SELECT * FROM warehouse_estimates WHERE id = ? AND user_id = ?");
 $stmt->bind_param("ii", $estimate_id, $user_id);
 $stmt->execute();
 $result = $stmt->get_result();
+$estimate = $result->fetch_assoc();
+$stmt->close();
 
-if ($result->num_rows === 0) {
-    // Either no such estimate or it doesn't belong to this user
-    echo "Estimate not found or access denied.";
+if (!$estimate) {
+    $_SESSION['calc_message'] = ['type' => 'error', 'text' => 'Estimate not found or access denied.'];
+    header("Location: cost_estimate_calculator.php");
     exit();
 }
 
-$estimate_row = $result->fetch_assoc();
-$stmt->close();
+$estimate_data = json_decode($estimate['estimate_data'], true);
 
-// Decode the stored estimate_data
-$estimate_data = json_decode($estimate_row['estimate_data'], true);
+// Check if this is the new format (has 'warehouses' array) or old format
+$is_new_format = isset($estimate_data['warehouses']);
 
-// Extract data from the JSON. This matches what was saved in calculator_results.
-$months_array = isset($estimate_data['months']) ? $estimate_data['months'] : [];
+if ($is_new_format) {
+    // New format processing
+    $calculator_data = $estimate_data;
+    $warehouse_results = $estimate_data['results'] ?? [];
 
-// Build display_months from $months_array
-$display_months = [];
-foreach ($months_array as $m) {
-    $dateObj = DateTime::createFromFormat('Y-m', $m);
-    $display_months[] = $dateObj ? $dateObj->format('F Y') : '';
-}
+    // If no pre-calculated results, recalculate them
+    if (empty($warehouse_results)) {
+        function calculateWarehouseCosts($warehouse, $schedule) {
+            $months = $schedule['months'];
+            $mode = $schedule['mode'];
+            $results = [
+                'monthly' => [],
+                'totals' => [
+                    'in_fees' => 0,
+                    'out_fees' => 0,
+                    'storage_fees' => 0,
+                    'other_fees' => 0,
+                    'total' => 0
+                ],
+                'summary' => [
+                    'total_pallets_in' => 0,
+                    'total_pallets_out' => 0,
+                    'peak_inventory' => 0,
+                    'avg_inventory' => 0
+                ]
+            ];
 
-$current_inventory_w1 = isset($estimate_data['current_inventory']['w1']) ? intval($estimate_data['current_inventory']['w1']) : 0;
-$current_inventory_w2 = isset($estimate_data['current_inventory']['w2']) ? intval($estimate_data['current_inventory']['w2']) : 0;
-$current_inventory_w3 = isset($estimate_data['current_inventory']['w3']) ? intval($estimate_data['current_inventory']['w3']) : 0;
+            $current_inventory = 0; // Inventory starts at 0
+            $inventory_sum = 0;
 
-$pallets_entering_w1 = isset($estimate_data['pallets_entering_w1']) ? $estimate_data['pallets_entering_w1'] : [];
-$pallets_leaving_w1  = isset($estimate_data['pallets_leaving_w1'])  ? $estimate_data['pallets_leaving_w1']  : [];
-$pallets_entering_w2 = isset($estimate_data['pallets_entering_w2']) ? $estimate_data['pallets_entering_w2'] : [];
-$pallets_leaving_w2  = isset($estimate_data['pallets_leaving_w2'])  ? $estimate_data['pallets_leaving_w2']  : [];
-$pallets_entering_w3 = isset($estimate_data['pallets_entering_w3']) ? $estimate_data['pallets_entering_w3'] : [];
-$pallets_leaving_w3  = isset($estimate_data['pallets_leaving_w3'])  ? $estimate_data['pallets_leaving_w3']  : [];
+            // Categorize fees by trigger
+            $in_fees_config = [];
+            $out_fees_config = [];
+            $storage_fees_config = [];
+            $other_fees = [];
 
-$in_fee_w1  = isset($estimate_data['in_fee_per_pallet_w1'])  ? floatval($estimate_data['in_fee_per_pallet_w1'])  : 0.00;
-$in_fee_w2  = isset($estimate_data['in_fee_per_pallet_w2'])  ? floatval($estimate_data['in_fee_per_pallet_w2'])  : 0.00;
-$in_fee_w3  = isset($estimate_data['in_fee_per_pallet_w3'])  ? floatval($estimate_data['in_fee_per_pallet_w3'])  : 0.00;
+            foreach ($warehouse['fees'] as $fee) {
+                if ($fee['trigger'] === 'on_entry') {
+                    $in_fees_config[] = $fee;
+                } elseif ($fee['trigger'] === 'on_exit') {
+                    $out_fees_config[] = $fee;
+                } elseif ($fee['trigger'] === 'monthly') {
+                    $storage_fees_config[] = $fee;
+                } else {
+                    $other_fees[] = $fee;
+                }
+            }
 
-$out_fee_w1 = isset($estimate_data['out_fee_per_pallet_w1']) ? floatval($estimate_data['out_fee_per_pallet_w1']) : 0.00;
-$out_fee_w2 = isset($estimate_data['out_fee_per_pallet_w2']) ? floatval($estimate_data['out_fee_per_pallet_w2']) : 0.00;
-$out_fee_w3 = isset($estimate_data['out_fee_per_pallet_w3']) ? floatval($estimate_data['out_fee_per_pallet_w3']) : 0.00;
+            // Helper function to calculate fee based on unit type
+            $calculateFeeAmount = function($fee, $pallets) {
+                $unit = $fee['unit'] ?? 'per_pallet';
+                $amount = $fee['amount'] ?? 0;
 
-$sto_fee_w1 = isset($estimate_data['storage_fee_per_pallet_w1']) ? floatval($estimate_data['storage_fee_per_pallet_w1']) : 0.00;
-$sto_fee_w2 = isset($estimate_data['storage_fee_per_pallet_w2']) ? floatval($estimate_data['storage_fee_per_pallet_w2']) : 0.00;
-$sto_fee_w3 = isset($estimate_data['storage_fee_per_pallet_w3']) ? floatval($estimate_data['storage_fee_per_pallet_w3']) : 0.00;
+                switch ($unit) {
+                    case 'per_pallet':
+                        return $amount * $pallets;
+                    case 'per_truck':
+                        $palletsPerTruck = $fee['palletsPerTruck'] ?? 26;
+                        if ($palletsPerTruck > 0 && $pallets > 0) {
+                            $trucks = ceil($pallets / $palletsPerTruck);
+                            return $amount * $trucks;
+                        }
+                        return 0;
+                    case 'per_sqft':
+                        $sqftPerPallet = $fee['sqftPerPallet'] ?? 13.33;
+                        $totalSqft = $pallets * $sqftPerPallet;
+                        return $amount * $totalSqft;
+                    case 'flat':
+                        return $pallets > 0 ? $amount : 0;
+                    default:
+                        return $amount * $pallets;
+                }
+            };
 
-// Helper function to do the calculations, copied from calculator_results.php
-function calculateWarehouse($months, $display_months, $in_fee, $out_fee, $sto_fee, $pallets_entering, $pallets_leaving, $current_inventory) {
-    $results = [];
-    $num_months = count($months);
-    $pallets_in_storage_previous = $current_inventory;
-    $grand_total = 0;
-    for($i=0; $i<$num_months; $i++){
-        $enter = isset($pallets_entering[$i]) ? intval($pallets_entering[$i]) : 0;
-        $leave = isset($pallets_leaving[$i]) ? intval($pallets_leaving[$i]) : 0;
+            foreach ($months as $index => $month) {
+                $pallets_in = 0;
+                $pallets_out = 0;
 
-        $this_storage = max(0, $pallets_in_storage_previous + $enter - $leave);
+                if ($mode === 'simple') {
+                    $total_in = $warehouse['simpleTotals']['in'] ?? 0;
+                    $total_out = $warehouse['simpleTotals']['out'] ?? 0;
+                    $num_months = count($months);
 
-        $this_in_fee  = $in_fee  * $enter;
-        $this_out_fee = $out_fee * $leave;
-        $this_sto_fee = $sto_fee * $this_storage;
+                    if ($index === 0) {
+                        $pallets_in = $total_in;
+                    }
+                    $out_start = floor($num_months / 2);
+                    if ($index >= $out_start && $total_out > 0) {
+                        $remaining_months = $num_months - $out_start;
+                        $pallets_out = ceil($total_out / $remaining_months);
+                        $already_out = 0;
+                        for ($i = $out_start; $i < $index; $i++) {
+                            $already_out += ceil($total_out / $remaining_months);
+                        }
+                        $pallets_out = min($pallets_out, $total_out - $already_out);
+                    }
+                } else {
+                    $pallets_in = $warehouse['movements'][$month]['in'] ?? 0;
+                    $pallets_out = $warehouse['movements'][$month]['out'] ?? 0;
+                }
 
-        $this_total = $this_in_fee + $this_out_fee + $this_sto_fee;
-        $grand_total += $this_total;
+                $start_inventory = $current_inventory;
+                $current_inventory = max(0, $current_inventory + $pallets_in - $pallets_out);
+                $end_inventory = $current_inventory;
 
-        $results[] = [
-            'month'             => $display_months[$i],
-            'pallets_in_storage'=> $this_storage,
-            'in_fee'            => $this_in_fee,
-            'out_fee'           => $this_out_fee,
-            'storage_fee'       => $this_sto_fee,
-            'total'             => $this_total,
-            'delivering'        => $enter,
-            'leaving'           => $leave
-        ];
-        $pallets_in_storage_previous = $this_storage;
+                // Calculate fees using unit-aware calculation
+                $in_fees = 0;
+                foreach ($in_fees_config as $fee) {
+                    $in_fees += $calculateFeeAmount($fee, $pallets_in);
+                }
+
+                $out_fees = 0;
+                foreach ($out_fees_config as $fee) {
+                    $out_fees += $calculateFeeAmount($fee, $pallets_out);
+                }
+
+                $storage_fees = 0;
+                foreach ($storage_fees_config as $fee) {
+                    $storage_fees += $calculateFeeAmount($fee, $end_inventory);
+                }
+
+                $monthly_total = $in_fees + $out_fees + $storage_fees;
+
+                $results['monthly'][] = [
+                    'month' => $month,
+                    'pallets_in' => $pallets_in,
+                    'pallets_out' => $pallets_out,
+                    'start_inventory' => $start_inventory,
+                    'end_inventory' => $end_inventory,
+                    'in_fees' => $in_fees,
+                    'out_fees' => $out_fees,
+                    'storage_fees' => $storage_fees,
+                    'total' => $monthly_total
+                ];
+
+                $results['totals']['in_fees'] += $in_fees;
+                $results['totals']['out_fees'] += $out_fees;
+                $results['totals']['storage_fees'] += $storage_fees;
+                $results['totals']['total'] += $monthly_total;
+
+                $results['summary']['total_pallets_in'] += $pallets_in;
+                $results['summary']['total_pallets_out'] += $pallets_out;
+                $results['summary']['peak_inventory'] = max($results['summary']['peak_inventory'], $end_inventory);
+                $inventory_sum += $end_inventory;
+            }
+
+            foreach ($other_fees as $fee) {
+                if ($fee['trigger'] === 'one_time') {
+                    $results['totals']['other_fees'] += $fee['amount'];
+                    $results['totals']['total'] += $fee['amount'];
+                }
+            }
+
+            if (count($months) > 0) {
+                $results['summary']['avg_inventory'] = round($inventory_sum / count($months), 1);
+            }
+
+            return $results;
+        }
+
+        foreach ($calculator_data['warehouses'] as $warehouse) {
+            $wh_results = calculateWarehouseCosts($warehouse, $calculator_data['schedule']);
+            $warehouse_results[] = [
+                'warehouse' => $warehouse,
+                'results' => $wh_results
+            ];
+        }
     }
-    return [
-        'rows' => $results,
-        'grand_total' => $grand_total
-    ];
+
+    // Find best value warehouse
+    $best_warehouse_index = 0;
+    $lowest_cost = PHP_FLOAT_MAX;
+    foreach ($warehouse_results as $index => $wr) {
+        if ($wr['results']['totals']['total'] < $lowest_cost) {
+            $lowest_cost = $wr['results']['totals']['total'];
+            $best_warehouse_index = $index;
+        }
+    }
+
+    // Prepare data for charts
+    $chart_labels = [];
+    foreach ($calculator_data['schedule']['months'] as $month) {
+        $date = DateTime::createFromFormat('Y-m', $month);
+        $chart_labels[] = $date->format('M Y');
+    }
+
+    $chart_datasets = [];
+    $colors = ['#488C9A', '#293E4C', '#fbb040', '#28a745', '#dc3545'];
+    foreach ($warehouse_results as $index => $wr) {
+        $monthly_totals = array_map(function($m) { return $m['total']; }, $wr['results']['monthly']);
+        $chart_datasets[] = [
+            'label' => $wr['warehouse']['name'],
+            'data' => $monthly_totals,
+            'borderColor' => $colors[$index % count($colors)],
+            'backgroundColor' => $colors[$index % count($colors)] . '20',
+            'fill' => true,
+            'tension' => 0.3
+        ];
+    }
+} else {
+    // Old format - redirect to calculator to create new estimate
+    // or convert on the fly
+    $_SESSION['calc_message'] = ['type' => 'info', 'text' => 'This estimate uses an older format. Please create a new estimate with the updated calculator.'];
+    header("Location: cost_estimate_calculator.php");
+    exit();
 }
 
-// Build array for each warehouse
-$warehouseCalculations = [];
-$num_warehouses = 0;
-
-// If warehouse 1 has any non-zero fees OR data, consider it used
-if($in_fee_w1!=0 || $out_fee_w1!=0 || $sto_fee_w1!=0 || !empty($pallets_entering_w1) || !empty($pallets_leaving_w1)) {
-    $num_warehouses = 1;
-    $warehouseCalculations[1] = calculateWarehouse(
-        $months_array, $display_months,
-        $in_fee_w1, $out_fee_w1, $sto_fee_w1,
-        $pallets_entering_w1, $pallets_leaving_w1, 
-        $current_inventory_w1
-    );
-}
-if($in_fee_w2!=0 || $out_fee_w2!=0 || $sto_fee_w2!=0 || !empty($pallets_entering_w2) || !empty($pallets_leaving_w2)) {
-    $num_warehouses = max($num_warehouses, 2);
-    $warehouseCalculations[2] = calculateWarehouse(
-        $months_array, $display_months,
-        $in_fee_w2, $out_fee_w2, $sto_fee_w2,
-        $pallets_entering_w2, $pallets_leaving_w2, 
-        $current_inventory_w2
-    );
-}
-if($in_fee_w3!=0 || $out_fee_w3!=0 || $sto_fee_w3!=0 || !empty($pallets_entering_w3) || !empty($pallets_leaving_w3)) {
-    $num_warehouses = max($num_warehouses, 3);
-    $warehouseCalculations[3] = calculateWarehouse(
-        $months_array, $display_months,
-        $in_fee_w3, $out_fee_w3, $sto_fee_w3,
-        $pallets_entering_w3, $pallets_leaving_w3, 
-        $current_inventory_w3
-    );
-}
+$conn->close();
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>View Saved Estimate</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo htmlspecialchars($estimate['name']); ?> - Saved Estimate</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        .success-message { color: green; }
-        .error-message { color: red; }
-        table {
-            border-collapse: collapse;
-            margin-top: 15px;
-            width: 100%;
+        /* Modern Page Header */
+        .results-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
         }
-        th, td {
-            border: 1px solid #ccc;
-            padding: 8px;
+        .results-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
         }
-        .back-icon {
-            display: inline-block;
-            margin-bottom: 20px;
-            text-decoration: none;
-            color: #000;
-        }
-        .back-icon svg {
-            width: 20px;
-            height: 20px;
-            vertical-align: middle;
-            margin-right: 5px;
-        }
-        .breadcrumb {
-            display: flex;
-            margin-bottom: 20px;
-            margin-top: 10px;
-        }
-        .breadcrumb a {
-            color: #488C9A;
-            text-decoration: none;
-        }
-        .breadcrumb .separator {
-            margin: 0 8px;
-            color: #6c757d;
-        }
-        .summary-table th, .summary-table td {
-            border: 1px solid #bbb;
-            padding: 8px;
-        }
-        .overall-total-row {
-            background-color: #fbb040;
-        }
-        .page-header {
+        .results-header-content {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 20px;
         }
-        .page-header h1 {
+        .results-header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+        .results-header .subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
             margin: 0;
         }
-        /* Simulation container styling */
-        #top-row-container {
+        .header-actions {
             display: flex;
+            gap: 12px;
             flex-wrap: wrap;
-            gap: 40px;
-            align-items: flex-start;
         }
-        #summary-container {
-            flex: 1 1 400px;
-        }
-        #simulation-container {
-            flex: 1 1 400px;
-            text-align: center;
-        }
-        .simulate-button {
-            background-color: #293E4C;
-            color: #fff;
-            border: none;
-            padding: 6px 12px;
+        .btn-action {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            font-weight: 500;
             cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            border: none;
         }
-        table.simulation-table thead th {
-            background-color: #293E4C;
+        .btn-primary {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
             color: #fff;
         }
-        table.simulation-summary thead th {
-            background-color: #293E4C;
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #3a7a87 0%, #293E4C 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+        .btn-secondary {
+            background: #fff;
+            color: #488C9A;
+            border: 2px solid #488C9A;
+        }
+        .btn-secondary:hover {
+            background: #488C9A;
             color: #fff;
         }
-        .simulation-section h2 {
-            margin-top: 30px;
+        .btn-success {
+            background: linear-gradient(135deg, #28a745 0%, #20923c 100%);
+            color: #fff;
+        }
+        .btn-success:hover {
+            background: linear-gradient(135deg, #20923c 0%, #1a7a32 100%);
+        }
+
+        .saved-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #e8f4f8;
+            color: #488C9A;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            margin-top: 8px;
+        }
+
+        /* Comparison Cards */
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+        .warehouse-result-card {
+            background: #fff;
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            border: 2px solid #e9ecef;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        .warehouse-result-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1);
+        }
+        .warehouse-result-card.best-value {
+            border-color: #28a745;
+            box-shadow: 0 4px 20px rgba(40, 167, 69, 0.15);
+        }
+        .best-value-badge {
+            position: absolute;
+            top: -12px;
+            right: 20px;
+            background: linear-gradient(135deg, #28a745 0%, #20923c 100%);
+            color: #fff;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .warehouse-card-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .warehouse-icon {
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8rem;
+        }
+        .warehouse-card-header h3 {
+            margin: 0;
+            font-size: 1.25rem;
             color: #293E4C;
         }
-        table.summary-table {
-            margin-top: 70px;
+        .warehouse-card-header .warehouse-period {
+            font-size: 0.85rem;
+            color: #6c757d;
+            margin-top: 4px;
         }
-        .info-tooltip {
-            margin-left: 0px;
-            margin-right: 5px;
+        .total-cost {
+            text-align: center;
+            padding: 20px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 12px;
+            margin-bottom: 20px;
         }
-        /* Hidden simulation details by default */
-        #simulation-detailed-container {
-            display: none;
+        .total-cost .amount {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #293E4C;
+        }
+        .total-cost .label {
+            font-size: 0.9rem;
+            color: #6c757d;
+            margin-top: 4px;
+        }
+        .savings-badge {
+            display: inline-block;
+            background: #d4edda;
+            color: #155724;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            margin-top: 8px;
+        }
+        .cost-breakdown {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .cost-item {
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .cost-item .label {
+            font-size: 0.8rem;
+            color: #6c757d;
+            margin-bottom: 4px;
+        }
+        .cost-item .value {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #293E4C;
+        }
+
+        /* Charts Section - prefixed to avoid portal.css conflicts */
+        .charts-section {
+            background: #fff;
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            margin-bottom: 32px;
+        }
+        .charts-section h2 {
+            margin: 0 0 24px 0;
+            font-size: 1.4rem;
+            color: #293E4C;
+        }
+        .calc-chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+            max-width: none;
+            margin: 0 auto 24px auto;
+        }
+        .calc-chart-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+        .chart-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+        }
+        @media (max-width: 992px) {
+            .chart-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Detailed Breakdown */
+        .details-section {
+            background: #fff;
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            margin-bottom: 32px;
+        }
+        .details-section h2 {
+            margin: 0 0 24px 0;
+            font-size: 1.4rem;
+            color: #293E4C;
+        }
+        .warehouse-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 12px;
+        }
+        .warehouse-tab {
+            padding: 10px 20px;
+            background: transparent;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            color: #6c757d;
+            transition: all 0.2s;
+        }
+        .warehouse-tab:hover {
+            background: #f8f9fa;
+        }
+        .warehouse-tab.active {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: #fff;
+        }
+        .details-table-container {
+            overflow-x: auto;
+            border-radius: 12px;
+            border: 1px solid #e9ecef;
+        }
+        .details-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 700px;
+        }
+        .details-table th {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: #fff;
+            padding: 14px 16px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        .details-table th:first-child {
+            text-align: left;
+        }
+        .details-table td {
+            padding: 12px 16px;
+            text-align: center;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .details-table td:first-child {
+            text-align: left;
+            font-weight: 500;
+            color: #293E4C;
+        }
+        .details-table tr:hover {
+            background: #f8f9fa;
+        }
+        .details-table .totals-row {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        .details-table .totals-row td {
+            border-top: 2px solid #e0e0e0;
+            color: #293E4C;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .results-header {
+                padding: 24px;
+            }
+            .results-header h1 {
+                font-size: 1.75rem;
+            }
+            .comparison-grid {
+                grid-template-columns: 1fr;
+            }
+            .header-actions {
+                width: 100%;
+                justify-content: stretch;
+            }
+            .header-actions .btn-action {
+                flex: 1;
+                justify-content: center;
+            }
         }
     </style>
-    <script>
-        // We'll replicate the simulation logic from calculator_results
-        function downloadCSV(csvContent, filename) {
-            var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            var link = document.createElement("a");
-            if (link.download !== undefined) {
-                var url = URL.createObjectURL(blob);
-                link.setAttribute("href", url);
-                link.setAttribute("download", filename);
-                link.style.visibility = 'hidden';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-            }
-        }
-
-        // We pull data from JS variables for the simulation
-        function simulateDelay(){
-            var delayVal = parseInt(document.getElementById('delay_months').value) || 0;
-            var summaryDiv = document.getElementById('simulation-summary');
-            var detailDiv  = document.getElementById('simulation-detailed-container');
-            summaryDiv.innerHTML = "";
-            detailDiv.innerHTML = "";
-            detailDiv.style.display = "none";
-
-            if(months.length===0 || numWarehouses<1){
-                summaryDiv.innerHTML = "<p>No months to simulate.</p>";
-                return;
-            }
-
-            var simData = [];
-            for(var w=1; w<=numWarehouses; w++){
-                let inFee, outFee, stoFee, pIn, pOut, cInv;
-                if(w===1){
-                    inFee = inFeeW1; outFee = outFeeW1; stoFee = stoFeeW1;
-                    pIn = palEnterW1; pOut = palLeaveW1; cInv = currentInventoryW1;
-                } else if(w===2){
-                    inFee = inFeeW2; outFee = outFeeW2; stoFee = stoFeeW2;
-                    pIn = palEnterW2; pOut = palLeaveW2; cInv = currentInventoryW2;
-                } else {
-                    inFee = inFeeW3; outFee = outFeeW3; stoFee = stoFeeW3;
-                    pIn = palEnterW3; pOut = palLeaveW3; cInv = currentInventoryW3;
-                }
-                var calc = monthlyCalc(inFee, outFee, stoFee, pIn, pOut, cInv, delayVal);
-                simData.push({warehouse: w, result: calc});
-            }
-
-            var totalSim = 0;
-            var summaryHtml = `
-                <table class="simulation-summary" style="width:100%;margin-top:15px;">
-                    <thead>
-                        <tr>
-                            <th>Warehouse</th>
-                            <th>Grand Total</th>
-                            <th>Difference vs. Original</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-            for(var i=0; i<simData.length; i++){
-                var w = simData[i].warehouse;
-                var gTot = simData[i].result.grandTotal;
-                totalSim += gTot;
-                var diff = gTot - originalGrandTotals[w-1];
-                var diffSign = (diff < 0) ? "green" : (diff > 0 ? "red" : "black");
-                summaryHtml += `
-                    <tr>
-                      <td>Warehouse ${w}</td>
-                      <td>$${formatCurrency(gTot)}</td>
-                      <td style="color:${diffSign};">$${formatCurrency(diff)}</td>
-                    </tr>
-                `;
-            }
-            var overallDiff = 0;
-            for(var j=0; j<numWarehouses; j++){
-                overallDiff += (simData[j].result.grandTotal - originalGrandTotals[j]);
-            }
-            var overallDiffColor = (overallDiff < 0) ? "green" : (overallDiff > 0 ? "red" : "black");
-            summaryHtml += `
-                  <tr class="overall-total-row">
-                    <td><strong>Overall Total</strong></td>
-                    <td><strong>$${formatCurrency(totalSim)}</strong></td>
-                    <td style="color:${overallDiffColor};"><strong>$${formatCurrency(overallDiff)}</strong></td>
-                  </tr>
-                  </tbody>
-                </table>
-            `;
-            summaryDiv.innerHTML = summaryHtml;
-
-            detailDiv.style.display = "block";
-            detailDiv.innerHTML = `<h2>Detailed Monthly Costs (Simulation)</h2>`;
-            for(var k=0; k<simData.length; k++){
-                var w = simData[k].warehouse;
-                var simRows = simData[k].result.rows;
-                var simGtot = simData[k].result.grandTotal;
-                var whHtml = `
-                  <h3>Warehouse ${w}</h3>
-                  <table class="simulation-table">
-                    <thead>
-                      <tr>
-                        <th>Month</th>
-                        <th>Pallets in Storage</th>
-                        <th>In Fee</th>
-                        <th>Out Fee</th>
-                        <th>Storage Fee</th>
-                        <th>Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                `;
-                for(var r=0; r<simRows.length; r++){
-                    var R = simRows[r];
-                    whHtml += `
-                      <tr>
-                        <td>${R.month}</td>
-                        <td>${R.palletsInStorage.toLocaleString()}</td>
-                        <td>$${formatCurrency(R.inFee)}</td>
-                        <td>$${formatCurrency(R.outFee)}</td>
-                        <td>$${formatCurrency(R.storageFee)}</td>
-                        <td>$${formatCurrency(R.total)}</td>
-                      </tr>
-                    `;
-                }
-                whHtml += `
-                    </tbody>
-                  </table>
-                  <p><strong>Grand Total (Warehouse ${w}):</strong> $${formatCurrency(simGtot)}</p>
-                `;
-                detailDiv.innerHTML += whHtml;
-            }
-        }
-
-        // Helper to format numbers as currency with commas
-        function formatCurrency(num){
-            return num.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-        }
-
-        // The monthlyCalc function used by simulateDelay:
-        function monthlyCalc(inFee, outFee, stoFee, palEnterArr, palLeaveArr, currentInv, delay){
-            var result = {rows:[], grandTotal:0};
-            var monthMap = {};
-            var leavingMap = {};
-
-            for(var i=0; i<months.length; i++){
-                var mKey = months[i];
-                if(!monthMap[mKey]) monthMap[mKey] = 0;
-                monthMap[mKey] += parseInt(palEnterArr[i]) || 0;
-            }
-
-            for(var i=0; i<months.length; i++){
-                var orig = months[i];
-                var parts = orig.split('-');
-                var Y = parseInt(parts[0]), M = parseInt(parts[1]);
-                M += delay;
-                while(M>12){ M-=12; Y++; }
-                while(M<1){ M+=12; Y--; }
-                var newKey = Y.toString().padStart(4,'0') + '-' + M.toString().padStart(2,'0');
-                leavingMap[newKey] = (leavingMap[newKey]||0) + (parseInt(palLeaveArr[i])||0);
-            }
-
-            var allMonthsSet = new Set(Object.keys(monthMap));
-            Object.keys(leavingMap).forEach(k=>allMonthsSet.add(k));
-            var allMonths = Array.from(allMonthsSet);
-            allMonths.sort();
-
-            var storageSoFar = currentInv;
-            for(var i=0; i<allMonths.length; i++){
-                var mk = allMonths[i];
-                var Y = parseInt(mk.split('-')[0]);
-                var M = parseInt(mk.split('-')[1]);
-                var dispDate = new Date(Y, M-1, 1);
-                var dispStr = dispDate.toLocaleString('default',{month:'long', year:'numeric'});
-
-                var delivering = monthMap[mk] || 0;
-                var leaving = leavingMap[mk] || 0;
-
-                storageSoFar = Math.max(0, storageSoFar + delivering - leaving);
-
-                var costIn = inFee * delivering;
-                var costOut = outFee * leaving;
-                var costSto = stoFee * storageSoFar;
-                var total = costIn + costOut + costSto;
-                result.grandTotal += total;
-                result.rows.push({
-                    month: dispStr,
-                    inFee: costIn,
-                    outFee: costOut,
-                    storageFee: costSto,
-                    total: total,
-                    palletsInStorage: storageSoFar
-                });
-            }
-            return result;
-        }
-
-        // We'll define the main variables in JavaScript for the simulation
-        var months             = <?php echo json_encode($months_array); ?>;
-        var currentInventoryW1 = <?php echo json_encode($current_inventory_w1); ?>;
-        var currentInventoryW2 = <?php echo json_encode($current_inventory_w2); ?>;
-        var currentInventoryW3 = <?php echo json_encode($current_inventory_w3); ?>;
-
-        var inFeeW1  = <?php echo json_encode($in_fee_w1); ?>;
-        var inFeeW2  = <?php echo json_encode($in_fee_w2); ?>;
-        var inFeeW3  = <?php echo json_encode($in_fee_w3); ?>;
-
-        var outFeeW1 = <?php echo json_encode($out_fee_w1); ?>;
-        var outFeeW2 = <?php echo json_encode($out_fee_w2); ?>;
-        var outFeeW3 = <?php echo json_encode($out_fee_w3); ?>;
-
-        var stoFeeW1 = <?php echo json_encode($sto_fee_w1); ?>;
-        var stoFeeW2 = <?php echo json_encode($sto_fee_w2); ?>;
-        var stoFeeW3 = <?php echo json_encode($sto_fee_w3); ?>;
-
-        var palEnterW1 = <?php echo json_encode($pallets_entering_w1); ?>;
-        var palLeaveW1 = <?php echo json_encode($pallets_leaving_w1);  ?>;
-        var palEnterW2 = <?php echo json_encode($pallets_entering_w2); ?>;
-        var palLeaveW2 = <?php echo json_encode($pallets_leaving_w2);  ?>;
-        var palEnterW3 = <?php echo json_encode($pallets_entering_w3); ?>;
-        var palLeaveW3 = <?php echo json_encode($pallets_leaving_w3);  ?>;
-
-        var numWarehouses = <?php
-            echo json_encode($num_warehouses);
-        ?>;
-
-        // We'll track the "originalGrandTotals" for the simulation difference
-        var originalGrandTotals = [0,0,0];
-        <?php
-        for($w=1; $w<=$num_warehouses; $w++):
-            $gt = isset($warehouseCalculations[$w]) 
-                    ? $warehouseCalculations[$w]['grand_total'] 
-                    : 0;
-        ?>
-            originalGrandTotals[<?php echo ($w-1); ?>] = <?php echo $gt; ?>;
-        <?php endfor; ?>
-
-    </script>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Page Header -->
     <?php
-        require_once 'components/breadcrumbs.php';
-        echo slp_render_breadcrumbs([
-            'current_label' => htmlspecialchars($estimate_row['name']),
-            'extra' => [ ['label' => 'Cost Estimate Calculator', 'url' => 'cost_estimate_calculator.php'] ]
-        ]);
+    require_once 'components/breadcrumbs.php';
+    echo slp_render_breadcrumbs([
+        'current_label' => 'View Estimate',
+        'extra' => [['label' => 'Warehouse Cost Calculator', 'url' => 'cost_estimate_calculator.php']]
+    ]);
     ?>
-    
-    <h1>Viewing Saved Estimate: <?php echo htmlspecialchars($estimate_row['name']); ?></h1>
 
+    <!-- Modern Page Header -->
+    <div class="results-header">
+        <div class="results-header-content">
+            <div>
+                <h1><?php echo htmlspecialchars($estimate['name']); ?></h1>
+                <p class="subtitle">
+                    <?php echo count($warehouse_results); ?> warehouse<?php echo count($warehouse_results) > 1 ? 's' : ''; ?> compared
+                    &bull; <?php echo count($calculator_data['schedule']['months']); ?> months
+                </p>
+                <div class="saved-badge">
+                    Saved on <?php echo date('M j, Y', strtotime($estimate['created_at'])); ?>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a href="cost_estimate_calculator.php" class="btn-action btn-secondary">
+                    Back to Calculator
+                </a>
+                <a href="cost_estimate_calculator.php?edit_id=<?php echo $estimate_id; ?>" class="btn-action btn-primary">
+                    Edit Estimate
+                </a>
+                <form method="POST" action="generate_estimate_pdf.php" style="display: inline;" target="_blank">
+                    <input type="hidden" name="calculator_data" value='<?php echo htmlspecialchars(json_encode($calculator_data)); ?>'>
+                    <input type="hidden" name="results_data" value='<?php echo htmlspecialchars(json_encode($warehouse_results)); ?>'>
+                    <button type="submit" class="btn-action btn-success">
+                        Export PDF
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
 
+    <!-- Comparison Cards -->
+    <div class="comparison-grid">
+        <?php foreach ($warehouse_results as $index => $wr): ?>
+            <?php
+            $is_best = ($index === $best_warehouse_index && count($warehouse_results) > 1);
+            ?>
+            <div class="warehouse-result-card <?php echo $is_best ? 'best-value' : ''; ?>">
+                <?php if ($is_best): ?>
+                    <div class="best-value-badge">Best Value</div>
+                <?php endif; ?>
 
-    <?php if(empty($months_array)): ?>
-        <p>This saved estimate has no months data.</p>
-    <?php else: ?>
-        <?php 
-            // Compute summary across all warehouses
-            $total_of_all_warehouses = 0;
-            foreach($warehouseCalculations as $w => $calc) {
-                $total_of_all_warehouses += $calc['grand_total'];
-            }
-        ?>
+                <div class="warehouse-card-header">
+                    <div class="warehouse-icon">🏭</div>
+                    <div>
+                        <h3><?php echo htmlspecialchars($wr['warehouse']['name']); ?></h3>
+                        <div class="warehouse-period">
+                            <?php
+                            $start = DateTime::createFromFormat('Y-m', $calculator_data['schedule']['startMonth']);
+                            $end = DateTime::createFromFormat('Y-m', $calculator_data['schedule']['endMonth']);
+                            echo $start->format('M Y') . ' - ' . $end->format('M Y');
+                            ?>
+                        </div>
+                    </div>
+                </div>
 
-        <div id="top-row-container">
-            <!-- Left: Summary of All Warehouses -->
-            <div id="summary-container">
-                <h2>Summary of All Warehouses</h2>
-                <table class="summary-table">
+                <div class="total-cost">
+                    <div class="amount">$<?php echo number_format($wr['results']['totals']['total'], 2); ?></div>
+                    <div class="label">Total Estimated Cost</div>
+                    <?php if ($is_best && count($warehouse_results) > 1): ?>
+                        <?php
+                        $max_cost = max(array_map(function($r) { return $r['results']['totals']['total']; }, $warehouse_results));
+                        $actual_savings = $max_cost - $wr['results']['totals']['total'];
+                        ?>
+                        <?php if ($actual_savings > 0): ?>
+                            <div class="savings-badge">Save $<?php echo number_format($actual_savings, 2); ?></div>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </div>
+
+                <div class="cost-breakdown">
+                    <div class="cost-item">
+                        <div class="label">In Fees</div>
+                        <div class="value">$<?php echo number_format($wr['results']['totals']['in_fees'], 2); ?></div>
+                    </div>
+                    <div class="cost-item">
+                        <div class="label">Out Fees</div>
+                        <div class="value">$<?php echo number_format($wr['results']['totals']['out_fees'], 2); ?></div>
+                    </div>
+                    <div class="cost-item">
+                        <div class="label">Storage Fees</div>
+                        <div class="value">$<?php echo number_format($wr['results']['totals']['storage_fees'], 2); ?></div>
+                    </div>
+                    <div class="cost-item">
+                        <div class="label">Peak Inventory</div>
+                        <div class="value"><?php echo number_format($wr['results']['summary']['peak_inventory']); ?> pallets</div>
+                    </div>
+                </div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="charts-section">
+        <h2>📈 Cost Analysis</h2>
+        <div class="chart-row">
+            <div>
+                <h4 style="margin: 0 0 16px 0; color: #6c757d; font-weight: 500;">Monthly Cost Trend</h4>
+                <div class="calc-chart-container">
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </div>
+            <div>
+                <h4 style="margin: 0 0 16px 0; color: #6c757d; font-weight: 500;">Cost Breakdown</h4>
+                <div class="calc-chart-container">
+                    <canvas id="breakdownChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detailed Breakdown -->
+    <div class="details-section">
+        <h2>Detailed Monthly Breakdown</h2>
+
+        <div class="warehouse-tabs" id="detailTabs">
+            <?php foreach ($warehouse_results as $index => $wr): ?>
+                <button type="button" class="warehouse-tab <?php echo $index === 0 ? 'active' : ''; ?>"
+                        onclick="switchDetailTab(<?php echo $index; ?>)">
+                    <?php echo htmlspecialchars($wr['warehouse']['name']); ?>
+                </button>
+            <?php endforeach; ?>
+        </div>
+
+        <?php foreach ($warehouse_results as $index => $wr): ?>
+            <div class="details-table-container detail-content" id="detailContent<?php echo $index; ?>"
+                 style="<?php echo $index !== 0 ? 'display: none;' : ''; ?>">
+                <table class="details-table">
                     <thead>
-                        <tr style="background-color: #293E4C; color:#fff;">
-                            <th>Warehouse</th>
-                            <th>Grand Total</th>
+                        <tr>
+                            <th>Month</th>
+                            <th>Pallets In</th>
+                            <th>Pallets Out</th>
+                            <th>End Inventory</th>
+                            <th>In Fees</th>
+                            <th>Out Fees</th>
+                            <th>Storage Fees</th>
+                            <th>Monthly Total</th>
                         </tr>
                     </thead>
                     <tbody>
-                    <?php for($w=1; $w<=$num_warehouses; $w++): ?>
-                        <?php if(!isset($warehouseCalculations[$w])) continue; ?>
-                        <tr>
-                            <td>Warehouse <?php echo $w; ?></td>
-                            <td>$<?php echo number_format($warehouseCalculations[$w]['grand_total'], 2); ?></td>
+                        <?php foreach ($wr['results']['monthly'] as $monthly): ?>
+                            <?php
+                            $date = DateTime::createFromFormat('Y-m', $monthly['month']);
+                            $monthDisplay = $date->format('M Y');
+                            ?>
+                            <tr>
+                                <td><?php echo $monthDisplay; ?></td>
+                                <td><?php echo number_format($monthly['pallets_in']); ?></td>
+                                <td><?php echo number_format($monthly['pallets_out']); ?></td>
+                                <td><?php echo number_format($monthly['end_inventory']); ?></td>
+                                <td>$<?php echo number_format($monthly['in_fees'], 2); ?></td>
+                                <td>$<?php echo number_format($monthly['out_fees'], 2); ?></td>
+                                <td>$<?php echo number_format($monthly['storage_fees'], 2); ?></td>
+                                <td><strong>$<?php echo number_format($monthly['total'], 2); ?></strong></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <tr class="totals-row">
+                            <td>Totals</td>
+                            <td><?php echo number_format($wr['results']['summary']['total_pallets_in']); ?></td>
+                            <td><?php echo number_format($wr['results']['summary']['total_pallets_out']); ?></td>
+                            <td>Avg: <?php echo number_format($wr['results']['summary']['avg_inventory'], 1); ?></td>
+                            <td>$<?php echo number_format($wr['results']['totals']['in_fees'], 2); ?></td>
+                            <td>$<?php echo number_format($wr['results']['totals']['out_fees'], 2); ?></td>
+                            <td>$<?php echo number_format($wr['results']['totals']['storage_fees'], 2); ?></td>
+                            <td><strong>$<?php echo number_format($wr['results']['totals']['total'], 2); ?></strong></td>
                         </tr>
-                    <?php endfor; ?>
-                    <tr class="overall-total-row">
-                        <td><strong>Overall Total</strong></td>
-                        <td><strong>$<?php echo number_format($total_of_all_warehouses, 2); ?></strong></td>
-                    </tr>
                     </tbody>
                 </table>
             </div>
-
-            <!-- Right: Delay/Pull-In Simulation -->
-            <div id="simulation-container">
-                <h2>Project Delay/Pull-In Simulation</h2>
-                <label for="delay_months">Adjust Project Schedule (in months):</label>
-                <span class="info-tooltip">?
-                    <span class="tooltip-text">
-                        Enter a positive number of months to simulate a delay (e.g., 2), 
-                        or a negative number to simulate a pull-in (e.g., -1).
-                    </span>
-                </span>
-                <input type="number" id="delay_months" name="delay_months" min="-12" max="36" value="0">
-                <button type="button" class="simulate-button" onclick="simulateDelay()">Simulate</button>
-                <div id="simulation-summary" style="margin-top:20px;"></div>
-            </div>
-        </div><!-- end top-row-container -->
-
-        <h2>Detailed Monthly Costs (Original)</h2>
-        <!-- Original Tables for Each Warehouse -->
-        <?php for($w=1; $w<=$num_warehouses; $w++): ?>
-            <?php 
-                if(!isset($warehouseCalculations[$w])) continue; 
-                $calc = $warehouseCalculations[$w];
-                $rows = $calc['rows'];
-                $grand_total = $calc['grand_total'];
-            ?>
-            <h3>Warehouse <?php echo $w; ?></h3>
-            <table class="original-table">
-                <thead>
-                    <tr style="background-color: #ccc;">
-                        <th>Month</th>
-                        <th>Pallets in Storage</th>
-                        <th>In Fee</th>
-                        <th>Out Fee</th>
-                        <th>Storage Fee</th>
-                        <th>Total</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php foreach($rows as $r): ?>
-                    <tr>
-                        <td><?php echo htmlspecialchars($r['month']); ?></td>
-                        <td><?php echo number_format($r['pallets_in_storage']); ?></td>
-                        <td>$<?php echo number_format($r['in_fee'], 2); ?></td>
-                        <td>$<?php echo number_format($r['out_fee'], 2); ?></td>
-                        <td>$<?php echo number_format($r['storage_fee'], 2); ?></td>
-                        <td>$<?php echo number_format($r['total'], 2); ?></td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-            <p>
-                <strong>Grand Total (Warehouse <?php echo $w; ?>):</strong>
-                $<?php echo number_format($grand_total, 2); ?>
-            </p>
-        <?php endfor; ?>
-
-        <!-- Simulation Detailed Costs (hidden by default) -->
-        <div id="simulation-detailed-container" class="simulation-section">
-            <!-- Simulation results appended here by simulateDelay() -->
-        </div>
-
-    <?php endif; ?>
-
+        <?php endforeach; ?>
+    </div>
 </main>
+
+<script>
+// Chart data from PHP
+const chartLabels = <?php echo json_encode($chart_labels); ?>;
+const chartDatasets = <?php echo json_encode($chart_datasets); ?>;
+const warehouseResults = <?php echo json_encode($warehouse_results); ?>;
+
+// Initialize charts
+document.addEventListener('DOMContentLoaded', function() {
+    initTrendChart();
+    initBreakdownChart();
+});
+
+function initTrendChart() {
+    const ctx = document.getElementById('trendChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: chartLabels,
+            datasets: chartDatasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top'
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toLocaleString();
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function initBreakdownChart() {
+    const ctx = document.getElementById('breakdownChart').getContext('2d');
+
+    const labels = warehouseResults.map(wr => wr.warehouse.name);
+    const inFees = warehouseResults.map(wr => wr.results.totals.in_fees);
+    const outFees = warehouseResults.map(wr => wr.results.totals.out_fees);
+    const storageFees = warehouseResults.map(wr => wr.results.totals.storage_fees);
+
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'In Fees',
+                    data: inFees,
+                    backgroundColor: '#488C9A'
+                },
+                {
+                    label: 'Out Fees',
+                    data: outFees,
+                    backgroundColor: '#293E4C'
+                },
+                {
+                    label: 'Storage Fees',
+                    data: storageFees,
+                    backgroundColor: '#fbb040'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top'
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true
+                },
+                y: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toLocaleString();
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function switchDetailTab(index) {
+    document.querySelectorAll('.warehouse-tab').forEach((tab, i) => {
+        tab.classList.toggle('active', i === index);
+    });
+    document.querySelectorAll('.detail-content').forEach((content, i) => {
+        content.style.display = i === index ? 'block' : 'none';
+    });
+}
+</script>
 </body>
 </html>

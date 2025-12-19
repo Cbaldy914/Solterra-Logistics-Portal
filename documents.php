@@ -82,65 +82,89 @@ while ($project = $projects_result->fetch_assoc()) {
             font-weight: 300;
         }
 
-        /* Document Management Styles */
+        /* Header Section - Matching global_documents.php */
         .documents-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .documents-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+
+        .header-content {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 40px;
             flex-wrap: wrap;
-            gap: 20px;
+            gap: 24px;
         }
 
-        .documents-title {
+        .header-left {
             display: flex;
             align-items: center;
-            gap: 16px;
-            margin: 0;
+            gap: 24px;
         }
 
-        .documents-title i {
-            font-size: 2.2em;
-            color: #488C9A;
-            background: linear-gradient(135deg, rgba(72, 140, 154, 0.1) 0%, rgba(72, 140, 154, 0.05) 100%);
-            padding: 12px;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(72, 140, 154, 0.15);
+        .header-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 32px;
+            box-shadow: 0 12px 24px rgba(72, 140, 154, 0.3);
         }
 
-        .documents-title h1 {
+        .header-info h1 {
             font-size: 2.5em;
-            font-weight: 600;
+            font-weight: 700;
             background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+
+        .header-subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
             margin: 0;
         }
 
-        .documents-stats {
+        .header-stats {
             display: flex;
-            align-items: center;
-            gap: 20px;
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-            padding: 16px 24px;
-            border-radius: 16px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
-            border: 1px solid rgba(72, 140, 154, 0.08);
+            gap: 24px;
+            flex-wrap: wrap;
         }
 
         .stat-item {
             text-align: center;
-            padding: 0 16px;
-            border-right: 1px solid rgba(72, 140, 154, 0.15);
-        }
-
-        .stat-item:last-child {
-            border-right: none;
+            background: rgba(72, 140, 154, 0.08);
+            padding: 16px 20px;
+            border-radius: 16px;
+            min-width: 120px;
         }
 
         .stat-number {
-            font-size: 1.8em;
+            font-size: 2em;
             font-weight: 700;
             color: #488C9A;
             margin: 0;
@@ -148,12 +172,10 @@ while ($project = $projects_result->fetch_assoc()) {
         }
 
         .stat-label {
-            font-size: 0.85em;
+            font-size: 0.9em;
             color: #6c757d;
             margin: 4px 0 0 0;
             font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
         }
 
         /* Enhanced Search */
@@ -378,18 +400,24 @@ while ($project = $projects_result->fetch_assoc()) {
 
         /* Responsive Design */
         @media (max-width: 768px) {
-            .documents-header {
+            .documents-header .header-content {
                 flex-direction: column;
                 align-items: flex-start;
                 gap: 20px;
             }
 
-            .documents-stats {
+            .documents-header .header-left {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 16px;
+            }
+
+            .documents-header .header-stats {
                 width: 100%;
                 justify-content: space-around;
             }
 
-            .documents-title h1 {
+            .documents-header .header-info h1 {
                 font-size: 2em;
             }
 
@@ -436,28 +464,32 @@ while ($project = $projects_result->fetch_assoc()) {
     <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Documents']); ?>
 
             <div class="documents-header">
-            <div class="documents-title">
-                <i class="fas fa-folder-open"></i>
-                <h1>Documents</h1>
+                <div class="header-content">
+                    <div class="header-left">
+                        <div class="header-icon">
+                            <i class="fas fa-folder-open"></i>
+                        </div>
+                        <div class="header-info">
+                            <h1>Documents</h1>
+                            <p class="header-subtitle">Access and manage project documents</p>
+                        </div>
+                    </div>
+                    <div class="header-stats">
+                        <div class="stat-item">
+                            <p class="stat-number"><?php echo count($projects); ?></p>
+                            <p class="stat-label">Projects</p>
+                        </div>
+                        <div class="stat-item">
+                            <p class="stat-number"><?php echo count($projects) * 9; ?></p>
+                            <p class="stat-label">Document Types</p>
+                        </div>
+                        <a href="global_documents" class="stat-item" style="text-decoration: none;">
+                            <p class="stat-number" style="font-size: 1.5em;">🌍</p>
+                            <p class="stat-label">Global View</p>
+                        </a>
+                    </div>
+                </div>
             </div>
-            
-            <div class="documents-stats">
-                <div class="stat-item">
-                    <p class="stat-number"><?php echo count($projects); ?></p>
-                    <p class="stat-label">Projects</p>
-                </div>
-                <div class="stat-item">
-                    <p class="stat-number"><?php echo count($projects) * 9; ?></p>
-                    <p class="stat-label">Document Types</p>
-                </div>
-                <div class="stat-item">
-                    <a href="global_documents" style="text-decoration: none; color: inherit;">
-                        <p class="stat-number">🌍</p>
-                        <p class="stat-label">Global View</p>
-                    </a>
-                </div>
-            </div>
-        </div>
 
     <div class="search-container">
         <input type="text" id="projectFilter" class="search-input" placeholder="Search projects...">

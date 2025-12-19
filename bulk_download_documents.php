@@ -165,10 +165,17 @@ try {
     header('Cache-Control: no-cache, must-revalidate');
     header('Pragma: no-cache');
     header('Expires: 0');
-    
-    // Output the file
-    readfile($zip_path);
-    
+
+    // Output the file using chunked reading to avoid memory exhaustion
+    $handle = fopen($zip_path, 'rb');
+    if ($handle) {
+        while (!feof($handle)) {
+            echo fread($handle, 8192); // Read 8KB at a time
+            flush();
+        }
+        fclose($handle);
+    }
+
     // Clean up - delete the temporary zip file
     unlink($zip_path);
     

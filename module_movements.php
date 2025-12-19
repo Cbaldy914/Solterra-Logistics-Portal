@@ -486,6 +486,48 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
+        /* Modern Page Header */
+        .movements-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .movements-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+        .movements-header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .movements-header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+        .movements-header .subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+
         .breadcrumb {
             display: flex;
             margin-bottom: 20px;
@@ -499,7 +541,7 @@ $conn->close();
             margin: 0 8px;
             color: #6c757d;
         }
-        
+
         .controls-section {
             background-color: #f9f9f9;
             padding: 20px;
@@ -663,7 +705,15 @@ $conn->close();
         echo slp_render_breadcrumbs(['current_label' => 'Module Movements', 'extra' => $extra]);
     ?>
 
-    <h1>Module Movement Tracking</h1>
+    <!-- Modern Page Header -->
+    <div class="movements-header">
+        <div class="movements-header-content">
+            <div>
+                <h1>Module Movement Tracking</h1>
+                <p class="subtitle">Track module pallets from manufacturer to project site</p>
+            </div>
+        </div>
+    </div>
 
     <?php if (!empty($errorMessage)): ?>
         <div class="error-message">

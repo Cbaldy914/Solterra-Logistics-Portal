@@ -129,7 +129,7 @@ $folder_mapping = [
         'damage_photo' => 'Damage Photo'
     ]],
     'exception_reports' => ['document_type' => 'exception_reports', 'subfolders' => ['damage_photo' => 'Damage Photo', 'warranty_document' => 'Warranty Document', 'proof_of_completion' => 'Proof of Completion', 'safety_incident' => 'Safety Incident', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD']],
-    'safe_harbor' => ['document_type' => 'other', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']],
+    'safe_harbor' => ['document_type' => 'safe_harbor_evidence', 'subfolders' => ['module_invoice' => 'Module Invoice', 'project_pod' => 'Project POD', 'warehouse_pod' => 'Warehouse POD', 'arrival_notice' => 'Arrival Notice', 'customs_document' => 'Customs Document', 'inventory_report' => 'Inventory Report', 'warehouse_photo' => 'Warehouse Photo', 'flash_test_data' => 'Flash Test Data']],
     'other' => ['document_type' => 'other', 'subfolders' => ['general' => 'General']]
 ];
 
@@ -687,13 +687,28 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
         }
 
                  .date-range-group {
-             display: grid;
-             grid-template-columns: 1fr 1fr;
-             gap: 12px;
+             display: flex;
+             flex-direction: column;
+             gap: 8px;
              width: 100%;
          }
 
-         .date-range-group .filter-input {
+         .date-range-row {
+             display: flex;
+             align-items: center;
+             gap: 8px;
+         }
+
+         .date-range-row .date-label {
+             font-size: 0.8em;
+             font-weight: 500;
+             color: #6c757d;
+             min-width: 40px;
+             flex-shrink: 0;
+         }
+
+         .date-range-row .filter-input {
+             flex: 1;
              margin: 0;
          }
 
@@ -1040,8 +1055,12 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
             }
 
             .date-range-group {
-                grid-template-columns: 1fr;
-                gap: 8px;
+                gap: 6px;
+            }
+
+            .date-range-row .date-label {
+                min-width: 35px;
+                font-size: 0.75em;
             }
 
             .filter-actions {
@@ -1088,10 +1107,6 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
         @media (max-width: 480px) {
             .filter-grid {
                 gap: 12px;
-            }
-
-            .date-range-group {
-                grid-template-columns: 1fr;
             }
 
             .filter-input, .filter-select {
@@ -1571,7 +1586,7 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
         <div class="filter-header">
             <h2 class="filter-title">
                 <i class="fas fa-filter"></i>
-                Advanced Filters
+                Document Filters
             </h2>
             <div class="filter-actions">
                 <button type="button" class="clear-filters" onclick="clearAllFilters()">
@@ -1598,23 +1613,43 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
 
             <div class="filter-group">
                 <label class="filter-label" for="documentTypeFilter">Document Type</label>
-                <select id="documentTypeFilter" class="filter-select">
+                <select id="documentTypeFilter" class="filter-select" onchange="updateDocumentSubTypeFilter()">
                     <option value="">All Document Types</option>
                     <?php foreach ($document_types as $type => $info): ?>
                         <option value="<?php echo $type; ?>"><?php echo htmlspecialchars($info['name']); ?></option>
                     <?php endforeach; ?>
                 </select>
-                
+            </div>
+
+            <div class="filter-group" id="subTypeFilterGroup" style="display: none;">
+                <label class="filter-label" for="documentSubTypeFilter">Document Sub-Type</label>
+                <select id="documentSubTypeFilter" class="filter-select">
+                    <option value="">All Sub-Types</option>
+                </select>
+            </div>
+
+            <div class="filter-group" id="warehouseFilterGroup" style="display: none;">
+                <label class="filter-label" for="warehouseFilterContext">Warehouse</label>
+                <select id="warehouseFilterContext" class="filter-select">
+                    <option value="">All Warehouses</option>
+                    <!-- Populated dynamically -->
+                </select>
             </div>
 
             <div class="filter-group">
                 <label class="filter-label">
-                    <i class="fas fa-calendar-upload" style="margin-right: 6px;"></i>
-                    Filter by Upload Date
+                    <i class="fas fa-calendar-alt" style="margin-right: 6px; margin-left: 50px;"></i>
+                    Upload Date Range
                 </label>
                 <div class="date-range-group">
-                    <input type="date" id="startDate" class="filter-input" placeholder="From date">
-                    <input type="date" id="endDate" class="filter-input" placeholder="To date">
+                    <div class="date-range-row">
+                        <span class="date-label">From</span>
+                        <input type="date" id="startDate" class="filter-input" title="Start date (documents uploaded on or after this date)">
+                    </div>
+                    <div class="date-range-row">
+                        <span class="date-label">To</span>
+                        <input type="date" id="endDate" class="filter-input" title="End date (documents uploaded on or before this date)">
+                    </div>
                 </div>
             </div>
 
@@ -1627,6 +1662,28 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
 
 
     <div class="documents-container">
+        <div class="pagination-container">
+            <div class="pagination-info" id="paginationInfo">
+                Showing 0 of 0 documents
+            </div>
+            <div class="pagination-controls">
+                <div class="page-size-selector">
+                    <label>Show:</label>
+                    <select id="pageSizeSelect" class="page-size-select" onchange="changePageSize()">
+                        <option value="25">25</option>
+                        <option value="50">50</option>
+                        <option value="100" selected>100</option>
+                        <option value="200">200</option>
+                        <option value="500">500</option>
+                    </select>
+                    <span>per page</span>
+                </div>
+                <div class="pagination-buttons" id="paginationButtons">
+                    <!-- Will be populated dynamically -->
+                </div>
+            </div>
+        </div>
+
         <div class="table-header">
             <div class="table-header-left">
                 <h3 class="table-title">
@@ -1666,28 +1723,6 @@ if ($from_page === 'project_overview' && $pre_selected_project > 0) {
                 <i class="fas fa-spinner fa-spin"></i>
                 <h3>Loading Documents</h3>
                 <p>Please wait while we fetch your documents...</p>
-            </div>
-        </div>
-
-        <div class="pagination-container">
-            <div class="pagination-info" id="paginationInfo">
-                Showing 0 of 0 documents
-            </div>
-            <div class="pagination-controls">
-                <div class="page-size-selector">
-                    <label>Show:</label>
-                    <select id="pageSizeSelect" class="page-size-select" onchange="changePageSize()">
-                        <option value="25">25</option>
-                        <option value="50">50</option>
-                        <option value="100" selected>100</option>
-                        <option value="200">200</option>
-                        <option value="500">500</option>
-                    </select>
-                    <span>per page</span>
-                </div>
-                <div class="pagination-buttons" id="paginationButtons">
-                    <!-- Will be populated dynamically -->
-                </div>
             </div>
         </div>
     </div>
@@ -1815,7 +1850,7 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
 
  // Document type sub-filters
  const subFilters = {
-     'invoices': ['Solterra Invoice', 'Module Invoice'],
+     'invoices': ['Solterra Invoice', 'Module Invoice', 'Freight Invoice'],
      'shipments': ['Arrival Notice', 'Customs Document', 'Delivery SOP', 'Project POD', 'Warehouse POD'],
      'warehousing': ['Warehouse POD', 'Inventory Report', 'Photos', 'Quote'],
      'modules': ['Module Invoice', 'Flash Test Data', 'Spec Sheets'],
@@ -1824,6 +1859,40 @@ let filtersApplied = false; // Show context subfilters/extra columns only after 
      'safe_harbor_evidence': [],
      'other': []
  };
+
+// Update document sub-type filter based on selected document type
+function updateDocumentSubTypeFilter() {
+    const docType = document.getElementById('documentTypeFilter').value;
+    const subTypeGroup = document.getElementById('subTypeFilterGroup');
+    const subTypeSelect = document.getElementById('documentSubTypeFilter');
+    const warehouseGroup = document.getElementById('warehouseFilterGroup');
+
+    // Reset sub-type select
+    subTypeSelect.innerHTML = '<option value="">All Sub-Types</option>';
+
+    // Show/hide sub-type filter based on whether there are sub-filters
+    if (docType && subFilters[docType] && subFilters[docType].length > 0) {
+        subFilters[docType].forEach(subType => {
+            const option = document.createElement('option');
+            option.value = subType;
+            option.textContent = subType;
+            subTypeSelect.appendChild(option);
+        });
+        subTypeGroup.style.display = 'block';
+    } else {
+        subTypeGroup.style.display = 'none';
+    }
+
+    // Show warehouse filter for warehousing or shipments (for PODs)
+    if (docType === 'warehousing' || docType === 'shipments') {
+        warehouseGroup.style.display = 'block';
+    } else {
+        warehouseGroup.style.display = 'none';
+        // Reset warehouse selection when hidden
+        const warehouseSelect = document.getElementById('warehouseFilterContext');
+        if (warehouseSelect) warehouseSelect.value = '';
+    }
+}
 
 // Load warehouses for filter
 async function loadWarehouseFilter() {
@@ -1884,12 +1953,19 @@ document.addEventListener('DOMContentLoaded', function() {
     <?php endif; ?>
     <?php if (!empty($pre_selected_document_type)): ?>
       document.getElementById('documentTypeFilter').value = '<?php echo $pre_selected_document_type; ?>';
-    <?php endif; ?>
-
-
-    // Initial state if coming from folder context
-    <?php if ($pre_selected_document_type === 'pods' || $is_pods_context): ?>
-        // Do not auto-show subfilters until Apply is used
+      // Update sub-type dropdown based on selected document type
+      updateDocumentSubTypeFilter();
+      <?php if (!empty($pre_selected_document_sub_type)): ?>
+        // Set the pre-selected sub-type
+        document.getElementById('documentSubTypeFilter').value = '<?php echo addslashes($pre_selected_document_sub_type); ?>';
+      <?php endif; ?>
+      // Auto-apply filters when coming from project_documents with folder/subfolder context
+      <?php if (!empty($pre_selected_folder)): ?>
+        setTimeout(() => {
+          console.log('Auto-applying filters for folder context: <?php echo $pre_selected_document_type; ?>' + <?php echo !empty($pre_selected_document_sub_type) ? "' / " . addslashes($pre_selected_document_sub_type) . "'" : "''"; ?>);
+          applyFilters();
+        }, 300);
+      <?php endif; ?>
     <?php endif; ?>
 
     loadDocuments();
@@ -2402,19 +2478,32 @@ function clearAllFilters() {
     document.getElementById('startDate').value = '';
     document.getElementById('endDate').value = '';
     document.getElementById('searchFilter').value = '';
-    
+
+    // Clear sub-type filter and hide it
+    const subTypeSelect = document.getElementById('documentSubTypeFilter');
+    if (subTypeSelect) {
+        subTypeSelect.value = '';
+        subTypeSelect.innerHTML = '<option value="">All Sub-Types</option>';
+    }
+    document.getElementById('subTypeFilterGroup').style.display = 'none';
+
+    // Clear warehouse filter and hide it
+    const warehouseSelect = document.getElementById('warehouseFilterContext');
+    if (warehouseSelect) warehouseSelect.value = '';
+    document.getElementById('warehouseFilterGroup').style.display = 'none';
+
     // Clear remaining filter field values (context subfilters have been removed)
     const clearIfExists = (id) => { const el = document.getElementById(id); if (el && el.type === 'checkbox') el.checked = false; else if (el) el.value = ''; };
-    
+
     // Clear any leftover filter values if they exist
     ['podsDeliveryStart', 'podsDeliveryEnd', 'podsBolNumber', 'podsManufacturerSelect', 'podsWattageSelect',
      'shipClearedStart', 'shipClearedEnd', 'shipContainerNumber', 'shipManufacturerSelect',
      'whPodsDeliveryStart', 'whPodsDeliveryEnd', 'whPodsBolNumber', 'whPodsManufacturerSelect',
      'whWarehouseSelect', 'whManufacturerSelect', 'modManufacturerSelect'].forEach(clearIfExists);
-    
+
     // Reset pagination
     currentPage = 1;
-    
+
     // Reload documents
     filtersApplied = false;
     loadDocuments();
@@ -2447,9 +2536,11 @@ async function loadDocuments() {
         
         // Collect filter values
         const warehouseFilterEl = document.getElementById('warehouseFilterContext');
+        const subTypeFilterEl = document.getElementById('documentSubTypeFilter');
         const filters = {
             project_id: document.getElementById('projectFilter').value,
             document_type: document.getElementById('documentTypeFilter').value,
+            document_sub_type: subTypeFilterEl ? subTypeFilterEl.value : '',
             warehouse_id: warehouseFilterEl ? warehouseFilterEl.value : '',
             start_date: document.getElementById('startDate').value,
             end_date: document.getElementById('endDate').value,
@@ -3141,6 +3232,8 @@ async function deleteSelected() {
 
 // Helper functions
 function getDocumentTypeIcon(type) {
+    // Treat legacy 'pods' as 'shipments' for display
+    if (type === 'pods') type = 'shipments';
     const icons = <?php echo json_encode(array_column($document_types, 'icon')); ?>;
     const types = <?php echo json_encode(array_keys($document_types)); ?>;
     const index = types.indexOf(type);
@@ -3148,6 +3241,8 @@ function getDocumentTypeIcon(type) {
 }
 
 function getDocumentTypeName(type) {
+    // Treat legacy 'pods' as 'shipments' for display
+    if (type === 'pods') type = 'shipments';
     const names = <?php echo json_encode(array_column($document_types, 'name')); ?>;
     const types = <?php echo json_encode(array_keys($document_types)); ?>;
     const index = types.indexOf(type);
@@ -3155,6 +3250,8 @@ function getDocumentTypeName(type) {
 }
 
 function getDocumentTypeColor(type) {
+    // Treat legacy 'pods' as 'shipments' for display
+    if (type === 'pods') type = 'shipments';
     const colors = <?php echo json_encode(array_column($document_types, 'color')); ?>;
     const types = <?php echo json_encode(array_keys($document_types)); ?>;
     const index = types.indexOf(type);
