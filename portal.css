@@ -1014,10 +1014,18 @@ main {
     flex-wrap: wrap; /* Allow wrapping on smaller screens */
 }
 
-.project-overview-image img {
+.project-overview-image {
     max-width: 350px;
     height: 200px;
     margin-top: 15px;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.project-overview-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .project-info {
