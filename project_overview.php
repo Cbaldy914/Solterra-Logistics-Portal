@@ -3758,8 +3758,8 @@ document.addEventListener('DOMContentLoaded', function() {
         <h1 class="project-name-mobile"><?php echo htmlspecialchars($project['project_name']); ?></h1>
         
         <div class="project-overview-image">
-            <?php $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/default_project.png'; ?>
-            <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="Project Overview Image" onerror="this.src='pictures/default_project.png'">
+            <?php $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/project_default.png'; ?>
+            <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/project_default.png'">
         </div>
         
         <div class="project-info">

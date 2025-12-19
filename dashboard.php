@@ -709,10 +709,8 @@ $conn->close();
                         </h3>
                     </div>
                     <div class="project-image">
-                        <?php
-                            $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/default_project.png';
-                        ?>
-                        <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/default_project.png'">
+                        <?php $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/project_default.png'; ?>
+                        <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/project_default.png'">
                         <div class="project-overlay">
                             <div class="project-overlay-text">View Project Details</div>
                         </div>
