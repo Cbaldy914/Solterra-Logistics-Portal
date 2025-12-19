@@ -186,15 +186,13 @@ $stmt->execute();
 $total_orders_result = $stmt->get_result();
 
 $total_orders = [];
-$project_size_mw = 0;
+$project_size_mw = isset($project['project_size']) ? (float)$project['project_size'] : 0;
 $wattages = [];
 
 while ($row = $total_orders_result->fetch_assoc()) {
     $w = (float)$row['wattage'];
     $t = (int)$row['total_order'];
     $wattages[] = $w;
-    // Calculate total in MW for project size
-    $project_size_mw += ($t * $w) / 1_000_000;
 
     $label = $w . 'W';
     $total_orders[$label] = [
@@ -3800,7 +3798,6 @@ document.addEventListener('DOMContentLoaded', function() {
                         Deliveries <span class="dropdown-arrow">▼</span>
                     </button>
                     <div class="dropdown-content" id="adminDeliveriesDropdown">
-                        <a href="upload_manufacturer_schedule.php?project_id=<?php echo $project_id; ?>">📥 Import Manufacturer Schedule</a>
                         <a href="create_shipment.php?project_id=<?php echo $project_id; ?>">Create Shipments</a>
                         <a href="manage_deliveries.php?project_id=<?php echo $project_id; ?>">Manage Deliveries</a>
                         <a href="scheduling.php?project_id=<?php echo $project_id; ?>">Scheduling</a>
@@ -3837,7 +3834,6 @@ document.addEventListener('DOMContentLoaded', function() {
                         Deliveries <span class="dropdown-arrow">▼</span>
                     </button>
                     <div class="dropdown-content" id="customerDeliveriesDropdown">
-                        <a href="upload_manufacturer_schedule.php?project_id=<?php echo $project_id; ?>">📥 Import Manufacturer Schedule</a>
                         <a href="<?php echo $deliveriesLink; ?>">📋 Delivery Schedule</a>
                         <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>">📅 Anticipated Schedule</a>
                     </div>

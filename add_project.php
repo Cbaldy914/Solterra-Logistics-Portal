@@ -1198,9 +1198,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <input type="text" name="project_name" id="project_name" class="required-field" required placeholder="e.g. Solar Farm Alpha">
                     </div>
                     <div class="form-group">
-                        <label>Project Size (GW)<span class="optional-tag">(optional)</span></label>
+                        <label>Project Size (MW)<span class="optional-tag">(optional)</span></label>
                         <input type="number" name="project_size" id="project_size" step="0.001" min="0" placeholder="e.g. 1.5">
-                        <span class="help-text">Target size in gigawatts</span>
+                        <span class="help-text">Target size in megawatts</span>
                     </div>
                     <div class="form-group">
                         <label>Estimated Completion Date<span class="required-star">*</span></label>
@@ -1335,12 +1335,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <button type="button" class="btn-back-step" onclick="goToStep(1)">
                         <span>&larr;</span> Back
                     </button>
-                    <div style="display: flex; gap: 12px; align-items: center;">
-                        <button type="button" class="btn-skip" onclick="goToStep(3)">Skip this step</button>
-                        <button type="button" class="btn-continue" onclick="goToStep(3)">
-                            Continue to Modules <span>&rarr;</span>
-                        </button>
-                    </div>
+                    <button type="button" class="btn-continue" onclick="goToStep(3)">
+                        Continue to Modules <span>&rarr;</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -1391,66 +1388,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                     <div class="form-group">
                         <label>Location<span class="optional-tag">(optional)</span></label>
-                        <select name="location_id" id="location_id" disabled>
+                        <select name="location_id" id="location_id" disabled onchange="checkModuleFieldsVisibility()">
                             <option value="">Select a manufacturer first</option>
                         </select>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label>Wattage Orders<span class="optional-tag">(optional)</span></label>
-                    <div id="wattage-container" class="wattage-container">
-                        <!-- Wattage entries added by JS -->
+                <div id="module-fields-container" style="display: none;">
+                    <div class="form-group">
+                        <label>Wattage Orders<span class="optional-tag">(optional)</span></label>
+                        <div id="wattage-container" class="wattage-container">
+                            <!-- Wattage entries added by JS -->
+                        </div>
+                        <button type="button" class="btn-add-wattage" onclick="addWattageField()">
+                            <span>+</span> Add Wattage Order
+                        </button>
                     </div>
-                    <button type="button" class="btn-add-wattage" onclick="addWattageField()">
-                        <span>+</span> Add Wattage Order
-                    </button>
-                </div>
 
-                <details style="margin-top: 24px;">
-                    <summary style="cursor: pointer; font-weight: 500; color: #488C9A; padding: 12px 0;">
-                        Advanced: Pallet & Logistics Specifications
-                    </summary>
-                    <div style="padding: 20px; background: #f8f9fa; border-radius: 12px; margin-top: 12px;">
-                        <div class="specs-grid">
-                            <div class="form-group">
-                                <label>Modules/Pallet</label>
-                                <input type="number" name="modules_per_pallet" min="1" placeholder="e.g. 30">
-                            </div>
-                            <div class="form-group">
-                                <label>Pallets/Truck</label>
-                                <input type="number" name="pallets_per_truck" min="1" placeholder="e.g. 22">
-                            </div>
-                            <div class="form-group">
-                                <label>Length (mm)</label>
-                                <input type="number" name="pallet_length_mm" min="1" placeholder="e.g. 2384">
-                            </div>
-                            <div class="form-group">
-                                <label>Depth (mm)</label>
-                                <input type="number" name="pallet_depth_mm" min="1" placeholder="e.g. 1303">
-                            </div>
-                            <div class="form-group">
-                                <label>Stack Height (mm)</label>
-                                <input type="number" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g. 2200">
-                            </div>
-                            <div class="form-group">
-                                <label>Weight (kg)</label>
-                                <input type="number" name="pallet_total_weight_kg" min="1" placeholder="e.g. 1200">
+                    <details style="margin-top: 24px;">
+                        <summary style="cursor: pointer; font-weight: 500; color: #488C9A; padding: 12px 0;">
+                            Advanced: Pallet & Logistics Specifications
+                        </summary>
+                        <div style="padding: 20px; background: #f8f9fa; border-radius: 12px; margin-top: 12px;">
+                            <div class="specs-grid">
+                                <div class="form-group">
+                                    <label>Modules/Pallet</label>
+                                    <input type="number" name="modules_per_pallet" min="1" placeholder="e.g. 30">
+                                </div>
+                                <div class="form-group">
+                                    <label>Pallets/Truck</label>
+                                    <input type="number" name="pallets_per_truck" min="1" placeholder="e.g. 22">
+                                </div>
+                                <div class="form-group">
+                                    <label>Length (mm)</label>
+                                    <input type="number" name="pallet_length_mm" min="1" placeholder="e.g. 2384">
+                                </div>
+                                <div class="form-group">
+                                    <label>Depth (mm)</label>
+                                    <input type="number" name="pallet_depth_mm" min="1" placeholder="e.g. 1303">
+                                </div>
+                                <div class="form-group">
+                                    <label>Stack Height (mm)</label>
+                                    <input type="number" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g. 2200">
+                                </div>
+                                <div class="form-group">
+                                    <label>Weight (kg)</label>
+                                    <input type="number" name="pallet_total_weight_kg" min="1" placeholder="e.g. 1200">
+                                </div>
                             </div>
                         </div>
-                    </div>
-                </details>
+                    </details>
+                </div>
+
+                <div id="module-fields-notice" class="module-selection-notice" style="padding: 20px; background: #f0f4f5; border-radius: 12px; text-align: center; color: #666;">
+                    <p style="margin: 0;">Please select a manufacturer and location above to add wattage orders.</p>
+                </div>
 
                 <div class="section-actions">
                     <button type="button" class="btn-back-step" onclick="goToStep(2)">
                         <span>&larr;</span> Back
                     </button>
-                    <div style="display: flex; gap: 12px; align-items: center;">
-                        <button type="button" class="btn-skip" onclick="submitForm()">Skip & Create Project</button>
-                        <button type="submit" class="btn-submit">
-                            Create Project <span>&#10003;</span>
-                        </button>
-                    </div>
+                    <button type="submit" class="btn-submit">
+                        Create Project <span>&#10003;</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -1581,16 +1581,38 @@ function handleManufacturerChange(select) {
             .then(r => r.json())
             .then(data => {
                 locationSelect.innerHTML = '<option value="">Select Location</option>';
-                data.forEach(loc => {
-                    locationSelect.innerHTML += `<option value="${loc.id}">${loc.name || loc.city}</option>`;
-                });
+                if (data.locations && data.locations.length > 0) {
+                    data.locations.forEach(loc => {
+                        locationSelect.innerHTML += `<option value="${loc.id}">${loc.location_name || loc.city}</option>`;
+                    });
+                } else {
+                    locationSelect.innerHTML = '<option value="">No locations found</option>';
+                }
+                checkModuleFieldsVisibility();
             })
             .catch(() => {
                 locationSelect.innerHTML = '<option value="">No locations found</option>';
+                checkModuleFieldsVisibility();
             });
     } else {
         locationSelect.disabled = true;
         locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
+        checkModuleFieldsVisibility();
+    }
+}
+
+function checkModuleFieldsVisibility() {
+    const manufacturerId = document.getElementById('manufacturer_id').value;
+    const locationId = document.getElementById('location_id').value;
+    const moduleFieldsContainer = document.getElementById('module-fields-container');
+    const moduleFieldsNotice = document.getElementById('module-fields-notice');
+
+    if (manufacturerId && manufacturerId !== 'add_new' && locationId) {
+        moduleFieldsContainer.style.display = 'block';
+        moduleFieldsNotice.style.display = 'none';
+    } else {
+        moduleFieldsContainer.style.display = 'none';
+        moduleFieldsNotice.style.display = 'block';
     }
 }
 
