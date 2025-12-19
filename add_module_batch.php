@@ -720,8 +720,8 @@ $conn->close();
                 </label>
                 <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #e9ecef; border-radius: 12px; cursor: pointer; background: #f8f9fa; transition: all 0.2s ease;">
                     <input type="radio" name="entry_method" value="import" style="margin-right: 10px;">
-                    <strong style="color: #293E4C;">Import Manufacturer Schedule</strong>
-                    <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Upload a CSV or Excel file from your manufacturer.</p>
+                    <strong style="color: #293E4C;">Import Pallets</strong>
+                    <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Upload a CSV or Excel file with pallet data.</p>
                 </label>
             </div>
         </div>
@@ -893,14 +893,14 @@ $conn->close();
         <!-- Import Container (hidden by default) -->
         <div id="importContainer" style="display: none; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); padding: 40px; margin-bottom: 20px;">
             <div style="text-align: center; padding: 40px 20px;">
-                <div style="font-size: 48px; color: #488C9A; margin-bottom: 16px;">📥</div>
-                <h2 style="color: #293E4C; margin-bottom: 12px;">Import Manufacturer Schedule</h2>
+                <div style="font-size: 48px; color: #488C9A; margin-bottom: 16px;">📦</div>
+                <h2 style="color: #293E4C; margin-bottom: 12px;">Import Pallets</h2>
                 <p style="color: #6c757d; margin-bottom: 24px; max-width: 500px; margin-left: auto; margin-right: auto;">
-                    Upload a CSV or Excel file from your manufacturer to automatically create module batches with all details pre-filled.
+                    Upload a CSV or Excel file with pallet data from your manufacturer to add pallets to inventory. Each row = one pallet.
                 </p>
-                <a href="upload_manufacturer_schedule.php<?php echo $project_id ? '?project_id='.$project_id : ''; ?>"
+                <a href="upload_pallets.php<?php echo $project_id ? '?project_id='.$project_id : ''; ?>"
                    class="btn-submit" style="display: inline-block; text-decoration: none; padding: 16px 32px;">
-                    Go to Import Page →
+                    Import Pallets →
                 </a>
             </div>
         </div>

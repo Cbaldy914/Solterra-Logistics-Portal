@@ -3791,6 +3791,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Module Overview</a>
                         <a href="create_shipment.php?project_id=<?php echo $project_id; ?>">Manage Pallets</a>
                         <a href="module_movements.php?project_id=<?php echo $project_id; ?>">Module Movements</a>
+                        <a href="upload_pallets.php?project_id=<?php echo $project_id; ?>">📦 Import Pallets</a>
                     </div>
                 </div>
                 <div class="dropdown">
@@ -3802,6 +3803,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <a href="manage_deliveries.php?project_id=<?php echo $project_id; ?>">Manage Deliveries</a>
                         <a href="scheduling.php?project_id=<?php echo $project_id; ?>">Scheduling</a>
                         <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>">Anticipated Schedule</a>
+                        <a href="upload_shipments.php?project_id=<?php echo $project_id; ?>">📥 Import Shipments</a>
                     </div>
                 </div>
                 <div class="dropdown">
