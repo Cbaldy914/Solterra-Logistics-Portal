@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(dir:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(del /f \"C:\\xampp\\htdocs\\Solterra-Solutions\\Solterra-Logistics-Portal\\add_project_wizard.html\" \"C:\\xampp\\htdocs\\Solterra-Solutions\\Solterra-Logistics-Portal\\add_project_new.php\")"
     ],
     "deny": [],
     "ask": []

@@ -10,8 +10,8 @@ if (!isset($_SESSION['csrf_token'])) {
 // Include document helpers
 require_once 'document_helpers.php';
 
-// Ensure only global_admin can upload a POD
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
+// Ensure only admin, global_admin, or customer_admin can upload a POD
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin','customer_admin'])) {
     header("Location: unauthorized");
      exit();
 }

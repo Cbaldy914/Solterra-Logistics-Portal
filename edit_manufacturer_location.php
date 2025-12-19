@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure user has role global_admin or admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
+// Ensure user has role global_admin, admin, or customer_admin
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     header("Location: unauthorized.php");
     exit();
 }

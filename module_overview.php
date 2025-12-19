@@ -2,9 +2,9 @@
 session_name("logistics_session");
 session_start();
 
-// Allow access for admin, global_admin, and user roles.
+// Allow access for admin, global_admin, customer_admin, and user roles.
 // Specific functionalities will be controlled by role checks within the page.
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'user'])) {
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin', 'user'])) {
     header("Location: unauthorized");
     exit();
 }

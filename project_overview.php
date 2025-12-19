@@ -28,7 +28,7 @@ if (!$conn) {
 }
 
 // Inline update of module batch info (admin/global_admin only)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_module_batch' && in_array($role, ['admin','global_admin'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_module_batch' && in_array($role, ['admin','global_admin','customer_admin'])) {
     $upd_batch_id = intval($_POST['batch_id'] ?? 0);
     if ($upd_batch_id > 0) {
         $fields = [
@@ -1488,7 +1488,7 @@ $conn->close();
 
 // Determine the correct link for the "Deliveries" button
 // If user is "admin", go to manage_deliveries.php; else "view_project.php"
-$deliveriesLink = ($role === 'admin' || $role === 'global_admin')
+$deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
     ? "manage_deliveries?project_id={$project_id}"
     : "view_project?project_id={$project_id}";
 ?>
@@ -1908,7 +1908,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
     margin-top: 5px;
 }
 
-<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+<?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
 /* Enhanced Shipping Statuses */
 .shipping-statuses {
     display: grid;
@@ -2352,7 +2352,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         margin-bottom: 15px;
     }
     
-    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+    <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
     
     .shipping-statuses {
         grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -2496,7 +2496,7 @@ $deliveriesLink = ($role === 'admin' || $role === 'global_admin')
         margin-left: 20px;
     }
     
-    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+    <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
     /* Enhanced mobile timeline for smallest screens */
     .timeline-container {
         margin: 15px 10px;
@@ -3758,7 +3758,8 @@ document.addEventListener('DOMContentLoaded', function() {
         <h1 class="project-name-mobile"><?php echo htmlspecialchars($project['project_name']); ?></h1>
         
         <div class="project-overview-image">
-            <img src="<?php echo htmlspecialchars($project['image_url']); ?>" alt="Project Overview Image">
+            <?php $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/default_project.png'; ?>
+            <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="Project Overview Image" onerror="this.src='pictures/default_project.png'">
         </div>
         
         <div class="project-info">
@@ -3783,7 +3784,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
             
             <!-- Admin View Buttons -->
-            <div id="admin-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: flex;"' : 'style="display: none;"'; ?>>
+            <div id="admin-buttons" class="button-group" <?php echo in_array($role, ['admin', 'global_admin', 'customer_admin']) ? 'style="display: flex;"' : 'style="display: none;"'; ?>>
                 <div class="dropdown">
                     <button class="dropdown-btn" onclick="toggleModulesDropdown()">
                         Modules <span class="dropdown-arrow">▼</span>
@@ -3799,6 +3800,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         Deliveries <span class="dropdown-arrow">▼</span>
                     </button>
                     <div class="dropdown-content" id="adminDeliveriesDropdown">
+                        <a href="upload_manufacturer_schedule.php?project_id=<?php echo $project_id; ?>">📥 Import Manufacturer Schedule</a>
                         <a href="create_shipment.php?project_id=<?php echo $project_id; ?>">Create Shipments</a>
                         <a href="manage_deliveries.php?project_id=<?php echo $project_id; ?>">Manage Deliveries</a>
                         <a href="scheduling.php?project_id=<?php echo $project_id; ?>">Scheduling</a>
@@ -3819,7 +3821,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
             
             <!-- Customer View Buttons -->
-            <div id="customer-buttons" class="button-group" <?php echo ($role === 'admin' || $role === 'global_admin') ? 'style="display: none;"' : 'style="display: flex;"';?> >
+            <div id="customer-buttons" class="button-group" <?php echo in_array($role, ['admin', 'global_admin', 'customer_admin']) ? 'style="display: none;"' : 'style="display: flex;"'; ?>>
                 <div class="dropdown">
                     <button class="dropdown-btn" onclick="toggleCustomerModulesDropdown()">
                         Modules <span class="dropdown-arrow">▼</span>
@@ -3835,6 +3837,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         Deliveries <span class="dropdown-arrow">▼</span>
                     </button>
                     <div class="dropdown-content" id="customerDeliveriesDropdown">
+                        <a href="upload_manufacturer_schedule.php?project_id=<?php echo $project_id; ?>">📥 Import Manufacturer Schedule</a>
                         <a href="<?php echo $deliveriesLink; ?>">📋 Delivery Schedule</a>
                         <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>">📅 Anticipated Schedule</a>
                     </div>
@@ -3863,7 +3866,7 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
     </div>
 
-    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+    <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
         <!-- Admin Timeline View -->
         <div id="admin-view-content">
             <div class="toggle-buttons">
@@ -5015,7 +5018,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </main>
 
 <script>
-<?php if ($role !== 'admin' && $role !== 'global_admin'): ?>
+<?php if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
 // Delivery View line chart (for regular users)
 var dateLabels = <?php echo $dateLabelsJSON; ?>;
 var lineData   = <?php echo $lineChartDataJSON; ?>;
@@ -5166,7 +5169,7 @@ var pieChart = new Chart(ctxPie,{
 <?php endif; ?>
 
 function showView(viewId) {
-    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+    <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
     // Admin view logic
     ['progress-info','site-info','module-info'].forEach(function(id){
         var sec = document.getElementById(id);
@@ -5203,7 +5206,7 @@ function showView(viewId) {
     <?php endif; ?>
 }
 
-<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+<?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
 function loadSiteInfo() {
     var siteSection = document.getElementById('site-info');
     if(siteSection && siteSection.innerHTML.trim() === '') {
@@ -5437,7 +5440,7 @@ function goToWarehouseManagement(warehouseId) {
 }
 <?php endif; ?>
 
-<?php if ($role !== 'admin' && $role !== 'global_admin'): ?>
+<?php if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
 // Customer view functions
 let currentFilter = 'mws'; // Global filter state
 
@@ -6542,7 +6545,7 @@ function initializeFinancialCharts(){
 }
 <?php endif; ?>
 
-<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+<?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
 // Shipping Filter functionality
 function initializeShippingFilters() {
     const filterButtons = document.querySelectorAll('.filter-btn');
@@ -6824,7 +6827,7 @@ window.onclick = function(event) {
         }
     }
     
-    <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+    <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
     // NOTE: Removed modal closing on outside click to prevent glitches
     // Users must now use the "x" button to close modals
     
@@ -6843,7 +6846,7 @@ window.onclick = function(event) {
     <?php endif; ?>
 }
 
-<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+<?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
 // Project Actions Functions
 function toggleProjectActions() {
     const dropdown = document.getElementById('projectActionsDropdown');
@@ -7089,7 +7092,7 @@ document.getElementById('editBatchForm').addEventListener('submit', function(e) 
 </script>
 
 <!-- Delete Confirmation Modal -->
-<?php if ($role === 'admin' || $role === 'global_admin'): ?>
+<?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
 <div id="deleteModal" class="delete-modal">
     <div class="delete-modal-content">
         <h3>⚠️ Confirm Project Deletion</h3>

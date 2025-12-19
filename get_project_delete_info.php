@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure the user is either an admin or global_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
+// Ensure the user is either an admin, global_admin, or customer_admin
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     header('HTTP/1.1 403 Forbidden');
     exit(json_encode(['error' => 'Unauthorized']));
 }
