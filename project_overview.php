@@ -328,6 +328,16 @@ sort($date_labels);
 
 $today = new DateTime();
 $today_str = $today->format('Y-m-d');
+$current_week_ending = getWeekEndingSunday($today_str);
+
+// Check if there are any actual deliveries in the future
+$has_future_actual_deliveries = false;
+foreach ($actual_deliveries as $delivery_date => $qty) {
+    if ($delivery_date > $current_week_ending && $qty > 0) {
+        $has_future_actual_deliveries = true;
+        break;
+    }
+}
 
 $cumulative_ant = 0;
 $cumulative_act = 0;
@@ -339,10 +349,23 @@ foreach ($date_labels as $dt) {
     $cumulative_ant += $val_ant;
     $lineChartData_anticipated[] = $cumulative_ant;
 
-    // Always include actuals that have been marked Delivered to Project, even for future weeks
+    // For actuals: if there are future deliveries marked as Delivered to Project, show them
+    // Otherwise, stop the line at the current week (use null for future data points)
     $val_act = $actual_deliveries[$dt] ?? 0;
     $cumulative_act += $val_act;
-    $lineChartData_actual[] = $cumulative_act;
+
+    if ($has_future_actual_deliveries) {
+        // Show all actuals including future ones (demo mode)
+        $lineChartData_actual[] = $cumulative_act;
+    } else {
+        // Only show actuals up to the current week
+        if ($dt <= $current_week_ending) {
+            $lineChartData_actual[] = $cumulative_act;
+        } else {
+            // Use null to stop the line (Chart.js will not draw a line to null points)
+            $lineChartData_actual[] = null;
+        }
+    }
 }
 
 $lineChartData = [
@@ -453,16 +476,19 @@ while ($row = $res_status->fetch_assoc()) {
         }
     }
 
-    // Build status_totals for overall tracking
+    // Build status_totals for overall tracking (include all pallets for status counts)
     if (!isset($status_totals[$status])) {
         $status_totals[$status] = ['pallets' => 0, 'modules' => 0];
     }
     $status_totals[$status]['pallets'] += 1;
     $status_totals[$status]['modules'] += $qty;
-    
-
 
     // Build detailed_breakdown for the overview section
+    // Only include non-damaged pallets to match delivery_totals (sub rows)
+    if ($status === 'Damaged') {
+        continue; // Skip damaged pallets for detailed_breakdown to match sub row calculations
+    }
+
     if ($status === 'In Warehouse' && $wh_name) {
         $key = 'In Warehouse - ' . $wh_name;
     } elseif ($status === 'In Transit to Warehouse' && $wh_name) {
@@ -531,51 +557,18 @@ $delivered_combined               = 0;
 $exceptions_combined              = 0;
 
 
-// Calculate combined totals by properly aggregating from the raw status data
-// This approach calculates MW correctly by using actual wattage for each module group
+// Calculate exceptions (damaged) from detailed_breakdown since they're not in delivery_totals
+// Other combined values will be calculated by summing sub rows below
 foreach ($status_totals as $status => $data) {
-    $modules = $data['modules'] ?? 0;
-    
-    if ($modules > 0) {
-        // Calculate the actual MW by looking at the wattage breakdown in detailed_breakdown
-        $total_mw_for_status = 0;
-        
-        // Find the corresponding detailed breakdown entries for this status
+    if ($status === 'Damaged' && ($data['modules'] ?? 0) > 0) {
         foreach ($detailed_breakdown as $key => $breakdown) {
-            if (strpos($key, $status) === 0 || $key === $status) {
+            if ($key === 'Damaged') {
                 foreach ($breakdown['wattage_breakdown'] as $wattage => $watt_data) {
                     $watt_modules = $watt_data['modules'];
                     $mw_for_this_wattage = calculateQuantity($watt_modules, $wattage, $view_mode);
-                    $total_mw_for_status += $mw_for_this_wattage;
+                    $exceptions_combined += $mw_for_this_wattage;
                 }
             }
-        }
-        
-        switch ($status) {
-            case 'At Manufacturer':
-                $at_manufacturer_combined = $total_mw_for_status;
-                break;
-            case 'On Water':
-                $on_water_combined = $total_mw_for_status;
-                break;
-            case 'Cleared Customs':
-                $cleared_customs_combined = $total_mw_for_status;
-                break;
-            case 'In Transit to Warehouse':
-                $in_transit_to_warehouse_combined = $total_mw_for_status;
-                break;
-            case 'In Warehouse':
-                $in_warehouse_combined = $total_mw_for_status;
-                break;
-            case 'In Transit to Project':
-                $in_transit_to_project_combined = $total_mw_for_status;
-                break;
-            case 'Delivered to Project':
-                $delivered_combined = $total_mw_for_status;
-                break;
-            case 'Damaged':
-                $exceptions_combined += $total_mw_for_status;
-                break;
         }
     }
 }
@@ -645,16 +638,28 @@ foreach ($all_wattages as $lbl => $info) {
     ];
 
     $total_order_combined             += $to;
-    // Status combined values are calculated from status_totals above - don't override them here
-    // $at_manufacturer_combined         += $atman;
-    // $on_water_combined                += $onw;
-    // $cleared_customs_combined         += $clr;
-    // $in_transit_to_warehouse_combined += $itw;
-    // $in_warehouse_combined            += $inw;
-    // $in_transit_to_project_combined   += $itp;
-    // $delivered_combined               += $del;
+}
 
-    // pieChartData will be calculated after the loop using the correct combined values
+// Calculate combined values by explicitly summing from the sub_rows arrays
+// This guarantees the main row exactly matches the sum of sub rows
+$delivered_combined = 0;
+$at_manufacturer_combined = 0;
+$on_water_combined = 0;
+$cleared_customs_combined = 0;
+$in_transit_to_warehouse_combined = 0;
+$in_warehouse_combined = 0;
+$in_transit_to_project_combined = 0;
+
+foreach ($sub_rows as $sr) {
+    $delivered_combined += $sr['delivered'];
+}
+foreach ($sub_rows_status as $srs) {
+    $at_manufacturer_combined += ($srs['at_manufacturer'] ?? 0);
+    $on_water_combined += ($srs['on_water'] ?? 0);
+    $cleared_customs_combined += ($srs['cleared_customs'] ?? 0);
+    $in_transit_to_warehouse_combined += ($srs['in_transit_to_warehouse'] ?? 0);
+    $in_warehouse_combined += ($srs['in_warehouse'] ?? 0);
+    $in_transit_to_project_combined += ($srs['in_transit_to_project'] ?? 0);
 }
 
 // Calculate pieChartData using the correct combined values

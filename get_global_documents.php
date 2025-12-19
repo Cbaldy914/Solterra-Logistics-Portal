@@ -35,6 +35,7 @@ $user_role = $_SESSION['role'];
 $project_id = intval($_GET['project_id'] ?? 0);
 $warehouse_id = intval($_GET['warehouse_id'] ?? 0);
 $document_type = trim($_GET['document_type'] ?? '');
+$document_sub_type = trim($_GET['document_sub_type'] ?? '');
 $start_date = trim($_GET['start_date'] ?? '');
 $end_date = trim($_GET['end_date'] ?? '');
 $search = trim($_GET['search'] ?? '');
@@ -176,19 +177,10 @@ if (!empty($document_type)) {
     if ($document_type === 'safe_harbor_evidence') {
         // Show all Safe Harbor docs: either stored in Safe Harbor folder or flagged as safe harbor
         $where_conditions[] = "(pd.document_type = 'safe_harbor_evidence' OR pd.is_safe_harbor = 1)";
-    } elseif ($document_type === 'shipments' && !empty($sub_filters) && is_array($sub_filters)) {
-        // If shipments selected and user includes POD subfilters, include legacy pods, too
-        $selected_pod = false;
-        foreach ($sub_filters as $sf) {
-            if (trim($sf) === 'Project POD' || trim($sf) === 'Warehouse POD') { $selected_pod = true; break; }
-        }
-        if ($selected_pod) {
-            $where_conditions[] = "pd.document_type IN ('shipments','pods')";
-        } else {
-            $where_conditions[] = "pd.document_type = ?";
-            $params[] = $document_type;
-            $param_types .= "s";
-        }
+    } elseif ($document_type === 'shipments') {
+        // Always include legacy 'pods' documents when filtering for shipments
+        // This ensures PODs show up whether or not a sub-filter is selected
+        $where_conditions[] = "pd.document_type IN ('shipments','pods')";
     } elseif ($document_type === 'photos') {
         // Virtual Photos aggregator
         $include_project = true; $include_warehouse = true; $include_damage = true;
@@ -241,6 +233,21 @@ if (!empty($search)) {
     $params[] = $search_param;
     $params[] = $search_param;
     $param_types .= "ss";
+}
+
+// Handle single document_sub_type filter from dropdown
+if (!empty($document_sub_type)) {
+    // Special handling for POD sub-types - include legacy 'pods' document_type records
+    if ($document_sub_type === 'Project POD' || $document_sub_type === 'Warehouse POD') {
+        $where_conditions[] = "(pd.document_sub_type = ? OR (pd.document_type = 'pods' AND pd.document_sub_type = ?))";
+        $params[] = $document_sub_type;
+        $params[] = $document_sub_type;
+        $param_types .= "ss";
+    } else {
+        $where_conditions[] = "pd.document_sub_type = ?";
+        $params[] = $document_sub_type;
+        $param_types .= "s";
+    }
 }
 
 // Handle sub-filters using the new document_sub_type field
