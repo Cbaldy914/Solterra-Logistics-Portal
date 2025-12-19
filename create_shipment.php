@@ -1934,6 +1934,9 @@ if (!empty($bolCompletionMessage)) {
                     <h1>Manage Pallets</h1>
                     <p class="header-subtitle">Manage pallets and create shipments</p>
                 </div>
+                <a href="upload_shipments.php<?php echo $project_id_from_url ? '?project_id='.$project_id_from_url : ''; ?>" class="btn-import-shipments" style="margin-top: 12px; display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; background: linear-gradient(135deg, #488C9A 0%, #3a7086 100%); color: white; border-radius: 8px; text-decoration: none; font-weight: 500; transition: all 0.2s ease;">
+                    <span style="font-size: 1.1em;">📥</span> Import Shipments
+                </a>
             </div>
             <div class="header-stats">
                 <div class="stat-item">
