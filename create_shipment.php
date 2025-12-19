@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-// Only allow admin and global_admin roles for shipment creation
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
+// Only allow admin, global_admin, and customer_admin roles for shipment creation
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     header("Location: unauthorized.php");
     exit();
 }

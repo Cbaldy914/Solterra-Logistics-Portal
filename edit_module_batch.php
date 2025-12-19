@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-// Only admins/global_admins
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
+// Only admins/global_admins/customer_admins
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin','customer_admin'])) {
     header('Location: unauthorized.php');
     exit();
 }

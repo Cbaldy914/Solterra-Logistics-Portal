@@ -386,6 +386,82 @@ $unread_notifications = unread_notification_count($_SESSION['user_id']);
             </div>
           </li>
 
+        <?php elseif ($role === 'customer_admin'): ?>
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Projects</a>
+            <div class="slp-submenu" role="menu">
+              <a href="dashboard" role="menuitem">Dashboard</a>
+              <a href="add_project" role="menuitem">Add Project</a>
+              <a href="manage_projects" role="menuitem">Manage Projects</a>
+              <a href="module_cost_analysis" role="menuitem">Cost Analysis</a>
+              <a href="sustainability_overview" role="menuitem">Sustainability</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Modules</a>
+            <div class="slp-submenu" role="menu">
+              <a href="modules" role="menuitem">Manage Modules</a>
+              <a href="module_movements" role="menuitem">Module Movements</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Warehousing</a>
+            <div class="slp-submenu" role="menu">
+              <a href="manage_warehouses" role="menuitem">Manage Warehouses</a>
+              <a href="warehousing_overview" role="menuitem">Warehousing Overview</a>
+              <a href="cost_estimate_calculator" role="menuitem">Cost Estimate Calculator</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Manufacturers</a>
+            <div class="slp-submenu" role="menu">
+              <a href="add_manufacturer" role="menuitem">Add Manufacturer</a>
+              <a href="manufacturers" role="menuitem">Manage Manufacturers</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Shipments</a>
+            <div class="slp-submenu" role="menu">
+              <a href="create_shipment" role="menuitem">Create Shipment</a>
+              <a href="manage_deliveries" role="menuitem">Manage Deliveries</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Documents</a>
+            <div class="slp-submenu" role="menu">
+              <a href="documents" role="menuitem">Project Documents</a>
+              <a href="global_documents" role="menuitem">Global Documents</a>
+            </div>
+          </li>
+
+          <li class="slp-item slp-has-dropdown slp-align-right" role="none">
+            <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">
+              <span class="slp-profile">
+                <?php echo strtoupper(substr($_SESSION['username'], 0, 2)); ?>
+                <?php if ($unread_notifications > 0): ?>
+                  <span class="slp-profile-badge"><?php echo $unread_notifications; ?></span>
+                <?php endif; ?>
+              </span>
+            </a>
+            <div class="slp-submenu" role="menu">
+              <a href="notifications" role="menuitem">
+                Notifications
+                <?php if ($unread_notifications > 0): ?>
+                  <span style="color: #ef4444; font-weight: 700;">(<?php echo $unread_notifications; ?>)</span>
+                <?php endif; ?>
+              </a>
+              <a href="account_settings" role="menuitem">Profile</a>
+              <a href="questions" role="menuitem">Questions & Support</a>
+              <a href="invoices_all" role="menuitem">Invoices</a>
+              <a class="slp-signout" href="logout" role="menuitem">Sign Out</a>
+            </div>
+          </li>
+
         <?php elseif ($role === 'DDPm'): ?>
           <li class="slp-item slp-has-dropdown" role="none">
             <a href="#" class="slp-link" role="menuitem" aria-haspopup="true" aria-expanded="false">Projects</a>

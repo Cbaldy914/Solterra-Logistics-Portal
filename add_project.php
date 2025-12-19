@@ -4,8 +4,8 @@ session_name("logistics_session");
 session_start();
 
 
-// 2) Ensure user has role admin or global_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
+// 2) Ensure user has role admin, global_admin, or customer_admin
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin','customer_admin'])) {
     header("Location: unauthorized");
      exit();
 }
@@ -38,12 +38,12 @@ if ($role === 'global_admin') {
         }
     }
 } else {
-    // If admin, fetch exactly one account_id from bridging table
+    // If admin or customer_admin, fetch exactly one account_id from bridging table
     $sqlOne = "
         SELECT account_id
         FROM customer_account_users
         WHERE user_id = ?
-          AND role = 'admin'
+          AND role IN ('admin', 'customer_admin')
         LIMIT 1
     ";
     $stmtOne = $conn->prepare($sqlOne);
@@ -99,16 +99,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $zip_code                  = trim($_POST['zip_code'] ?? '');
         $estimated_completion_date = trim($_POST['estimated_completion_date'] ?? '');
         $solterra_fee              = isset($_POST['solterra_fee']) ? floatval($_POST['solterra_fee']) : 0.0000;
-        
+        // Project size in GW (stored as float, user inputs in GW)
+        $project_size              = isset($_POST['project_size']) && $_POST['project_size'] !== '' ? floatval($_POST['project_size']) : 0.0;
+
         // New site information fields (optional)
         $phone1                    = trim($_POST['phone1'] ?? '');
         $phone2                    = trim($_POST['phone2'] ?? '');
         $timezone                  = trim($_POST['timezone'] ?? 'America/New_York');
-        $reference_numbers         = trim($_POST['reference_numbers'] ?? '');
+        // Site receiving hours - will be stored in site_operating_hours table
+        $receiving_hours_start     = trim($_POST['receiving_hours_start'] ?? '08:00');
+        $receiving_hours_end       = trim($_POST['receiving_hours_end'] ?? '17:00');
+        $reference_numbers         = ''; // Deprecated - using site_operating_hours table instead
         $instructions              = trim($_POST['instructions'] ?? '');
         $additional_notes          = trim($_POST['additional_notes'] ?? '');
         $driver_handout_url        = null; // Legacy column (now stored in project_documents)
-        
+
         // Module information fields (optional) - use 0 as default for integer fields to avoid NULL binding issues
         $modules_per_pallet        = isset($_POST['modules_per_pallet']) && $_POST['modules_per_pallet'] !== '' ? (int)$_POST['modules_per_pallet'] : 0;
         $pallets_per_truck         = isset($_POST['pallets_per_truck']) && $_POST['pallets_per_truck'] !== '' ? (int)$_POST['pallets_per_truck'] : 0;
@@ -145,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // Default project image (can be set via Project Photos manager later)
-        $image_url = "pictures/test.png"; // default cover until photos are arranged
+        $image_url = "pictures/default_project.png"; // default cover until photos are arranged
 
         // Note: Driver Handout and Module Documentation now save to project_documents
 
@@ -154,6 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             INSERT INTO projects (
                 account_id,
                 project_name,
+                project_size,
                 street_address,
                 city,
                 state,
@@ -168,15 +174,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 instructions,
                 additional_notes,
                 driver_handout_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         if (!$stmt) {
             throw new Exception("Error preparing project insert: " . $conn->error);
         }
         $stmt->bind_param(
-            "isssssssdsssssss",
+            "isdssssssdsssssss",
             $account_id,
             $project_name,
+            $project_size,
             $street_address,
             $city,
             $state,
@@ -197,6 +204,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $project_id = $stmt->insert_id;
         $stmt->close();
+
+        // Insert site operating hours (Mon-Fri with the specified times)
+        // day_of_week: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday
+        $stmtHours = $conn->prepare("
+            INSERT INTO site_operating_hours (project_id, day_of_week, start_time, end_time)
+            VALUES (?, ?, ?, ?)
+        ");
+        if ($stmtHours) {
+            // Insert for Monday (1) through Friday (5)
+            for ($day = 1; $day <= 5; $day++) {
+                $stmtHours->bind_param("iiss", $project_id, $day, $receiving_hours_start, $receiving_hours_end);
+                $stmtHours->execute();
+            }
+            $stmtHours->close();
+        }
 
         // Project photos are now managed on a dedicated page; cover image is set from the first photo there.
 
@@ -321,28 +343,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Default values are now set in the main INSERT statement
-
-        // Set default operating hours (Monday-Friday 8AM-5PM)
-        $hours_stmt = $conn->prepare("
-            INSERT INTO site_operating_hours (project_id, day_of_week, start_time, end_time) 
-            VALUES (?, ?, ?, ?)
-        ");
-        if (!$hours_stmt) {
-            throw new Exception("Error preparing operating hours insert: " . $conn->error);
-        }
-        
-        // Add Mon-Fri 8AM-5PM
-        $start_time = "08:00:00";
-        $end_time = "17:00:00";
-        for ($day = 1; $day <= 5; $day++) {
-            $hours_stmt->bind_param("iiss", $project_id, $day, $start_time, $end_time);
-            if (!$hours_stmt->execute()) {
-                throw new Exception("Error setting operating hours for day {$day}: " . $hours_stmt->error);
-            }
-        }
-        $hours_stmt->close();
-
         // If wattage and quantities are provided, create a module batch for them
         if (isset($_POST['wattages'], $_POST['quantities'])) {
             $wattages   = $_POST['wattages'];
@@ -356,7 +356,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // First, create entries in project_wattage_orders table for project size calculation
             $stmt_wattage = $conn->prepare("
-                INSERT INTO project_wattage_orders (project_id, wattage, total_order) 
+                INSERT INTO project_wattage_orders (project_id, wattage, total_order)
                 VALUES (?, ?, ?)
             ");
             if (!$stmt_wattage) {
@@ -381,7 +381,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($w_int <= 0 || $q_int <= 0) {
                     throw new Exception("Wattage and Quantity must be positive integers.");
                 }
-                
+
                 // Insert into project_wattage_orders for project size calculation
                 $stmt_wattage->bind_param("iii", $project_id, $w_int, $q_int);
                 if (!$stmt_wattage->execute()) {
@@ -393,16 +393,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Define vendor_name and initial_location for the new module batch
             $manufacturer_name = "Unknown Manufacturer";
             $manufacturer_address = "";
-            
+
             if ($manufacturer_id_for_batch && $location_id_for_batch) {
                 // Get manufacturer details for vendor name and initial location (from selected location)
                 $stmt_mfg = $conn->prepare("
-                    SELECT 
-                        m.name, 
-                        ml.street_address, 
-                        ml.city, 
-                        ml.state, 
-                        ml.zip_code 
+                    SELECT
+                        m.name,
+                        ml.street_address,
+                        ml.city,
+                        ml.state,
+                        ml.zip_code
                     FROM manufacturers m
                     LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id
                     WHERE m.id = ? AND ml.id = ?");
@@ -420,12 +420,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else if ($manufacturer_id_for_batch) {
                 // Fallback to primary location if no specific location was selected
                 $stmt_mfg = $conn->prepare("
-                    SELECT 
-                        m.name, 
-                        ml.street_address, 
-                        ml.city, 
-                        ml.state, 
-                        ml.zip_code 
+                    SELECT
+                        m.name,
+                        ml.street_address,
+                        ml.city,
+                        ml.state,
+                        ml.zip_code
                     FROM manufacturers m
                     LEFT JOIN manufacturer_locations ml ON m.id = ml.manufacturer_id AND ml.is_primary = TRUE
                     WHERE m.id = ?");
@@ -441,9 +441,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt_mfg->close();
                 }
             }
-            
+
             $default_vendor_name = $manufacturer_name;
-            
+
             // Use manufacturer address as initial location, fallback to project address
             if (!empty($manufacturer_address)) {
                 $default_initial_location = $manufacturer_address;
@@ -468,10 +468,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Error preparing module batch insert: " . $conn->error);
             }
             $stmt_module->bind_param(
-                "issiiiiiiiissiiiiis", 
-                $account_id, 
-                $default_vendor_name, 
-                $default_initial_location, 
+                "issiiiiiiiissiiiiis",
+                $account_id,
+                $default_vendor_name,
+                $default_initial_location,
                 $project_id,
                 $modules_per_pallet,
                 $pallets_per_truck,
@@ -489,7 +489,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $module_notes,
                 $module_docs_url
             );
-            
+
             if (!$stmt_module->execute()) {
                 throw new Exception("Error inserting module batch for project: " . $stmt_module->error);
             }
@@ -498,7 +498,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Insert items into unassigned_module_items
             $stmt_item = $conn->prepare("
-                INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity) 
+                INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity)
                 VALUES (?, ?, ?)
             ");
             if (!$stmt_item) {
@@ -512,7 +512,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // We already validated these above, so we can use the same validation
                 $w_int = filter_var($w_val, FILTER_VALIDATE_INT);
                 $q_int = filter_var($q_val, FILTER_VALIDATE_INT);
-                
+
                 $stmt_item->bind_param("iii", $module_batch_id, $w_int, $q_int);
                 if (!$stmt_item->execute()) {
                     throw new Exception("Error inserting module item (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_item->error);
@@ -523,7 +523,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Set a success message to be displayed with the form below
         $successMessage = "Project added successfully! <a href='project_overview?project_id=" . $project_id . "' style='color: #488C9A; text-decoration: underline;'>View Project</a>.";
-        
+
         // If modules were created, enhance the success message with module count
         if (isset($_POST['wattages'], $_POST['quantities'])) {
             $totalModulesCreated = 0;
@@ -538,1071 +538,919 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Project</title>
+    <title>Create New Project</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
-
-        /* Form layout */
-        .form-container {
-            background: #fff;
-            border-radius: 16px;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+        /* Modern Page Header */
+        .add-project-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
             overflow: hidden;
         }
-
-        .form-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            min-height: 600px;
+        .add-project-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+        .add-project-header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .add-project-header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+        .add-project-header .subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+        .btn-back {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: #fff;
+            color: #488C9A;
+            border: 2px solid #488C9A;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+        }
+        .btn-back:hover {
+            background: #488C9A;
+            color: #fff;
         }
 
-        .form-section {
-            padding: 40px;
-            border-right: 1px solid #f0f0f0;
+        /* Step Indicator */
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0;
+            margin-bottom: 32px;
+            padding: 20px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
         }
-
-        .form-section:last-child {
-            border-right: none;
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
         }
-
-        .form-section h2 {
-            font-size: 1.4rem;
+        .step-number {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: #e9ecef;
+            color: #6c757d;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-weight: 600;
-            color: #1a1a1a;
-            margin-bottom: 24px;
-            padding-bottom: 12px;
-            border-bottom: 2px solid #488C9A;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+        .step.active .step-number {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: #fff;
+        }
+        .step.completed .step-number {
+            background: #28a745;
+            color: #fff;
+        }
+        .step.completed .step-number::after {
+            content: '\2713';
+        }
+        .step-label {
+            font-weight: 500;
+            color: #6c757d;
+            font-size: 0.95rem;
+        }
+        .step.active .step-label {
+            color: #293E4C;
+        }
+        .step-connector {
+            width: 60px;
+            height: 3px;
+            background: #e9ecef;
+            margin: 0 5px;
+        }
+        .step-connector.completed {
+            background: #28a745;
+        }
+        .step-tag {
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 8px;
+            font-weight: 600;
+        }
+        .step-tag.required {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .step-tag.optional {
+            background: #e9ecef;
+            color: #6c757d;
         }
 
-        /* Input styling */
-        .input-group {
+        /* Accordion Sections */
+        .accordion-section {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            margin-bottom: 20px;
+            overflow: hidden;
+            border: 1px solid #e9ecef;
+        }
+        .accordion-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-bottom: 1px solid transparent;
+        }
+        .accordion-header:hover {
+            background: #f8f9fa;
+        }
+        .accordion-header.active {
+            border-bottom: 1px solid #e9ecef;
+        }
+        .accordion-header h2 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #293E4C;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .accordion-header h2 .step-badge {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: #fff;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+        }
+        .accordion-header h2 .step-badge.completed {
+            background: #28a745;
+        }
+        .accordion-toggle {
+            font-size: 1.5rem;
+            color: #6c757d;
+            transition: transform 0.3s ease;
+        }
+        .accordion-header.active .accordion-toggle {
+            transform: rotate(180deg);
+        }
+        .accordion-content {
+            padding: 0;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease, padding 0.3s ease;
+        }
+        .accordion-content.open {
+            padding: 24px;
+            max-height: 3000px;
+        }
+        .section-description {
+            color: #6c757d;
             margin-bottom: 24px;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border-left: 4px solid #488C9A;
         }
 
-        .input-group label {
-            display: block;
+        /* Form Fields */
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .form-row.single {
+            grid-template-columns: 1fr;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .form-group label {
             font-weight: 500;
             color: #333;
             margin-bottom: 8px;
             font-size: 0.95rem;
         }
-
-        .input-group.required label::after {
-            content: " *";
+        .form-group label .required-star {
             color: #dc3545;
-            font-weight: 600;
+            margin-left: 4px;
         }
-
-        .input-group.optional label {
-            color: #666;
-        }
-
-        .input-group.optional label::after {
-            content: " (optional)";
-            color: #999;
+        .form-group label .optional-tag {
+            color: #6c757d;
             font-weight: 400;
             font-size: 0.85rem;
+            margin-left: 8px;
         }
-
-        .input-group input,
-        .input-group select,
-        .input-group textarea {
-            width: 100%;
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
             padding: 12px 16px;
-            border: 2px solid #e8e8e8;
-            border-radius: 8px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
             font-size: 1rem;
             transition: all 0.2s ease;
-            box-sizing: border-box;
             background: #fafafa;
         }
-
-        .input-group.required input,
-        .input-group.required select,
-        .input-group.required textarea {
-            border-left: 4px solid #dc3545;
-        }
-
-        .input-group input:focus,
-        .input-group select:focus,
-        .input-group textarea:focus {
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
             outline: none;
             border-color: #488C9A;
             background: #fff;
             box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
         }
-
-        .input-group textarea {
+        .form-group input.required-field {
+            border-left: 4px solid #dc3545;
+        }
+        .form-group textarea {
+            min-height: 100px;
             resize: vertical;
-            min-height: 80px;
+        }
+        .form-group .help-text {
+            font-size: 0.85rem;
+            color: #6c757d;
+            margin-top: 6px;
         }
 
-
-
-        /* Address grid */
+        /* Address Grid */
         .address-grid {
             display: grid;
             grid-template-columns: 2fr 1fr 1fr 1fr;
             gap: 16px;
         }
-
-        .address-grid .input-group {
-            margin-bottom: 0;
+        @media (max-width: 768px) {
+            .address-grid {
+                grid-template-columns: 1fr 1fr;
+            }
         }
 
-        /* Phone grid */
-        .phone-grid {
+        /* Hours Grid */
+        .hours-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-columns: 1fr 1fr;
             gap: 16px;
+            max-width: 400px;
         }
 
-        .phone-grid .input-group {
-            margin-bottom: 0;
+        /* Section Actions */
+        .section-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid #e9ecef;
         }
-
-        /* Module section */
-        .module-section {
-            grid-column: 1 / -1;
-            border-top: 1px solid #f0f0f0;
-            margin-top: 20px;
-            padding-top: 40px;
-        }
-
-        .module-intro {
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            padding: 24px;
+        .btn-continue {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: #fff;
+            border: none;
             border-radius: 12px;
-            margin-bottom: 32px;
-            text-align: center;
-        }
-
-        .module-intro h3 {
-            color: #293E4C;
-            margin-bottom: 8px;
+            font-size: 1rem;
             font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .btn-continue:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
+        }
+        .btn-back-step {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 24px;
+            background: #fff;
+            color: #6c757d;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .btn-back-step:hover {
+            background: #f8f9fa;
+            border-color: #dee2e6;
+        }
+        .btn-skip {
+            padding: 14px 24px;
+            background: transparent;
+            color: #6c757d;
+            border: none;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .btn-skip:hover {
+            color: #488C9A;
         }
 
-        .module-intro p {
-            color: #666;
-            margin-bottom: 0;
+        /* Submit Button */
+        .btn-submit {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 16px 40px;
+            background: linear-gradient(135deg, #28a745 0%, #20963b 100%);
+            color: #fff;
+            border: none;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            min-width: 200px;
+        }
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
         }
 
-        /* Wattage entries */
+        /* Wattage Entries */
         .wattage-container {
-            margin: 24px 0;
+            margin: 20px 0;
         }
-
         .wattage-entry {
             display: grid;
             grid-template-columns: 1fr 1fr auto;
             gap: 16px;
             align-items: end;
-            padding: 20px;
+            padding: 16px;
             background: #f8f9fa;
             border-radius: 12px;
-            margin-bottom: 16px;
+            margin-bottom: 12px;
             border: 1px solid #e9ecef;
         }
-
-        .wattage-entry .input-group {
+        .wattage-entry .form-group {
             margin-bottom: 0;
         }
-
-        .remove-btn {
+        .btn-remove {
+            padding: 10px 16px;
             background: #dc3545;
-            color: white;
+            color: #fff;
             border: none;
-            padding: 12px 16px;
             border-radius: 8px;
             cursor: pointer;
             font-weight: 500;
             transition: background 0.2s ease;
         }
-
-        .remove-btn:hover {
+        .btn-remove:hover {
             background: #c82333;
         }
-
-        .add-wattage-btn {
-            background: #488C9A;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            cursor: pointer;
+        .btn-add-wattage {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 20px;
+            background: #fff;
+            color: #488C9A;
+            border: 2px dashed #488C9A;
+            border-radius: 10px;
+            font-size: 0.95rem;
             font-weight: 500;
-            margin-bottom: 24px;
-            transition: background 0.2s ease;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .btn-add-wattage:hover {
+            background: rgba(72, 140, 154, 0.1);
         }
 
-        .add-wattage-btn:hover {
-            background: #3a7086;
-        }
-
-        /* Logistics specs grid */
+        /* Specs Grid */
         .specs-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
             gap: 16px;
-            margin: 24px 0;
         }
-
-        .specs-grid .input-group {
+        .specs-grid .form-group {
             margin-bottom: 0;
         }
 
-        /* Submit section */
-        .submit-section {
-            grid-column: 1 / -1;
+        /* Photo Upload */
+        .photo-upload-area {
+            padding: 40px 20px;
             text-align: center;
-            padding: 40px;
-            background: #f8f9fa;
-            border-top: 1px solid #f0f0f0;
-        }
-
-        .submit-btn {
-            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
-            color: white;
-            border: none;
-            padding: 16px 48px;
-            border-radius: 50px;
-            font-size: 1.1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 16px rgba(40, 62, 76, 0.2);
-        }
-
-        .submit-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(40, 62, 76, 0.3);
-        }
-
-        /* Messages */
-        .message {
-            padding: 16px 24px;
+            border: 2px dashed rgba(72, 140, 154, 0.3);
             border-radius: 12px;
-            margin: 24px 0;
-            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: #fafafa;
+        }
+        .photo-upload-area:hover {
+            border-color: #488C9A;
+            background: rgba(72, 140, 154, 0.05);
+        }
+        .photo-upload-area .upload-icon {
+            font-size: 2.5rem;
+            color: #488C9A;
+            margin-bottom: 12px;
+        }
+        .photo-upload-area .upload-text {
+            color: #333;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        .photo-upload-area .upload-subtext {
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+        .photo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        /* Success/Error Messages */
+        .message {
+            padding: 16px 20px;
+            border-radius: 12px;
+            margin-bottom: 24px;
             font-weight: 500;
         }
-
-        .success-message {
-            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+        .message.success {
+            background: #d4edda;
             color: #155724;
             border: 1px solid #c3e6cb;
         }
-
-        .error-message {
-            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+        .message.error {
+            background: #f8d7da;
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
 
-        /* Responsive design */
-        @media (max-width: 1024px) {
-            .form-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .form-section {
-                border-right: none;
-                border-bottom: 1px solid #f0f0f0;
-            }
-
-            .form-section:last-child {
-                border-bottom: none;
-            }
-
-            .address-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-
-            .specs-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-        }
-
-        @media (max-width: 768px) {
-            main {
-                width: 95%;
-                padding: 10px;
-            }
-
-            .form-section {
-                padding: 24px;
-            }
-
-            .address-grid,
-            .phone-grid,
-            .specs-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .wattage-entry {
-                grid-template-columns: 1fr;
-                gap: 12px;
-            }
-
-            .page-header h1 {
-                font-size: 2rem;
-            }
-        }
-
-        /* Hide default br spacing */
-        form br {
-            display: none;
-        }
-
-        /* Subtle animations */
-        .input-group {
-            animation: fadeInUp 0.5s ease forwards;
-            opacity: 0;
-            transform: translateY(20px);
-        }
-
-        .input-group:nth-child(1) { animation-delay: 0.1s; }
-        .input-group:nth-child(2) { animation-delay: 0.2s; }
-        .input-group:nth-child(3) { animation-delay: 0.3s; }
-        .input-group:nth-child(4) { animation-delay: 0.4s; }
-
-        @keyframes fadeInUp {
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        /* Loading modal styles */
-        .loading-modal {
-            display: none;
-            position: fixed;
-            z-index: 2000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.7);
-        }
-        .loading-content {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            text-align: center;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-        }
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #488C9A;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 2s linear infinite;
-            margin: 0 auto 15px auto;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        /* Upload Modal Styles - Matching global_documents.php design */
-        .upload-modal {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.5);
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            backdrop-filter: blur(8px);
-        }
-
-        .modal-content {
-            background: #fff;
-            width: 620px;
-            max-width: 90%;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            overflow: hidden;
-            animation: modalSlideIn 0.3s ease-out;
-        }
-
-        @keyframes modalSlideIn {
-            from {
-                opacity: 0;
-                transform: translateY(-30px) scale(0.95);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0) scale(1);
-            }
-        }
-
-        .modal-header {
-            padding: 24px 32px 20px 32px;
-            border-bottom: 1px solid rgba(72, 140, 154, 0.1);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-        }
-
-        .modal-title {
-            font-weight: 600;
-            font-size: 1.25rem;
-            color: #293E4C;
-            margin: 0;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .close-modal {
-            border: none;
-            background: rgba(72, 140, 154, 0.1);
-            color: #488C9A;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            font-size: 18px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .close-modal:hover {
-            background: rgba(72, 140, 154, 0.2);
-            transform: rotate(90deg);
-        }
-
-        .modal-body {
-            padding: 32px;
-        }
-
-        .modal-body .input-group {
+        /* Module Options Cards */
+        .module-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
             margin-bottom: 24px;
         }
-
-        .modal-body .input-group label {
-            font-weight: 600;
-            color: #293E4C;
-            margin-bottom: 8px;
-            display: block;
-            font-size: 0.95rem;
-        }
-
-        .modal-body .input-group select,
-        .modal-body .input-group input {
-            width: 100%;
-            padding: 12px 16px;
-            border: 2px solid rgba(72, 140, 154, 0.15);
+        .module-option-card {
+            padding: 24px;
             border-radius: 12px;
-            background: white;
-            font-size: 0.95rem;
-            transition: all 0.3s ease;
-            font-family: 'Poppins', sans-serif;
-            box-sizing: border-box;
+            border: 2px solid #e9ecef;
+            transition: all 0.2s ease;
         }
-
-        .modal-body .input-group select:focus,
-        .modal-body .input-group input:focus {
-            outline: none;
+        .module-option-card.primary {
             border-color: #488C9A;
-            box-shadow: 0 4px 15px rgba(72, 140, 154, 0.2);
+            background: rgba(72, 140, 154, 0.05);
         }
-
-        /* File Upload Area */
-        .file-upload-area {
-            border: 2px dashed rgba(72, 140, 154, 0.3);
-            border-radius: 16px;
-            padding: 40px 20px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .file-upload-area:hover {
-            border-color: #488C9A;
-            background: linear-gradient(135deg, #f0f8ff 0%, #f8f9fa 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(72, 140, 154, 0.15);
-        }
-
-        .file-upload-area::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(72, 140, 154, 0.1), transparent);
-            transition: left 0.5s ease;
-        }
-
-        .file-upload-area:hover::before {
-            left: 100%;
-        }
-
-        .file-upload-area.drag-over {
-            border-color: #488C9A !important;
-            background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%) !important;
-            transform: translateY(-2px) scale(1.02);
-        }
-
-        .upload-icon {
-            font-size: 48px;
-            color: #488C9A;
-            margin-bottom: 16px;
-            display: block;
-            animation: float 3s ease-in-out infinite;
-        }
-
-        @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-10px); }
-        }
-
-        .upload-text {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #293E4C;
-            margin-bottom: 8px;
-        }
-
-        .upload-subtext {
-            font-size: 0.85rem;
-            color: #6c757d;
-            line-height: 1.4;
-        }
-
-        /* File List */
-        .file-list {
-            margin-top: 16px;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-
-        .file-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 16px;
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-            border-radius: 12px;
-            margin-bottom: 8px;
-            border: 1px solid rgba(72, 140, 154, 0.1);
-            transition: all 0.3s ease;
-        }
-
-        .file-item:hover {
-            transform: translateX(4px);
-            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.1);
-        }
-
-        .file-name {
-            font-weight: 500;
-            color: #293E4C;
-            flex: 1;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .file-size {
-            color: #6c757d;
-            font-size: 0.85rem;
-            margin-left: 12px;
-        }
-
-        /* Modal Footer */
-        .modal-footer {
-            padding: 20px 32px 32px 32px;
-            border-top: 1px solid rgba(72, 140, 154, 0.1);
-            display: flex;
-            gap: 12px;
-            justify-content: flex-end;
-            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-        }
-
-        /* Button Styles */
-        .btn-cancel, .btn-upload {
-            padding: 12px 24px;
-            border-radius: 12px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            border: none;
+        .module-option-card h4 {
             display: flex;
             align-items: center;
-            gap: 8px;
-            font-family: 'Poppins', sans-serif;
-            min-width: 120px;
+            gap: 10px;
+            margin: 0 0 12px 0;
+            color: #293E4C;
+        }
+        .module-option-card h4 .option-number {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
             justify-content: center;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .module-option-card.primary h4 .option-number {
+            background: #488C9A;
+            color: #fff;
+        }
+        .module-option-card:not(.primary) h4 .option-number {
+            background: #6c757d;
+            color: #fff;
+        }
+        .module-option-card p {
+            color: #555;
+            font-size: 0.9rem;
+            margin-bottom: 12px;
+        }
+        .module-option-card ul {
+            color: #666;
+            font-size: 0.85rem;
+            margin: 0;
+            padding-left: 20px;
         }
 
-        .btn-cancel {
-            background: linear-gradient(135deg, rgba(108, 117, 125, 0.1) 0%, rgba(108, 117, 125, 0.05) 100%);
-            color: #6c757d;
-            border: 2px solid rgba(108, 117, 125, 0.2);
-        }
-
-        .btn-cancel:hover {
-            background: linear-gradient(135deg, rgba(108, 117, 125, 0.15) 0%, rgba(108, 117, 125, 0.1) 100%);
-            color: #5a6268;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(108, 117, 125, 0.2);
-        }
-
-        .btn-upload {
-            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-            color: white;
-            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.3);
-        }
-
-        .btn-upload:hover {
-            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(34, 197, 94, 0.4);
-        }
-
-        .btn-upload:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        /* Responsive Design */
         @media (max-width: 768px) {
-            .modal-content {
-                width: 95%;
-                margin: 20px;
+            .module-options {
+                grid-template-columns: 1fr;
             }
-
-            .modal-header,
-            .modal-body,
-            .modal-footer {
-                padding: 20px;
+            .step-indicator {
+                flex-wrap: wrap;
+                gap: 10px;
             }
-
-            .file-upload-area {
-                padding: 30px 15px;
+            .step-connector {
+                display: none;
             }
-
-            .upload-icon {
-                font-size: 36px;
-            }
-
-            .modal-footer {
-                flex-direction: column;
-            }
-
-            .btn-cancel, .btn-upload {
-                width: 100%;
+            .step-label {
+                display: none;
             }
         }
     </style>
-    <script>
-        function addWattageField() {
-            var container = document.getElementById('wattage-container');
-            var index = container.children.length;
-
-            var div = document.createElement('div');
-            div.className = 'wattage-entry';
-
-            var wattageGroup = document.createElement('div');
-            wattageGroup.className = 'input-group';
-            var wattageLabel = document.createElement('label');
-            wattageLabel.textContent = 'Wattage (W)';
-            var wattageInput = document.createElement('input');
-            wattageInput.type = 'number';
-            wattageInput.step = '1';
-            wattageInput.name = 'wattages[' + index + ']';
-            wattageInput.required = true;
-            wattageInput.placeholder = 'e.g. 555';
-            wattageGroup.appendChild(wattageLabel);
-            wattageGroup.appendChild(wattageInput);
-
-            var quantityGroup = document.createElement('div');
-            quantityGroup.className = 'input-group';
-            var quantityLabel = document.createElement('label');
-            quantityLabel.textContent = 'Quantity';
-            var quantityInput = document.createElement('input');
-            quantityInput.type = 'number';
-            quantityInput.step = '1';
-            quantityInput.name = 'quantities[' + index + ']';
-            quantityInput.required = true;
-            quantityInput.placeholder = 'e.g. 1000';
-            quantityGroup.appendChild(quantityLabel);
-            quantityGroup.appendChild(quantityInput);
-
-            var removeButton = document.createElement('button');
-            removeButton.type = 'button';
-            removeButton.textContent = 'Remove';
-            removeButton.className = 'remove-btn';
-            removeButton.onclick = function() {
-                container.removeChild(div);
-            };
-
-            div.appendChild(wattageGroup);
-            div.appendChild(quantityGroup);
-            div.appendChild(removeButton);
-
-            container.appendChild(div);
-        }
-    </script>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Breadcrumb Navigation -->
-    <?php
-        require_once 'components/breadcrumbs.php';
-        echo slp_render_breadcrumbs([
-            'current_label' => 'Add Project',
-            'extra' => [ ['label' => 'Manage Projects', 'url' => 'manage_projects.php'] ]
-        ]);
-    ?>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Create Project', 'extra' => [['label' => 'Manage Projects', 'url' => 'manage_projects.php']]]); ?>
 
-    <div class="page-header">
-        <h1>Add Project</h1>
+    <!-- Modern Page Header -->
+    <div class="add-project-header">
+        <div class="add-project-header-content">
+            <div>
+                <h1>Create New Project</h1>
+                <p class="subtitle">Set up a new solar project in just a few steps</p>
+            </div>
+            <div class="header-actions">
+                <a href="manage_projects.php" class="btn-back">&larr; Back to Projects</a>
+            </div>
+        </div>
     </div>
 
-    <!-- Display success or error messages if any -->
+    <!-- Messages -->
     <?php if (!empty($successMessage)): ?>
-        <div class="message success-message"><?php 
-            // Check if the message contains HTML (specifically a link) and display accordingly
-            if (strpos($successMessage, '<a href=') !== false) {
-                echo $successMessage; // Don't escape if it contains HTML links
-            } else {
-                echo htmlspecialchars($successMessage); // Escape for safety if no HTML
-            }
-        ?></div>
+        <div class="message success"><?php echo $successMessage; ?></div>
     <?php endif; ?>
-
     <?php if (!empty($errorMessage)): ?>
-        <div class="message error-message"><?php echo htmlspecialchars($errorMessage); ?></div>
+        <div class="message error"><?php echo htmlspecialchars($errorMessage); ?></div>
     <?php endif; ?>
 
-    <!-- The project form -->
-    <form action="" method="POST" enctype="multipart/form-data">
-        <div class="form-container">
-            <div class="form-grid">
-                <!-- Left Column: Basic Project Information -->
-                <div class="form-section">
-                    <h2>Project Details</h2>
-                    
-                    <?php if ($role === 'global_admin'): ?>
-                        <div class="input-group required">
-                            <label for="account_id">Account Name</label>
-                            <select name="account_id" id="account_id" required>
-                                <option value="">Select Account</option>
-                                <?php foreach ($accounts as $acc): ?>
-                                    <option value="<?php echo $acc['id']; ?>">
-                                        <?php echo htmlspecialchars($acc['name']); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                    <?php else: ?>
-                        <input type="hidden" name="account_id" value="<?php echo $account_id_for_admin; ?>">
-                    <?php endif; ?>
+    <!-- Step Indicator -->
+    <div class="step-indicator">
+        <div class="step active" data-step="1" onclick="goToStep(1)">
+            <div class="step-number">1</div>
+            <span class="step-label">Project Details</span>
+            <span class="step-tag required">Required</span>
+        </div>
+        <div class="step-connector"></div>
+        <div class="step" data-step="2" onclick="goToStep(2)">
+            <div class="step-number">2</div>
+            <span class="step-label">Site Info</span>
+            <span class="step-tag optional">Optional</span>
+        </div>
+        <div class="step-connector"></div>
+        <div class="step" data-step="3" onclick="goToStep(3)">
+            <div class="step-number">3</div>
+            <span class="step-label">Modules</span>
+            <span class="step-tag optional">Optional</span>
+        </div>
+    </div>
 
-                    <div class="input-group required">
-                        <label for="project_name">Project Name</label>
-                        <input type="text" id="project_name" name="project_name" required placeholder="e.g. Solar Farm Project Alpha">
-                    </div>
+    <form method="POST" action="" enctype="multipart/form-data" id="projectForm">
+        <!-- Hidden fields -->
+        <?php if ($role !== 'global_admin'): ?>
+            <input type="hidden" name="account_id" value="<?php echo $account_id_for_admin; ?>">
+        <?php endif; ?>
+        <input type="hidden" id="tempPhotoToken" name="temp_photo_token" value="<?php echo htmlspecialchars(uniqid('ppt_', true)); ?>">
+        <input type="hidden" id="tempPhotoOrder" name="temp_photo_order" value="">
 
-                    <div class="input-group required">
-                        <label>Project Address</label>
-                        <div class="address-grid">
-                            <div class="input-group required">
-                                <label for="street_address">Street Address</label>
-                                <input type="text" id="street_address" name="street_address" placeholder="e.g. 123 Main Street" required>
-                            </div>
-                            <div class="input-group required">
-                                <label for="city">City</label>
-                                <input type="text" id="city" name="city" placeholder="e.g. Springfield" required>
-                            </div>
-                            <div class="input-group required">
-                                <label for="state">State</label>
-                                <input type="text" id="state" name="state" placeholder="e.g. CA" required>
-                            </div>
-                            <div class="input-group required">
-                                <label for="zip_code">Zip Code</label>
-                                <input type="text" id="zip_code" name="zip_code" placeholder="e.g. 12345" required>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="input-group required">
-                        <label for="estimated_completion_date">Estimated Completion Date</label>
-                        <input type="date" id="estimated_completion_date" name="estimated_completion_date" required>
-                    </div>
-
-                    <div class="input-group optional">
-                        <label>Project Photos</label>
-                        <input type="hidden" id="tempPhotoToken" name="temp_photo_token" value="<?php echo htmlspecialchars(uniqid('ppt_', true)); ?>">
-                        <input type="hidden" id="tempPhotoOrder" name="temp_photo_order" value="">
-                        <div id="prePhotoDrop" class="file-upload-area" style="padding:20px; text-align:center; border: 2px dashed rgba(72, 140, 154, 0.3); border-radius: 12px; cursor:pointer;">
-                            <i class="fas fa-cloud-upload-alt upload-icon"></i>
-                            <div class="upload-text">Drop images here or click to browse</div>
-                            <div class="upload-subtext">PNG, JPG, or GIF up to 10MB each</div>
-                        </div>
-                        <input type="file" id="prePhotoInput" accept="image/*" multiple style="display:none;">
-                        <div id="prePhotoGrid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap:12px; margin-top:12px;"></div>
-                        <small style="color:#6c757d;display:block;margin-top:6px;">Drag to reorder; the first photo becomes the project image.</small>
-                    </div>
-
-                    <?php if ($role === 'global_admin'): ?>
-                        <div class="input-group required">
-                            <label for="solterra_fee">Solterra Fee (per watt)</label>
-                            <input type="number" id="solterra_fee" step="0.0001" name="solterra_fee" value="0.0000" required>
-                        </div>
-                    <?php else: ?>
-                        <input type="hidden" name="solterra_fee" value="0.0000">
-                    <?php endif; ?>
+        <!-- Step 1: Project Details (Required) -->
+        <div class="accordion-section" data-section="1">
+            <div class="accordion-header active" onclick="toggleAccordion(1)">
+                <h2><span class="step-badge" id="badge-1">1</span> Project Details <span class="step-tag required">Required</span></h2>
+                <span class="accordion-toggle">&#9660;</span>
+            </div>
+            <div class="accordion-content open">
+                <div class="section-description">
+                    Enter the essential information for your project. All fields in this section are required.
                 </div>
 
-                <!-- Right Column: Site Information -->
-                <div class="form-section">
-                    <h2>Site Information <span style="color: #999; font-weight: 400; font-size: 0.85rem;">(optional)</span></h2>
-                    
-                    <div class="input-group">
-                        <label>Contact Information</label>
-                        <div class="phone-grid">
-                            <div class="input-group">
-                                <label for="phone1">Primary Phone</label>
-                                <input type="tel" id="phone1" name="phone1" placeholder="e.g. 555-555-5555">
-                            </div>
-                            <div class="input-group">
-                                <label for="phone2">Secondary Phone</label>
-                                <input type="tel" id="phone2" name="phone2" placeholder="e.g. 555-555-5555">
-                            </div>
-                            <div class="input-group">
-                                <label for="timezone">Timezone</label>
-                                <select name="timezone" id="timezone">
-                                    <option value="America/New_York" selected>Eastern</option>
-                                    <option value="America/Chicago">Central</option>
-                                    <option value="America/Denver">Mountain</option>
-                                    <option value="America/Los_Angeles">Pacific</option>
-                                    <option value="UTC">UTC</option>
-                                </select>
-                            </div>
-                        </div>
+                <?php if ($role === 'global_admin'): ?>
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label>Account<span class="required-star">*</span></label>
+                        <select name="account_id" id="account_id" class="required-field" required>
+                            <option value="">Select Account</option>
+                            <?php foreach ($accounts as $acc): ?>
+                                <option value="<?php echo $acc['id']; ?>"><?php echo htmlspecialchars($acc['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
+                </div>
+                <?php endif; ?>
 
-                    <div class="input-group">
-                        <label for="reference_numbers">Reference Numbers</label>
-                        <input type="text" id="reference_numbers" name="reference_numbers" placeholder="e.g. PO #12345, Job #ABC-2024">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Project Name<span class="required-star">*</span></label>
+                        <input type="text" name="project_name" id="project_name" class="required-field" required placeholder="e.g. Solar Farm Alpha">
                     </div>
-
-                    <div class="input-group">
-                        <label for="instructions">Special Instructions</label>
-                        <textarea id="instructions" name="instructions" placeholder="e.g. Delivery instructions, site access requirements, etc."></textarea>
+                    <div class="form-group">
+                        <label>Project Size (GW)<span class="optional-tag">(optional)</span></label>
+                        <input type="number" name="project_size" id="project_size" step="0.001" min="0" placeholder="e.g. 1.5">
+                        <span class="help-text">Target size in gigawatts</span>
                     </div>
-
-                    <div class="input-group">
-                        <label for="additional_notes">Additional Notes</label>
-                        <textarea id="additional_notes" name="additional_notes" placeholder="e.g. Any other relevant information for this project..."></textarea>
-                    </div>
-
-                    <div class="input-group">
-                        <label for="driver_handout">Driver Handout</label>
-                        <input type="file" id="driver_handout" name="driver_handout" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
-                        <small style="color: #666; font-size: 0.85em;">Upload driver instructions, site maps, or other handout materials (PDF, DOC, JPG, PNG - max 5MB)</small>
+                    <div class="form-group">
+                        <label>Estimated Completion Date<span class="required-star">*</span></label>
+                        <input type="date" name="estimated_completion_date" id="estimated_completion_date" class="required-field" required>
                     </div>
                 </div>
 
-                <!-- Module Information Section (Full Width) -->
-                <div class="module-section">
-                    <div class="module-intro">
-                        <h3>Initial Module Batch</h3>
-                        <p>Create an initial module batch for this project. You can add more batches from different manufacturers later.</p>
-                    </div>
-
-                    <div class="form-grid">
-                        <div class="form-section">
-                            <h2>Manufacturer & Modules <span style="color: #999; font-weight: 400; font-size: 0.85rem;">(optional)</span></h2>
-                            
-                            <div class="input-group">
-                                <label for="manufacturer_id">Manufacturer</label>
-                                <select name="manufacturer_id" id="manufacturer_id" onchange="handleManufacturerChange(this)">
-                                    <option value="">Select Manufacturer</option>
-                                    <?php foreach ($manufacturers as $mfg): ?>
-                                        <option value="<?php echo $mfg['id']; ?>">
-                                            <?php echo htmlspecialchars($mfg['name']); ?>
-                                            <?php if (!empty($mfg['short_name'])): ?>
-                                                (<?php echo htmlspecialchars($mfg['short_name']); ?>)
-                                            <?php endif; ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                    <option value="add_new" style="background-color: #f0f8ff; font-style: italic;">+ Add New Manufacturer</option>
-                                </select>
-                            </div>
-
-                            <div class="input-group">
-                                <label for="location_id">Location</label>
-                                <select name="location_id" id="location_id" disabled>
-                                    <option value="">Select a manufacturer first</option>
-                                </select>
-                            </div>
-
-                            <div class="input-group">
-                                <label>Wattage & Quantities</label>
-                                <div id="wattage-container" class="wattage-container">
-                                    <!-- Wattage fields will be added here by JS -->
-                                </div>
-                                <button type="button" class="add-wattage-btn" onclick="addWattageField()">+ Add Wattage</button>
-                            </div>
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label>Project Address<span class="required-star">*</span></label>
+                    <div class="address-grid">
+                        <div class="form-group">
+                            <input type="text" name="street_address" id="street_address" class="required-field" required placeholder="Street Address">
                         </div>
-
-                        <div class="form-section">
-                            <h2>Logistics Specifications <span style="color: #999; font-weight: 400; font-size: 0.85rem;">(optional)</span></h2> 
-                            
-                            <div class="specs-grid">
-                                <div class="input-group">
-                                    <label for="modules_per_pallet">Modules per Pallet</label>
-                                    <input type="number" id="modules_per_pallet" name="modules_per_pallet" min="1" placeholder="e.g. 30">
-                                </div>
-                                <div class="input-group">
-                                    <label for="pallets_per_truck">Pallets per Truck</label>
-                                    <input type="number" id="pallets_per_truck" name="pallets_per_truck" min="1" placeholder="e.g. 22">
-                                </div>
-                                <div class="input-group">
-                                    <label for="modules_per_truck">Modules per Truck</label>
-                                    <input type="number" id="modules_per_truck" name="modules_per_truck" min="1" placeholder="Auto-calculated" readonly style="background-color: #f8f9fa; color: #6c757d;">
-                                </div>
-                                <div class="input-group">
-                                    <label for="pallet_length_mm">Length (mm)</label>
-                                    <input type="number" id="pallet_length_mm" name="pallet_length_mm" min="1" placeholder="e.g. 2384">
-                                </div>
-                                <div class="input-group">
-                                    <label for="pallet_depth_mm">Depth (mm)</label>
-                                    <input type="number" id="pallet_depth_mm" name="pallet_depth_mm" min="1" placeholder="e.g. 1303">
-                                </div>
-                                <div class="input-group">
-                                    <label for="pallet_double_stacked_height_mm">Stack Height (mm)</label>
-                                    <input type="number" id="pallet_double_stacked_height_mm" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g. 2200">
-                                </div>
-                                <div class="input-group">
-                                    <label for="pallet_total_weight_kg">Weight (kg)</label>
-                                    <input type="number" id="pallet_total_weight_kg" name="pallet_total_weight_kg" min="1" placeholder="e.g. 1200">
-                                </div>
-                                <div class="input-group">
-                                    <label for="forklift_truck_long_side_mm">Forklift Long (mm)</label>
-                                    <input type="number" id="forklift_truck_long_side_mm" name="forklift_truck_long_side_mm" min="1" placeholder="e.g. 1200">
-                                </div>
-                                <div class="input-group">
-                                    <label for="forklift_truck_short_side_mm">Forklift Short (mm)</label>
-                                    <input type="number" id="forklift_truck_short_side_mm" name="forklift_truck_short_side_mm" min="1" placeholder="e.g. 1000">
-                                </div>
-                                <div class="input-group">
-                                    <label for="pallet_jack_long_side_mm">Pallet Jack Long (mm)</label>
-                                    <input type="number" id="pallet_jack_long_side_mm" name="pallet_jack_long_side_mm" min="1" placeholder="e.g. 1150">
-                                </div>
-                                <div class="input-group">
-                                    <label for="pallet_jack_short_side_mm">Pallet Jack Short (mm)</label>
-                                    <input type="number" id="pallet_jack_short_side_mm" name="pallet_jack_short_side_mm" min="1" placeholder="e.g. 800">
-                                </div>
-                            </div>
-
-                            <div class="input-group">
-                                <label for="stacking_in_warehouse">Warehouse Stacking</label>
-                                <textarea id="stacking_in_warehouse" name="stacking_in_warehouse" placeholder="e.g. Instructions for warehouse stacking..."></textarea>
-                            </div>
-
-                            <div class="input-group">
-                                <label for="stacking_during_transport">Transport Stacking</label>
-                                <textarea id="stacking_during_transport" name="stacking_during_transport" placeholder="e.g. Instructions for transport stacking..."></textarea>
-                            </div>
-
-                            <div class="input-group">
-                                <label for="module_notes">Module Notes</label>
-                                <textarea id="module_notes" name="module_notes" placeholder="e.g. General notes about the modules..."></textarea>
-                            </div>
-
-                            <div class="input-group">
-                                <label>Module Documentation <span style="color:#999; font-weight:400; font-size:0.85rem;">(optional)</span></label>
-                                <button type="button" class="add-wattage-btn" onclick="openPreModuleUploadModal()">Attach Module Documentation</button>
-                                <div id="preModuleDocsSummary" style="margin-top:8px; color:#666; font-size:0.85em; display:none;"></div>
-                            </div>
-
-                            <!-- Pre-creation Module Documentation Modal (fields submit with main form) -->
-                            <div id="preModuleUploadModal" class="upload-modal">
-                              <div class="modal-content">
-                                <div class="modal-header">
-                                  <h2 class="modal-title">
-                                    <i class="fas fa-file-alt"></i>
-                                    Attach Module Documentation
-                                  </h2>
-                                  <button type="button" class="close-modal" onclick="closePreModuleUploadModal()">×</button>
-                                </div>
-                                <div class="modal-body">
-                                  <div class="input-group">
-                                    <label for="module_docs_sub_type">Document Sub-Type <span style="color:#999; font-weight:400;">(required only if uploading)</span></label>
-                                    <select id="module_docs_sub_type" name="module_docs_sub_type">
-                                        <option value="">Choose sub-type...</option>
-                                        <option value="Module Invoice">Module Invoice</option>
-                                        <option value="Flash Test Data">Flash Test Data</option>
-                                        <option value="Spec Sheets">Spec Sheets</option>
-                                    </select>
-                                  </div>
-                                  <div class="input-group">
-                                    <label for="module_docs_description">Description (Optional)</label>
-                                    <input type="text" id="module_docs_description" name="module_docs_description" placeholder="Short description">
-                                  </div>
-                                  <div class="input-group">
-                                    <label>Select File(s)</label>
-                                    <div class="file-upload-area" onclick="document.getElementById('preFileInput').click()">
-                                        <i class="fas fa-cloud-upload-alt upload-icon"></i>
-                                        <div class="upload-text">Drop files here or click to browse</div>
-                                        <div class="upload-subtext">Supports: PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, TXT, CSV (Max: 50MB each)</div>
-                                    </div>
-                                    <input type="file" id="preFileInput" name="module_docs[]" multiple style="display:none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv">
-                                    <div id="preFileList" class="file-list"></div>
-                                  </div>
-                                </div>
-                                <div class="modal-footer">
-                                  <button type="button" class="btn-cancel" onclick="closePreModuleUploadModal()">Cancel</button>
-                                  <button type="button" class="btn-upload" onclick="confirmPreModuleDocs()">
-                                    <i class="fas fa-upload"></i> 
-                                    Upload Documents
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                            <?php if (!empty($successMessage) && !empty($project_id)): ?>
-                              <div class="input-group">
-                                  <button type="button" class="add-wattage-btn" onclick="openModuleUploadModal()">Upload More Module Documentation</button>
-                                  <small style="color:#666; display:block;">Use this to upload additional docs after creation.</small>
-                              </div>
-                            <?php endif; ?>
+                        <div class="form-group">
+                            <input type="text" name="city" id="city" class="required-field" required placeholder="City">
+                        </div>
+                        <div class="form-group">
+                            <input type="text" name="state" id="state" class="required-field" required placeholder="State">
+                        </div>
+                        <div class="form-group">
+                            <input type="text" name="zip_code" id="zip_code" class="required-field" required placeholder="Zip">
                         </div>
                     </div>
                 </div>
 
-                <!-- Submit Section -->
-                <div class="submit-section">
-                    <button type="submit" class="submit-btn">Create Project</button>
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label>Project Photo<span class="optional-tag">(optional)</span></label>
+                        <div class="photo-upload-area" id="prePhotoDrop" onclick="document.getElementById('prePhotoInput').click()">
+                            <div class="upload-icon">&#128247;</div>
+                            <div class="upload-text">Drop image here or click to browse</div>
+                            <div class="upload-subtext">PNG, JPG, or GIF up to 10MB</div>
+                        </div>
+                        <input type="file" id="prePhotoInput" accept="image/*" style="display:none">
+                        <div class="photo-grid" id="prePhotoGrid"></div>
+                    </div>
+                </div>
+
+                <?php if ($role === 'global_admin'): ?>
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label>Solterra Fee<span class="optional-tag">(optional)</span></label>
+                        <input type="number" name="solterra_fee" step="0.0001" placeholder="e.g. 0.0010">
+                        <span class="help-text">Per-module fee for Solterra services</span>
+                    </div>
+                </div>
+                <?php else: ?>
+                <input type="hidden" name="solterra_fee" value="0.0000">
+                <?php endif; ?>
+
+                <div class="section-actions">
+                    <div></div>
+                    <button type="button" class="btn-continue" onclick="goToStep(2)">
+                        Continue to Site Info <span>&rarr;</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: Site Information (Optional) -->
+        <div class="accordion-section" data-section="2">
+            <div class="accordion-header" onclick="toggleAccordion(2)">
+                <h2><span class="step-badge" id="badge-2">2</span> Site Information <span class="step-tag optional">Optional</span></h2>
+                <span class="accordion-toggle">&#9660;</span>
+            </div>
+            <div class="accordion-content">
+                <div class="section-description">
+                    Add contact details and receiving hours for the project site. You can skip this step and add it later.
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Primary Phone<span class="optional-tag">(optional)</span></label>
+                        <input type="tel" name="phone1" placeholder="e.g. 555-555-5555">
+                    </div>
+                    <div class="form-group">
+                        <label>Secondary Phone<span class="optional-tag">(optional)</span></label>
+                        <input type="tel" name="phone2" placeholder="e.g. 555-555-5555">
+                    </div>
+                    <div class="form-group">
+                        <label>Timezone</label>
+                        <select name="timezone">
+                            <option value="America/New_York" selected>Eastern</option>
+                            <option value="America/Chicago">Central</option>
+                            <option value="America/Denver">Mountain</option>
+                            <option value="America/Los_Angeles">Pacific</option>
+                            <option value="UTC">UTC</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Site Receiving Hours</label>
+                        <div class="hours-grid">
+                            <div class="form-group">
+                                <label style="font-size: 0.85rem; color: #6c757d;">Opens</label>
+                                <input type="time" name="receiving_hours_start" value="08:00">
+                            </div>
+                            <div class="form-group">
+                                <label style="font-size: 0.85rem; color: #6c757d;">Closes</label>
+                                <input type="time" name="receiving_hours_end" value="17:00">
+                            </div>
+                        </div>
+                        <span class="help-text">Hours will be set for Monday-Friday</span>
+                    </div>
+                </div>
+
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label>Special Instructions<span class="optional-tag">(optional)</span></label>
+                        <textarea name="instructions" placeholder="e.g. Gate code required, call ahead for access, etc."></textarea>
+                    </div>
+                </div>
+
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label>Additional Notes<span class="optional-tag">(optional)</span></label>
+                        <textarea name="additional_notes" placeholder="Any other relevant information..."></textarea>
+                    </div>
+                </div>
+
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label>Driver Handout<span class="optional-tag">(optional)</span></label>
+                        <input type="file" name="driver_handout" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
+                        <span class="help-text">Upload driver instructions, site maps, or other handout materials (PDF, DOC, JPG, PNG - max 5MB)</span>
+                    </div>
+                </div>
+
+                <div class="section-actions">
+                    <button type="button" class="btn-back-step" onclick="goToStep(1)">
+                        <span>&larr;</span> Back
+                    </button>
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <button type="button" class="btn-skip" onclick="goToStep(3)">Skip this step</button>
+                        <button type="button" class="btn-continue" onclick="goToStep(3)">
+                            Continue to Modules <span>&rarr;</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: Module Setup (Optional) -->
+        <div class="accordion-section" data-section="3">
+            <div class="accordion-header" onclick="toggleAccordion(3)">
+                <h2><span class="step-badge" id="badge-3">3</span> Module Setup <span class="step-tag optional">Optional</span></h2>
+                <span class="accordion-toggle">&#9660;</span>
+            </div>
+            <div class="accordion-content">
+                <div class="section-description">
+                    Set up your module orders now, or skip and add them later from the Project Overview page.
+                </div>
+
+                <div class="module-options">
+                    <div class="module-option-card primary">
+                        <h4><span class="option-number">1</span> Manual Setup</h4>
+                        <p>Enter wattage orders below. Pallets can be created manually later.</p>
+                        <ul>
+                            <li>Best for: Planning ahead before manufacturer data is available</li>
+                            <li>You control: Pallet creation, status updates, delivery scheduling</li>
+                        </ul>
+                    </div>
+                    <div class="module-option-card">
+                        <h4><span class="option-number">2</span> Import Schedule Later</h4>
+                        <p>After creating the project, import the manufacturer's shipping schedule.</p>
+                        <ul>
+                            <li>Best for: When you have the manufacturer's BOL/pallet data</li>
+                            <li>Auto-creates: Pallets, deliveries, links by BOL number</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Manufacturer<span class="optional-tag">(optional)</span></label>
+                        <select name="manufacturer_id" id="manufacturer_id" onchange="handleManufacturerChange(this)">
+                            <option value="">Select Manufacturer</option>
+                            <?php foreach ($manufacturers as $mfg): ?>
+                                <option value="<?php echo $mfg['id']; ?>">
+                                    <?php echo htmlspecialchars($mfg['name']); ?>
+                                    <?php if (!empty($mfg['short_name'])): ?>(<?php echo htmlspecialchars($mfg['short_name']); ?>)<?php endif; ?>
+                                </option>
+                            <?php endforeach; ?>
+                            <option value="add_new" style="font-style: italic;">+ Add New Manufacturer</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Location<span class="optional-tag">(optional)</span></label>
+                        <select name="location_id" id="location_id" disabled>
+                            <option value="">Select a manufacturer first</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Wattage Orders<span class="optional-tag">(optional)</span></label>
+                    <div id="wattage-container" class="wattage-container">
+                        <!-- Wattage entries added by JS -->
+                    </div>
+                    <button type="button" class="btn-add-wattage" onclick="addWattageField()">
+                        <span>+</span> Add Wattage Order
+                    </button>
+                </div>
+
+                <details style="margin-top: 24px;">
+                    <summary style="cursor: pointer; font-weight: 500; color: #488C9A; padding: 12px 0;">
+                        Advanced: Pallet & Logistics Specifications
+                    </summary>
+                    <div style="padding: 20px; background: #f8f9fa; border-radius: 12px; margin-top: 12px;">
+                        <div class="specs-grid">
+                            <div class="form-group">
+                                <label>Modules/Pallet</label>
+                                <input type="number" name="modules_per_pallet" min="1" placeholder="e.g. 30">
+                            </div>
+                            <div class="form-group">
+                                <label>Pallets/Truck</label>
+                                <input type="number" name="pallets_per_truck" min="1" placeholder="e.g. 22">
+                            </div>
+                            <div class="form-group">
+                                <label>Length (mm)</label>
+                                <input type="number" name="pallet_length_mm" min="1" placeholder="e.g. 2384">
+                            </div>
+                            <div class="form-group">
+                                <label>Depth (mm)</label>
+                                <input type="number" name="pallet_depth_mm" min="1" placeholder="e.g. 1303">
+                            </div>
+                            <div class="form-group">
+                                <label>Stack Height (mm)</label>
+                                <input type="number" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g. 2200">
+                            </div>
+                            <div class="form-group">
+                                <label>Weight (kg)</label>
+                                <input type="number" name="pallet_total_weight_kg" min="1" placeholder="e.g. 1200">
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <div class="section-actions">
+                    <button type="button" class="btn-back-step" onclick="goToStep(2)">
+                        <span>&larr;</span> Back
+                    </button>
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <button type="button" class="btn-skip" onclick="submitForm()">Skip & Create Project</button>
+                        <button type="submit" class="btn-submit">
+                            Create Project <span>&#10003;</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1610,570 +1458,266 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </main>
 
 <script>
-// Pre-save photos gallery
-(function(){
-  const drop = document.getElementById('prePhotoDrop');
-  const input = document.getElementById('prePhotoInput');
-  const grid = document.getElementById('prePhotoGrid');
-  const token = document.getElementById('tempPhotoToken');
-  const orderInput = document.getElementById('tempPhotoOrder');
+let currentStep = 1;
 
-  function updateOrderInput(){
-    const ids = Array.from(grid.querySelectorAll('.tile')).map(el=>el.dataset.name);
-    orderInput.value = ids.join(',');
-  }
-
-  function addTile(file){
-    const tile = document.createElement('div');
-    tile.className = 'tile';
-    tile.style.cssText = 'position:relative; border-radius:10px; overflow:hidden; background:#f8f9fa; box-shadow: 0 2px 8px rgba(0,0,0,0.06);';
-    tile.setAttribute('draggable','true');
-    tile.dataset.name = file.name;
-    tile.innerHTML = `<img src="${file.path}" style="width:100%; height:120px; object-fit:cover; display:block;">
-      <div style=\"position:absolute; top:6px; right:6px; display:flex; gap:6px;\">
-        <button type=\"button\" class=\"icon-btn\" style=\"background: rgba(0,0,0,0.5); color:#fff; border:none; border-radius:6px; width:28px; height:28px; display:flex; align-items:center; justify-content:center; cursor:pointer;\" title=\"Remove\">&times;</button>
-      </div>`;
-    const btn = tile.querySelector('button');
-    btn.addEventListener('click', ()=>{ tile.remove(); updateOrderInput(); });
-    // Drag
-    tile.addEventListener('dragstart', e=>{ tile.classList.add('dragging'); });
-    tile.addEventListener('dragend', e=>{ tile.classList.remove('dragging'); updateOrderInput(); });
-    grid.appendChild(tile);
-    updateOrderInput();
-  }
-
-  function getAfterElement(container, y){
-    const els = [...container.querySelectorAll('.tile:not(.dragging)')];
-    return els.reduce((closest, child)=>{
-      const box = child.getBoundingClientRect();
-      const offset = y - box.top - box.height/2;
-      if (offset < 0 && offset > closest.offset) { return { offset, element: child }; }
-      else { return closest; }
-    }, { offset: Number.NEGATIVE_INFINITY }).element;
-  }
-  grid.addEventListener('dragover', e=>{ e.preventDefault(); const dragging = grid.querySelector('.dragging'); if (!dragging) return; const after = getAfterElement(grid, e.clientY); if (!after) grid.appendChild(dragging); else grid.insertBefore(dragging, after); });
-
-  drop.addEventListener('click', ()=> input.click());
-  drop.addEventListener('dragover', e=>{ e.preventDefault(); drop.classList.add('drag-over'); });
-  drop.addEventListener('dragleave', ()=> drop.classList.remove('drag-over'));
-  drop.addEventListener('drop', async (e)=>{ e.preventDefault(); drop.classList.remove('drag-over'); const files = e.dataTransfer?.files; if (files?.length) await uploadAll(files); });
-  input.addEventListener('change', async ()=>{ if (input.files?.length) await uploadAll(input.files); input.value=''; });
-
-  async function uploadAll(fileList){
-    const t = token.value;
-    for (const f of fileList){
-      const form = new FormData();
-      form.append('token', t);
-      form.append('file', f);
-      try {
-        const res = await fetch('upload_temp_photo.php', { method:'POST', body: form });
-        const data = await res.json();
-        if (data.success) { addTile(data.file); }
-        else { alert(data.message || 'Upload failed'); }
-      } catch(e){ alert('Network error during upload'); }
+function goToStep(step) {
+    // Validate current step before moving forward
+    if (step > currentStep && !validateStep(currentStep)) {
+        return;
     }
-  }
-})();
-</script>
-<!-- Loading Modal for Project Creation -->
-<div id="loadingModal" class="loading-modal">
-    <div class="loading-content">
-        <div class="spinner"></div>
-        <h3>Creating Project...</h3>
-        <p>Please wait while we create your project. This may take a few moments.</p>
-    </div>
-</div>
 
-<?php if (!empty($successMessage) && !empty($project_id)): ?>
-<!-- Module Documentation Upload Modal -->
-<div id="moduleUploadModal" class="upload-modal">
-  <div class="modal-content">
-    <div class="modal-header">
-      <h2 class="modal-title">
-        <i class="fas fa-file-alt"></i>
-        Upload Module Documentation
-      </h2>
-      <button type="button" class="close-modal" onclick="closeModuleUploadModal()">×</button>
-    </div>
-    <div class="modal-body">
-      <div class="input-group">
-        <label for="moduleDocSubType">Document Sub-Type</label>
-        <select id="moduleDocSubType">
-            <option value="">Choose sub-type...</option>
-            <option value="Module Invoice">Module Invoice</option>
-            <option value="Flash Test Data">Flash Test Data</option>
-            <option value="Spec Sheets">Spec Sheets</option>
-        </select>
-      </div>
-      <div class="input-group">
-        <label for="moduleDocDescription">Description (Optional)</label>
-        <input type="text" id="moduleDocDescription" placeholder="Short description">
-      </div>
-      <div class="input-group">
-        <label>Select File(s)</label>
-        <div class="file-upload-area" onclick="document.getElementById('moduleDocFiles').click()">
-            <i class="fas fa-cloud-upload-alt upload-icon"></i>
-            <div class="upload-text">Drop files here or click to browse</div>
-            <div class="upload-subtext">Supports: PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, TXT, CSV (Max: 50MB each)</div>
-        </div>
-        <input type="file" id="moduleDocFiles" multiple style="display:none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv">
-        <div id="moduleDocFileList" class="file-list"></div>
-      </div>
-      <div id="moduleDocProgress" style="display:none; margin-top:16px;">
-        <div style="height:8px; background:#e9ecef; border-radius:8px; overflow:hidden; margin-bottom:8px;">
-          <div id="moduleDocProgressFill" style="height:8px; width:0; background:linear-gradient(90deg, #22c55e, #16a34a); border-radius:8px; transition:width 0.3s ease;"></div>
-        </div>
-        <div id="moduleDocProgressText" style="font-size:0.85rem; color:#6c757d; text-align:center;">Uploading...</div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="btn-cancel" onclick="closeModuleUploadModal()">Cancel</button>
-      <button type="button" class="btn-upload" onclick="uploadModuleDocuments()">
-        <i class="fas fa-upload"></i> 
-        Upload Documents
-      </button>
-    </div>
-  </div>
-</div>
-<?php endif; ?>
+    // Close current accordion
+    document.querySelectorAll('.accordion-header').forEach(h => h.classList.remove('active'));
+    document.querySelectorAll('.accordion-content').forEach(c => c.classList.remove('open'));
 
-<!-- Load the Google Maps JavaScript API with Places library -->
-<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
+    // Open target accordion
+    const targetSection = document.querySelector(`[data-section="${step}"]`);
+    if (targetSection) {
+        targetSection.querySelector('.accordion-header').classList.add('active');
+        targetSection.querySelector('.accordion-content').classList.add('open');
+    }
 
-<script>
-function initializeAddressAutocomplete() {
-    // Get the street address input element
-    const streetAddressInput = document.getElementById('street_address');
-    const cityInput = document.getElementById('city');
-    const stateInput = document.getElementById('state');
-    const zipInput = document.getElementById('zip_code');
-    
-    // Create the autocomplete object, restricting the search to addresses
-    const autocomplete = new google.maps.places.Autocomplete(streetAddressInput, {
-        types: ['address'],
-        componentRestrictions: { country: 'US' } // Restrict to US addresses
+    // Update step indicator
+    document.querySelectorAll('.step').forEach(s => {
+        const stepNum = parseInt(s.dataset.step);
+        s.classList.remove('active', 'completed');
+        if (stepNum < step) {
+            s.classList.add('completed');
+        } else if (stepNum === step) {
+            s.classList.add('active');
+        }
     });
-    
-    // When the user selects an address from the dropdown, populate the address fields
+
+    // Update connectors
+    document.querySelectorAll('.step-connector').forEach((c, i) => {
+        if (i < step - 1) {
+            c.classList.add('completed');
+        } else {
+            c.classList.remove('completed');
+        }
+    });
+
+    // Update badges
+    for (let i = 1; i < step; i++) {
+        const badge = document.getElementById(`badge-${i}`);
+        if (badge) {
+            badge.classList.add('completed');
+            badge.innerHTML = '&#10003;';
+        }
+    }
+
+    currentStep = step;
+
+    // Scroll to top of section
+    targetSection?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function toggleAccordion(section) {
+    goToStep(section);
+}
+
+function validateStep(step) {
+    if (step === 1) {
+        const projectName = document.getElementById('project_name').value.trim();
+        const street = document.getElementById('street_address').value.trim();
+        const city = document.getElementById('city').value.trim();
+        const state = document.getElementById('state').value.trim();
+        const zip = document.getElementById('zip_code').value.trim();
+        const date = document.getElementById('estimated_completion_date').value;
+
+        if (!projectName || !street || !city || !state || !zip || !date) {
+            alert('Please fill in all required fields in Project Details.');
+            return false;
+        }
+
+        <?php if ($role === 'global_admin'): ?>
+        const accountId = document.getElementById('account_id').value;
+        if (!accountId) {
+            alert('Please select an account.');
+            return false;
+        }
+        <?php endif; ?>
+    }
+    return true;
+}
+
+function submitForm() {
+    if (validateStep(1)) {
+        document.getElementById('projectForm').submit();
+    }
+}
+
+function addWattageField() {
+    const container = document.getElementById('wattage-container');
+    const index = container.children.length;
+
+    const entry = document.createElement('div');
+    entry.className = 'wattage-entry';
+    entry.innerHTML = `
+        <div class="form-group">
+            <label>Wattage (W)</label>
+            <input type="number" name="wattages[${index}]" placeholder="e.g. 555" step="1">
+        </div>
+        <div class="form-group">
+            <label>Quantity</label>
+            <input type="number" name="quantities[${index}]" placeholder="e.g. 1000" step="1">
+        </div>
+        <button type="button" class="btn-remove" onclick="this.parentElement.remove()">Remove</button>
+    `;
+    container.appendChild(entry);
+}
+
+function handleManufacturerChange(select) {
+    if (select.value === 'add_new') {
+        window.location.href = 'add_manufacturer.php';
+        return;
+    }
+
+    const locationSelect = document.getElementById('location_id');
+    if (select.value) {
+        locationSelect.disabled = false;
+        // Fetch locations via AJAX
+        fetch(`get_manufacturer_locations.php?manufacturer_id=${select.value}`)
+            .then(r => r.json())
+            .then(data => {
+                locationSelect.innerHTML = '<option value="">Select Location</option>';
+                data.forEach(loc => {
+                    locationSelect.innerHTML += `<option value="${loc.id}">${loc.name || loc.city}</option>`;
+                });
+            })
+            .catch(() => {
+                locationSelect.innerHTML = '<option value="">No locations found</option>';
+            });
+    } else {
+        locationSelect.disabled = true;
+        locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
+    }
+}
+
+// Photo upload handling
+(function() {
+    const drop = document.getElementById('prePhotoDrop');
+    const input = document.getElementById('prePhotoInput');
+    const grid = document.getElementById('prePhotoGrid');
+    const token = document.getElementById('tempPhotoToken');
+    const orderInput = document.getElementById('tempPhotoOrder');
+
+    if (!drop || !input) return;
+
+    input.addEventListener('change', async () => {
+        if (input.files?.length) {
+            for (const file of input.files) {
+                await uploadPhoto(file);
+            }
+            input.value = '';
+        }
+    });
+
+    drop.addEventListener('dragover', e => { e.preventDefault(); drop.style.borderColor = '#488C9A'; });
+    drop.addEventListener('dragleave', () => { drop.style.borderColor = ''; });
+    drop.addEventListener('drop', async e => {
+        e.preventDefault();
+        drop.style.borderColor = '';
+        if (e.dataTransfer?.files?.length) {
+            for (const file of e.dataTransfer.files) {
+                await uploadPhoto(file);
+            }
+        }
+    });
+
+    async function uploadPhoto(file) {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('token', token.value);
+        try {
+            const res = await fetch('upload_temp_photo.php', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (data.success) {
+                addPhotoTile(data);
+            }
+        } catch (err) {
+            console.error('Upload failed', err);
+        }
+    }
+
+    function addPhotoTile(data) {
+        const tile = document.createElement('div');
+        tile.style.cssText = 'position:relative; border-radius:8px; overflow:hidden;';
+        tile.innerHTML = `
+            <img src="${data.path}" style="width:100%; height:80px; object-fit:cover;">
+            <button type="button" onclick="this.parentElement.remove(); updatePhotoOrder();" style="position:absolute; top:4px; right:4px; background:rgba(0,0,0,0.5); color:#fff; border:none; border-radius:50%; width:24px; height:24px; cursor:pointer;">&times;</button>
+        `;
+        tile.dataset.name = data.name;
+        grid.appendChild(tile);
+        updatePhotoOrder();
+    }
+
+    window.updatePhotoOrder = function() {
+        const names = Array.from(grid.querySelectorAll('[data-name]')).map(el => el.dataset.name);
+        orderInput.value = names.join(',');
+    };
+})();
+
+// Google Places Address Autocomplete
+function initAddressAutocomplete() {
+    const streetInput = document.getElementById('street_address');
+    if (!streetInput) return;
+
+    const options = {
+        types: ['address'],
+        componentRestrictions: { country: 'us' }
+    };
+
+    const autocomplete = new google.maps.places.Autocomplete(streetInput, options);
+
     autocomplete.addListener('place_changed', function() {
         const place = autocomplete.getPlace();
-        
-        // Clear all fields first
-        streetAddressInput.value = '';
-        cityInput.value = '';
-        stateInput.value = '';
-        zipInput.value = '';
-        
-        if (!place.geometry) {
-            // User entered the name of a Place that was not suggested and pressed Enter
-            console.log("No details available for input: '" + place.name + "'");
-            return;
-        }
-        
-        // Get the address components and populate the form fields
+        if (!place.address_components) return;
+
+        // Clear existing values
+        document.getElementById('street_address').value = '';
+        document.getElementById('city').value = '';
+        document.getElementById('state').value = '';
+        document.getElementById('zip_code').value = '';
+
         let streetNumber = '';
         let route = '';
-        
-        for (let i = 0; i < place.address_components.length; i++) {
-            const addressType = place.address_components[i].types[0];
-            const val = place.address_components[i].long_name;
-            
-            switch (addressType) {
+
+        // Parse address components
+        for (const component of place.address_components) {
+            const type = component.types[0];
+
+            switch (type) {
                 case 'street_number':
-                    streetNumber = val;
+                    streetNumber = component.long_name;
                     break;
                 case 'route':
-                    route = val;
+                    route = component.long_name;
                     break;
                 case 'locality':
-                case 'administrative_area_level_3':
-                    cityInput.value = val;
+                    document.getElementById('city').value = component.long_name;
                     break;
                 case 'administrative_area_level_1':
-                    stateInput.value = place.address_components[i].short_name; // Use short name for state (e.g., "CA" instead of "California")
+                    document.getElementById('state').value = component.short_name;
                     break;
                 case 'postal_code':
-                    zipInput.value = val;
+                    document.getElementById('zip_code').value = component.long_name;
                     break;
             }
         }
-        
-        // Combine street number and route for full street address
-        streetAddressInput.value = (streetNumber + ' ' + route).trim();
+
+        // Combine street number and route
+        document.getElementById('street_address').value = (streetNumber + ' ' + route).trim();
     });
 }
 
-// Initialize the autocomplete when the page loads
-google.maps.event.addDomListener(window, 'load', initializeAddressAutocomplete);
-
-// Loading modal functions for project creation
-function showLoadingModal() {
-    const modal = document.getElementById('loadingModal');
-    if (modal) modal.style.display = 'block';
+// Initialize when Google Maps loads
+if (typeof google !== 'undefined' && google.maps) {
+    initAddressAutocomplete();
 }
-
-function hideLoadingModal() {
-    const modal = document.getElementById('loadingModal');
-    if (modal) modal.style.display = 'none';
-}
-
-// Add loading spinner to project creation form
-document.addEventListener('DOMContentLoaded', function() {
-    const projectForm = document.querySelector('form[method="POST"]');
-    if (projectForm) {
-        projectForm.addEventListener('submit', function(e) {
-            // Basic form validation before showing loading
-            const requiredFields = projectForm.querySelectorAll('input[required], select[required]');
-            let allValid = true;
-            
-            requiredFields.forEach(function(field) {
-                if (!field.value.trim()) {
-                    allValid = false;
-                }
-            });
-            
-            // Only show loading modal if basic validation passes
-            if (allValid) {
-                showLoadingModal();
-            }
-        });
-    }
-    
-    // Hide loading modal on page load (in case of refresh/back button)
-    hideLoadingModal();
-});
-
-        // Handle manufacturer dropdown change
-        function handleManufacturerChange(select) {
-            const locationSelect = document.getElementById('location_id');
-            
-            if (select.value === 'add_new') {
-                // Open add manufacturer page in new tab/window
-                window.open('add_manufacturer.php', '_blank');
-                // Reset the dropdown to empty value
-                select.value = '';
-                // Reset and disable location dropdown
-                locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
-                locationSelect.disabled = true;
-                return;
-            }
-            
-            if (select.value === '') {
-                // Reset and disable location dropdown
-                locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
-                locationSelect.disabled = true;
-                return;
-            }
-            
-            // Fetch locations for selected manufacturer
-            const manufacturerId = select.value;
-            
-            // Show loading state
-            locationSelect.innerHTML = '<option value="">Loading locations...</option>';
-            locationSelect.disabled = true;
-            
-            // Fetch locations via AJAX
-            fetch(`get_manufacturer_locations.php?manufacturer_id=${manufacturerId}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        console.error('Error fetching locations:', data.error);
-                        locationSelect.innerHTML = '<option value="">Error loading locations</option>';
-                        return;
-                    }
-                    
-                    // Clear existing options
-                    locationSelect.innerHTML = '';
-                    
-                    if (data.locations.length === 0) {
-                        locationSelect.innerHTML = '<option value="">No locations found</option>';
-                        locationSelect.disabled = true;
-                        return;
-                    }
-                    
-                    // Add default option
-                    locationSelect.innerHTML = '<option value="">Select Location</option>';
-                    
-                    // Add location options
-                    data.locations.forEach(location => {
-                        const option = document.createElement('option');
-                        option.value = location.id;
-                        
-                        // Create display text with location name and address
-                        let displayText = location.location_name;
-                        if (location.formatted_address) {
-                            displayText += ' - ' + location.formatted_address;
-                        }
-                        if (location.is_primary) {
-                            displayText += ' (Primary)';
-                        }
-                        
-                        option.textContent = displayText;
-                        locationSelect.appendChild(option);
-                    });
-                    
-                    // Auto-select primary location if available
-                    const primaryLocation = data.locations.find(loc => loc.is_primary);
-                    if (primaryLocation) {
-                        locationSelect.value = primaryLocation.id;
-                    }
-                    
-                    // Enable the dropdown
-                    locationSelect.disabled = false;
-                })
-                .catch(error => {
-                    console.error('Error fetching locations:', error);
-                    locationSelect.innerHTML = '<option value="">Error loading locations</option>';
-                    locationSelect.disabled = true;
-                });
-        }
-
-        // Prevent form submission on Enter key press
-        function preventEnterSubmission(event) {
-            if (event.key === 'Enter' && event.target.tagName !== 'TEXTAREA' && event.target.type !== 'submit') {
-                event.preventDefault();
-                return false;
-            }
-        }
-
-        // Auto-calculate modules per truck
-        function calculateModulesPerTruck() {
-            var modulesPerPallet = parseFloat(document.getElementById('modules_per_pallet').value) || 0;
-            var palletsPerTruck = parseFloat(document.getElementById('pallets_per_truck').value) || 0;
-            var modulesPerTruckField = document.getElementById('modules_per_truck');
-            
-            if (modulesPerPallet > 0 && palletsPerTruck > 0) {
-                var result = modulesPerPallet * palletsPerTruck;
-                modulesPerTruckField.value = result;
-                modulesPerTruckField.style.color = '#333'; // Normal text color when calculated
-            } else {
-                modulesPerTruckField.value = '';
-                modulesPerTruckField.style.color = '#6c757d'; // Muted color when empty
-            }
-        }
-
-        // Add event listeners for auto-calculation and form behavior
-        document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('modules_per_pallet').addEventListener('input', calculateModulesPerTruck);
-            document.getElementById('pallets_per_truck').addEventListener('input', calculateModulesPerTruck);
-            
-            // Add event listener to prevent Enter key submission on form fields
-            document.addEventListener('keydown', preventEnterSubmission);
-
-            // Hook file inputs for pre/post creation modals to show lists
-            const preInput = document.getElementById('preFileInput');
-            if (preInput) preInput.addEventListener('change', handlePreFileSelection);
-            const postInput = document.getElementById('moduleDocFiles');
-            if (postInput) postInput.addEventListener('change', handleModuleDocFileSelection);
-
-            // Add drag and drop functionality
-            addDragDropSupport('preModuleUploadModal', 'preFileInput');
-            if (document.getElementById('moduleUploadModal')) {
-                addDragDropSupport('moduleUploadModal', 'moduleDocFiles');
-            }
-        });
-
-        function bytesToSize(bytes) {
-            if (bytes === 0) return '0 B';
-            const k = 1024, sizes = ['B','KB','MB','GB'];
-            const i = Math.floor(Math.log(bytes)/Math.log(k));
-            return parseFloat((bytes/Math.pow(k,i)).toFixed(1)) + ' ' + sizes[i];
-        }
-        function renderFileList(listEl, files) {
-            listEl.innerHTML = '';
-            Array.from(files).forEach(f => {
-                const row = document.createElement('div');
-                row.className = 'file-item';
-                const name = document.createElement('div');
-                name.className = 'file-name';
-                name.textContent = f.name;
-                const size = document.createElement('div');
-                size.className = 'file-size';
-                size.textContent = bytesToSize(f.size);
-                row.appendChild(name); row.appendChild(size);
-                listEl.appendChild(row);
-            });
-        }
-        function handlePreFileSelection(e) {
-            const list = document.getElementById('preFileList');
-            if (list) renderFileList(list, e.target.files);
-        }
-        function handleModuleDocFileSelection(e) {
-            const list = document.getElementById('moduleDocFileList');
-            if (list) renderFileList(list, e.target.files);
-        }
-
-        // Pre-creation module docs modal
-        function openPreModuleUploadModal() {
-            const m = document.getElementById('preModuleUploadModal');
-            if (m) {
-                m.style.display = 'flex';
-                document.body.style.overflow = 'hidden'; // Prevent background scroll
-            }
-        }
-        function closePreModuleUploadModal() {
-            const m = document.getElementById('preModuleUploadModal');
-            if (m) {
-                m.style.display = 'none';
-                document.body.style.overflow = ''; // Restore background scroll
-            }
-        }
-        function confirmPreModuleDocs() {
-            const select = document.getElementById('module_docs_sub_type');
-            const files = document.getElementById('preFileInput');
-            if (!select || !files) { closePreModuleUploadModal(); return; }
-            if (files.files && files.files.length > 0 && !select.value) {
-                alert('Please choose a Module Documentation Sub-Type.');
-                return;
-            }
-            // Update summary
-            const summary = document.getElementById('preModuleDocsSummary');
-            if (summary) {
-                const n = files.files ? files.files.length : 0;
-                if (n > 0) {
-                    summary.style.display = '';
-                    summary.textContent = n + ' file' + (n>1?'s':'') + ' attached (' + select.value + ')';
-                } else {
-                    summary.style.display = 'none';
-                    summary.textContent = '';
-                }
-            }
-            closePreModuleUploadModal();
-        }
-
-        // Module Documentation Upload Modal controls
-        function openModuleUploadModal() {
-            const m = document.getElementById('moduleUploadModal');
-            if (m) {
-                m.style.display = 'flex';
-                document.body.style.overflow = 'hidden'; // Prevent background scroll
-            }
-        }
-        function closeModuleUploadModal() {
-            const m = document.getElementById('moduleUploadModal');
-            if (m) {
-                m.style.display = 'none';
-                document.body.style.overflow = ''; // Restore background scroll
-            }
-        }
-
-        async function uploadModuleDocuments() {
-            const filesInput = document.getElementById('moduleDocFiles');
-            const subTypeEl = document.getElementById('moduleDocSubType');
-            const descEl = document.getElementById('moduleDocDescription');
-            const progress = document.getElementById('moduleDocProgress');
-            const fill = document.getElementById('moduleDocProgressFill');
-            const text = document.getElementById('moduleDocProgressText');
-            const files = filesInput ? filesInput.files : null;
-            const subType = subTypeEl ? (subTypeEl.value || '').trim() : '';
-            const description = descEl ? (descEl.value || '').trim() : '';
-            const projectId = <?php echo isset($project_id) ? (int)$project_id : 0; ?>;
-
-            if (!projectId) { alert('Project not found. Save the project first.'); return; }
-            if (!files || files.length === 0) { alert('Please select at least one file.'); return; }
-            if (!subType) { alert('Please enter a document sub-type.'); return; }
-
-            progress.style.display = '';
-            fill.style.width = '0%';
-            text.textContent = 'Uploading...';
-
-            try {
-                for (let i = 0; i < files.length; i++) {
-                    const fd = new FormData();
-                    fd.append('document', files[i]);
-                    fd.append('project_id', projectId);
-                    fd.append('document_type', 'modules');
-                    fd.append('document_sub_type', subType);
-                    if (description) fd.append('description', description);
-
-                    await new Promise((resolve, reject) => {
-                        const xhr = new XMLHttpRequest();
-                        xhr.upload.onprogress = function(e){
-                            if (e.lengthComputable) {
-                                const pct = ((i + e.loaded / e.total) / files.length) * 100;
-                                fill.style.width = pct + '%';
-                                text.textContent = 'Uploading ' + (i+1) + '/' + files.length + '...';
-                            }
-                        };
-                        xhr.onload = function(){
-                            if (xhr.status === 200) {
-                                const resp = JSON.parse(xhr.responseText || '{}');
-                                if (resp.success) resolve(); else reject(new Error(resp.message || 'Upload failed'));
-                            } else {
-                                reject(new Error('Upload failed'));
-                            }
-                        };
-                        xhr.onerror = () => reject(new Error('Network error'));
-                        xhr.open('POST', 'upload_project_document.php');
-                        xhr.send(fd);
-                    });
-                }
-                text.textContent = 'Upload complete';
-                setTimeout(()=>{ closeModuleUploadModal(); }, 600);
-                alert('Module documentation uploaded successfully.');
-            } catch (err) {
-                alert('Upload failed: ' + err.message);
-            } finally {
-                fill.style.width = '100%';
-            }
-        }
-
-        // Drag and drop support for file upload areas
-        function addDragDropSupport(modalId, inputId) {
-            const modal = document.getElementById(modalId);
-            if (!modal) return;
-
-            const uploadArea = modal.querySelector('.file-upload-area');
-            const fileInput = document.getElementById(inputId);
-            if (!uploadArea || !fileInput) return;
-
-            // Prevent default drag behaviors
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                uploadArea.addEventListener(eventName, preventDefaults, false);
-                document.body.addEventListener(eventName, preventDefaults, false);
-            });
-
-            // Highlight drop area when item is dragged over it
-            ['dragenter', 'dragover'].forEach(eventName => {
-                uploadArea.addEventListener(eventName, highlight, false);
-            });
-
-            ['dragleave', 'drop'].forEach(eventName => {
-                uploadArea.addEventListener(eventName, unhighlight, false);
-            });
-
-            // Handle dropped files
-            uploadArea.addEventListener('drop', handleDrop, false);
-
-            function preventDefaults(e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-
-            function highlight(e) {
-                uploadArea.classList.add('drag-over');
-                uploadArea.style.borderColor = '#488C9A';
-                uploadArea.style.backgroundColor = '#f0f8ff';
-            }
-
-            function unhighlight(e) {
-                uploadArea.classList.remove('drag-over');
-                uploadArea.style.borderColor = '';
-                uploadArea.style.backgroundColor = '';
-            }
-
-            function handleDrop(e) {
-                const dt = e.dataTransfer;
-                const files = dt.files;
-
-                fileInput.files = files;
-                
-                // Trigger change event to update file list
-                const event = new Event('change', { bubbles: true });
-                fileInput.dispatchEvent(event);
-            }
-        }
 </script>
 
+<!-- Google Maps API with Places library -->
+<script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places&callback=initAddressAutocomplete" async defer></script>
 </body>
 </html>
