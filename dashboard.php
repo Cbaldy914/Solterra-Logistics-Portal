@@ -709,7 +709,10 @@ $conn->close();
                         </h3>
                     </div>
                     <div class="project-image">
-                        <img src="<?php echo htmlspecialchars($project['image_url']); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>">
+                        <?php
+                            $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/default_project.png';
+                        ?>
+                        <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/default_project.png'">
                         <div class="project-overlay">
                             <div class="project-overlay-text">View Project Details</div>
                         </div>
@@ -752,7 +755,7 @@ $conn->close();
                 </div>
             <?php endforeach; ?>
 
-            <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+            <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
                 <div class="project-item project-item--add" onclick="window.location.href='add_project.php'">
                     <div class="add-project-icon">＋</div>
                     <div class="add-project-text">Add New Project</div>
