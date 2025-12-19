@@ -69,7 +69,6 @@ try {
         'site_safety' => 0,
         'site_scheduling' => 0,
         'site_operating_hours' => 0,
-        'site_module_wattages' => 0,
         'delivery_pallets' => 0,
         'deliveries' => 0,
         'pallets' => 0,
@@ -111,16 +110,6 @@ try {
     $stmtDelSiteOpHours->execute();
     $deleted_counts['site_operating_hours'] = $stmtDelSiteOpHours->affected_rows;
     $stmtDelSiteOpHours->close();
-    
-    // Site Step 5: Delete site_module_wattages for this project
-    $stmtDelSiteModuleWattages = $conn->prepare("DELETE FROM site_module_wattages WHERE project_id = ?");
-    $stmtDelSiteModuleWattages->bind_param("i", $project_id);
-    $stmtDelSiteModuleWattages->execute();
-    $deleted_counts['site_module_wattages'] = $stmtDelSiteModuleWattages->affected_rows;
-    $stmtDelSiteModuleWattages->close();
-    
-    // Note: site_module_info table will be dropped after migration, so no need to delete from it
-    // Note: sites table will be dropped after migration, so no need to delete from it
     
     // PROJECT DELETION STEPS (existing logic)
     
