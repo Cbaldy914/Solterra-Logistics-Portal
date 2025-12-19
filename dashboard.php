@@ -97,7 +97,7 @@ if (count($accountIds) > 0) {
     // Build an IN() clause with placeholders
     $placeholders = implode(',', array_fill(0, count($accountIds), '?'));
     $sqlProj = "
-        SELECT id, project_name, project_address, image_url, estimated_completion_date
+        SELECT id, project_name, project_address, image_url, estimated_completion_date, project_size
         FROM projects
         WHERE account_id IN ($placeholders)
         ORDER BY id ASC
@@ -127,16 +127,13 @@ if (count($accountIds) > 0) {
         $wattage_orders_result = $stmt_wattage_orders->get_result();
         $stmt_wattage_orders->close();
 
-        $total_mws = 0;
         $total_order_quantity = 0;
         while ($wattage_row = $wattage_orders_result->fetch_assoc()) {
-            $wattage = (float)$wattage_row['wattage'];
             $torder  = (int)$wattage_row['total_order'];
-
             $total_order_quantity += $torder;
-            $total_mws += ($wattage * $torder) / 1_000_000; // Convert to MW
         }
-        $project['project_size'] = $total_mws;
+        // Use project_size from database, default to 0 if not set
+        $project['project_size'] = isset($project['project_size']) ? (float)$project['project_size'] : 0;
 
         // ---- Modules Delivered
         $stmt_delivered = $conn->prepare("

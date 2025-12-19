@@ -489,7 +489,24 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
         </div>
     </div>
 
-    <div class="form-container">
+    <!-- Entry Method Toggle -->
+    <div class="entry-method-toggle" style="background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+        <h3 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1.1em;">How would you like to update modules?</h3>
+        <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+            <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #488C9A; border-radius: 12px; cursor: pointer; background: rgba(72,140,154,0.05); transition: all 0.2s ease;">
+                <input type="radio" name="entry_method" value="manual" checked style="margin-right: 10px;">
+                <strong style="color: #293E4C;">Manual Entry</strong>
+                <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Edit module details manually using the form below.</p>
+            </label>
+            <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #e9ecef; border-radius: 12px; cursor: pointer; background: #f8f9fa; transition: all 0.2s ease;">
+                <input type="radio" name="entry_method" value="import" style="margin-right: 10px;">
+                <strong style="color: #293E4C;">Import Manufacturer Schedule</strong>
+                <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Upload a CSV or Excel file from your manufacturer.</p>
+            </label>
+        </div>
+    </div>
+
+    <div class="form-container" id="manualEntryContainer">
         <div class="form-content">
             <?php if (!empty($errors)): ?>
                 <div class="error-message"><ul style="margin:0; padding-left:20px; ">
@@ -507,6 +524,51 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
             </form>
         </div>
     </div>
+
+    <!-- Import Container (hidden by default) -->
+    <div id="importContainer" style="display: none; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); padding: 40px; margin-bottom: 20px;">
+        <div style="text-align: center; padding: 40px 20px;">
+            <div style="font-size: 48px; color: #488C9A; margin-bottom: 16px;">📥</div>
+            <h2 style="color: #293E4C; margin-bottom: 12px;">Import Manufacturer Schedule</h2>
+            <p style="color: #6c757d; margin-bottom: 24px; max-width: 500px; margin-left: auto; margin-right: auto;">
+                Upload a CSV or Excel file from your manufacturer to automatically update module batches with all details.
+            </p>
+            <a href="upload_manufacturer_schedule.php<?php echo $project_id ? '?project_id='.$project_id : ''; ?>"
+               class="btn-submit" style="display: inline-block; text-decoration: none; padding: 16px 32px;">
+                Go to Import Page →
+            </a>
+        </div>
+    </div>
 </main>
+
+<script>
+    // Entry method toggle
+    document.addEventListener('DOMContentLoaded', function() {
+        const methodRadios = document.querySelectorAll('input[name="entry_method"]');
+        const manualContainer = document.getElementById('manualEntryContainer');
+        const importContainer = document.getElementById('importContainer');
+        const methodOptions = document.querySelectorAll('.method-option');
+
+        methodRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.value === 'manual') {
+                    manualContainer.style.display = 'block';
+                    importContainer.style.display = 'none';
+                    methodOptions[0].style.border = '2px solid #488C9A';
+                    methodOptions[0].style.background = 'rgba(72,140,154,0.05)';
+                    methodOptions[1].style.border = '2px solid #e9ecef';
+                    methodOptions[1].style.background = '#f8f9fa';
+                } else {
+                    manualContainer.style.display = 'none';
+                    importContainer.style.display = 'block';
+                    methodOptions[1].style.border = '2px solid #488C9A';
+                    methodOptions[1].style.background = 'rgba(72,140,154,0.05)';
+                    methodOptions[0].style.border = '2px solid #e9ecef';
+                    methodOptions[0].style.background = '#f8f9fa';
+                }
+            });
+        });
+    });
+</script>
 </body>
 </html>
