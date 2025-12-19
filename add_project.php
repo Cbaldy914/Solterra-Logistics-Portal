@@ -150,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // Default project image (can be set via Project Photos manager later)
-        $image_url = "pictures/default_project.png"; // default cover until photos are arranged
+        $image_url = "pictures/project_default.png";
 
         // Note: Driver Handout and Module Documentation now save to project_documents
 
