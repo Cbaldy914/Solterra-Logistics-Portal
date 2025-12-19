@@ -1032,35 +1032,63 @@ $conn->close();
             margin: 0 8px;
             color: #6c757d;
         }
+        /* Modern Page Header */
         .overview-header {
-            position: relative; /* Needed for absolute positioning of child */
-            background-color: #f9f9f9;
-            padding: 15px;
-            margin-bottom: 20px;
-            border: 1px solid #e0e0e0;
-            border-radius: 5px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .overview-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
         }
         .overview-header .edit-button {
             position: absolute;
-            top: 15px;
-            right: 15px;
-            background-color: #488C9A;
+            top: 32px;
+            right: 32px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
             color: #fff;
             text-decoration: none;
-            border-radius: 5px;
-            padding: 5px 10px;
+            border-radius: 12px;
+            padding: 10px 20px;
             border: none;
             cursor: pointer;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+            transition: all 0.3s ease;
+        }
+        .overview-header .edit-button:hover {
+            background: linear-gradient(135deg, #3a7a87 0%, #293E4C 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
         }
         .overview-header h1 {
-            margin-top: 0;
-            margin-bottom: 10px;
-            font-size: 1.6em;
-            color: #293E4C;
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 12px 0;
+            line-height: 1.2;
         }
         .overview-header p, .summary-section p {
             margin: 5px 0;
             line-height: 1.5;
+            color: #6c757d;
+        }
+        .overview-header p strong {
+            color: #293E4C;
         }
         .section-title {
             font-size: 1.3em;

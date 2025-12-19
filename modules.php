@@ -449,14 +449,166 @@ if ($conn && $conn instanceof mysqli) {
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
-        .header-container {
+        /* Modern Page Header */
+        .modules-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .modules-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+        .modules-header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modules-header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+        .modules-header .subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+        .btn-add-batch {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: white;
+            text-decoration: none;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+        .btn-add-batch:hover {
+            background: linear-gradient(135deg, #3a7a87 0%, #293E4C 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
+        }
+
+        /* Section Headers */
+        .section-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #e9ecef;
         }
+        .section-header h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0;
+        }
+
+        /* Modern Table Styling */
+        .table-container {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            overflow: hidden;
+            margin-bottom: 32px;
+        }
+        .table-container table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0;
+        }
+        .table-container thead {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+        }
+        .table-container th {
+            padding: 16px 20px;
+            text-align: center;
+            font-weight: 600;
+            color: #fff;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: none;
+        }
+        .table-container td {
+            padding: 16px 20px;
+            vertical-align: middle;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .table-container tbody tr {
+            transition: background-color 0.2s ease;
+        }
+        .table-container tbody tr:hover {
+            background-color: #f8f9fa;
+        }
+        .table-container tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Modern Action Buttons */
+        .btn-action {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            border: none;
+            cursor: pointer;
+        }
+        .btn-action.primary {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: white;
+        }
+        .btn-action.primary:hover {
+            background: linear-gradient(135deg, #3a7a87 0%, #293E4C 100%);
+            transform: translateY(-1px);
+        }
+        .btn-action.secondary {
+            background: #f8f9fa;
+            color: #488C9A;
+            border: 1px solid #e9ecef;
+        }
+        .btn-action.secondary:hover {
+            background: #e9ecef;
+            color: #293E4C;
+        }
+        .btn-action.warning {
+            background: linear-gradient(135deg, #fd7e14 0%, #e8690b 100%);
+            color: white;
+        }
+        .btn-action.warning:hover {
+            background: linear-gradient(135deg, #e8690b 0%, #d45d0a 100%);
+        }
+
+        /* Legacy button classes for backwards compatibility */
         .action-buttons.add-new {
             display: inline-block;
             padding: 8px 15px;
@@ -529,6 +681,38 @@ if ($conn && $conn instanceof mysqli) {
         .action-buttons.project:hover {
             background-color: #293E4C;
         }
+
+        /* Empty State Styling */
+        .table-container tr.empty-row td {
+            text-align: center;
+            padding: 48px 20px !important;
+            background: #fafafa;
+        }
+        .empty-state-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+        .empty-state-content .empty-icon {
+            font-size: 3rem;
+            opacity: 0.5;
+        }
+        .empty-state-content p {
+            color: #666;
+            margin: 0;
+            font-size: 0.95rem;
+        }
+        .empty-state-content a {
+            color: #488C9A;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .empty-state-content a:hover {
+            text-decoration: underline;
+        }
+
         .error-message {
             color: #721c24;
             background-color: #f8d7da;
@@ -929,12 +1113,20 @@ if ($conn && $conn instanceof mysqli) {
 <?php include 'header.php'; ?>
 <main>
     <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Manage Modules']); ?>
-    
-    <div class="header-container">
-        <h1>Manage Modules</h1>
-        <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-        <a href="add_module_batch.php" class="action-buttons add-new" style="text-decoration:none; display:inline-block; line-height: 36px;">Add Module Batch</a>
-        <?php endif; ?>
+
+    <!-- Modern Page Header -->
+    <div class="modules-header">
+        <div class="modules-header-content">
+            <div>
+                <h1>Manage Modules</h1>
+                <p class="subtitle">Track and manage module batches across your projects</p>
+            </div>
+            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+            <a href="add_module_batch.php" class="btn-add-batch">
+                <span>+</span> Add Module Batch
+            </a>
+            <?php endif; ?>
+        </div>
     </div>
 
     <?php
@@ -1055,8 +1247,10 @@ if ($conn && $conn instanceof mysqli) {
     </div>
 
     <!-- Project-Assigned Modules Table -->
-    <h2>Project-Assigned Module Batches</h2>
-    <div class="table-responsive">
+    <div class="section-header">
+        <h2>Project-Assigned Module Batches</h2>
+    </div>
+    <div class="table-container">
         <table>
             <thead>
                 <tr>
@@ -1132,9 +1326,12 @@ if ($conn && $conn instanceof mysqli) {
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
-                    <tr>
-                        <td colspan="6" style="text-align: center; padding: 20px; color: #666;">
-                            No project-assigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?>. <a href="#" onclick="document.getElementById('openAddModalBtn').click()">Add the first batch</a>
+                    <tr class="empty-row">
+                        <td colspan="6">
+                            <div class="empty-state-content">
+                                <span class="empty-icon">📦</span>
+                                <p>No project-assigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if (in_array($role, ['admin', 'global_admin'])): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
+                            </div>
                         </td>
                     </tr>
                 <?php endif; ?>
@@ -1143,8 +1340,10 @@ if ($conn && $conn instanceof mysqli) {
     </div>
 
     <!-- Unassigned Modules Table -->
-    <h2 style="margin-top: 40px;">Unassigned (Stock) Module Batches</h2>
-    <div class="table-responsive">
+    <div class="section-header" style="margin-top: 40px;">
+        <h2>Unassigned (Stock) Module Batches</h2>
+    </div>
+    <div class="table-container">
         <table>
             <thead>
                 <tr>
@@ -1221,9 +1420,12 @@ if ($conn && $conn instanceof mysqli) {
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
-                    <tr>
-                        <td colspan="6" style="text-align: center; padding: 20px; color: #666;">
-                            No unassigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?>. <a href="#" onclick="document.getElementById('openAddModalBtn').click()">Add the first batch</a>
+                    <tr class="empty-row">
+                        <td colspan="6">
+                            <div class="empty-state-content">
+                                <span class="empty-icon">📦</span>
+                                <p>No unassigned module batches found<?php echo ($role==='admin' && !$account_id_for_admin) ? ' for your assigned account' : ''; ?><?php if (in_array($role, ['admin', 'global_admin'])): ?>. <a href="add_module_batch.php">Add the first batch</a><?php endif; ?></p>
+                            </div>
                         </td>
                     </tr>
                 <?php endif; ?>

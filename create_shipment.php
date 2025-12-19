@@ -869,8 +869,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
 // --- Data Fetching ---
 $pallets = [];
 $errorMessage = '';
-// Cap the number of pallets rendered to keep page responsive on huge datasets
-$server_side_limit = 1000; // Keep at 1000 for performance
+// Pallets are now loaded via AJAX - skip the heavy PHP query
+$total_pallets_count = 0;
+$available_to_ship_count = 0;
+$skip_pallet_loading = true; // Flag to skip old pallet loading code
 
 // Apply project filter at SQL level if provided
 $project_filter_sql = '';
@@ -881,6 +883,7 @@ if ($project_id_from_url > 0) {
 }
 
 try {
+    if (!$skip_pallet_loading) {
     // Comprehensive query to fetch pallet details from ALL projects
     $sql = "SELECT 
                 ip.id AS pallet_id,
@@ -963,7 +966,7 @@ try {
     }
     
     $sql .= " GROUP BY ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.arrival_date, ip.unassigned_module_item_id, ip.current_warehouse_id, ip.current_project_id, ip.assigned_project_id, ip.manufacturer_location_id, m.vendor_name, m.pallets_per_truck, m.account_id, ml.street_address, ml.city, ml.state, ml.zip_code, ml.country, ml.location_name, mfg.name, w.name, w.street_address, w.city, w.state, w.zip_code, p_current.project_name, p_current.account_id, p_current.street_address, p_current.city, p_current.state, p_current.zip_code, p_assigned.project_name, p_assigned.account_id
-              ORDER BY ip.id ASC LIMIT " . (int)$server_side_limit . "";
+              ORDER BY ip.id ASC LIMIT 1000";
     
     // Also compute accurate global counts for header/pagination
     $total_pallets_count = 0;
@@ -1139,6 +1142,7 @@ try {
         }
     }
     unset($pallet); // Unset reference after loop
+    } // End of if (!$skip_pallet_loading)
 
     // Get all projects for the filter dropdown
     $all_projects_for_filter = [];
@@ -2098,92 +2102,40 @@ if (!empty($bolCompletionMessage)) {
                     </div>
                 </div>
                 
-                <?php if (!empty($pallets)): ?>
-                    <div class="deliveries-container">
-                        <div class="table-header">
-                            <h3 class="table-title"><i class="fas fa-boxes"></i> Pallets</h3>
-                            <div class="table-header-actions">
-                                <button type="button" id="deletePalletsBtn" class="action-btn action-btn-danger" disabled><i class="fas fa-trash"></i> Delete</button>
-                                <button type="button" id="exportCsvBtn" class="btn-export-header"><i class="fas fa-download"></i> Export</button>
-                                <button type="button" id="openShipModalBtn" class="action-btn action-btn-primary" disabled><i class="fas fa-truck-loading"></i> Create Shipment</button>
-                            </div>
-                        </div>
-                        <div class="table-responsive">
-                    <table id="palletsTable">
-                        <thead>
-                            <tr>
-                                <th><input type="checkbox" id="selectAllPallets" disabled></th>
-                                <th>Identifier</th>
-                                <th>Wattage</th>
-                                <th>Quantity</th>
-                                <th>Status</th>
-                                <th>Project</th>
-                                <th>Deliveries</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($pallets as $pallet): ?>
-                                <tr data-id="<?php echo htmlspecialchars($pallet['pallet_id']); ?>">
-                                    <td><input type="checkbox" name="selected_pallets[]" value="<?php echo $pallet['pallet_id']; ?>" class="pallet-checkbox" data-status="<?php echo htmlspecialchars($pallet['status']); ?>"></td>
-                                    <td><?php echo htmlspecialchars($pallet['pallet_identifier'] ?? 'N/A'); ?></td>
-                                    <td><?php echo $pallet['wattage']; ?>W</td>
-                                    <td><?php echo number_format($pallet['quantity']); ?></td>
-                                    <td>
-                                        <?php 
-                                        $status = htmlspecialchars($pallet['status']);
-                                        if ($pallet['current_warehouse_id'] && $status === 'In Transit to Warehouse') {
-                                            echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . (int)$pallet['current_warehouse_id'] . '&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
-                                        } elseif ($pallet['current_warehouse_id'] && $status === 'In Warehouse') {
-                                            echo '<a href="manage_warehouse_inventory.php?warehouse_id=' . (int)$pallet['current_warehouse_id'] . '&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">' . $status . '</a>';
-                                        } else {
-                                            echo $status;
-                                        }
-                                        ?>
-                                    </td>
-                                    <td><?php echo htmlspecialchars($pallet['display_project_name']); ?></td>
-                                    <td>
-                                        <?php 
-                                        $deliveryInfo = $pallet['delivery_info'] ?? '';
-                                        if (empty($deliveryInfo)) {
-                                            echo 'No deliveries';
-                                        } else {
-                                            $deliveries = explode('|', $deliveryInfo);
-                                            if (count($deliveries) == 1) {
-                                                $parts = explode(':', $deliveries[0]);
-                                                $deliveryId = $parts[0];
-                                                $bolNumber = $parts[1];
-                                                echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '&from=manage_pallets" style="color: #488C9A; text-decoration: underline;">' . htmlspecialchars($bolNumber) . '</a>';
-                                            } else {
-                                                echo '<div class="delivery-dropdown">';
-                                                echo '<button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (' . count($deliveries) . ')</button>';
-                                                echo '<div class="delivery-list" style="display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 3px; z-index: 1000; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">';
-                                                foreach ($deliveries as $delivery) {
-                                                    $parts = explode(':', $delivery);
-                                                    $deliveryId = $parts[0];
-                                                    $bolNumber = $parts[1];
-                                                    echo '<a href="manage_deliveries.php?delivery_id=' . htmlspecialchars($deliveryId) . '&from=manage_pallets" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor=\'#f5f5f5\'" onmouseout="this.style.backgroundColor=\'white\'">' . htmlspecialchars($bolNumber) . '</a>';
-                                                }
-                                                echo '</div>';
-                                                echo '</div>';
-                                            }
-                                        }
-                                        ?>
-                                    </td>
-                                    <td>
-                                        <?php $detailsUrl = 'pallet_details.php?pallet_id=' . (int)$pallet['pallet_id'] . ($project_id_from_url > 0 ? ('&project_id=' . (int)$project_id_from_url) : ''); ?>
-                                        <a href="<?php echo $detailsUrl; ?>" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
-                                        <a href="edit_pallet.php?pallet_id=<?php echo $pallet['pallet_id']; ?>" class="action-button" style="background-color: #6c757d; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em; margin-left:6px;">Edit</a>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                <div class="deliveries-container">
+                    <div class="table-header">
+                        <h3 class="table-title"><i class="fas fa-boxes"></i> Pallets</h3>
+                        <div class="table-header-actions">
+                            <button type="button" id="deletePalletsBtn" class="action-btn action-btn-danger" disabled><i class="fas fa-trash"></i> Delete</button>
+                            <button type="button" id="exportCsvBtn" class="btn-export-header"><i class="fas fa-download"></i> Export</button>
+                            <button type="button" id="openShipModalBtn" class="action-btn action-btn-primary" disabled><i class="fas fa-truck-loading"></i> Create Shipment</button>
                         </div>
                     </div>
-                <?php else: ?>
-                    <p>No pallets found.</p>
-                <?php endif; ?>
+                    <div class="table-responsive">
+                        <table id="palletsTable">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" id="selectAllPallets" disabled></th>
+                                    <th>Identifier</th>
+                                    <th>Wattage</th>
+                                    <th>Quantity</th>
+                                    <th>Status</th>
+                                    <th>Project</th>
+                                    <th>Deliveries</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="palletsTableBody">
+                                <tr>
+                                    <td colspan="8" style="text-align: center; padding: 40px;">
+                                        <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: #488C9A;"></i>
+                                        <p style="margin-top: 10px; color: #666;">Loading pallets...</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </form>
     <?php endif; ?>
@@ -2459,15 +2411,17 @@ if (!empty($bolCompletionMessage)) {
     </div>
 </div>
 
-<!-- Expose server-side totals for accurate header/pagination info -->
-<div id="statsData" data-total-pallets="<?php echo (int)($total_pallets_count ?? 0); ?>" data-available-pallets="<?php echo (int)($available_to_ship_count ?? 0); ?>" data-loaded="<?php echo (int)count($pallets); ?>" data-limit="<?php echo (int)$server_side_limit; ?>" style="display:none"></div>
+<!-- Stats are now loaded via AJAX -->
 
 <!-- Embed PHP data as JS variables for populating dropdowns -->
 <script>
     const projectsData = <?php echo json_encode($all_projects); ?>;
     const warehousesData = <?php echo json_encode($all_warehouses); ?>;
     const manufacturersData = <?php echo json_encode($all_manufacturers); ?>;
-    const palletsData = <?php echo json_encode($pallets); ?>;
+    const projectIdFromUrl = <?php echo (int)$project_id_from_url; ?>;
+    // Pallets are now loaded via AJAX
+    let palletsData = [];
+    const palletsMap = new Map();
 </script>
 
 <!-- Load the Google Maps JavaScript API with Places library -->
@@ -2527,15 +2481,12 @@ function updateHeaderStats() {
         selectedPalletsEl.textContent = selectedCount;
     }
 
-    // Always use server totals from COUNT queries (accurate and not limited by loaded pallets)
-    const statsEl = document.getElementById('statsData');
+    // Use totalPallets from AJAX response
     const totalPalletsEl = document.getElementById('totalPallets');
     const availablePalletsEl = document.getElementById('availablePallets');
-    const serverTotal = statsEl ? parseInt(statsEl.dataset.totalPallets || '0') : 0;
-    const serverAvailable = statsEl ? parseInt(statsEl.dataset.availablePallets || '0') : 0;
-    
-    if (totalPalletsEl) totalPalletsEl.textContent = serverTotal;
-    if (availablePalletsEl) availablePalletsEl.textContent = serverAvailable;
+
+    if (totalPalletsEl) totalPalletsEl.textContent = totalPallets;
+    if (availablePalletsEl) availablePalletsEl.textContent = totalPallets; // Will be updated with actual available count
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -2643,173 +2594,281 @@ function initializeDeletePallets() {
     });
 }
 
-// ----------------- PAGINATION -----------------
+// ----------------- AJAX PAGINATION -----------------
 let currentPage = 1;
 let itemsPerPage = 100;
-let allPalletRows = [];
+let totalPallets = 0;
+let totalPages = 0;
+let isLoading = false;
+
+async function loadPallets() {
+    if (isLoading) return;
+    isLoading = true;
+
+    const tbody = document.getElementById('palletsTableBody');
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="8" style="text-align: center; padding: 40px;">
+                <i class="fas fa-spinner fa-spin" style="font-size: 24px; color: #488C9A;"></i>
+                <p style="margin-top: 10px; color: #666;">Loading pallets...</p>
+            </td>
+        </tr>
+    `;
+
+    // Get filter values
+    const search = document.getElementById('cs_search')?.value || document.getElementById('palletSearch')?.value || '';
+    const projectFilter = document.getElementById('cs_project')?.value || document.getElementById('projectFilter')?.value || '';
+    const wattageFilter = document.getElementById('cs_wattage')?.value || document.getElementById('wattageFilter')?.value || '';
+    const statusFilter = document.getElementById('cs_status')?.value || document.getElementById('statusFilter')?.value || '';
+
+    const params = new URLSearchParams({
+        page: currentPage,
+        pageSize: itemsPerPage,
+        search: search,
+        project: projectFilter,
+        wattage: wattageFilter,
+        status: statusFilter
+    });
+
+    if (projectIdFromUrl > 0) {
+        params.append('project_id', projectIdFromUrl);
+    }
+
+    try {
+        const response = await fetch(`get_shipment_pallets.php?${params.toString()}`);
+        const data = await response.json();
+
+        if (data.success) {
+            totalPallets = data.totalCount;
+            totalPages = data.totalPages;
+
+            // Update palletsData and palletsMap for shipment creation
+            palletsData = data.pallets;
+            palletsMap.clear();
+            data.pallets.forEach(p => palletsMap.set(p.pallet_id, p));
+
+            // Populate filter dropdowns on first load
+            if (data.filterOptions && data.filterOptions.projects) {
+                populateFilterDropdowns(data.filterOptions);
+            }
+
+            renderPalletsTable(data.pallets);
+            updatePaginationInfo();
+            updateHeaderStats();
+        } else {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" style="text-align: center; padding: 40px; color: #dc3545;">
+                        <i class="fas fa-exclamation-circle" style="font-size: 24px;"></i>
+                        <p style="margin-top: 10px;">Error loading pallets: ${data.message || 'Unknown error'}</p>
+                    </td>
+                </tr>
+            `;
+        }
+    } catch (error) {
+        console.error('Error loading pallets:', error);
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" style="text-align: center; padding: 40px; color: #dc3545;">
+                    <i class="fas fa-exclamation-circle" style="font-size: 24px;"></i>
+                    <p style="margin-top: 10px;">Failed to load pallets. Please try again.</p>
+                </td>
+            </tr>
+        `;
+    } finally {
+        isLoading = false;
+    }
+}
+
+function renderPalletsTable(pallets) {
+    const tbody = document.getElementById('palletsTableBody');
+
+    if (pallets.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" style="text-align: center; padding: 40px; color: #666;">
+                    <i class="fas fa-box-open" style="font-size: 24px;"></i>
+                    <p style="margin-top: 10px;">No pallets found matching your criteria.</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    let html = '';
+    pallets.forEach(pallet => {
+        const status = pallet.status || '';
+        let statusHtml = status;
+
+        if (pallet.current_warehouse_id && status === 'In Transit to Warehouse') {
+            statusHtml = `<a href="manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}&view=inbound_transit" style="color: #488C9A; text-decoration: underline;">${status}</a>`;
+        } else if (pallet.current_warehouse_id && status === 'In Warehouse') {
+            statusHtml = `<a href="manage_warehouse_inventory.php?warehouse_id=${pallet.current_warehouse_id}&view=stored_inventory" style="color: #488C9A; text-decoration: underline;">${status}</a>`;
+        }
+
+        let deliveriesHtml = 'No deliveries';
+        const deliveryInfo = pallet.delivery_info || '';
+        if (deliveryInfo) {
+            const deliveries = deliveryInfo.split('|');
+            if (deliveries.length === 1) {
+                const parts = deliveries[0].split(':');
+                deliveriesHtml = `<a href="manage_deliveries.php?delivery_id=${parts[0]}&from=manage_pallets" style="color: #488C9A; text-decoration: underline;">${escapeHtml(parts[1] || 'No BOL')}</a>`;
+            } else {
+                deliveriesHtml = `
+                    <div class="delivery-dropdown">
+                        <button type="button" class="delivery-toggle" onclick="toggleDeliveryDropdown(this)" style="background: #488C9A; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Multiple (${deliveries.length})</button>
+                        <div class="delivery-list" style="display: none; position: absolute; background: white; border: 1px solid #ccc; border-radius: 3px; z-index: 1000; min-width: 150px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
+                            ${deliveries.map(d => {
+                                const p = d.split(':');
+                                return `<a href="manage_deliveries.php?delivery_id=${p[0]}&from=manage_pallets" style="display: block; padding: 8px 12px; color: #488C9A; text-decoration: none; border-bottom: 1px solid #eee;" onmouseover="this.style.backgroundColor='#f5f5f5'" onmouseout="this.style.backgroundColor='white'">${escapeHtml(p[1] || 'No BOL')}</a>`;
+                            }).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        const detailsUrl = `pallet_details.php?pallet_id=${pallet.pallet_id}${projectIdFromUrl > 0 ? `&project_id=${projectIdFromUrl}` : ''}`;
+
+        html += `
+            <tr data-id="${pallet.pallet_id}">
+                <td><input type="checkbox" name="selected_pallets[]" value="${pallet.pallet_id}" class="pallet-checkbox" data-status="${escapeHtml(status)}"></td>
+                <td>${escapeHtml(pallet.pallet_identifier || 'N/A')}</td>
+                <td>${pallet.wattage}W</td>
+                <td>${Number(pallet.quantity).toLocaleString()}</td>
+                <td>${statusHtml}</td>
+                <td>${escapeHtml(pallet.display_project_name || 'Unassigned')}</td>
+                <td>${deliveriesHtml}</td>
+                <td>
+                    <a href="${detailsUrl}" class="action-button" style="background-color: #488C9A; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em;">View Details</a>
+                    <a href="edit_pallet.php?pallet_id=${pallet.pallet_id}" class="action-button" style="background-color: #6c757d; color: white; padding: 4px 8px; text-decoration: none; border-radius: 3px; font-size: 0.9em; margin-left:6px;">Edit</a>
+                </td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+
+    // Re-attach checkbox event listeners
+    document.querySelectorAll('.pallet-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            updateOpenShipModalButtonState();
+            updateSelectedCount();
+            updateOriginDisplay();
+            updateMultiShipSummary();
+        });
+    });
+
+    // Enable select all checkbox
+    const selectAll = document.getElementById('selectAllPallets');
+    if (selectAll) {
+        selectAll.disabled = false;
+        selectAll.checked = false;
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function populateFilterDropdowns(options) {
+    // Populate project filter
+    const projectSelect = document.getElementById('cs_project') || document.getElementById('projectFilter');
+    if (projectSelect && options.projects) {
+        const currentVal = projectSelect.value;
+        projectSelect.innerHTML = '<option value="">All Projects</option>';
+        options.projects.forEach(p => {
+            projectSelect.innerHTML += `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`;
+        });
+        projectSelect.value = currentVal;
+    }
+
+    // Populate wattage filter
+    const wattageSelect = document.getElementById('cs_wattage') || document.getElementById('wattageFilter');
+    if (wattageSelect && options.wattages) {
+        const currentVal = wattageSelect.value;
+        wattageSelect.innerHTML = '<option value="">All Wattages</option>';
+        options.wattages.forEach(w => {
+            wattageSelect.innerHTML += `<option value="${w}">${w}W</option>`;
+        });
+        wattageSelect.value = currentVal;
+    }
+
+    // Populate status filter
+    const statusSelect = document.getElementById('cs_status') || document.getElementById('statusFilter');
+    if (statusSelect && options.statuses) {
+        const currentVal = statusSelect.value;
+        statusSelect.innerHTML = '<option value="">All Statuses</option>';
+        options.statuses.forEach(s => {
+            statusSelect.innerHTML += `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`;
+        });
+        statusSelect.value = currentVal;
+    }
+}
+
+function updatePaginationInfo() {
+    const paginationInfo = document.getElementById('paginationInfo');
+    const pageInfo = document.getElementById('pageInfo');
+    const prevButton = document.getElementById('prevPage');
+    const nextButton = document.getElementById('nextPage');
+
+    if (paginationInfo) {
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        const endIndex = Math.min(startIndex + itemsPerPage, totalPallets);
+        const displayStart = totalPallets > 0 ? startIndex + 1 : 0;
+        paginationInfo.textContent = `Showing ${displayStart}-${endIndex} of ${totalPallets} pallets`;
+    }
+
+    if (pageInfo) {
+        pageInfo.textContent = `Page ${currentPage} of ${Math.max(1, totalPages)}`;
+    }
+
+    if (prevButton) {
+        prevButton.disabled = currentPage <= 1;
+    }
+
+    if (nextButton) {
+        nextButton.disabled = currentPage >= totalPages || totalPallets === 0;
+    }
+}
 
 function initializePagination() {
-    const table = document.querySelector('.pallets-section table tbody');
-    if (!table) return;
-    
-    allPalletRows = Array.from(table.querySelectorAll('tr'));
-    
     const itemsPerPageInput = document.getElementById('itemsPerPage');
     const prevButton = document.getElementById('prevPage');
     const nextButton = document.getElementById('nextPage');
-    
+
     if (itemsPerPageInput) {
         itemsPerPageInput.addEventListener('change', function() {
             itemsPerPage = Math.min(Math.max(1, parseInt(this.value) || 100), 500);
             this.value = itemsPerPage;
             currentPage = 1;
-            updatePagination();
+            loadPallets();
         });
     }
-    
+
     if (prevButton) {
         prevButton.addEventListener('click', function() {
             if (currentPage > 1) {
                 currentPage--;
-                updatePagination();
+                loadPallets();
             }
         });
     }
-    
+
     if (nextButton) {
         nextButton.addEventListener('click', function() {
-            const maxPages = Math.ceil(getFilteredRows().length / itemsPerPage);
-            if (currentPage < maxPages) {
+            if (currentPage < totalPages) {
                 currentPage++;
-                updatePagination();
+                loadPallets();
             }
         });
     }
-    
-    updatePagination();
-}
 
-function getFilteredRows() {
-    return allPalletRows.filter(row => {
-        if (!row || !row.cells) return false;
-        
-        const filter = (document.getElementById('cs_search')?.value || document.getElementById('palletSearch')?.value || '').toLowerCase();
-        const projectFilter = document.getElementById('cs_project')?.value || document.getElementById('projectFilter')?.value || '';
-        const wattageFilter = document.getElementById('cs_wattage')?.value || document.getElementById('wattageFilter')?.value || '';
-        const statusFilter = document.getElementById('cs_status')?.value || document.getElementById('statusFilter')?.value || '';
-        
-        // Get cell contents
-        let textContent = '';
-        for (let i = 1; i < row.cells.length; i++) { // Skip checkbox column
-            textContent += (row.cells[i].textContent || row.cells[i].innerText || '').toLowerCase() + ' ';
-        }
-        
-        // Check search filter
-        if (filter && !textContent.includes(filter)) {
-            return false;
-        }
-        
-        // Check project filter (Project is in column 5, index 5)
-        if (projectFilter && row.cells[5]) {
-            const cellProject = (row.cells[5].textContent || row.cells[5].innerText || '').trim();
-            if (projectFilter === "Unassigned") {
-                if (cellProject !== "Unassigned") {
-                    return false;
-                }
-            } else {
-                if (cellProject !== projectFilter) {
-                    return false;
-                }
-            }
-        }
-        
-        // Check wattage filter (Wattage is in column 2, index 2)
-        if (wattageFilter && row.cells[2]) {
-            const cellWattage = (row.cells[2].textContent || row.cells[2].innerText || '').replace('W','').trim();
-            if (cellWattage !== wattageFilter) {
-                return false;
-            }
-        }
-        
-        // Check status filter (Status is in column 4, index 4)
-        if (statusFilter && row.cells[4]) {
-            const cellStatus = (row.cells[4].textContent || row.cells[4].innerText || '').trim();
-            if (cellStatus !== statusFilter) {
-                return false;
-            }
-        }
-        
-        return true;
-    });
-}
-
-function updatePagination() {
-    const filteredRows = getFilteredRows();
-    const totalItems = filteredRows.length;
-    const statsEl = document.getElementById('statsData');
-    const serverTotal = statsEl ? parseInt(statsEl.dataset.totalPallets || '0') : totalItems;
-    const loadedCount = statsEl ? parseInt(statsEl.dataset.loaded || '0') : totalItems;
-    const limitCount = statsEl ? parseInt(statsEl.dataset.limit || '0') : 0;
-    const maxPages = Math.ceil(totalItems / itemsPerPage);
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    
-    // Hide all rows first
-    allPalletRows.forEach(row => {
-        row.style.display = 'none';
-    });
-    
-    // Show only current page rows from filtered set
-    filteredRows.slice(startIndex, endIndex).forEach(row => {
-        row.style.display = '';
-    });
-    
-    // Update pagination info
-    const paginationInfo = document.getElementById('paginationInfo');
-    const pageInfo = document.getElementById('pageInfo');
-    const prevButton = document.getElementById('prevPage');
-    const nextButton = document.getElementById('nextPage');
-    
-    if (paginationInfo) {
-        const showing = Math.min(endIndex, totalItems);
-        const displayStart = totalItems > 0 ? startIndex + 1 : 0;
-        let suffix = '';
-        
-        // If we're filtering, show filtered count; otherwise show server total
-        const isFiltering = (document.getElementById('cs_search')?.value || document.getElementById('palletSearch')?.value || 
-                           document.getElementById('cs_project')?.value || document.getElementById('projectFilter')?.value || 
-                           document.getElementById('cs_wattage')?.value || document.getElementById('wattageFilter')?.value || 
-                           document.getElementById('cs_status')?.value || document.getElementById('statusFilter')?.value);
-        
-        const displayTotal = isFiltering ? totalItems : serverTotal;
-        
-        // Show limit notice when server total exceeds loaded count
-        if (serverTotal > loadedCount && limitCount > 0) {
-            if (isFiltering) {
-                // Filtering in JavaScript from loaded pallets
-                suffix = ` (filtered from ${loadedCount} loaded of ${serverTotal} total)`;
-            } else {
-                // Showing all loaded pallets
-                suffix = ` (showing first ${loadedCount} of ${serverTotal} total)`;
-            }
-        }
-        paginationInfo.textContent = `Showing ${displayStart}-${showing} of ${displayTotal} pallets${suffix}`;
-    }
-    
-    if (pageInfo) {
-        pageInfo.textContent = `Page ${Math.max(1, currentPage)} of ${Math.max(1, maxPages)}`;
-    }
-    
-    if (prevButton) {
-        prevButton.disabled = currentPage <= 1;
-    }
-    
-    if (nextButton) {
-        nextButton.disabled = currentPage >= maxPages || totalItems === 0;
-    }
-    
-    // Update selection counts after pagination
-    updateSelectedCount();
+    // Initial load
+    loadPallets();
 }
 
 // ----------------- FILTER DROPDOWN FUNCTIONALITY -----------------
@@ -2828,9 +2887,9 @@ function toggleFilters() {
 
 // ----------------- PALLET FILTER -----------------
 function filterPallets() {
-    // Reset to page 1 when filter changes
+    // Reset to page 1 when filter changes and reload via AJAX
     currentPage = 1;
-    updatePagination();
+    loadPallets();
 }
 
 // Apply/Clear for new filter bar
@@ -3162,18 +3221,19 @@ function getSelectedPallets() {
     const allCheckboxes = document.querySelectorAll('.pallet-checkbox');
     const selectedCheckboxes = Array.from(allCheckboxes).filter(checkbox => checkbox.checked);
     const selectedPallets = [];
-    
+
     selectedCheckboxes.forEach(checkbox => {
         const palletId = parseInt(checkbox.value);
-        const pallet = palletsData.find(p => p.pallet_id === palletId);
+        // Use Map for O(1) lookup instead of Array.find O(n)
+        const pallet = palletsMap.get(palletId);
         if (pallet) {
             selectedPallets.push(pallet);
         }
     });
-    
+
     // Debug logging to help identify issues with selection across filters
     console.log(`Found ${selectedCheckboxes.length} checked checkboxes out of ${allCheckboxes.length} total, ${selectedPallets.length} matching pallets in data`);
-    
+
     return selectedPallets;
 }
 
