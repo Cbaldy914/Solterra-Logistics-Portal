@@ -2687,11 +2687,27 @@ function renderPalletsTable(pallets) {
     const tbody = document.getElementById('palletsTableBody');
 
     if (pallets.length === 0) {
+        // Check if a project filter is selected
+        const projectFilter = document.getElementById('cs_project');
+        const selectedProject = projectFilter ? projectFilter.value : '';
+
+        let emptyMessage = 'No pallets found matching your criteria.';
+        let subMessage = '';
+
+        if (selectedProject && selectedProject !== 'Unassigned') {
+            emptyMessage = `No pallets available for project "${selectedProject}".`;
+            subMessage = '<p style="margin-top: 8px; font-size: 13px; color: #888;">Import pallets first using the Import Pallets feature, or assign existing pallets to this project.</p>';
+        } else if (selectedProject === 'Unassigned') {
+            emptyMessage = 'No unassigned pallets available.';
+            subMessage = '<p style="margin-top: 8px; font-size: 13px; color: #888;">All pallets are currently assigned to projects.</p>';
+        }
+
         tbody.innerHTML = `
             <tr>
                 <td colspan="8" style="text-align: center; padding: 40px; color: #666;">
                     <i class="fas fa-box-open" style="font-size: 24px;"></i>
-                    <p style="margin-top: 10px;">No pallets found matching your criteria.</p>
+                    <p style="margin-top: 10px;">${emptyMessage}</p>
+                    ${subMessage}
                 </td>
             </tr>
         `;

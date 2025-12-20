@@ -3,8 +3,10 @@
  * Upload Shipments
  *
  * Multi-step upload process for importing shipments/deliveries.
- * Links existing pallets to deliveries based on BOL number.
- * Step 1: Select project and upload file
+ * Links existing pallets to deliveries based on BOL/Container number.
+ * Works like create_shipment.php - user selects destination type (project or warehouse).
+ *
+ * Step 1: Upload file and select destination
  * Step 2: Map columns
  * Step 3: Preview and confirm import
  * Step 4: Results
@@ -76,14 +78,6 @@ if ($project_id) {
     $account_id = $project['account_id'];
 }
 
-// Fetch manufacturers for dropdown
-$manufacturers = [];
-$sqlMfg = "SELECT id, name, short_name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC";
-$resMfg = $conn->query($sqlMfg);
-while ($row = $resMfg->fetch_assoc()) {
-    $manufacturers[] = $row;
-}
-
 // Fetch projects for destination options
 $projects = [];
 if ($account_id) {
@@ -97,8 +91,13 @@ if ($account_id) {
     $stmt->close();
 }
 
-// Get valid statuses
-$validStatuses = ScheduleParser::$validStatuses;
+// Fetch warehouses for destination options
+$warehouses = [];
+$sqlWh = "SELECT id, name, city, state FROM warehouses ORDER BY name ASC";
+$resWh = $conn->query($sqlWh);
+while ($row = $resWh->fetch_assoc()) {
+    $warehouses[] = $row;
+}
 
 // Check if Excel is supported
 $excelSupported = ScheduleParser::isExcelSupported();
@@ -219,39 +218,30 @@ $conn->close();
             padding: 20px;
             margin-bottom: 24px;
         }
+        .info-banner.warning {
+            background: linear-gradient(135deg, #fff3cd 0%, #fffbe6 100%);
+            border-color: #ffc107;
+        }
         .info-banner h3 {
             color: #0056b3;
             margin: 0 0 8px 0;
             font-size: 1rem;
+        }
+        .info-banner.warning h3 {
+            color: #856404;
         }
         .info-banner p {
             color: #004085;
             margin: 0;
             font-size: 0.9rem;
         }
+        .info-banner.warning p {
+            color: #856404;
+        }
         .info-banner ul {
             color: #004085;
             margin: 8px 0 0 0;
             padding-left: 20px;
-            font-size: 0.9rem;
-        }
-
-        /* Warning Banner */
-        .warning-banner {
-            background: linear-gradient(135deg, #fff3cd 0%, #fffbe6 100%);
-            border: 1px solid #ffc107;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 24px;
-        }
-        .warning-banner h3 {
-            color: #856404;
-            margin: 0 0 8px 0;
-            font-size: 1rem;
-        }
-        .warning-banner p {
-            color: #856404;
-            margin: 0;
             font-size: 0.9rem;
         }
 
@@ -270,7 +260,9 @@ $conn->close();
             color: #dc3545;
         }
         .form-group select,
-        .form-group input[type="text"] {
+        .form-group input[type="text"],
+        .form-group input[type="date"],
+        .form-group input[type="number"] {
             width: 100%;
             padding: 12px 16px;
             border: 2px solid #e8e8e8;
@@ -286,6 +278,37 @@ $conn->close();
             border-color: #488C9A;
             background: white;
             box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
+        }
+
+        /* Destination Type Toggle */
+        .destination-toggle {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .destination-toggle label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            padding: 12px 20px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+        .destination-toggle label:hover {
+            border-color: #488C9A;
+        }
+        .destination-toggle input[type="radio"] {
+            width: auto;
+        }
+        .destination-toggle input[type="radio"]:checked + span {
+            color: #488C9A;
+        }
+        .destination-toggle label:has(input:checked) {
+            border-color: #488C9A;
+            background: linear-gradient(135deg, #f0f8ff 0%, #ffffff 100%);
         }
 
         /* File Upload Area */
@@ -385,8 +408,8 @@ $conn->close();
         .preview-table tr:hover {
             background: #f8f9fa;
         }
-        .preview-table .pallet-found { color: #28a745; }
-        .preview-table .pallet-missing { color: #dc3545; }
+        .preview-table .found { color: #28a745; }
+        .preview-table .not-found { color: #dc3545; }
 
         /* Summary Stats */
         .summary-stats {
@@ -407,13 +430,13 @@ $conn->close();
             font-weight: 700;
             color: #488C9A;
         }
+        .stat-value.warning { color: #ffc107; }
+        .stat-value.danger { color: #dc3545; }
         .stat-label {
             font-size: 0.85rem;
             color: #6c757d;
             margin-top: 4px;
         }
-        .stat-card.warning .stat-value { color: #ffc107; }
-        .stat-card.danger .stat-value { color: #dc3545; }
 
         /* Warnings/Errors */
         .warnings-list {
@@ -528,6 +551,59 @@ $conn->close();
             color: #293E4C;
             margin-bottom: 16px;
         }
+
+        /* Optional Fields */
+        .optional-fields-toggle {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .optional-fields-toggle:hover {
+            background: #e9ecef;
+        }
+        .optional-fields-toggle h4 {
+            margin: 0;
+            color: #495057;
+            font-size: 0.95rem;
+        }
+        .optional-fields-toggle .toggle-icon {
+            transition: transform 0.3s;
+        }
+        .optional-fields-toggle.open .toggle-icon {
+            transform: rotate(180deg);
+        }
+        .optional-fields-content {
+            display: none;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            padding: 20px;
+            margin-top: -24px;
+            margin-bottom: 24px;
+        }
+        .optional-fields-content.show {
+            display: block;
+        }
+        .optional-fields-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+        .optional-fields-grid .form-group {
+            margin-bottom: 0;
+        }
+        .field-hint {
+            font-size: 0.8rem;
+            color: #6c757d;
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -550,14 +626,14 @@ $conn->close();
         <!-- Page Header -->
         <div class="page-header">
             <h1>Import Shipments</h1>
-            <p>Upload a shipping schedule to create deliveries and link existing pallets.</p>
+            <p>Upload a shipping manifest to create deliveries and link existing pallets.</p>
         </div>
 
         <!-- Step Indicator -->
         <div class="step-indicator">
             <div class="step active" data-step="1">
                 <span class="step-number">1</span>
-                <span>Upload File</span>
+                <span>Upload & Configure</span>
             </div>
             <div class="step" data-step="2">
                 <span class="step-number">2</span>
@@ -576,75 +652,81 @@ $conn->close();
         <!-- Step 1: Upload File -->
         <div class="step-content active" id="step1">
             <div class="content-card">
-                <h2>Step 1: Select Manufacturer & Upload Shipping Schedule</h2>
+                <h2>Step 1: Upload Shipping Manifest & Configure Destination</h2>
 
-                <div class="info-banner">
-                    <h3>What This Does</h3>
-                    <p>Upload your manufacturer's shipping schedule to create delivery records and link them to existing pallets in inventory.</p>
-                    <ul>
-                        <li><strong>BOL Number</strong> - Bill of Lading to group pallets into deliveries (required)</li>
-                        <li><strong>Pallet ID</strong> - Links to existing pallets in inventory (required)</li>
-                        <li><strong>Status</strong> - Delivery status (required)</li>
-                        <li><strong>Estimated Delivery</strong> - Expected arrival date (optional)</li>
-                    </ul>
+                <div class="info-banner warning">
+                    <h3>Important: Import Pallets First</h3>
+                    <p>Make sure your pallets are already in the system before importing shipments. This process links existing pallets to deliveries based on Pallet ID.</p>
                 </div>
 
-                <div class="warning-banner">
-                    <h3>Important: Import Pallets First</h3>
-                    <p>Make sure you've imported your pallets before importing shipments. Shipments are linked to existing pallets by their Pallet ID.</p>
+                <div class="info-banner">
+                    <h3>Required Fields</h3>
+                    <ul>
+                        <li><strong>BOL/Container Number</strong> - Used to group pallets into shipments</li>
+                        <li><strong>Pallet ID</strong> - Must match existing pallets in inventory</li>
+                    </ul>
+                    <p style="margin-top: 8px;"><strong>Optional:</strong> Freight Cost, Estimated Delivery Date, Actual Delivery Date</p>
                 </div>
 
                 <form id="uploadForm" enctype="multipart/form-data">
-                    <input type="hidden" name="project_id" value="<?php echo $project_id ?? ''; ?>">
                     <input type="hidden" name="account_id" value="<?php echo $account_id ?? ''; ?>">
 
+                    <!-- Destination Type Selection -->
                     <div class="form-group">
-                        <label class="required" for="manufacturer_id">Manufacturer</label>
-                        <select name="manufacturer_id" id="manufacturer_id" required>
-                            <option value="">Select Manufacturer</option>
-                            <?php foreach ($manufacturers as $mfg): ?>
-                                <option value="<?php echo $mfg['id']; ?>">
-                                    <?php echo htmlspecialchars($mfg['name']); ?>
-                                    <?php if ($mfg['short_name']): ?>(<?php echo htmlspecialchars($mfg['short_name']); ?>)<?php endif; ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
+                        <label class="required">Destination</label>
+                        <div class="destination-toggle">
+                            <label>
+                                <input type="radio" name="destination_type" value="project" <?php echo $project_id ? 'checked' : ''; ?>>
+                                <span>Project</span>
+                            </label>
+                            <label>
+                                <input type="radio" name="destination_type" value="warehouse" <?php echo !$project_id ? 'checked' : ''; ?>>
+                                <span>Warehouse</span>
+                            </label>
+                        </div>
                     </div>
 
-                    <?php if (!$project_id): ?>
-                    <div class="form-group">
-                        <label class="required" for="destination_project_id">Destination Project</label>
-                        <select name="destination_project_id" id="destination_project_id" required>
+                    <!-- Project Destination -->
+                    <div class="form-group" id="projectDestGroup" style="<?php echo !$project_id ? 'display:none;' : ''; ?>">
+                        <label class="required" for="destination_project_id">Select Project</label>
+                        <select name="destination_project_id" id="destination_project_id">
                             <option value="">Select Project</option>
                             <?php foreach ($projects as $p): ?>
-                                <option value="<?php echo $p['id']; ?>">
+                                <option value="<?php echo $p['id']; ?>" <?php echo ($project_id && $project_id == $p['id']) ? 'selected' : ''; ?>>
                                     <?php echo htmlspecialchars($p['project_name']); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <?php else: ?>
-                    <input type="hidden" name="destination_project_id" value="<?php echo $project_id; ?>">
-                    <?php endif; ?>
 
-                    <div class="form-group">
-                        <label class="required" for="default_status">Default Status for New Records</label>
-                        <select name="default_status" id="default_status" required>
-                            <?php foreach ($validStatuses as $status): ?>
-                                <option value="<?php echo htmlspecialchars($status); ?>" <?php echo $status === 'At Manufacturer' ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($status); ?>
+                    <!-- Warehouse Destination -->
+                    <div class="form-group" id="warehouseDestGroup" style="<?php echo $project_id ? 'display:none;' : ''; ?>">
+                        <label class="required" for="destination_warehouse_id">Select Warehouse</label>
+                        <select name="destination_warehouse_id" id="destination_warehouse_id">
+                            <option value="">Select Warehouse</option>
+                            <?php foreach ($warehouses as $wh): ?>
+                                <option value="<?php echo $wh['id']; ?>">
+                                    <?php echo htmlspecialchars($wh['name']); ?>
+                                    <?php if ($wh['city'] || $wh['state']): ?>
+                                        (<?php echo htmlspecialchars(trim($wh['city'] . ', ' . $wh['state'], ', ')); ?>)
+                                    <?php endif; ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                        <small style="color: #6c757d; display: block; margin-top: 4px;">
-                            This status will be used if a row's status is blank or unmapped.
-                        </small>
                     </div>
 
+                    <!-- Departure Date -->
                     <div class="form-group">
-                        <label class="required">Shipping Schedule File</label>
+                        <label class="required" for="departure_date">Departure Date</label>
+                        <input type="date" name="departure_date" id="departure_date" value="<?php echo date('Y-m-d'); ?>" required>
+                        <div class="field-hint">When the shipments left the origin location.</div>
+                    </div>
+
+                    <!-- File Upload -->
+                    <div class="form-group">
+                        <label class="required">Shipping Manifest File</label>
                         <div class="file-upload-area" id="fileDropArea">
-                            <div class="upload-icon">🚚</div>
+                            <div class="upload-icon">📥</div>
                             <div class="upload-text">Drop your file here or click to browse</div>
                             <div class="upload-subtext">
                                 Supports: CSV<?php echo $excelSupported ? ', Excel (.xlsx, .xls)' : ''; ?>
@@ -676,7 +758,7 @@ $conn->close();
 
                 <div id="existingMappingNotice" style="display: none; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
                     <strong style="color: #155724;">Saved Mapping Found!</strong>
-                    <p style="color: #155724; margin: 8px 0 0 0;">We found a saved column mapping for this manufacturer. The mappings below have been pre-filled.</p>
+                    <p style="color: #155724; margin: 8px 0 0 0;">We found a saved column mapping. The mappings below have been pre-filled.</p>
                 </div>
 
                 <table class="mapping-table">
@@ -694,7 +776,7 @@ $conn->close();
                 <div class="form-group">
                     <label>
                         <input type="checkbox" id="saveMappingCheckbox" checked>
-                        Save this mapping for future uploads from this manufacturer
+                        Save this mapping for future uploads
                     </label>
                 </div>
 
@@ -764,42 +846,44 @@ $conn->close();
     let summary = {};
     let warnings = [];
 
-    const manufacturerId = () => document.getElementById('manufacturer_id').value;
-    const projectId = () => document.querySelector('[name="destination_project_id"]')?.value || '<?php echo $project_id ?? ''; ?>';
+    const getDestinationType = () => document.querySelector('input[name="destination_type"]:checked')?.value || 'project';
+    const getDestinationId = () => {
+        const type = getDestinationType();
+        if (type === 'project') {
+            return document.getElementById('destination_project_id').value;
+        } else {
+            return document.getElementById('destination_warehouse_id').value;
+        }
+    };
+    const getDepartureDate = () => document.getElementById('departure_date').value;
     const accountId = () => document.querySelector('[name="account_id"]')?.value || '<?php echo $account_id ?? ''; ?>';
-    const defaultStatus = () => document.getElementById('default_status').value;
 
     // System fields for shipment import
     const systemFields = {
         'bol_number': {
-            label: 'BOL Number',
+            label: 'BOL / Container Number',
             required: true,
-            common_names: ['BOL', 'BOL #', 'BOL Number', 'Bill of Lading', 'B/L']
+            common_names: ['BOL', 'BOL #', 'BOL Number', 'Container', 'Container #', 'Container Number', 'CNTR', 'Tracking']
         },
         'pallet_id': {
             label: 'Pallet ID',
             required: true,
-            common_names: ['Pallet', 'Pallet #', 'Pallet ID', 'Pallet Number', 'Serial']
+            common_names: ['Pallet', 'Pallet #', 'Pallet ID', 'Pallet Number', 'Serial', 'Serial #']
         },
-        'container_number': {
-            label: 'Container Number',
+        'freight_cost': {
+            label: 'Freight Cost',
             required: false,
-            common_names: ['Container', 'Container #', 'Container Number', 'CNTR']
-        },
-        'status': {
-            label: 'Status',
-            required: false,
-            common_names: ['Status', 'Delivery Status', 'Ship Status', 'State']
+            common_names: ['Freight', 'Cost', 'Freight Cost', 'Shipping Cost', 'Price']
         },
         'estimated_delivery': {
             label: 'Estimated Delivery Date',
             required: false,
-            common_names: ['Est Delivery', 'Est. Delivery', 'ETA', 'Expected Delivery', 'Estimated Arrival']
+            common_names: ['ETA', 'Est. Delivery', 'Estimated Delivery', 'Expected', 'Due Date']
         },
         'actual_delivery': {
             label: 'Actual Delivery Date',
             required: false,
-            common_names: ['Actual Delivery', 'Delivered', 'Delivery Date', 'Actual Del']
+            common_names: ['Delivery Date', 'Actual Delivery', 'Delivered', 'Arrival Date']
         }
     };
 
@@ -814,6 +898,20 @@ $conn->close();
     const btnConfirm = document.getElementById('btnConfirm');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const loadingText = document.getElementById('loadingText');
+
+    // Destination type toggle
+    document.querySelectorAll('input[name="destination_type"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const isProject = this.value === 'project';
+            document.getElementById('projectDestGroup').style.display = isProject ? 'block' : 'none';
+            document.getElementById('warehouseDestGroup').style.display = isProject ? 'none' : 'block';
+            updateStep1Validation();
+        });
+    });
+
+    document.getElementById('destination_project_id').addEventListener('change', updateStep1Validation);
+    document.getElementById('destination_warehouse_id').addEventListener('change', updateStep1Validation);
+    document.getElementById('departure_date').addEventListener('change', updateStep1Validation);
 
     // Step Navigation
     function goToStep(step) {
@@ -879,14 +977,10 @@ $conn->close();
     }
 
     function updateStep1Validation() {
-        const mfgSelected = manufacturerId();
-        const projSelected = projectId();
-        btnNext1.disabled = !(uploadedFile && mfgSelected && projSelected);
+        const destId = getDestinationId();
+        const departureDate = getDepartureDate();
+        btnNext1.disabled = !(uploadedFile && destId && departureDate);
     }
-
-    document.getElementById('manufacturer_id').addEventListener('change', updateStep1Validation);
-    const projSelect = document.getElementById('destination_project_id');
-    if (projSelect) projSelect.addEventListener('change', updateStep1Validation);
 
     // Step 1 -> Step 2
     btnNext1.addEventListener('click', async () => {
@@ -895,7 +989,7 @@ $conn->close();
         const formData = new FormData();
         formData.append('shipment_file', uploadedFile);
         formData.append('action', 'parse_headers');
-        formData.append('manufacturer_id', manufacturerId());
+        formData.append('account_id', accountId());
 
         try {
             const response = await fetch('process_shipment_upload.php', {
@@ -975,6 +1069,7 @@ $conn->close();
 
     // Step 2 -> Step 3
     btnNext2.addEventListener('click', async () => {
+        // Collect mappings
         columnMapping = {};
         let missingRequired = [];
 
@@ -992,15 +1087,15 @@ $conn->close();
             return;
         }
 
-        showLoading('Parsing data and checking pallets...');
+        showLoading('Parsing data and validating pallets...');
 
         const formData = new FormData();
         formData.append('shipment_file', uploadedFile);
         formData.append('action', 'parse_data');
-        formData.append('manufacturer_id', manufacturerId());
-        formData.append('project_id', projectId());
+        formData.append('destination_type', getDestinationType());
+        formData.append('destination_id', getDestinationId());
+        formData.append('departure_date', getDepartureDate());
         formData.append('account_id', accountId());
-        formData.append('default_status', defaultStatus());
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
 
@@ -1022,6 +1117,7 @@ $conn->close();
             summary = result.summary;
             warnings = result.warnings || [];
 
+            // Show preview
             buildPreview();
             goToStep(3);
 
@@ -1032,33 +1128,30 @@ $conn->close();
     });
 
     function buildPreview() {
+        // Summary stats
         const statsDiv = document.getElementById('summaryStats');
-
-        const missingClass = summary.pallets_missing > 0 ? 'danger' : '';
+        const palletsNotFoundClass = summary.pallets_not_found > 0 ? 'danger' : '';
 
         statsDiv.innerHTML = `
             <div class="stat-card">
-                <div class="stat-value">${summary.total_rows}</div>
-                <div class="stat-label">Total Rows</div>
+                <div class="stat-value">${summary.unique_shipments || 0}</div>
+                <div class="stat-label">Shipments (BOL/Container)</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">${summary.unique_bols}</div>
-                <div class="stat-label">Deliveries to Create</div>
+                <div class="stat-value">${summary.total_pallets || 0}</div>
+                <div class="stat-label">Total Pallet Lines</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">${summary.unique_pallets}</div>
-                <div class="stat-label">Pallets Referenced</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">${summary.pallets_found}</div>
+                <div class="stat-value">${summary.pallets_found || 0}</div>
                 <div class="stat-label">Pallets Found</div>
             </div>
-            <div class="stat-card ${missingClass}">
-                <div class="stat-value">${summary.pallets_missing}</div>
+            <div class="stat-card">
+                <div class="stat-value ${palletsNotFoundClass}">${summary.pallets_not_found || 0}</div>
                 <div class="stat-label">Pallets Not Found</div>
             </div>
         `;
 
+        // Warnings
         const warningsDiv = document.getElementById('previewWarnings');
         const warningsList = document.getElementById('warningsList');
         if (warnings.length > 0) {
@@ -1073,29 +1166,30 @@ $conn->close();
             warningsDiv.style.display = 'none';
         }
 
+        // Preview table
         const thead = document.getElementById('previewTableHead');
         const tbody = document.getElementById('previewTableBody');
 
-        const headerCols = ['BOL', 'Pallet ID', 'Pallet Status', 'Container', 'Status', 'Est. Delivery'];
+        // Headers
+        const headerCols = ['BOL/Container', 'Pallet ID', 'Status', 'Pallet Found'];
         thead.innerHTML = headerCols.map(h => `<th>${h}</th>`).join('');
 
+        // Rows (first 20)
         tbody.innerHTML = parsedData.slice(0, 20).map(row => {
-            const palletStatusClass = row.pallet_found ? 'pallet-found' : 'pallet-missing';
-            const palletStatusText = row.pallet_found ? 'Found' : 'Not Found';
+            const foundClass = row.pallet_found ? 'found' : 'not-found';
+            const foundText = row.pallet_found ? '✓ Yes' : '✗ Not Found';
             return `
                 <tr>
                     <td>${row.bol_number || '-'}</td>
                     <td>${row.pallet_id || '-'}</td>
-                    <td class="${palletStatusClass}">${palletStatusText}</td>
-                    <td>${row.container_number || '-'}</td>
-                    <td>${row.status || '-'}</td>
-                    <td>${row.estimated_delivery || '-'}</td>
+                    <td>${row.calculated_status || '-'}</td>
+                    <td class="${foundClass}">${foundText}</td>
                 </tr>
             `;
         }).join('');
 
         if (parsedData.length > 20) {
-            tbody.innerHTML += `<tr><td colspan="6" style="text-align:center; color:#6c757d;">...and ${parsedData.length - 20} more rows</td></tr>`;
+            tbody.innerHTML += `<tr><td colspan="4" style="text-align:center; color:#6c757d;">...and ${parsedData.length - 20} more rows</td></tr>`;
         }
     }
 
@@ -1104,8 +1198,8 @@ $conn->close();
 
     // Step 3 -> Confirm Import
     btnConfirm.addEventListener('click', async () => {
-        if (summary.pallets_missing > 0) {
-            if (!confirm(`Warning: ${summary.pallets_missing} pallets were not found in inventory. Deliveries will be created but these pallets won't be linked. Continue anyway?`)) {
+        if (summary.pallets_not_found > 0) {
+            if (!confirm(`Warning: ${summary.pallets_not_found} pallet(s) were not found in the system and will be skipped. Continue anyway?`)) {
                 return;
             }
         } else {
@@ -1114,15 +1208,15 @@ $conn->close();
             }
         }
 
-        showLoading('Creating deliveries...');
+        showLoading('Creating shipments...');
 
         const formData = new FormData();
         formData.append('shipment_file', uploadedFile);
         formData.append('action', 'import');
-        formData.append('manufacturer_id', manufacturerId());
-        formData.append('project_id', projectId());
+        formData.append('destination_type', getDestinationType());
+        formData.append('destination_id', getDestinationId());
+        formData.append('departure_date', getDepartureDate());
         formData.append('account_id', accountId());
-        formData.append('default_status', defaultStatus());
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
 
@@ -1140,6 +1234,7 @@ $conn->close();
                 return;
             }
 
+            // Show results
             showResults(result);
             goToStep(4);
 
@@ -1151,29 +1246,37 @@ $conn->close();
 
     function showResults(result) {
         const container = document.getElementById('resultsContent');
+        const destType = getDestinationType();
+        const destId = getDestinationId();
 
         if (result.success) {
+            let viewLink = '';
+            if (destType === 'project') {
+                viewLink = `<a href="project_overview.php?project_id=${destId}" class="btn btn-primary">View Project</a>`;
+            } else {
+                viewLink = `<a href="manage_deliveries.php" class="btn btn-primary">View Deliveries</a>`;
+            }
+
             container.innerHTML = `
                 <div class="results-icon success">✓</div>
                 <h2>Import Complete!</h2>
                 <div class="summary-stats">
                     <div class="stat-card">
-                        <div class="stat-value">${result.deliveries_created}</div>
+                        <div class="stat-value">${result.deliveries_created || 0}</div>
                         <div class="stat-label">Deliveries Created</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${result.deliveries_updated}</div>
-                        <div class="stat-label">Deliveries Updated</div>
+                        <div class="stat-value">${result.pallets_linked || 0}</div>
+                        <div class="stat-label">Pallets Linked</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${result.pallets_linked}</div>
-                        <div class="stat-label">Pallets Linked</div>
+                        <div class="stat-value">${result.pallets_skipped || 0}</div>
+                        <div class="stat-label">Pallets Skipped</div>
                     </div>
                 </div>
                 <div class="btn-group" style="justify-content: center; margin-top: 32px;">
-                    <a href="project_overview.php?project_id=${projectId()}" class="btn btn-primary">View Project</a>
-                    <a href="manage_deliveries.php?project_id=${projectId()}" class="btn btn-secondary">View Deliveries</a>
-                    <button type="button" class="btn btn-secondary" onclick="location.reload()">Import More</button>
+                    ${viewLink}
+                    <button type="button" class="btn btn-secondary" onclick="location.reload()">Import Another</button>
                 </div>
             `;
         } else {
@@ -1197,6 +1300,7 @@ $conn->close();
         loadingOverlay.classList.remove('show');
     }
 
+    // Make goToStep available globally for the results page
     window.goToStep = goToStep;
 })();
 </script>
