@@ -128,9 +128,7 @@ function suggestPalletMappings($headers) {
     $palletFields = [
         'pallet_id' => ['Pallet', 'Pallet #', 'Pallet ID', 'Pallet Number', 'Serial', 'Serial #', 'Pallet No'],
         'wattage' => ['Wattage', 'Watts', 'W', 'Power', 'Module Wattage', 'Wp'],
-        'quantity' => ['Quantity', 'Qty', 'Count', 'Modules', 'Module Count', 'PCS', 'Pieces'],
-        'container_number' => ['Container', 'Container #', 'Container Number', 'CNTR', 'Container No'],
-        'serial_range' => ['Serial Range', 'Serials', 'Serial Numbers', 'S/N Range', 'Serial #s']
+        'quantity' => ['Quantity', 'Qty', 'Count', 'Modules', 'Module Count', 'PCS', 'Pieces']
     ];
 
     $suggestions = [];
@@ -204,19 +202,34 @@ function handleParseData($conn, $user_id) {
     $warnings = $data['warnings'];
 
     // Get summary
-    $summary = [
-        'total_rows' => count($parsedData),
-        'total_quantity' => 0,
-        'wattages' => []
-    ];
+    $totalPallets = count($parsedData);
+    $totalModules = 0;
+    $wattages = [];
+    $quantities = [];
 
     foreach ($parsedData as $row) {
-        $summary['total_quantity'] += $row['quantity'] ?? 0;
+        $qty = intval($row['quantity'] ?? 0);
+        $totalModules += $qty;
+        if ($qty > 0) {
+            $quantities[] = $qty;
+        }
         if (!empty($row['wattage'])) {
-            $summary['wattages'][$row['wattage']] = true;
+            $wattages[$row['wattage']] = true;
         }
     }
-    $summary['unique_wattages'] = count($summary['wattages']);
+
+    // Calculate average modules per pallet
+    $avgModulesPerPallet = $totalPallets > 0 ? round($totalModules / $totalPallets) : 0;
+
+    $summary = [
+        'total_rows' => $totalPallets,
+        'total_pallets' => $totalPallets,
+        'total_modules' => $totalModules,
+        'total_quantity' => $totalModules,
+        'unique_wattages' => count($wattages),
+        'avg_modules_per_pallet' => $avgModulesPerPallet,
+        'wattages' => $wattages
+    ];
 
     // Check for existing pallets
     $existingCount = 0;

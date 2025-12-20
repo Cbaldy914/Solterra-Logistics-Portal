@@ -83,7 +83,7 @@ while ($row = $resMfg->fetch_assoc()) {
     $manufacturers[] = $row;
 }
 
-// Fetch projects for destination options (if not already on a project page)
+// Fetch projects for destination options
 $projects = [];
 if ($account_id) {
     $stmt = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC");
@@ -247,7 +247,8 @@ $conn->close();
             color: #dc3545;
         }
         .form-group select,
-        .form-group input[type="text"] {
+        .form-group input[type="text"],
+        .form-group input[type="number"] {
             width: 100%;
             padding: 12px 16px;
             border: 2px solid #e8e8e8;
@@ -263,6 +264,66 @@ $conn->close();
             border-color: #488C9A;
             background: white;
             box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
+        }
+
+        /* Optional Fields Section */
+        .optional-fields-toggle {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .optional-fields-toggle:hover {
+            background: #e9ecef;
+        }
+        .optional-fields-toggle h4 {
+            margin: 0;
+            color: #495057;
+            font-size: 0.95rem;
+        }
+        .optional-fields-toggle .toggle-icon {
+            transition: transform 0.3s;
+        }
+        .optional-fields-toggle.open .toggle-icon {
+            transform: rotate(180deg);
+        }
+        .optional-fields-content {
+            display: none;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            padding: 20px;
+            margin-top: -24px;
+            margin-bottom: 24px;
+        }
+        .optional-fields-content.show {
+            display: block;
+        }
+        .optional-fields-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+        .optional-fields-grid .form-group {
+            margin-bottom: 0;
+        }
+        .optional-fields-grid label {
+            font-size: 0.9rem;
+        }
+        .optional-fields-grid input {
+            padding: 10px 12px;
+            font-size: 0.9rem;
+        }
+        .field-hint {
+            font-size: 0.8rem;
+            color: #6c757d;
+            margin-top: 4px;
         }
 
         /* File Upload Area */
@@ -558,12 +619,10 @@ $conn->close();
                         <li><strong>Pallet ID</strong> - Manufacturer's pallet identifier (required)</li>
                         <li><strong>Wattage</strong> - Module wattage on this pallet (required)</li>
                         <li><strong>Quantity</strong> - Number of modules on this pallet (required)</li>
-                        <li><strong>Container Number</strong> - For grouping pallets (optional)</li>
                     </ul>
                 </div>
 
                 <form id="uploadForm" enctype="multipart/form-data">
-                    <input type="hidden" name="project_id" value="<?php echo $project_id ?? ''; ?>">
                     <input type="hidden" name="account_id" value="<?php echo $account_id ?? ''; ?>">
 
                     <div class="form-group">
@@ -586,21 +645,51 @@ $conn->close();
                         </select>
                     </div>
 
-                    <?php if (!$project_id): ?>
                     <div class="form-group">
-                        <label class="required" for="destination_project_id">Destination Project</label>
-                        <select name="destination_project_id" id="destination_project_id" required>
-                            <option value="">Select Project</option>
+                        <label for="destination_project_id">Project</label>
+                        <select name="destination_project_id" id="destination_project_id">
+                            <option value="">Unassigned</option>
                             <?php foreach ($projects as $p): ?>
-                                <option value="<?php echo $p['id']; ?>">
+                                <option value="<?php echo $p['id']; ?>" <?php echo ($project_id && $project_id == $p['id']) ? 'selected' : ''; ?>>
                                     <?php echo htmlspecialchars($p['project_name']); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
+                        <div class="field-hint">Leave as "Unassigned" if these pallets are not yet assigned to a specific project.</div>
                     </div>
-                    <?php else: ?>
-                    <input type="hidden" name="destination_project_id" value="<?php echo $project_id; ?>">
-                    <?php endif; ?>
+
+                    <!-- Optional Module Details Section -->
+                    <div class="optional-fields-toggle" id="optionalFieldsToggle">
+                        <h4>Optional Module Details</h4>
+                        <span class="toggle-icon">&#9660;</span>
+                    </div>
+                    <div class="optional-fields-content" id="optionalFieldsContent">
+                        <p style="margin: 0 0 16px 0; color: #6c757d; font-size: 0.9rem;">
+                            These fields are optional and will be applied to all imported pallets.
+                            <strong>Modules per Pallet</strong> will be automatically calculated from your file's Quantity column.
+                        </p>
+                        <div class="optional-fields-grid">
+                            <div class="form-group">
+                                <label for="modules_per_pallet">Modules per Pallet</label>
+                                <input type="number" id="modules_per_pallet" name="modules_per_pallet" placeholder="Auto from file" readonly style="background: #e9ecef;">
+                                <div class="field-hint">Deduced from Quantity column</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="pallets_per_truck">Pallets per Truck</label>
+                                <input type="number" id="pallets_per_truck" name="pallets_per_truck" min="1" placeholder="e.g., 24">
+                            </div>
+                            <div class="form-group">
+                                <label for="modules_per_truck">Modules per Truck</label>
+                                <input type="number" id="modules_per_truck" name="modules_per_truck" placeholder="Auto-calculated" readonly style="background: #e9ecef;">
+                                <div class="field-hint">Pallets x Modules</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="trucks_needed">Trucks Needed</label>
+                                <input type="number" id="trucks_needed" name="trucks_needed" placeholder="Auto-calculated" readonly style="background: #e9ecef;">
+                                <div class="field-hint">Based on total pallets</div>
+                            </div>
+                        </div>
+                    </div>
 
                     <div class="form-group">
                         <label class="required">Pallet Manifest File</label>
@@ -727,10 +816,10 @@ $conn->close();
 
     const manufacturerId = () => document.getElementById('manufacturer_id').value;
     const manufacturerLocationId = () => document.getElementById('manufacturer_location_id').value;
-    const projectId = () => document.querySelector('[name="destination_project_id"]')?.value || '<?php echo $project_id ?? ''; ?>';
+    const projectId = () => document.getElementById('destination_project_id')?.value || '';
     const accountId = () => document.querySelector('[name="account_id"]')?.value || '<?php echo $account_id ?? ''; ?>';
 
-    // System fields for pallet import (simplified from full schedule import)
+    // System fields for pallet import (simplified)
     const systemFields = {
         'pallet_id': {
             label: 'Pallet ID',
@@ -745,17 +834,7 @@ $conn->close();
         'quantity': {
             label: 'Quantity (Modules per Pallet)',
             required: true,
-            common_names: ['Quantity', 'Qty', 'Count', 'Modules', 'Module Count', 'PCS']
-        },
-        'container_number': {
-            label: 'Container Number',
-            required: false,
-            common_names: ['Container', 'Container #', 'Container Number', 'CNTR']
-        },
-        'serial_range': {
-            label: 'Serial Number Range',
-            required: false,
-            common_names: ['Serial Range', 'Serials', 'Serial Numbers', 'S/N Range']
+            common_names: ['Quantity', 'Qty', 'Count', 'Modules', 'Module Count', 'PCS', 'Pieces']
         }
     };
 
@@ -770,6 +849,31 @@ $conn->close();
     const btnConfirm = document.getElementById('btnConfirm');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const loadingText = document.getElementById('loadingText');
+
+    // Optional fields toggle
+    document.getElementById('optionalFieldsToggle').addEventListener('click', function() {
+        this.classList.toggle('open');
+        document.getElementById('optionalFieldsContent').classList.toggle('show');
+    });
+
+    // Auto-calculate modules per truck
+    document.getElementById('pallets_per_truck').addEventListener('input', function() {
+        updateCalculatedFields();
+    });
+
+    function updateCalculatedFields() {
+        const modulesPerPallet = parseInt(document.getElementById('modules_per_pallet').value) || 0;
+        const palletsPerTruck = parseInt(document.getElementById('pallets_per_truck').value) || 0;
+
+        if (modulesPerPallet && palletsPerTruck) {
+            document.getElementById('modules_per_truck').value = modulesPerPallet * palletsPerTruck;
+        }
+
+        // Calculate trucks needed based on total pallets in preview
+        if (summary.total_pallets && palletsPerTruck > 0) {
+            document.getElementById('trucks_needed').value = Math.ceil(summary.total_pallets / palletsPerTruck);
+        }
+    }
 
     // Manufacturer change - load locations
     document.getElementById('manufacturer_id').addEventListener('change', function() {
@@ -870,12 +974,9 @@ $conn->close();
 
     function updateStep1Validation() {
         const mfgSelected = manufacturerId();
-        const projSelected = projectId();
-        btnNext1.disabled = !(uploadedFile && mfgSelected && projSelected);
+        // Project is optional now (can be unassigned)
+        btnNext1.disabled = !(uploadedFile && mfgSelected);
     }
-
-    const projSelect = document.getElementById('destination_project_id');
-    if (projSelect) projSelect.addEventListener('change', updateStep1Validation);
 
     // Step 1 -> Step 2
     btnNext1.addEventListener('click', async () => {
@@ -964,6 +1065,7 @@ $conn->close();
 
     // Step 2 -> Step 3
     btnNext2.addEventListener('click', async () => {
+        // Collect mappings
         columnMapping = {};
         let missingRequired = [];
 
@@ -993,6 +1095,9 @@ $conn->close();
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
 
+        // Add optional module details
+        formData.append('pallets_per_truck', document.getElementById('pallets_per_truck').value || '');
+
         try {
             const response = await fetch('process_pallet_upload.php', {
                 method: 'POST',
@@ -1011,6 +1116,13 @@ $conn->close();
             summary = result.summary;
             warnings = result.warnings || [];
 
+            // Update modules per pallet field with average from data
+            if (summary.avg_modules_per_pallet) {
+                document.getElementById('modules_per_pallet').value = summary.avg_modules_per_pallet;
+                updateCalculatedFields();
+            }
+
+            // Show preview
             buildPreview();
             goToStep(3);
 
@@ -1021,14 +1133,15 @@ $conn->close();
     });
 
     function buildPreview() {
+        // Summary stats
         const statsDiv = document.getElementById('summaryStats');
         statsDiv.innerHTML = `
             <div class="stat-card">
-                <div class="stat-value">${summary.total_rows}</div>
+                <div class="stat-value">${summary.total_pallets || 0}</div>
                 <div class="stat-label">Total Pallets</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">${summary.total_quantity?.toLocaleString() || 0}</div>
+                <div class="stat-value">${(summary.total_modules || 0).toLocaleString()}</div>
                 <div class="stat-label">Total Modules</div>
             </div>
             <div class="stat-card">
@@ -1036,15 +1149,12 @@ $conn->close();
                 <div class="stat-label">Wattage Types</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">${summary.pallets_existing || 0}</div>
-                <div class="stat-label">Will Update</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">${summary.pallets_new || summary.total_rows}</div>
-                <div class="stat-label">Will Create</div>
+                <div class="stat-value">${summary.avg_modules_per_pallet || '-'}</div>
+                <div class="stat-label">Avg Modules/Pallet</div>
             </div>
         `;
 
+        // Warnings
         const warningsDiv = document.getElementById('previewWarnings');
         const warningsList = document.getElementById('warningsList');
         if (warnings.length > 0) {
@@ -1059,23 +1169,25 @@ $conn->close();
             warningsDiv.style.display = 'none';
         }
 
+        // Preview table
         const thead = document.getElementById('previewTableHead');
         const tbody = document.getElementById('previewTableBody');
 
-        const headerCols = ['Pallet ID', 'Wattage', 'Quantity', 'Container'];
+        // Headers
+        const headerCols = ['Pallet ID', 'Wattage', 'Quantity'];
         thead.innerHTML = headerCols.map(h => `<th>${h}</th>`).join('');
 
+        // Rows (first 20)
         tbody.innerHTML = parsedData.slice(0, 20).map(row => `
             <tr>
                 <td>${row.pallet_id || '-'}</td>
                 <td>${row.wattage || '-'}W</td>
                 <td>${row.quantity || '-'}</td>
-                <td>${row.container_number || '-'}</td>
             </tr>
         `).join('');
 
         if (parsedData.length > 20) {
-            tbody.innerHTML += `<tr><td colspan="4" style="text-align:center; color:#6c757d;">...and ${parsedData.length - 20} more pallets</td></tr>`;
+            tbody.innerHTML += `<tr><td colspan="3" style="text-align:center; color:#6c757d;">...and ${parsedData.length - 20} more rows</td></tr>`;
         }
     }
 
@@ -1100,6 +1212,9 @@ $conn->close();
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
 
+        // Add optional module details
+        formData.append('pallets_per_truck', document.getElementById('pallets_per_truck').value || '');
+
         try {
             const response = await fetch('process_pallet_upload.php', {
                 method: 'POST',
@@ -1114,6 +1229,7 @@ $conn->close();
                 return;
             }
 
+            // Show results
             showResults(result);
             goToStep(4);
 
@@ -1125,8 +1241,16 @@ $conn->close();
 
     function showResults(result) {
         const container = document.getElementById('resultsContent');
+        const pid = projectId();
 
         if (result.success) {
+            let viewLink = '';
+            if (pid) {
+                viewLink = `<a href="project_overview.php?project_id=${pid}" class="btn btn-primary">View Project</a>`;
+            } else {
+                viewLink = `<a href="dashboard.php" class="btn btn-primary">Go to Dashboard</a>`;
+            }
+
             container.innerHTML = `
                 <div class="results-icon success">✓</div>
                 <h2>Import Complete!</h2>
@@ -1136,18 +1260,17 @@ $conn->close();
                         <div class="stat-label">Pallets Created</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${result.pallets_updated}</div>
-                        <div class="stat-label">Pallets Updated</div>
+                        <div class="stat-value">${result.modules_created || 0}</div>
+                        <div class="stat-label">Module Items Created</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">${result.total_modules?.toLocaleString() || 0}</div>
+                        <div class="stat-value">${(result.total_modules || 0).toLocaleString()}</div>
                         <div class="stat-label">Total Modules</div>
                     </div>
                 </div>
                 <div class="btn-group" style="justify-content: center; margin-top: 32px;">
-                    <a href="project_overview.php?project_id=${projectId()}" class="btn btn-primary">View Project</a>
-                    <a href="module_overview.php?project_id=${projectId()}" class="btn btn-secondary">View Modules</a>
-                    <button type="button" class="btn btn-secondary" onclick="location.reload()">Import More</button>
+                    ${viewLink}
+                    <button type="button" class="btn btn-secondary" onclick="location.reload()">Import Another</button>
                 </div>
             `;
         } else {
@@ -1171,6 +1294,7 @@ $conn->close();
         loadingOverlay.classList.remove('show');
     }
 
+    // Make goToStep available globally for the results page
     window.goToStep = goToStep;
 })();
 </script>
