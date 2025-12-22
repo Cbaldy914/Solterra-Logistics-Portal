@@ -868,14 +868,17 @@ $conn->close();
 
                     <!-- Optional Module Details Section -->
                     <div class="optional-fields-toggle" id="optionalFieldsToggle">
-                        <h4>Optional Module Details</h4>
+                        <h4>Optional Logistics Specifications</h4>
                         <span class="toggle-icon">&#9660;</span>
                     </div>
                     <div class="optional-fields-content" id="optionalFieldsContent">
                         <p style="margin: 0 0 16px 0; color: #6c757d; font-size: 0.9rem;">
-                            These fields are optional and will be applied to all imported pallets.
+                            These fields are optional and will be applied to the module batch.
                             <strong>Modules per Pallet</strong> will be automatically calculated from your file's Quantity column.
                         </p>
+
+                        <!-- Truck/Pallet Calculations -->
+                        <h5 style="margin: 0 0 12px 0; color: #293E4C; font-size: 0.95rem; border-bottom: 1px solid #e9ecef; padding-bottom: 8px;">Truck & Pallet Info</h5>
                         <div class="optional-fields-grid">
                             <div class="form-group">
                                 <label for="modules_per_pallet">Modules per Pallet</label>
@@ -896,6 +899,65 @@ $conn->close();
                                 <input type="number" id="trucks_needed" name="trucks_needed" placeholder="Auto-calculated" readonly style="background: #e9ecef;">
                                 <div class="field-hint">Based on total pallets</div>
                             </div>
+                        </div>
+
+                        <!-- Pallet Dimensions -->
+                        <h5 style="margin: 20px 0 12px 0; color: #293E4C; font-size: 0.95rem; border-bottom: 1px solid #e9ecef; padding-bottom: 8px;">Pallet Dimensions</h5>
+                        <div class="optional-fields-grid">
+                            <div class="form-group">
+                                <label for="pallet_length_mm">Length (mm)</label>
+                                <input type="number" id="pallet_length_mm" name="pallet_length_mm" min="1" placeholder="e.g., 2384">
+                            </div>
+                            <div class="form-group">
+                                <label for="pallet_depth_mm">Depth (mm)</label>
+                                <input type="number" id="pallet_depth_mm" name="pallet_depth_mm" min="1" placeholder="e.g., 1303">
+                            </div>
+                            <div class="form-group">
+                                <label for="pallet_double_stacked_height_mm">Stack Height (mm)</label>
+                                <input type="number" id="pallet_double_stacked_height_mm" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g., 2200">
+                            </div>
+                            <div class="form-group">
+                                <label for="pallet_total_weight_kg">Weight (kg)</label>
+                                <input type="number" id="pallet_total_weight_kg" name="pallet_total_weight_kg" min="1" placeholder="e.g., 1200">
+                            </div>
+                        </div>
+
+                        <!-- Handling Requirements -->
+                        <h5 style="margin: 20px 0 12px 0; color: #293E4C; font-size: 0.95rem; border-bottom: 1px solid #e9ecef; padding-bottom: 8px;">Handling Requirements</h5>
+                        <div class="optional-fields-grid">
+                            <div class="form-group">
+                                <label for="forklift_truck_long_side_mm">Forklift Long Side (mm)</label>
+                                <input type="number" id="forklift_truck_long_side_mm" name="forklift_truck_long_side_mm" min="1" placeholder="e.g., 1200">
+                            </div>
+                            <div class="form-group">
+                                <label for="forklift_truck_short_side_mm">Forklift Short Side (mm)</label>
+                                <input type="number" id="forklift_truck_short_side_mm" name="forklift_truck_short_side_mm" min="1" placeholder="e.g., 1000">
+                            </div>
+                            <div class="form-group">
+                                <label for="pallet_jack_long_side_mm">Pallet Jack Long (mm)</label>
+                                <input type="number" id="pallet_jack_long_side_mm" name="pallet_jack_long_side_mm" min="1" placeholder="e.g., 1150">
+                            </div>
+                            <div class="form-group">
+                                <label for="pallet_jack_short_side_mm">Pallet Jack Short (mm)</label>
+                                <input type="number" id="pallet_jack_short_side_mm" name="pallet_jack_short_side_mm" min="1" placeholder="e.g., 800">
+                            </div>
+                        </div>
+
+                        <!-- Stacking Instructions -->
+                        <h5 style="margin: 20px 0 12px 0; color: #293E4C; font-size: 0.95rem; border-bottom: 1px solid #e9ecef; padding-bottom: 8px;">Stacking Instructions</h5>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                            <div class="form-group">
+                                <label for="stacking_in_warehouse">Warehouse Stacking</label>
+                                <textarea id="stacking_in_warehouse" name="stacking_in_warehouse" rows="2" placeholder="Instructions for warehouse stacking..."></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="stacking_during_transport">Transport Stacking</label>
+                                <textarea id="stacking_during_transport" name="stacking_during_transport" rows="2" placeholder="Instructions for transport stacking..."></textarea>
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin-top: 12px;">
+                            <label for="module_notes">Module Notes</label>
+                            <textarea id="module_notes" name="module_notes" rows="2" placeholder="General notes about the modules..."></textarea>
                         </div>
                     </div>
 
@@ -949,15 +1011,12 @@ $conn->close();
                     </tbody>
                 </table>
 
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="saveMappingCheckbox" checked>
-                        Save this mapping for future uploads from this manufacturer
-                    </label>
-                </div>
-
-                <div class="btn-group">
+                <div class="btn-group" style="align-items: center; flex-wrap: wrap; gap: 16px;">
                     <button type="button" class="btn btn-secondary" id="btnBack2">Back</button>
+                    <label style="display: flex; align-items: center; gap: 8px; margin: 0; font-weight: normal; cursor: pointer;">
+                        <input type="checkbox" id="saveMappingCheckbox" checked style="width: 18px; height: 18px; cursor: pointer;">
+                        <span style="font-size: 0.9rem; color: #495057;">Save this mapping for future uploads</span>
+                    </label>
                     <button type="button" class="btn btn-primary" id="btnNext2">Next: Preview Import</button>
                 </div>
             </div>
@@ -1084,7 +1143,9 @@ $conn->close();
         },
         'quantity': {
             label: 'Quantity (Modules per Pallet)',
-            required: true,
+            required: false, // Allow manual entry if not in file
+            allowManualEntry: true,
+            manualEntryLabel: 'Default quantity for all pallets',
             common_names: ['Quantity', 'Qty', 'Count', 'Modules', 'Module Count', 'PCS', 'Pieces']
         }
     };
@@ -1305,6 +1366,35 @@ $conn->close();
 
             selectCell.appendChild(select);
 
+            // Add manual entry option for fields that support it
+            if (fieldConfig.allowManualEntry) {
+                const manualDiv = document.createElement('div');
+                manualDiv.id = 'manual_' + fieldKey + '_container';
+                manualDiv.style.marginTop = '10px';
+                manualDiv.style.display = 'none';
+                manualDiv.innerHTML = `
+                    <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 10px;">
+                        <label style="display: block; font-size: 0.85rem; color: #856404; margin-bottom: 6px;">
+                            ${fieldConfig.manualEntryLabel || 'Enter value manually'}:
+                        </label>
+                        <input type="number" id="manual_${fieldKey}" name="manual_${fieldKey}"
+                               placeholder="e.g., 30" min="1"
+                               style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    </div>
+                `;
+                selectCell.appendChild(manualDiv);
+
+                // Show/hide manual entry based on column selection
+                select.addEventListener('change', function() {
+                    manualDiv.style.display = this.value ? 'none' : 'block';
+                });
+
+                // Initially show if not mapped
+                if (!mappingsToUse || !mappingsToUse[fieldKey]) {
+                    manualDiv.style.display = 'block';
+                }
+            }
+
             row.appendChild(labelCell);
             row.appendChild(selectCell);
             tbody.appendChild(row);
@@ -1327,10 +1417,20 @@ $conn->close();
             if (fieldConfig.required && !select.value) {
                 missingRequired.push(fieldConfig.label);
             }
+
+            // Check for manual entry if field supports it and isn't mapped
+            if (fieldConfig.allowManualEntry && !select.value) {
+                const manualInput = document.getElementById('manual_' + fieldKey);
+                if (manualInput && manualInput.value) {
+                    columnMapping['manual_' + fieldKey] = manualInput.value;
+                } else {
+                    missingRequired.push(fieldConfig.label + ' (map column or enter default value)');
+                }
+            }
         }
 
         if (missingRequired.length > 0) {
-            alert('Please map the required fields: ' + missingRequired.join(', '));
+            alert('Please provide the following:\n\n' + missingRequired.join('\n'));
             return;
         }
 
