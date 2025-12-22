@@ -114,8 +114,6 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        .container { padding: 20px; max-width: 1200px; margin: 0 auto; }
-
         /* Page Header */
         .page-header {
             background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);

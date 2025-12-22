@@ -18,6 +18,12 @@ $role = $_SESSION['role'];
 $batch_id = isset($_GET['batch_id']) ? (int)$_GET['batch_id'] : 0;
 if ($batch_id <= 0) { header('Location: modules.php?error=missing_batch'); exit(); }
 
+// Project capacity tracking variables
+$project_size_mw = 0;
+$current_ordered_mw = 0;
+$this_batch_mw = 0;
+$remaining_mw = 0;
+
 // Load module batch and access control
 if ($role === 'admin') {
     $stmt = $conn->prepare("SELECT m.*, p.project_name FROM modules m LEFT JOIN projects p ON m.project_id = p.id JOIN customer_account_users cau ON m.account_id = cau.account_id AND cau.role='admin' WHERE m.id=? AND cau.user_id=?");
@@ -33,6 +39,44 @@ $module = $res->fetch_assoc();
 $stmt->close();
 
 $project_id = (int)($module['project_id'] ?? 0);
+
+// Load project capacity data if this batch is assigned to a project
+if ($project_id > 0) {
+    // Get project size
+    $stmtProj = $conn->prepare("SELECT project_size FROM projects WHERE id = ?");
+    $stmtProj->bind_param("i", $project_id);
+    $stmtProj->execute();
+    $projResult = $stmtProj->get_result()->fetch_assoc();
+    $project_size_mw = floatval($projResult['project_size'] ?? 0);
+    $stmtProj->close();
+
+    // Calculate total ordered MW for the project (all batches)
+    $stmtTotal = $conn->prepare("
+        SELECT SUM(umi.wattage * umi.quantity) / 1000000 as total_mw
+        FROM unassigned_module_items umi
+        JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE m.project_id = ?
+    ");
+    $stmtTotal->bind_param("i", $project_id);
+    $stmtTotal->execute();
+    $totalResult = $stmtTotal->get_result()->fetch_assoc();
+    $current_ordered_mw = floatval($totalResult['total_mw'] ?? 0);
+    $stmtTotal->close();
+
+    // Calculate MW from THIS batch specifically
+    $stmtBatch = $conn->prepare("
+        SELECT SUM(wattage * quantity) / 1000000 as batch_mw
+        FROM unassigned_module_items
+        WHERE unassigned_module_id = ?
+    ");
+    $stmtBatch->bind_param("i", $batch_id);
+    $stmtBatch->execute();
+    $batchResult = $stmtBatch->get_result()->fetch_assoc();
+    $this_batch_mw = floatval($batchResult['batch_mw'] ?? 0);
+    $stmtBatch->close();
+
+    $remaining_mw = max(0, $project_size_mw - $current_ordered_mw);
+}
 
 // Load manufacturers
 $manufacturers = [];
@@ -489,6 +533,42 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
         </div>
     </div>
 
+    <?php if ($project_id > 0 && $project_size_mw > 0): ?>
+    <!-- Project Capacity Info Banner -->
+    <div id="capacityBanner" style="background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%); border: 1px solid #b8daff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+        <h3 style="margin: 0 0 16px 0; color: #0056b3; font-size: 1.1em; display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 1.2em;">&#9889;</span> Project Capacity Status
+        </h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 16px;">
+            <div style="background: white; border-radius: 12px; padding: 16px; text-align: center;">
+                <div style="font-size: 1.6rem; font-weight: 700; color: #488C9A;"><?php echo number_format($current_ordered_mw, 2); ?> MW</div>
+                <div style="font-size: 0.85rem; color: #6c757d;">Total Ordered</div>
+            </div>
+            <div style="background: white; border-radius: 12px; padding: 16px; text-align: center;">
+                <div style="font-size: 1.6rem; font-weight: 700; color: #6c757d;"><?php echo number_format($this_batch_mw, 2); ?> MW</div>
+                <div style="font-size: 0.85rem; color: #6c757d;">This Batch (current)</div>
+            </div>
+            <div style="background: white; border-radius: 12px; padding: 16px; text-align: center;">
+                <div style="font-size: 1.6rem; font-weight: 700; color: #293E4C;"><?php echo number_format($project_size_mw, 2); ?> MW</div>
+                <div style="font-size: 0.85rem; color: #6c757d;">Project Target</div>
+            </div>
+            <div style="background: white; border-radius: 12px; padding: 16px; text-align: center;">
+                <div style="font-size: 1.6rem; font-weight: 700; color: <?php echo $remaining_mw > 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo number_format($remaining_mw, 2); ?> MW</div>
+                <div style="font-size: 0.85rem; color: #6c757d;">Remaining</div>
+            </div>
+        </div>
+        <?php
+        $capacity_pct = $project_size_mw > 0 ? min(100, ($current_ordered_mw / $project_size_mw) * 100) : 0;
+        ?>
+        <div style="background: #e9ecef; border-radius: 8px; height: 20px; overflow: hidden;">
+            <div style="background: linear-gradient(90deg, #488C9A 0%, #3a7086 100%); height: 100%; width: <?php echo $capacity_pct; ?>%; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: 600;">
+                <?php echo number_format($capacity_pct, 1); ?>%
+            </div>
+        </div>
+        <div id="newMwPreview" style="display: none; margin-top: 16px; padding: 12px; background: white; border-radius: 8px; border: 2px solid #ffc107;"></div>
+    </div>
+    <?php endif; ?>
+
     <!-- Entry Method Toggle -->
     <div class="entry-method-toggle" style="background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
         <h3 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1.1em;">How would you like to update modules?</h3>
@@ -568,6 +648,113 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
                 }
             });
         });
+    });
+
+    // MW Capacity tracking for edit mode
+    const capacityData = {
+        projectSizeMw: <?php echo json_encode($project_size_mw); ?>,
+        currentOrderedMw: <?php echo json_encode($current_ordered_mw); ?>,
+        thisBatchMw: <?php echo json_encode($this_batch_mw); ?>
+    };
+
+    function calculateNewBatchMw() {
+        let batchMw = 0;
+        const wattageInputs = document.querySelectorAll('input[name="wattages[]"]');
+        const quantityInputs = document.querySelectorAll('input[name="quantities[]"]');
+
+        wattageInputs.forEach((wInput, i) => {
+            const wattage = parseFloat(wInput.value) || 0;
+            const quantity = parseInt(quantityInputs[i]?.value) || 0;
+            batchMw += (wattage * quantity) / 1000000;
+        });
+        return batchMw;
+    }
+
+    function updateMwPreview() {
+        if (capacityData.projectSizeMw <= 0) return;
+
+        const newBatchMw = calculateNewBatchMw();
+        // New total = current total - old batch MW + new batch MW
+        const newTotalMw = capacityData.currentOrderedMw - capacityData.thisBatchMw + newBatchMw;
+        const previewDiv = document.getElementById('newMwPreview');
+
+        if (previewDiv) {
+            const difference = newBatchMw - capacityData.thisBatchMw;
+
+            if (Math.abs(difference) > 0.001) {
+                previewDiv.style.display = 'block';
+
+                if (newTotalMw > capacityData.projectSizeMw) {
+                    const excessMw = newTotalMw - capacityData.projectSizeMw;
+                    const excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
+                    previewDiv.style.borderColor = '#dc3545';
+                    previewDiv.style.background = '#f8d7da';
+                    previewDiv.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="color: #721c24; font-weight: 600;">&#9888; Over Capacity Warning</span>
+                            <span style="font-weight: 700; color: #721c24;">${newTotalMw.toFixed(2)} MW total</span>
+                        </div>
+                        <div style="font-size: 0.9rem; color: #721c24;">
+                            This change will exceed the project target by ${excessMw.toFixed(2)} MW (${excessPct.toFixed(1)}% over).
+                        </div>
+                    `;
+                } else {
+                    const changeSign = difference > 0 ? '+' : '';
+                    const changeColor = difference > 0 ? '#856404' : '#155724';
+                    previewDiv.style.borderColor = difference > 0 ? '#ffc107' : '#28a745';
+                    previewDiv.style.background = difference > 0 ? '#fff3cd' : '#d4edda';
+                    const remainingAfter = capacityData.projectSizeMw - newTotalMw;
+                    previewDiv.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="color: ${changeColor}; font-weight: 500;">After Changes:</span>
+                            <span style="font-weight: 700; color: ${changeColor};">${newTotalMw.toFixed(2)} MW total (${changeSign}${difference.toFixed(2)} MW)</span>
+                        </div>
+                        <div style="font-size: 0.85rem; color: ${changeColor}; margin-top: 4px;">
+                            ${remainingAfter.toFixed(2)} MW remaining capacity
+                        </div>
+                    `;
+                }
+            } else {
+                previewDiv.style.display = 'none';
+            }
+        }
+    }
+
+    // Add listeners to wattage container for dynamic updates
+    document.addEventListener('DOMContentLoaded', function() {
+        const wattageContainer = document.getElementById('wattage-container');
+        if (wattageContainer) {
+            wattageContainer.addEventListener('input', updateMwPreview);
+            const observer = new MutationObserver(updateMwPreview);
+            observer.observe(wattageContainer, { childList: true, subtree: true });
+        }
+    });
+
+    // Form submission confirmation for over-capacity
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.getElementById('editBatchForm');
+        if (form && capacityData.projectSizeMw > 0) {
+            form.addEventListener('submit', function(e) {
+                const newBatchMw = calculateNewBatchMw();
+                const newTotalMw = capacityData.currentOrderedMw - capacityData.thisBatchMw + newBatchMw;
+
+                if (newTotalMw > capacityData.projectSizeMw) {
+                    const excessMw = newTotalMw - capacityData.projectSizeMw;
+                    const excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
+
+                    const confirmMsg = `WARNING: This change will exceed the project capacity!\n\n` +
+                        `New Total: ${newTotalMw.toFixed(2)} MW\n` +
+                        `Target: ${capacityData.projectSizeMw.toFixed(2)} MW\n\n` +
+                        `This is ${excessMw.toFixed(2)} MW (${excessPct.toFixed(1)}%) over the target.\n\n` +
+                        `Are you sure you want to proceed?`;
+
+                    if (!confirm(confirmMsg)) {
+                        e.preventDefault();
+                        return false;
+                    }
+                }
+            });
+        }
     });
 </script>
 </body>
