@@ -398,6 +398,11 @@ function mapPalletRow($row, $headerIndex, $columnMapping, $rowNum, &$warnings) {
     $requiredFields = ['pallet_id', 'wattage', 'quantity'];
 
     foreach ($columnMapping as $fieldKey => $columnName) {
+        // Skip manual_* keys for now, we'll handle them separately
+        if (strpos($fieldKey, 'manual_') === 0) {
+            continue;
+        }
+
         if (empty($columnName) || !isset($headerIndex[$columnName])) {
             $mapped[$fieldKey] = null;
             continue;
@@ -425,6 +430,20 @@ function mapPalletRow($row, $headerIndex, $columnMapping, $rowNum, &$warnings) {
 
         if (in_array($fieldKey, $requiredFields) && $value !== null && $value !== '') {
             $hasRequiredData = true;
+        }
+    }
+
+    // Apply manual values for unmapped fields
+    foreach ($columnMapping as $manualKey => $manualValue) {
+        if (strpos($manualKey, 'manual_') === 0 && !empty($manualValue)) {
+            $actualKey = str_replace('manual_', '', $manualKey);
+            if (!isset($mapped[$actualKey]) || $mapped[$actualKey] === null) {
+                $mapped[$actualKey] = (int)$manualValue;
+                // Mark as having required data if this is a required field
+                if (in_array($actualKey, $requiredFields)) {
+                    $hasRequiredData = true;
+                }
+            }
         }
     }
 

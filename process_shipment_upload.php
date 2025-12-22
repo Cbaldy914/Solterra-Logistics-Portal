@@ -222,17 +222,17 @@ function handleParseData($conn, $user_id) {
         $types = str_repeat('s', count($palletIds));
 
         $stmt = $conn->prepare("
-            SELECT ip.id, ip.manufacturer_pallet_id, ip.status, ip.current_warehouse_id, ip.current_project_id,
+            SELECT ip.id, ip.pallet_identifier, ip.status, ip.current_warehouse_id, ip.current_project_id,
                    ip.assigned_project_id, ip.wattage, ip.quantity
             FROM inventory_pallets ip
-            WHERE ip.manufacturer_pallet_id IN ($placeholders)
+            WHERE ip.pallet_identifier IN ($placeholders)
         ");
 
         $stmt->bind_param($types, ...$palletIds);
         $stmt->execute();
         $result = $stmt->get_result();
         while ($row = $result->fetch_assoc()) {
-            $foundPallets[$row['manufacturer_pallet_id']] = $row;
+            $foundPallets[$row['pallet_identifier']] = $row;
         }
         $stmt->close();
     }
@@ -543,20 +543,20 @@ function handleImport($conn, $user_id) {
         $types = str_repeat('s', count($palletIds));
 
         $stmt = $conn->prepare("
-            SELECT ip.id, ip.manufacturer_pallet_id, ip.status, ip.current_warehouse_id, ip.current_project_id,
+            SELECT ip.id, ip.pallet_identifier, ip.status, ip.current_warehouse_id, ip.current_project_id,
                    ip.assigned_project_id, ip.wattage, ip.quantity,
                    COALESCE(ip.manufacturer, m.vendor_name, 'Unknown') as manufacturer
             FROM inventory_pallets ip
             LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
             LEFT JOIN modules m ON umi.unassigned_module_id = m.id
-            WHERE ip.manufacturer_pallet_id IN ($placeholders)
+            WHERE ip.pallet_identifier IN ($placeholders)
         ");
 
         $stmt->bind_param($types, ...$palletIds);
         $stmt->execute();
         $result = $stmt->get_result();
         while ($row = $result->fetch_assoc()) {
-            $foundPallets[$row['manufacturer_pallet_id']] = $row;
+            $foundPallets[$row['pallet_identifier']] = $row;
         }
         $stmt->close();
     }

@@ -398,7 +398,6 @@ $conn->close();
             white-space: nowrap;
         }
         .preview-table th {
-            background: #f8f9fa;
             position: sticky;
             top: 0;
             font-weight: 600;
@@ -771,15 +770,12 @@ $conn->close();
                     </tbody>
                 </table>
 
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="saveMappingCheckbox" checked>
-                        Save this mapping for future uploads
-                    </label>
-                </div>
-
-                <div class="btn-group">
+                <div class="btn-group" style="align-items: center; flex-wrap: wrap; gap: 16px;">
                     <button type="button" class="btn btn-secondary" id="btnBack2">Back</button>
+                    <label style="display: flex; align-items: center; gap: 8px; margin: 0; font-weight: normal; cursor: pointer;">
+                        <input type="checkbox" id="saveMappingCheckbox" checked style="width: 18px; height: 18px; cursor: pointer;">
+                        <span style="font-size: 0.9rem; color: #495057;">Save this mapping for future uploads</span>
+                    </label>
                     <button type="button" class="btn btn-primary" id="btnNext2">Next: Preview Import</button>
                 </div>
             </div>
