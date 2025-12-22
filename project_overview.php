@@ -1274,10 +1274,45 @@ if ($current_step >= 4 && $step3_completed) $progress_percentage = 60;
 if ($current_step >= 5 && $step4_completed) $progress_percentage = 80;
 if ($step5_completed) $progress_percentage = 100;
 
-// Delivered-based completion percentage for the circular indicator
+// Calculate ordered MW (total MW of modules added to the project)
+$ordered_mw = 0;
+foreach ($total_orders as $lbl => $info) {
+    $ordered_mw += ($info['raw_quantity'] * $info['wattage']) / 1000000;
+}
+
+// Calculate delivered MW (based on delivered modules with their wattages)
+// We need to get delivered quantities by wattage to calculate accurate MW
+$delivered_mw = 0;
+$delivered_by_wattage_query = $conn->prepare("
+    SELECT ip.wattage, SUM(ip.quantity) as qty
+    FROM inventory_pallets ip
+    WHERE ip.assigned_project_id = ? AND ip.status = 'Delivered to Project'
+    GROUP BY ip.wattage
+");
+$delivered_by_wattage_query->bind_param("i", $project_id);
+$delivered_by_wattage_query->execute();
+$delivered_wattage_result = $delivered_by_wattage_query->get_result();
+while ($dw_row = $delivered_wattage_result->fetch_assoc()) {
+    $delivered_mw += ($dw_row['qty'] * $dw_row['wattage']) / 1000000;
+}
+$delivered_by_wattage_query->close();
+
+// Delivered-based completion percentage for the circular indicator (of ordered modules)
 $delivered_percentage = 0;
 if ($total_raw_modules > 0) {
     $delivered_percentage = max(0, min(100, (int)round(($delivered_raw_total / $total_raw_modules) * 100)));
+}
+
+// Project target completion percentage (based on project_size_mw)
+$project_completion_percentage = 0;
+if ($project_size_mw > 0) {
+    $project_completion_percentage = max(0, min(100, (int)round(($delivered_mw / $project_size_mw) * 100)));
+}
+
+// Ordered vs target percentage (how much of the project target has been ordered)
+$ordered_vs_target_percentage = 0;
+if ($project_size_mw > 0) {
+    $ordered_vs_target_percentage = max(0, min(100, (int)round(($ordered_mw / $project_size_mw) * 100)));
 }
 
 // Fetch module batches for this project with wattage information
@@ -3791,7 +3826,6 @@ document.addEventListener('DOMContentLoaded', function() {
                         <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Module Overview</a>
                         <a href="create_shipment.php?project_id=<?php echo $project_id; ?>">Manage Pallets</a>
                         <a href="module_movements.php?project_id=<?php echo $project_id; ?>">Module Movements</a>
-                        <a href="upload_pallets.php?project_id=<?php echo $project_id; ?>">📦 Import Pallets</a>
                     </div>
                 </div>
                 <div class="dropdown">
@@ -3803,7 +3837,6 @@ document.addEventListener('DOMContentLoaded', function() {
                         <a href="manage_deliveries.php?project_id=<?php echo $project_id; ?>">Manage Deliveries</a>
                         <a href="scheduling.php?project_id=<?php echo $project_id; ?>">Scheduling</a>
                         <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>">Anticipated Schedule</a>
-                        <a href="upload_shipments.php?project_id=<?php echo $project_id; ?>">📥 Import Shipments</a>
                     </div>
                 </div>
                 <div class="dropdown">
@@ -3908,7 +3941,12 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <div class="circle">2</div>
                                 <span class="label">Add Modules</span>
                             <?php endif; ?>
-                            <div class="description"><?php echo number_format($total_raw_modules); ?> modules added</div>
+                            <div class="description">
+                                <?php echo number_format($total_raw_modules); ?> modules added
+                                <?php if ($ordered_mw > 0): ?>
+                                <div style="font-size: 10px; color: #488C9A; margin-top: 2px;">(<?php echo number_format($ordered_mw, 2); ?> / <?php echo number_format($project_size_mw, 2); ?> MW)</div>
+                                <?php endif; ?>
+                            </div>
                         </li>
                         
                         <li class="timeline-item<?php echo $step3_completed ? ' completed' : ''; ?><?php echo $current_step == 3 ? ' current' : ''; ?>">
@@ -4211,10 +4249,10 @@ document.addEventListener('DOMContentLoaded', function() {
                                     </defs>
                                     <circle class="timeline-progress-track" cx="60" cy="60" r="45"></circle>
                                     <circle class="timeline-progress-center" cx="60" cy="60" r="41"></circle>
-                                    <circle class="timeline-progress-fill" cx="60" cy="60" r="45" 
-                                            style="--progress-percentage: <?php echo $delivered_percentage; ?>"></circle>
+                                    <circle class="timeline-progress-fill" cx="60" cy="60" r="45"
+                                            style="--progress-percentage: <?php echo $project_completion_percentage; ?>"></circle>
                                     <text class="timeline-progress-text" x="60" y="60" text-anchor="middle" dy="0.35em">
-                                        <?php echo $delivered_percentage; ?>%
+                                        <?php echo $project_completion_percentage; ?>%
                                     </text>
                                 </svg>
                             </div>
@@ -4222,17 +4260,24 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <?php if ($step5_completed): ?>
                                     <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Completed</a>
                                 <?php else: ?>
-                                    <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Percent Completion</a>
+                                    <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Completion</a>
                                 <?php endif; ?>
                             </span>
-                            <div class="description timeline-remaining-text" data-project-id="<?php echo $project_id; ?>">
-                                <?php 
+                            <div class="description timeline-progress-details">
+                                <?php
                                 if ($step5_completed) {
                                     echo "All modules delivered and project finalized";
                                 } else {
-                                    // Default to modules remaining, will be updated by JavaScript based on active filter
-                                    $remaining = $total_raw_modules - $delivered_raw_total;
-                                    echo '<span class="remaining-count">' . number_format($remaining) . '</span> <span class="remaining-unit">modules</span> remaining';
+                                    // Show hybrid metrics
+                                    $remaining_mw = $project_size_mw - $delivered_mw;
+                                    echo '<div style="font-size: 11px; line-height: 1.5;">';
+                                    echo '<div>' . number_format($delivered_mw, 2) . ' / ' . number_format($project_size_mw, 2) . ' MW delivered</div>';
+                                    if ($ordered_mw > 0 && $ordered_mw < $project_size_mw) {
+                                        echo '<div style="color: #856404;">(' . number_format($ordered_mw, 2) . ' MW ordered, ' . $ordered_vs_target_percentage . '% of target)</div>';
+                                    } elseif ($ordered_mw >= $project_size_mw) {
+                                        echo '<div style="color: #155724;">(' . $delivered_percentage . '% of ordered delivered)</div>';
+                                    }
+                                    echo '</div>';
                                 }
                                 ?>
                             </div>
@@ -4733,10 +4778,10 @@ document.addEventListener('DOMContentLoaded', function() {
                                     </defs>
                                     <circle class="timeline-progress-track" cx="60" cy="60" r="45"></circle>
                                     <circle class="timeline-progress-center" cx="60" cy="60" r="41"></circle>
-                                    <circle class="timeline-progress-fill" cx="60" cy="60" r="45" 
-                                            style="--progress-percentage: <?php echo $delivered_percentage; ?>"></circle>
+                                    <circle class="timeline-progress-fill" cx="60" cy="60" r="45"
+                                            style="--progress-percentage: <?php echo $project_completion_percentage; ?>"></circle>
                                     <text class="timeline-progress-text" x="60" y="60" text-anchor="middle" dy="0.35em">
-                                        <?php echo $delivered_percentage; ?>%
+                                        <?php echo $project_completion_percentage; ?>%
                                     </text>
                                 </svg>
                             </div>
@@ -4745,12 +4790,13 @@ document.addEventListener('DOMContentLoaded', function() {
                                     <h3>Project Completed</h3>
                                     <p>All modules delivered and project finalized</p>
                                 <?php else: ?>
-                                    <h3>Percent Completion</h3>
-                                    <p class="timeline-remaining-text" data-project-id="<?php echo $project_id; ?>">
-                                        <?php 
-                                        // Default to modules remaining, will be updated by JavaScript based on active filter
-                                        $remaining = $total_raw_modules - $delivered_raw_total;
-                                        echo '<span class="remaining-count">' . number_format($remaining) . '</span> <span class="remaining-unit">modules</span> remaining';
+                                    <h3>Project Completion</h3>
+                                    <p style="font-size: 12px; line-height: 1.5; margin: 0;">
+                                        <?php
+                                        echo number_format($delivered_mw, 2) . ' / ' . number_format($project_size_mw, 2) . ' MW delivered';
+                                        if ($ordered_mw > 0 && $ordered_mw < $project_size_mw) {
+                                            echo '<br><span style="color: #856404;">(' . number_format($ordered_mw, 2) . ' MW ordered)</span>';
+                                        }
                                         ?>
                                     </p>
                                 <?php endif; ?>

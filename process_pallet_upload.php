@@ -242,9 +242,9 @@ function handleParseData($conn, $user_id) {
             $types = str_repeat('s', count($palletIds));
 
             $stmt = $conn->prepare("
-                SELECT manufacturer_pallet_id
+                SELECT pallet_identifier
                 FROM inventory_pallets
-                WHERE assigned_project_id = ? AND manufacturer_pallet_id IN ($placeholders)
+                WHERE assigned_project_id = ? AND pallet_identifier IN ($placeholders)
             ");
 
             $params = array_merge([$project_id], $palletIds);
@@ -253,7 +253,7 @@ function handleParseData($conn, $user_id) {
             $result = $stmt->get_result();
             $existingPallets = [];
             while ($row = $result->fetch_assoc()) {
-                $existingPallets[$row['manufacturer_pallet_id']] = true;
+                $existingPallets[$row['pallet_identifier']] = true;
             }
             $stmt->close();
 
@@ -524,8 +524,6 @@ function handleImport($conn, $user_id) {
             $palletId = $palletData['pallet_id'] ?? null;
             $wattage = $palletData['wattage'] ?? 0;
             $quantity = $palletData['quantity'] ?? 0;
-            $containerNumber = $palletData['container_number'] ?? null;
-            $serialRange = $palletData['serial_range'] ?? null;
 
             if (!$palletId || !$wattage || !$quantity) {
                 continue;
@@ -534,10 +532,10 @@ function handleImport($conn, $user_id) {
             // Find or create unassigned_module_item for this wattage
             $moduleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity);
 
-            // Check if pallet exists
+            // Check if pallet exists (using pallet_identifier since manufacturer_pallet_id doesn't exist)
             $stmt = $conn->prepare("
                 SELECT id FROM inventory_pallets
-                WHERE manufacturer_pallet_id = ? AND assigned_project_id = ?
+                WHERE pallet_identifier = ? AND assigned_project_id = ?
             ");
             $stmt->bind_param("si", $palletId, $project_id);
             $stmt->execute();
@@ -550,12 +548,10 @@ function handleImport($conn, $user_id) {
                     UPDATE inventory_pallets SET
                         wattage = ?,
                         quantity = ?,
-                        container_number = COALESCE(?, container_number),
-                        serial_range = COALESCE(?, serial_range),
                         manufacturer_location_id = COALESCE(?, manufacturer_location_id)
                     WHERE id = ?
                 ");
-                $stmt->bind_param("iissii", $wattage, $quantity, $containerNumber, $serialRange, $manufacturer_location_id, $existingPallet['id']);
+                $stmt->bind_param("iiii", $wattage, $quantity, $manufacturer_location_id, $existingPallet['id']);
                 $stmt->execute();
                 $stmt->close();
                 $palletsUpdated++;
@@ -564,16 +560,16 @@ function handleImport($conn, $user_id) {
                 $defaultStatus = 'At Manufacturer';
                 $stmt = $conn->prepare("
                     INSERT INTO inventory_pallets (
-                        pallet_identifier, manufacturer_pallet_id, unassigned_module_item_id,
+                        pallet_identifier, unassigned_module_item_id,
                         wattage, quantity, status, manufacturer, manufacturer_location_id,
-                        assigned_project_id, container_number, serial_range
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        assigned_project_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmt->bind_param(
-                    "ssiiisissss",
-                    $palletId, $palletId, $moduleItemId, $wattage, $quantity,
+                    "siisssii",
+                    $palletId, $moduleItemId, $wattage, $quantity,
                     $defaultStatus, $manufacturerName, $manufacturer_location_id,
-                    $project_id, $containerNumber, $serialRange
+                    $project_id
                 );
                 $stmt->execute();
                 $stmt->close();
