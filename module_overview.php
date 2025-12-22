@@ -528,7 +528,29 @@ try {
         } else {
             $project_data = null;
         }
-        
+
+        // Calculate MW metrics for project view
+        $project_size_mw = 0;
+        $ordered_mw = 0;
+        if ($project_data) {
+            $project_size_mw = floatval($project_data['project_size'] ?? 0);
+
+            // Calculate total ordered MW
+            $stmtMw = $conn->prepare("
+                SELECT SUM(umi.wattage * umi.quantity) / 1000000 as ordered_mw
+                FROM unassigned_module_items umi
+                JOIN modules m ON umi.unassigned_module_id = m.id
+                WHERE m.project_id = ?
+            ");
+            if ($stmtMw) {
+                $stmtMw->bind_param("i", $project_id);
+                $stmtMw->execute();
+                $mwResult = $stmtMw->get_result()->fetch_assoc();
+                $ordered_mw = floatval($mwResult['ordered_mw'] ?? 0);
+                $stmtMw->close();
+            }
+        }
+
         // Fetch all module batches for this project
         $stmtBatches = $conn->prepare("
             SELECT um.*, c.name as account_name, p.project_name
@@ -1571,6 +1593,32 @@ $conn->close();
                     <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project_data['project_address']); ?></p>
                 <?php endif; ?>
                 <p><strong>Number of Module Batches:</strong> <?php echo count($module_batches); ?></p>
+                <?php if ($project_size_mw > 0): ?>
+                <div style="margin-top: 16px; padding: 20px; background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%); border: 1px solid #b8daff; border-radius: 12px;">
+                    <h3 style="margin: 0 0 12px 0; color: #0056b3; font-size: 1rem;">Project Capacity</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 12px;">
+                        <div style="background: white; border-radius: 8px; padding: 12px; text-align: center;">
+                            <div style="font-size: 1.4rem; font-weight: 700; color: #488C9A;"><?php echo number_format($ordered_mw, 2); ?> MW</div>
+                            <div style="font-size: 0.8rem; color: #6c757d;">Ordered</div>
+                        </div>
+                        <div style="background: white; border-radius: 8px; padding: 12px; text-align: center;">
+                            <div style="font-size: 1.4rem; font-weight: 700; color: #293E4C;"><?php echo number_format($project_size_mw, 2); ?> MW</div>
+                            <div style="font-size: 0.8rem; color: #6c757d;">Target</div>
+                        </div>
+                        <div style="background: white; border-radius: 8px; padding: 12px; text-align: center;">
+                            <?php $remaining_mw = max(0, $project_size_mw - $ordered_mw); ?>
+                            <div style="font-size: 1.4rem; font-weight: 700; color: <?php echo $remaining_mw > 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo number_format($remaining_mw, 2); ?> MW</div>
+                            <div style="font-size: 0.8rem; color: #6c757d;">Remaining</div>
+                        </div>
+                    </div>
+                    <?php $capacity_pct = $project_size_mw > 0 ? min(100, ($ordered_mw / $project_size_mw) * 100) : 0; ?>
+                    <div style="background: #e9ecef; border-radius: 8px; height: 16px; overflow: hidden;">
+                        <div style="background: linear-gradient(90deg, #488C9A 0%, #3a7086 100%); height: 100%; width: <?php echo $capacity_pct; ?>%; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: 600;">
+                            <?php echo number_format($capacity_pct, 1); ?>%
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
                 <?php if (count($module_batches) === 0): ?>
                     <div style="margin-top: 16px; padding: 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; text-align: center;">
                         <div style="font-size: 16px; color: #293E4C; font-weight: 600;">No modules found for this project</div>

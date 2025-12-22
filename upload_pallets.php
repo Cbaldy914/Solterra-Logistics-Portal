@@ -55,8 +55,11 @@ $project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : null;
 
 // Validate project belongs to user's account
 $project = null;
+$project_size_mw = 0;
+$existing_modules = 0;
+$existing_mw = 0;
 if ($project_id) {
-    $stmt = $conn->prepare("SELECT id, project_name, account_id FROM projects WHERE id = ?");
+    $stmt = $conn->prepare("SELECT id, project_name, account_id, project_size FROM projects WHERE id = ?");
     $stmt->bind_param("i", $project_id);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -73,6 +76,23 @@ if ($project_id) {
     }
 
     $account_id = $project['account_id'];
+    $project_size_mw = floatval($project['project_size'] ?? 0);
+
+    // Get existing modules count and MW for this project
+    $stmt = $conn->prepare("
+        SELECT SUM(ip.quantity) as total_modules,
+               SUM(ip.quantity * ip.wattage) / 1000000 as total_mw
+        FROM inventory_pallets ip
+        WHERE ip.assigned_project_id = ?
+    ");
+    $stmt->bind_param("i", $project_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $existing = $result->fetch_assoc();
+    $stmt->close();
+
+    $existing_modules = intval($existing['total_modules'] ?? 0);
+    $existing_mw = floatval($existing['total_mw'] ?? 0);
 }
 
 // Fetch manufacturers for dropdown
@@ -111,8 +131,6 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        .container { padding: 20px; max-width: 1200px; margin: 0 auto; }
-
         /* Page Header */
         .page-header {
             background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
@@ -562,6 +580,158 @@ $conn->close();
             color: #293E4C;
             margin-bottom: 16px;
         }
+
+        /* Project Info Banner */
+        .project-info-banner {
+            background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%);
+            border: 1px solid #b8daff;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }
+        .project-info-banner h3 {
+            color: #0056b3;
+            margin: 0 0 12px 0;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .project-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+        }
+        .project-info-item {
+            background: white;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .project-info-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #488C9A;
+        }
+        .project-info-label {
+            font-size: 0.8rem;
+            color: #6c757d;
+            margin-top: 4px;
+        }
+        .project-info-item.target .project-info-value {
+            color: #293E4C;
+        }
+        .project-info-progress {
+            margin-top: 12px;
+            background: white;
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .progress-bar-bg {
+            background: #e9ecef;
+            border-radius: 8px;
+            height: 20px;
+            overflow: hidden;
+        }
+        .progress-bar-fill {
+            background: linear-gradient(90deg, #488C9A 0%, #3a7086 100%);
+            height: 100%;
+            border-radius: 8px;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .progress-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #6c757d;
+            margin-top: 6px;
+        }
+
+        /* MW Comparison Section in Preview */
+        .mw-comparison {
+            background: linear-gradient(135deg, #e7f3ff 0%, #f0f8ff 100%);
+            border: 1px solid #b8daff;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }
+        .mw-comparison h4 {
+            color: #0056b3;
+            margin: 0 0 16px 0;
+            font-size: 1rem;
+        }
+        .mw-comparison-grid {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr auto 1fr;
+            gap: 8px;
+            align-items: center;
+            text-align: center;
+        }
+        .mw-box {
+            background: white;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .mw-box-value {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #488C9A;
+        }
+        .mw-box-label {
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+        .mw-box.total .mw-box-value {
+            color: #28a745;
+        }
+        .mw-box.target .mw-box-value {
+            color: #293E4C;
+        }
+        .mw-operator {
+            font-size: 1.5rem;
+            color: #6c757d;
+            font-weight: bold;
+        }
+
+        /* Over Capacity Warning */
+        .over-capacity-warning {
+            background: linear-gradient(135deg, #fff3cd 0%, #ffe8a1 100%);
+            border: 2px solid #ffc107;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+            display: none;
+        }
+        .over-capacity-warning.show {
+            display: block;
+        }
+        .over-capacity-warning.critical {
+            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+            border-color: #dc3545;
+        }
+        .over-capacity-warning h4 {
+            color: #856404;
+            margin: 0 0 8px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .over-capacity-warning.critical h4 {
+            color: #721c24;
+        }
+        .over-capacity-warning p {
+            color: #856404;
+            margin: 0;
+        }
+        .over-capacity-warning.critical p {
+            color: #721c24;
+        }
     </style>
 </head>
 <body>
@@ -621,6 +791,44 @@ $conn->close();
                         <li><strong>Quantity</strong> - Number of modules on this pallet (required)</li>
                     </ul>
                 </div>
+
+                <?php if ($project && $project_size_mw > 0): ?>
+                <div class="project-info-banner" id="projectInfoBanner">
+                    <h3><span>📊</span> Current Project Status: <?php echo htmlspecialchars($project['project_name']); ?></h3>
+                    <div class="project-info-grid">
+                        <div class="project-info-item">
+                            <div class="project-info-value"><?php echo number_format($existing_modules); ?></div>
+                            <div class="project-info-label">Modules Added</div>
+                        </div>
+                        <div class="project-info-item">
+                            <div class="project-info-value"><?php echo number_format($existing_mw, 2); ?> MW</div>
+                            <div class="project-info-label">Current Capacity</div>
+                        </div>
+                        <div class="project-info-item target">
+                            <div class="project-info-value"><?php echo number_format($project_size_mw, 2); ?> MW</div>
+                            <div class="project-info-label">Project Target</div>
+                        </div>
+                        <div class="project-info-item">
+                            <div class="project-info-value"><?php echo number_format(max(0, $project_size_mw - $existing_mw), 2); ?> MW</div>
+                            <div class="project-info-label">Remaining</div>
+                        </div>
+                    </div>
+                    <?php
+                    $current_pct = $project_size_mw > 0 ? min(100, ($existing_mw / $project_size_mw) * 100) : 0;
+                    ?>
+                    <div class="project-info-progress">
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill" style="width: <?php echo $current_pct; ?>%;">
+                                <?php echo number_format($current_pct, 1); ?>%
+                            </div>
+                        </div>
+                        <div class="progress-labels">
+                            <span>0 MW</span>
+                            <span><?php echo number_format($project_size_mw, 2); ?> MW Target</span>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
 
                 <form id="uploadForm" enctype="multipart/form-data">
                     <input type="hidden" name="account_id" value="<?php echo $account_id ?? ''; ?>">
@@ -764,6 +972,40 @@ $conn->close();
                     <!-- Populated by JavaScript -->
                 </div>
 
+                <!-- MW Comparison Section (only shown when project has a size target) -->
+                <div class="mw-comparison" id="mwComparison" style="display: none;">
+                    <h4>Capacity Impact Analysis</h4>
+                    <div class="mw-comparison-grid">
+                        <div class="mw-box">
+                            <div class="mw-box-value" id="existingMwValue">0.00 MW</div>
+                            <div class="mw-box-label">Currently Added</div>
+                        </div>
+                        <div class="mw-operator">+</div>
+                        <div class="mw-box">
+                            <div class="mw-box-value" id="importMwValue">0.00 MW</div>
+                            <div class="mw-box-label">This Import</div>
+                        </div>
+                        <div class="mw-operator">=</div>
+                        <div class="mw-box total">
+                            <div class="mw-box-value" id="totalMwValue">0.00 MW</div>
+                            <div class="mw-box-label">New Total</div>
+                        </div>
+                    </div>
+                    <div style="text-align: center; margin-top: 12px; padding: 8px; background: white; border-radius: 8px;">
+                        <span style="color: #6c757d; font-size: 0.9rem;">Project Target: </span>
+                        <strong style="color: #293E4C;" id="targetMwValue">0.00 MW</strong>
+                        <span style="margin-left: 16px; color: #6c757d; font-size: 0.9rem;">After Import: </span>
+                        <strong id="percentOfTarget" style="color: #28a745;">0%</strong>
+                        <span style="color: #6c757d; font-size: 0.9rem;"> of target</span>
+                    </div>
+                </div>
+
+                <!-- Over Capacity Warning -->
+                <div class="over-capacity-warning" id="overCapacityWarning">
+                    <h4><span>⚠️</span> <span id="warningTitle">Exceeds Project Capacity</span></h4>
+                    <p id="warningMessage">This import will exceed the project's target capacity.</p>
+                </div>
+
                 <div id="previewWarnings" class="warnings-list" style="display: none;">
                     <h4>Warnings</h4>
                     <ul id="warningsList"></ul>
@@ -813,6 +1055,15 @@ $conn->close();
     let parsedData = [];
     let summary = {};
     let warnings = [];
+    let overCapacityConfirmed = false;
+
+    // Project capacity data from PHP
+    const projectData = {
+        projectSizeMw: <?php echo json_encode($project_size_mw); ?>,
+        existingModules: <?php echo json_encode($existing_modules); ?>,
+        existingMw: <?php echo json_encode($existing_mw); ?>,
+        projectName: <?php echo json_encode($project ? $project['project_name'] : ''); ?>
+    };
 
     const manufacturerId = () => document.getElementById('manufacturer_id').value;
     const manufacturerLocationId = () => document.getElementById('manufacturer_location_id').value;
@@ -1154,6 +1405,67 @@ $conn->close();
             </div>
         `;
 
+        // MW Comparison (only if project has a target size)
+        const mwComparisonDiv = document.getElementById('mwComparison');
+        const overCapacityWarning = document.getElementById('overCapacityWarning');
+
+        if (projectData.projectSizeMw > 0 && projectId()) {
+            // Calculate MW being imported
+            let importMw = 0;
+            parsedData.forEach(row => {
+                const wattage = parseFloat(row.wattage) || 0;
+                const quantity = parseInt(row.quantity) || 0;
+                importMw += (wattage * quantity) / 1000000;
+            });
+
+            const existingMw = projectData.existingMw || 0;
+            const totalMw = existingMw + importMw;
+            const targetMw = projectData.projectSizeMw;
+            const percentOfTarget = targetMw > 0 ? (totalMw / targetMw) * 100 : 0;
+
+            // Update MW comparison display
+            document.getElementById('existingMwValue').textContent = existingMw.toFixed(2) + ' MW';
+            document.getElementById('importMwValue').textContent = importMw.toFixed(2) + ' MW';
+            document.getElementById('totalMwValue').textContent = totalMw.toFixed(2) + ' MW';
+            document.getElementById('targetMwValue').textContent = targetMw.toFixed(2) + ' MW';
+
+            const percentEl = document.getElementById('percentOfTarget');
+            percentEl.textContent = percentOfTarget.toFixed(1) + '%';
+
+            // Color code the percentage
+            if (percentOfTarget > 100) {
+                percentEl.style.color = '#dc3545'; // Red for over
+            } else if (percentOfTarget >= 90) {
+                percentEl.style.color = '#28a745'; // Green for near completion
+            } else {
+                percentEl.style.color = '#488C9A'; // Default blue
+            }
+
+            mwComparisonDiv.style.display = 'block';
+
+            // Show over-capacity warning if needed
+            if (totalMw > targetMw) {
+                const excessMw = totalMw - targetMw;
+                const excessPercent = ((totalMw / targetMw) - 1) * 100;
+
+                document.getElementById('warningTitle').textContent = 'Exceeds Project Capacity';
+                document.getElementById('warningMessage').textContent =
+                    `This import will bring the project to ${totalMw.toFixed(2)} MW, which is ${excessMw.toFixed(2)} MW (${excessPercent.toFixed(1)}%) over the target of ${targetMw.toFixed(2)} MW. You will be asked to confirm before proceeding.`;
+
+                overCapacityWarning.classList.add('show');
+                if (excessPercent > 10) {
+                    overCapacityWarning.classList.add('critical');
+                } else {
+                    overCapacityWarning.classList.remove('critical');
+                }
+            } else {
+                overCapacityWarning.classList.remove('show', 'critical');
+            }
+        } else {
+            mwComparisonDiv.style.display = 'none';
+            overCapacityWarning.classList.remove('show', 'critical');
+        }
+
         // Warnings
         const warningsDiv = document.getElementById('previewWarnings');
         const warningsList = document.getElementById('warningsList');
@@ -1196,8 +1508,37 @@ $conn->close();
 
     // Step 3 -> Confirm Import
     btnConfirm.addEventListener('click', async () => {
-        if (!confirm('Are you sure you want to import these pallets? This will add them to your inventory.')) {
-            return;
+        // Check if over capacity and require explicit confirmation
+        let importMw = 0;
+        parsedData.forEach(row => {
+            const wattage = parseFloat(row.wattage) || 0;
+            const quantity = parseInt(row.quantity) || 0;
+            importMw += (wattage * quantity) / 1000000;
+        });
+
+        const existingMw = projectData.existingMw || 0;
+        const totalMw = existingMw + importMw;
+        const targetMw = projectData.projectSizeMw || 0;
+
+        if (targetMw > 0 && totalMw > targetMw && projectId()) {
+            const excessMw = totalMw - targetMw;
+            const excessPercent = ((totalMw / targetMw) - 1) * 100;
+
+            const confirmMsg = `WARNING: This import will exceed the project capacity!\n\n` +
+                `Current: ${existingMw.toFixed(2)} MW\n` +
+                `Import: +${importMw.toFixed(2)} MW\n` +
+                `New Total: ${totalMw.toFixed(2)} MW\n` +
+                `Target: ${targetMw.toFixed(2)} MW\n\n` +
+                `This is ${excessMw.toFixed(2)} MW (${excessPercent.toFixed(1)}%) over the target.\n\n` +
+                `Are you sure you want to proceed?`;
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+        } else {
+            if (!confirm('Are you sure you want to import these pallets? This will add them to your inventory.')) {
+                return;
+            }
         }
 
         showLoading('Importing pallets...');
