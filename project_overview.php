@@ -1627,43 +1627,246 @@ $deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
 }
 
 /* Timeline Circular Progress - Step 5 Replacement */
+/* ===== Redesigned Project Completion Circle ===== */
 .timeline-progress-step {
     position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
-.timeline-progress-container {
+/* The completion hub - a larger central element that shipping boxes flow around */
+.completion-hub {
+    position: relative;
+    width: 90px;
+    height: 90px;
+    margin: 0 auto 20px;
+    z-index: 3;
+}
+
+.completion-hub-inner {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    border: 4px solid #dee2e6;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    margin: 0 auto 20px;
     position: relative;
     z-index: 2;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+/* Progress ring around the hub */
+.completion-hub svg.progress-ring {
+    position: absolute;
+    top: -4px;
+    left: -4px;
+    width: calc(100% + 8px);
+    height: calc(100% + 8px);
+    transform: rotate(-90deg);
+    z-index: 3;
+    pointer-events: none;
+}
+
+.completion-hub .progress-ring-track {
+    fill: none;
+    stroke: #e9ecef;
+    stroke-width: 4;
+}
+
+.completion-hub .progress-ring-fill {
+    fill: none;
+    stroke: url(#completionGradient);
+    stroke-width: 4;
+    stroke-linecap: round;
+    stroke-dasharray: 282.74;
+    stroke-dashoffset: calc(282.74 - (282.74 * var(--progress, 0) / 100));
+    transition: stroke-dashoffset 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.completion-hub .percentage {
+    font-family: 'Poppins', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: #293E4C;
+    line-height: 1;
+    margin-bottom: 2px;
+}
+
+.completion-hub .percentage-label {
+    font-size: 9px;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+
+/* States for completion hub */
+.timeline-progress-step.completed .completion-hub-inner {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    border-color: #488C9A;
+    transform: scale(1.1);
+    box-shadow: 0 12px 35px rgba(72, 140, 154, 0.4);
+}
+
+.timeline-progress-step.completed .completion-hub .percentage,
+.timeline-progress-step.completed .completion-hub .percentage-label {
+    color: #ffffff;
+}
+
+.timeline-progress-step.completed .completion-hub .progress-ring-fill {
+    stroke: #ffffff;
+}
+
+.timeline-progress-step.current .completion-hub-inner {
+    border-color: #ffc107;
+    box-shadow: 0 10px 30px rgba(255, 193, 7, 0.3);
+    animation: completionPulse 2.5s ease-in-out infinite;
+}
+
+.timeline-progress-step.current .completion-hub .percentage {
+    color: #293E4C;
+}
+
+@keyframes completionPulse {
+    0%, 100% {
+        box-shadow: 0 10px 30px rgba(255, 193, 7, 0.3);
+    }
+    50% {
+        box-shadow: 0 10px 30px rgba(255, 193, 7, 0.5), 0 0 0 8px rgba(255, 193, 7, 0.1);
+    }
+}
+
+/* Shipping flow container - wraps around completion hub */
+.shipping-flow-container {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+    max-width: 550px;
+    margin: 15px auto 0;
+    padding: 20px;
+    background: linear-gradient(135deg, rgba(72, 140, 154, 0.03) 0%, rgba(58, 110, 127, 0.06) 100%);
+    border-radius: 16px;
+    border: 1px solid rgba(72, 140, 154, 0.1);
+}
+
+.shipping-flow-container::before {
+    content: '';
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2px;
+    height: 12px;
+    background: linear-gradient(to bottom, #dee2e6, rgba(72, 140, 154, 0.3));
+}
+
+/* Flow arrow indicator pointing to completion */
+.flow-arrow {
+    position: absolute;
+    bottom: -25px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.flow-arrow-line {
+    width: 2px;
+    height: 15px;
+    background: linear-gradient(to bottom, rgba(72, 140, 154, 0.3), #488C9A);
+}
+
+.flow-arrow-head {
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid #488C9A;
+}
+
+/* Mini shipping cards in the flow */
+.shipping-flow-card {
+    background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+    border: 1px solid rgba(72, 140, 154, 0.15);
+    border-radius: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    text-align: center;
+    min-width: 95px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.shipping-flow-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(72, 140, 154, 0.15);
+    border-color: #488C9A;
+}
+
+.shipping-flow-card .flow-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #293E4C;
+    margin-bottom: 6px;
+    line-height: 1.2;
+}
+
+.shipping-flow-card .flow-count {
+    font-size: 18px;
+    font-weight: 700;
+    color: #488C9A;
+    line-height: 1;
+}
+
+.shipping-flow-card .flow-unit {
+    font-size: 9px;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-top: 2px;
+}
+
+/* Delivered card special styling */
+.shipping-flow-card.delivered {
+    background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+    border-color: rgba(76, 175, 80, 0.3);
+}
+
+.shipping-flow-card.delivered .flow-count {
+    color: #2e7d32;
+}
+
+/* Exceptions card special styling */
+.shipping-flow-card.exceptions {
+    background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+    border-color: rgba(245, 124, 0, 0.3);
+}
+
+.shipping-flow-card.exceptions .flow-label,
+.shipping-flow-card.exceptions .flow-count {
+    color: #e65100;
+}
+
+/* Legacy timeline-progress styles kept for backward compatibility */
+.timeline-progress-container {
+    display: none; /* Hide old container */
 }
 
 .timeline-circular-progress {
-    width: 100px;
-    height: 100px;
-    /* start at 9 o'clock instead of 12 */
-    transform: rotate(-160deg);
-    filter: drop-shadow(0 6px 15px rgba(72, 140, 154, 0.25));
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    display: none; /* Hide old SVG */
 }
 
-
-.timeline-progress-step.completed .timeline-circular-progress {
-    transform: rotate(-160deg) scale(1.02);
-}
-
-.timeline-progress-step.current .timeline-circular-progress {
-    transform: rotate(-160deg) scale(1.0);
-}
-
-@keyframes timelineProgressPulse {
-    0% { filter: drop-shadow(0 8px 20px rgba(255, 193, 7, 0.4)); }
-    50% { filter: drop-shadow(0 8px 20px rgba(255, 193, 7, 0.6)) drop-shadow(0 0 0 8px rgba(255, 193, 7, 0.1)); }
-    100% { filter: drop-shadow(0 8px 20px rgba(255, 193, 7, 0.4)); }
-}
-
+/* Keep gradient definitions working */
 .timeline-progress-track {
     fill: none;
     stroke: #e9ecef;
@@ -1677,22 +1880,19 @@ $deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
     stroke: url(#timelineProgressGradient);
     stroke-width: 6;
     stroke-linecap: round;
-    stroke-dasharray: 282.74; /* 2 * π * 45 */
+    stroke-dasharray: 282.74;
     stroke-dashoffset: calc(282.74 - (282.74 * var(--progress-percentage, 0) / 100));
     transition: stroke-dashoffset 2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Fill the center to visually mask the straight progress bar beneath */
 .timeline-progress-center {
     fill: #ffffff;
 }
 
-/* Admin view uses specific gradient ID */
 #progress-info .timeline-progress-fill {
     stroke: url(#timelineProgressGradient);
 }
 
-/* User view uses different gradient ID */
 #project-progress .timeline-progress-fill {
     stroke: url(#timelineProgressGradientUser);
 }
@@ -2262,17 +2462,38 @@ $deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
         min-width: auto;
     }
     
-    /* Timeline Circular Progress Mobile Responsiveness */
-    .timeline-progress-container { margin-bottom: 10px; }
-    .timeline-circular-progress { width: 110px; height: 110px; }
-    .timeline-progress-text { font-size: 20px; }
-    
-    .timeline-progress-step.completed .timeline-circular-progress {
-        transform: rotate(180deg) scale(1.02);
+    /* Completion Hub Mobile Responsiveness */
+    .completion-hub {
+        width: 70px;
+        height: 70px;
+        margin-bottom: 15px;
     }
-    
-    .timeline-progress-step.current .timeline-circular-progress {
-        transform: rotate(180deg) scale(1.0);
+
+    .completion-hub .percentage {
+        font-size: 18px;
+    }
+
+    .completion-hub .percentage-label {
+        font-size: 8px;
+    }
+
+    .shipping-flow-container {
+        max-width: 320px;
+        padding: 15px;
+        gap: 8px;
+    }
+
+    .shipping-flow-card {
+        min-width: 80px;
+        padding: 8px 10px;
+    }
+
+    .shipping-flow-card .flow-label {
+        font-size: 9px;
+    }
+
+    .shipping-flow-card .flow-count {
+        font-size: 15px;
     }
 
     /* Timeline Mobile Responsiveness */
@@ -2352,25 +2573,23 @@ $deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
         z-index: 2;
     }
 
-    /* Align progress circle like other circles on mobile */
-    .timeline-progress-step .timeline-progress-container {
+    /* Align completion hub like other circles on mobile */
+    .timeline-progress-step .completion-hub {
         position: absolute;
         left: 0;
         top: 0;
         width: var(--timeline-circle-size);
         height: var(--timeline-circle-size);
         margin: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
         z-index: 2;
     }
-    .timeline-progress-step .timeline-circular-progress {
-        width: var(--timeline-circle-size);
-        height: var(--timeline-circle-size);
-        /* Scale so the ring diameter matches the visible circle size (r=45, stroke=6 => ~0.8 of viewBox) */
-        transform: rotate(-160deg) scale(1.25);
-        transform-origin: center center;
+
+    .timeline-progress-step .completion-hub .percentage {
+        font-size: 14px;
+    }
+
+    .timeline-progress-step .completion-hub .percentage-label {
+        font-size: 7px;
     }
     
     .timeline-item .label,
@@ -2454,6 +2673,16 @@ $deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
     .shipping-statuses { grid-template-columns: 1fr; max-width: 360px; }
 }
 
+/* Capacity boxes - very small screens stack completely */
+@media (max-width: 400px) {
+    .capacity-overview {
+        grid-template-columns: 1fr !important;
+    }
+    .capacity-box {
+        grid-column: 1 / -1 !important;
+    }
+}
+
 /* Tablet/laptop optimizations to avoid clipping before mobile layout kicks in */
 @media (max-width: 1200px) and (min-width: 769px) {
     .timeline-container { padding: 30px 20px; overflow: visible; }
@@ -2485,6 +2714,23 @@ $deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
     }
     .project-info button {
         margin: 10px 0;
+    }
+
+    /* Capacity Overview Mobile */
+    .capacity-wrapper {
+        max-width: 100% !important;
+        margin: 12px auto 0 !important;
+    }
+    .capacity-overview {
+        grid-template-columns: 1fr 1fr !important;
+    }
+    .remaining-box {
+        grid-column: 1 / -1 !important;
+    }
+    .modules-ordered-box .wattage-breakdown {
+        left: 0 !important;
+        right: auto !important;
+        width: 250px !important;
     }
     
     /* Mobile responsive for view toggle */
@@ -2558,18 +2804,18 @@ $deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
         height: var(--timeline-circle-size);
         font-size: 18px;
     }
-    /* Keep progress ring same size as circles on smallest screens */
-    .timeline-progress-step .timeline-progress-container {
+    /* Keep completion hub same size as circles on smallest screens */
+    .timeline-progress-step .completion-hub {
         width: var(--timeline-circle-size);
         height: var(--timeline-circle-size);
     }
-    .timeline-progress-step .timeline-circular-progress {
-        width: var(--timeline-circle-size);
-        height: var(--timeline-circle-size);
-        transform: rotate(-160deg) scale(calc(1 / 0.8)); /* ~1.25, match visual circle size */
-        transform-origin: center center;
-        margin-left: calc((var(--timeline-circle-size) - (var(--timeline-circle-size) / 0.8)) / 2 * -1);
-        margin-top: calc((var(--timeline-circle-size) - (var(--timeline-circle-size) / 0.8)) / 2 * -1);
+
+    .timeline-progress-step .completion-hub .percentage {
+        font-size: 12px;
+    }
+
+    .timeline-progress-step .completion-hub .percentage-label {
+        font-size: 6px;
     }
     
     .timeline-item .label {
@@ -3801,7 +4047,86 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div style="flex: 1;">
                     <h1 class="project-name-desktop"><?php echo htmlspecialchars($project['project_name']); ?></h1>
                     <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
-                    <p><strong>Project Size:</strong> <?php echo number_format($project_size_mw, 2); ?> MWs</p>
+
+                    <!-- Project Capacity Overview -->
+                    <?php
+                    $remaining_mw = $project_size_mw - $ordered_mw;
+                    $order_progress_pct = $project_size_mw > 0 ? min(100, ($ordered_mw / $project_size_mw) * 100) : 0;
+                    $can_add_modules = isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']);
+                    ?>
+                    <div class="capacity-wrapper" style="max-width: 60%; margin-top: 12px;">
+                        <div class="capacity-overview" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+                            <!-- Project Size Box -->
+                            <div class="capacity-box" style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 10px; padding: 10px 14px; border: 1px solid #dee2e6;">
+                                <div style="font-size: 10px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Project Size</div>
+                                <div style="font-size: 20px; font-weight: 700; color: #293E4C;"><?php echo number_format($project_size_mw, 2); ?> <span style="font-size: 13px; font-weight: 500;">MW</span></div>
+                            </div>
+
+                            <!-- Modules Ordered Box -->
+                            <div class="capacity-box modules-ordered-box" style="background: linear-gradient(135deg, #f0f7f8 0%, #e3eff1 100%); border-radius: 10px; padding: 10px 14px; border: 1px solid rgba(72, 140, 154, 0.2); position: relative; <?php echo $can_add_modules ? 'cursor: pointer;' : ''; ?>" <?php echo $can_add_modules ? 'onclick="toggleWattageBreakdown(event)"' : ''; ?>>
+                                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                                    <div>
+                                        <div style="font-size: 10px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Modules Ordered</div>
+                                        <div style="display: flex; align-items: baseline; gap: 6px;">
+                                            <span style="font-size: 20px; font-weight: 700; color: #488C9A;"><?php echo number_format($total_raw_modules); ?></span>
+                                            <span style="font-size: 12px; color: #495057;">(<?php echo number_format($ordered_mw, 2); ?> MW)</span>
+                                        </div>
+                                    </div>
+                                    <?php if (!empty($total_orders) && count($total_orders) > 0): ?>
+                                    <span class="wattage-toggle-icon" style="font-size: 10px; color: #488C9A; transition: transform 0.2s;">▼</span>
+                                    <?php endif; ?>
+                                </div>
+                                <?php if (!empty($total_orders) && count($total_orders) > 0): ?>
+                                <!-- Wattage Breakdown Dropdown -->
+                                <div class="wattage-breakdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid rgba(72, 140, 154, 0.25); border-radius: 8px; padding: 10px 12px; margin-top: 4px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                                    <div style="font-size: 10px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Wattage Breakdown</div>
+                                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                                        <?php foreach ($total_orders as $label => $info): ?>
+                                        <span style="font-size: 11px; padding: 3px 8px; background: rgba(72, 140, 154, 0.1); border-radius: 4px; color: #3A6E7F;">
+                                            <?php echo number_format($info['raw_quantity']); ?> × <?php echo $label; ?>
+                                        </span>
+                                        <?php endforeach; ?>
+                                    </div>
+                                    <?php if ($can_add_modules): ?>
+                                    <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" style="display: block; margin-top: 10px; padding: 8px 12px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color: #fff; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 500; text-align: center; transition: opacity 0.2s;" onclick="event.stopPropagation();" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+                                        + Add More Modules
+                                    </a>
+                                    <?php endif; ?>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+
+                            <!-- Remaining/Status Box -->
+                            <div class="capacity-box remaining-box" style="border-radius: 10px; padding: 10px 14px; border: 1px solid <?php echo $remaining_mw > 0 ? 'rgba(255, 193, 7, 0.3)' : 'rgba(40, 167, 69, 0.3)'; ?>; background: <?php echo $remaining_mw > 0 ? 'linear-gradient(135deg, #fffbf0 0%, #fff3cd 100%)' : 'linear-gradient(135deg, #f0fff4 0%, #d4edda 100%)'; ?>;">
+                                <?php if ($remaining_mw > 0): ?>
+                                <div style="font-size: 10px; color: #856404; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Remaining</div>
+                                <div style="font-size: 20px; font-weight: 700; color: #856404;"><?php echo number_format($remaining_mw, 2); ?> <span style="font-size: 13px; font-weight: 500;">MW</span></div>
+                                <?php if ($can_add_modules): ?>
+                                <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" style="display: inline-block; margin-top: 4px; font-size: 10px; color: #856404; text-decoration: none; opacity: 0.8;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">+ Add Modules</a>
+                                <?php endif; ?>
+                                <?php elseif ($remaining_mw < 0): ?>
+                                <div style="font-size: 10px; color: #155724; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Over Target</div>
+                                <div style="font-size: 20px; font-weight: 700; color: #155724;">+<?php echo number_format(abs($remaining_mw), 2); ?> <span style="font-size: 13px; font-weight: 500;">MW</span></div>
+                                <?php else: ?>
+                                <div style="font-size: 10px; color: #155724; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Status</div>
+                                <div style="font-size: 16px; font-weight: 700; color: #155724;">Target Reached</div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <!-- Progress Bar -->
+                        <?php if ($project_size_mw > 0): ?>
+                        <div class="capacity-progress" style="margin-top: 8px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                                <span style="font-size: 10px; color: #6c757d;">Order Progress</span>
+                                <span style="font-size: 10px; font-weight: 600; color: <?php echo $order_progress_pct >= 100 ? '#155724' : '#488C9A'; ?>;"><?php echo number_format($order_progress_pct, 1); ?>%</span>
+                            </div>
+                            <div style="height: 5px; background: #e9ecef; border-radius: 3px; overflow: hidden;">
+                                <div style="height: 100%; width: <?php echo min(100, $order_progress_pct); ?>%; background: <?php echo $order_progress_pct >= 100 ? 'linear-gradient(90deg, #28a745 0%, #20c997 100%)' : 'linear-gradient(90deg, #488C9A 0%, #5ba3b1 100%)'; ?>; border-radius: 3px; transition: width 0.5s ease;"></div>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+                    </div>
                 </div>
                 <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
                 <div class="project-actions-dropdown">
@@ -3943,19 +4268,39 @@ document.addEventListener('DOMContentLoaded', function() {
                             <?php endif; ?>
                             <div class="description">
                                 <?php echo number_format($total_raw_modules); ?> modules added
-                                <?php if ($ordered_mw > 0): ?>
-                                <div style="font-size: 10px; color: #488C9A; margin-top: 2px;">(<?php echo number_format($ordered_mw, 2); ?> / <?php echo number_format($project_size_mw, 2); ?> MW)</div>
+                                <?php if ($ordered_mw > 0 && $project_size_mw > 0):
+                                    $mw_diff = $ordered_mw - $project_size_mw;
+                                    $mw_percentage = round(($ordered_mw / $project_size_mw) * 100);
+                                ?>
+                                <div style="font-size: 10px; color: #488C9A; margin-top: 2px;">
+                                    (<?php echo number_format($ordered_mw, 2); ?> / <?php echo number_format($project_size_mw, 2); ?> MW)
+                                </div>
+                                <?php if ($mw_diff < 0): ?>
+                                <div style="font-size: 9px; margin-top: 3px; padding: 2px 6px; display: inline-block; background: rgba(255, 193, 7, 0.12); border-radius: 3px; color: #856404;">
+                                    <?php echo number_format(abs($mw_diff), 2); ?> MW short of target
+                                </div>
+                                <?php elseif ($mw_diff > 0): ?>
+                                <div style="font-size: 9px; margin-top: 3px; padding: 2px 6px; display: inline-block; background: rgba(40, 167, 69, 0.12); border-radius: 3px; color: #155724;">
+                                    +<?php echo number_format($mw_diff, 2); ?> MW over target
+                                </div>
+                                <?php else: ?>
+                                <div style="font-size: 9px; margin-top: 3px; padding: 2px 6px; display: inline-block; background: rgba(40, 167, 69, 0.12); border-radius: 3px; color: #155724;">
+                                    Target reached
+                                </div>
+                                <?php endif; ?>
+                                <?php elseif ($ordered_mw > 0): ?>
+                                <div style="font-size: 10px; color: #488C9A; margin-top: 2px;">(<?php echo number_format($ordered_mw, 2); ?> MW)</div>
                                 <?php endif; ?>
                             </div>
                         </li>
-                        
+
                         <li class="timeline-item<?php echo $step3_completed ? ' completed' : ''; ?><?php echo $current_step == 3 ? ' current' : ''; ?>">
                             <div class="circle clickable" onclick="window.location.href='module_overview.php?project_id=<?php echo $project_id; ?>'">3</div>
                             <span class="label">
                                 <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Palletize Modules</a>
                             </span>
                             <div class="description">
-                                <?php 
+                                <?php
                                 echo number_format($actual_palletized_count) . ' of ' . number_format($expected_pallets) . ' palletized';
                                 ?>
                             </div>
@@ -4239,23 +4584,32 @@ document.addEventListener('DOMContentLoaded', function() {
                         </li>
                         
                         <li class="timeline-item timeline-progress-step<?php echo $step5_completed ? ' completed' : ''; ?><?php echo $current_step == 5 ? ' current' : ''; ?>">
-                            <div class="timeline-progress-container">
-                                <svg class="timeline-circular-progress" viewBox="0 0 120 120">
-                                    <defs>
-                                        <linearGradient id="timelineProgressGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                                            <stop offset="0%" style="stop-color:#488C9A;stop-opacity:1" />
-                                            <stop offset="100%" style="stop-color:#3A6E7F;stop-opacity:1" />
-                                        </linearGradient>
-                                    </defs>
-                                    <circle class="timeline-progress-track" cx="60" cy="60" r="45"></circle>
-                                    <circle class="timeline-progress-center" cx="60" cy="60" r="41"></circle>
-                                    <circle class="timeline-progress-fill" cx="60" cy="60" r="45"
-                                            style="--progress-percentage: <?php echo $project_completion_percentage; ?>"></circle>
-                                    <text class="timeline-progress-text" x="60" y="60" text-anchor="middle" dy="0.35em">
-                                        <?php echo $project_completion_percentage; ?>%
-                                    </text>
+                            <!-- SVG Gradient Definition (hidden) -->
+                            <svg style="position: absolute; width: 0; height: 0;">
+                                <defs>
+                                    <linearGradient id="completionGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                        <stop offset="0%" style="stop-color:#488C9A;stop-opacity:1" />
+                                        <stop offset="100%" style="stop-color:#3A6E7F;stop-opacity:1" />
+                                    </linearGradient>
+                                    <linearGradient id="timelineProgressGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                        <stop offset="0%" style="stop-color:#488C9A;stop-opacity:1" />
+                                        <stop offset="100%" style="stop-color:#3A6E7F;stop-opacity:1" />
+                                    </linearGradient>
+                                </defs>
+                            </svg>
+
+                            <!-- Redesigned Completion Hub -->
+                            <div class="completion-hub">
+                                <div class="completion-hub-inner">
+                                    <span class="percentage"><?php echo $project_completion_percentage; ?>%</span>
+                                    <span class="percentage-label">Complete</span>
+                                </div>
+                                <svg class="progress-ring" viewBox="0 0 100 100">
+                                    <circle class="progress-ring-track" cx="50" cy="50" r="45"></circle>
+                                    <circle class="progress-ring-fill" cx="50" cy="50" r="45" style="--progress: <?php echo $project_completion_percentage; ?>"></circle>
                                 </svg>
                             </div>
+
                             <span class="label">
                                 <?php if ($step5_completed): ?>
                                     <a href="project_overview.php?project_id=<?php echo $project_id; ?>">Project Completed</a>
@@ -4268,7 +4622,6 @@ document.addEventListener('DOMContentLoaded', function() {
                                 if ($step5_completed) {
                                     echo "All modules delivered and project finalized";
                                 } else {
-                                    // Show hybrid metrics
                                     $remaining_mw = $project_size_mw - $delivered_mw;
                                     echo '<div style="font-size: 11px; line-height: 1.5;">';
                                     echo '<div>' . number_format($delivered_mw, 2) . ' / ' . number_format($project_size_mw, 2) . ' MW delivered</div>';
@@ -4768,23 +5121,32 @@ document.addEventListener('DOMContentLoaded', function() {
                             </div>
                         </li>
                         <li class="timeline-item timeline-progress-step<?php echo $step5_completed ? ' completed' : ''; ?><?php echo $current_step == 5 ? ' current' : ''; ?>">
-                            <div class="timeline-progress-container">
-                                <svg class="timeline-circular-progress" viewBox="0 0 120 120">
-                                    <defs>
-                                        <linearGradient id="timelineProgressGradientUser" x1="0%" y1="0%" x2="100%" y2="0%">
-                                            <stop offset="0%" style="stop-color:#488C9A;stop-opacity:1" />
-                                            <stop offset="100%" style="stop-color:#3A6E7F;stop-opacity:1" />
-                                        </linearGradient>
-                                    </defs>
-                                    <circle class="timeline-progress-track" cx="60" cy="60" r="45"></circle>
-                                    <circle class="timeline-progress-center" cx="60" cy="60" r="41"></circle>
-                                    <circle class="timeline-progress-fill" cx="60" cy="60" r="45"
-                                            style="--progress-percentage: <?php echo $project_completion_percentage; ?>"></circle>
-                                    <text class="timeline-progress-text" x="60" y="60" text-anchor="middle" dy="0.35em">
-                                        <?php echo $project_completion_percentage; ?>%
-                                    </text>
+                            <!-- SVG Gradient Definition (hidden) -->
+                            <svg style="position: absolute; width: 0; height: 0;">
+                                <defs>
+                                    <linearGradient id="completionGradientUser" x1="0%" y1="0%" x2="100%" y2="0%">
+                                        <stop offset="0%" style="stop-color:#488C9A;stop-opacity:1" />
+                                        <stop offset="100%" style="stop-color:#3A6E7F;stop-opacity:1" />
+                                    </linearGradient>
+                                    <linearGradient id="timelineProgressGradientUser" x1="0%" y1="0%" x2="100%" y2="0%">
+                                        <stop offset="0%" style="stop-color:#488C9A;stop-opacity:1" />
+                                        <stop offset="100%" style="stop-color:#3A6E7F;stop-opacity:1" />
+                                    </linearGradient>
+                                </defs>
+                            </svg>
+
+                            <!-- Redesigned Completion Hub -->
+                            <div class="completion-hub">
+                                <div class="completion-hub-inner">
+                                    <span class="percentage"><?php echo $project_completion_percentage; ?>%</span>
+                                    <span class="percentage-label">Complete</span>
+                                </div>
+                                <svg class="progress-ring" viewBox="0 0 100 100">
+                                    <circle class="progress-ring-track" cx="50" cy="50" r="45"></circle>
+                                    <circle class="progress-ring-fill" cx="50" cy="50" r="45" style="--progress: <?php echo $project_completion_percentage; ?>"></circle>
                                 </svg>
                             </div>
+
                             <div class="timeline-content">
                                 <?php if ($step5_completed): ?>
                                     <h3>Project Completed</h3>
@@ -6891,6 +7253,37 @@ window.onclick = function(event) {
 }
 
 <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
+// Wattage Breakdown Toggle
+function toggleWattageBreakdown(event) {
+    event.stopPropagation();
+    const box = event.currentTarget;
+    const dropdown = box.querySelector('.wattage-breakdown');
+    const icon = box.querySelector('.wattage-toggle-icon');
+
+    if (dropdown) {
+        const isOpen = dropdown.style.display === 'block';
+        dropdown.style.display = isOpen ? 'none' : 'block';
+        if (icon) {
+            icon.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
+        }
+    }
+}
+
+// Close wattage breakdown when clicking outside
+document.addEventListener('click', function(event) {
+    const modulesBox = document.querySelector('.modules-ordered-box');
+    if (modulesBox && !modulesBox.contains(event.target)) {
+        const dropdown = modulesBox.querySelector('.wattage-breakdown');
+        const icon = modulesBox.querySelector('.wattage-toggle-icon');
+        if (dropdown) {
+            dropdown.style.display = 'none';
+        }
+        if (icon) {
+            icon.style.transform = 'rotate(0deg)';
+        }
+    }
+});
+
 // Project Actions Functions
 function toggleProjectActions() {
     const dropdown = document.getElementById('projectActionsDropdown');
