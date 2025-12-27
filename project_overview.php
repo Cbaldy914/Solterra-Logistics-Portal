@@ -4097,19 +4097,25 @@ document.addEventListener('DOMContentLoaded', function() {
                             </div>
 
                             <!-- Remaining/Status Box -->
-                            <div class="capacity-box remaining-box" style="border-radius: 10px; padding: 10px 14px; border: 1px solid <?php echo $remaining_mw > 0 ? 'rgba(255, 193, 7, 0.3)' : 'rgba(40, 167, 69, 0.3)'; ?>; background: <?php echo $remaining_mw > 0 ? 'linear-gradient(135deg, #fffbf0 0%, #fff3cd 100%)' : 'linear-gradient(135deg, #f0fff4 0%, #d4edda 100%)'; ?>;">
+                            <div class="capacity-box remaining-box" style="border-radius: 10px; padding: 10px 14px; border: 1px solid <?php echo $remaining_mw > 0 ? 'rgba(255, 193, 7, 0.3)' : 'rgba(40, 167, 69, 0.3)'; ?>; background: <?php echo $remaining_mw > 0 ? 'linear-gradient(135deg, #fffbf0 0%, #fff3cd 100%)' : 'linear-gradient(135deg, #f0fff4 0%, #d4edda 100%)'; ?>; display: flex; justify-content: space-between; align-items: center;">
                                 <?php if ($remaining_mw > 0): ?>
-                                <div style="font-size: 10px; color: #856404; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Remaining</div>
-                                <div style="font-size: 20px; font-weight: 700; color: #856404;"><?php echo number_format($remaining_mw, 2); ?> <span style="font-size: 13px; font-weight: 500;">MW</span></div>
+                                <div>
+                                    <div style="font-size: 10px; color: #856404; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Remaining</div>
+                                    <div style="font-size: 20px; font-weight: 700; color: #856404;"><?php echo number_format($remaining_mw, 2); ?> <span style="font-size: 13px; font-weight: 500;">MW</span></div>
+                                </div>
                                 <?php if ($can_add_modules): ?>
-                                <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" style="display: inline-block; margin-top: 4px; font-size: 10px; color: #856404; text-decoration: none; opacity: 0.8;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">+ Add Modules</a>
+                                <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" style="font-size: 18px; color: #856404; text-decoration: none; opacity: 0.6; line-height: 1;" title="Add Modules" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">+</a>
                                 <?php endif; ?>
                                 <?php elseif ($remaining_mw < 0): ?>
-                                <div style="font-size: 10px; color: #155724; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Over Target</div>
-                                <div style="font-size: 20px; font-weight: 700; color: #155724;">+<?php echo number_format(abs($remaining_mw), 2); ?> <span style="font-size: 13px; font-weight: 500;">MW</span></div>
+                                <div>
+                                    <div style="font-size: 10px; color: #155724; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Over Target</div>
+                                    <div style="font-size: 20px; font-weight: 700; color: #155724;">+<?php echo number_format(abs($remaining_mw), 2); ?> <span style="font-size: 13px; font-weight: 500;">MW</span></div>
+                                </div>
                                 <?php else: ?>
-                                <div style="font-size: 10px; color: #155724; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Status</div>
-                                <div style="font-size: 16px; font-weight: 700; color: #155724;">Target Reached</div>
+                                <div>
+                                    <div style="font-size: 10px; color: #155724; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Status</div>
+                                    <div style="font-size: 16px; font-weight: 700; color: #155724;">Target Reached</div>
+                                </div>
                                 <?php endif; ?>
                             </div>
                         </div>
