@@ -1011,13 +1011,15 @@ $conn->close();
                     </tbody>
                 </table>
 
-                <div class="btn-group" style="align-items: center; flex-wrap: wrap; gap: 16px;">
-                    <button type="button" class="btn btn-secondary" id="btnBack2">Back</button>
+                <div class="btn-group" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
                     <label style="display: flex; align-items: center; gap: 8px; margin: 0; font-weight: normal; cursor: pointer;">
                         <input type="checkbox" id="saveMappingCheckbox" checked style="width: 18px; height: 18px; cursor: pointer;">
                         <span style="font-size: 0.9rem; color: #495057;">Save this mapping for future uploads</span>
                     </label>
-                    <button type="button" class="btn btn-primary" id="btnNext2">Next: Preview Import</button>
+                    <div style="display: flex; gap: 12px;">
+                        <button type="button" class="btn btn-secondary" id="btnBack2">Back</button>
+                        <button type="button" class="btn btn-primary" id="btnNext2">Next: Preview Import</button>
+                    </div>
                 </div>
             </div>
         </div>
