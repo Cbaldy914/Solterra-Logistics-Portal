@@ -268,12 +268,60 @@ function handleParseData($conn, $user_id) {
     }
     unset($row);
 
+    // Check for existing BOL/Container numbers in the database (duplicate shipments)
+    // The deliveries table has separate bol_number and container_number columns
+    $existingBols = [];
+    $existingBolsList = [];
+    if (!empty($uniqueBols)) {
+        $bolNumbers = array_keys($uniqueBols);
+        $placeholders = str_repeat('?,', count($bolNumbers) - 1) . '?';
+        $types = str_repeat('s', count($bolNumbers));
+
+        // Check both bol_number and container_number columns
+        $stmt = $conn->prepare("
+            SELECT DISTINCT
+                CASE
+                    WHEN bol_number IN ($placeholders) THEN bol_number
+                    WHEN container_number IN ($placeholders) THEN container_number
+                END as matched_bol,
+                id, created_at
+            FROM deliveries
+            WHERE bol_number IN ($placeholders) OR container_number IN ($placeholders)
+        ");
+
+        // We need to pass the parameters 4 times (for each IN clause)
+        $allParams = array_merge($bolNumbers, $bolNumbers, $bolNumbers, $bolNumbers);
+        $allTypes = str_repeat('s', count($allParams));
+
+        $stmt->bind_param($allTypes, ...$allParams);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            if (!empty($row['matched_bol'])) {
+                $existingBols[$row['matched_bol']] = [
+                    'id' => $row['id'],
+                    'created_at' => $row['created_at']
+                ];
+                if (!in_array($row['matched_bol'], $existingBolsList)) {
+                    $existingBolsList[] = $row['matched_bol'];
+                }
+            }
+        }
+        $stmt->close();
+    }
+
+    $existingBolCount = count($existingBols);
+    $newBolCount = count($uniqueBols) - $existingBolCount;
+
     // Summary
     $summary = [
         'total_pallets' => count($parsedData),
         'pallets_found' => $palletsFound,
         'pallets_not_found' => $palletsNotFound,
-        'unique_shipments' => count($uniqueBols)
+        'unique_shipments' => count($uniqueBols),
+        'existing_bols' => $existingBolCount,
+        'new_bols' => $newBolCount,
+        'existing_bol_list' => $existingBolsList
     ];
 
     // Store parsed data in session
@@ -344,16 +392,33 @@ function parseShipmentFile($filePath, $columnMapping) {
 
             // Validate required fields
             if (empty($parsedRow['bol_number'])) {
-                $warnings[] = ['row' => $rowNumber, 'message' => 'Missing BOL/Container number'];
+                $warnings[] = ['row' => $rowNumber, 'message' => 'Missing BOL/Container number', 'type' => 'error'];
                 continue;
             }
             if (empty($parsedRow['pallet_id'])) {
-                $warnings[] = ['row' => $rowNumber, 'message' => 'Missing Pallet ID'];
+                $warnings[] = ['row' => $rowNumber, 'message' => 'Missing Pallet ID', 'type' => 'error'];
                 continue;
             }
             if (empty($parsedRow['ship_date'])) {
-                $warnings[] = ['row' => $rowNumber, 'message' => 'Missing Ship Date'];
+                $warnings[] = ['row' => $rowNumber, 'message' => 'Missing Ship Date', 'type' => 'error'];
                 continue;
+            }
+
+            // Data quality validations
+            $bolNumber = $parsedRow['bol_number'];
+            $palletId = $parsedRow['pallet_id'];
+
+            // BOL format validation
+            if (strlen($bolNumber) < 3) {
+                $warnings[] = ['row' => $rowNumber, 'message' => "BOL '{$bolNumber}' is very short - verify this is correct", 'type' => 'warning'];
+            }
+
+            // Pallet ID validation
+            if (strlen($palletId) < 3) {
+                $warnings[] = ['row' => $rowNumber, 'message' => "Pallet ID '{$palletId}' is very short - verify this is correct", 'type' => 'warning'];
+            }
+            if (preg_match('/^\d{1,5}$/', $palletId)) {
+                $warnings[] = ['row' => $rowNumber, 'message' => "Pallet ID '{$palletId}' looks like a row number - verify correct column", 'type' => 'warning'];
             }
 
             // Parse dates
