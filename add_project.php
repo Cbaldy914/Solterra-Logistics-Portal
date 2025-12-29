@@ -354,22 +354,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Mismatch between wattage[] and quantities[] arrays.");
             }
 
-            // First, create entries in project_wattage_orders table for project size calculation
-            $stmt_wattage = $conn->prepare("
-                INSERT INTO project_wattage_orders (project_id, wattage, total_order)
-                VALUES (?, ?, ?)
-            ");
-            if (!$stmt_wattage) {
-                throw new Exception("Error preparing wattage orders insert: " . $conn->error);
-            }
-
+            // First, check if there are any valid wattage/quantity pairs
+            // Skip module batch creation entirely if all entries are empty
+            $valid_pairs = [];
             for ($i = 0; $i < count($wattages); $i++) {
                 $w_val = trim($wattages[$i]);
                 $q_val = trim($quantities[$i]);
 
-                // Validate and convert to integers
+                // Skip completely empty entries
+                if ($w_val === '' && $q_val === '') {
+                    continue;
+                }
+
+                // If one is filled but not the other, that's an error
                 if ($w_val === '' || $q_val === '') {
-                    throw new Exception("Wattage and Quantity values cannot be empty for an entry.");
+                    throw new Exception("Both Wattage and Quantity must be provided for each entry, or leave both empty.");
                 }
 
                 $w_int = filter_var($w_val, FILTER_VALIDATE_INT);
@@ -382,13 +381,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new Exception("Wattage and Quantity must be positive integers.");
                 }
 
-                // Insert into project_wattage_orders for project size calculation
-                $stmt_wattage->bind_param("iii", $project_id, $w_int, $q_int);
-                if (!$stmt_wattage->execute()) {
-                    throw new Exception("Error inserting wattage order (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_wattage->error);
-                }
+                $valid_pairs[] = ['wattage' => $w_int, 'quantity' => $q_int];
             }
-            $stmt_wattage->close();
+
+            // Only proceed with module batch creation if there are valid pairs
+            if (count($valid_pairs) > 0) {
+                // Create entries in project_wattage_orders table for project size calculation
+                $stmt_wattage = $conn->prepare("
+                    INSERT INTO project_wattage_orders (project_id, wattage, total_order)
+                    VALUES (?, ?, ?)
+                ");
+                if (!$stmt_wattage) {
+                    throw new Exception("Error preparing wattage orders insert: " . $conn->error);
+                }
+
+                foreach ($valid_pairs as $pair) {
+                    $w_int = $pair['wattage'];
+                    $q_int = $pair['quantity'];
+                    $stmt_wattage->bind_param("iii", $project_id, $w_int, $q_int);
+                    if (!$stmt_wattage->execute()) {
+                        throw new Exception("Error inserting wattage order (Wattage: {$w_int}W, Quantity: {$q_int}): " . $stmt_wattage->error);
+                    }
+                }
+                $stmt_wattage->close();
 
             // Define vendor_name and initial_location for the new module batch
             $manufacturer_name = "Unknown Manufacturer";
@@ -505,13 +520,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Error preparing module item insert: " . $conn->error);
             }
 
-            for ($i = 0; $i < count($wattages); $i++) {
-                $w_val = trim($wattages[$i]);
-                $q_val = trim($quantities[$i]);
-
-                // We already validated these above, so we can use the same validation
-                $w_int = filter_var($w_val, FILTER_VALIDATE_INT);
-                $q_int = filter_var($q_val, FILTER_VALIDATE_INT);
+            foreach ($valid_pairs as $pair) {
+                $w_int = $pair['wattage'];
+                $q_int = $pair['quantity'];
 
                 $stmt_item->bind_param("iii", $module_batch_id, $w_int, $q_int);
                 if (!$stmt_item->execute()) {
@@ -519,16 +530,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             $stmt_item->close();
+            } // End of if (count($valid_pairs) > 0)
         }
 
         // Set a success message to be displayed with the form below
         $successMessage = "Project added successfully! <a href='project_overview?project_id=" . $project_id . "' style='color: #488C9A; text-decoration: underline;'>View Project</a>.";
 
         // If modules were created, enhance the success message with module count
-        if (isset($_POST['wattages'], $_POST['quantities'])) {
+        if (isset($valid_pairs) && count($valid_pairs) > 0) {
             $totalModulesCreated = 0;
-            for ($i = 0; $i < count($quantities); $i++) {
-                $totalModulesCreated += filter_var($quantities[$i], FILTER_VALIDATE_INT);
+            foreach ($valid_pairs as $pair) {
+                $totalModulesCreated += $pair['quantity'];
             }
             $successMessage = "Project added successfully! " . number_format($totalModulesCreated) . " modules created for this project. <a href='project_overview?project_id=" . $project_id . "' style='color: #488C9A; text-decoration: underline;'>View Project</a>.";
         }
