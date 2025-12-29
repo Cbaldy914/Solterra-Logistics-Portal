@@ -269,7 +269,7 @@ function handleParseData($conn, $user_id) {
     }
 
     $summary['pallets_existing'] = $existingCount;
-    $summary['pallets_new'] = $newCount > 0 ? $newCount : $summary['total_rows'];
+    $summary['pallets_new'] = $project_id ? $newCount : $summary['total_rows'];
     $summary['existing_pallet_ids'] = $existingPalletsList;
 
     // Save mapping if requested
