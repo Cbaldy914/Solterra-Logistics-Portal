@@ -642,12 +642,10 @@ function handleImport($conn, $user_id) {
                 continue;
             }
 
-            // Find or create unassigned_module_item for this wattage
-            $moduleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity);
-
             // Check if pallet exists (using pallet_identifier since manufacturer_pallet_id doesn't exist)
             $stmt = $conn->prepare("
-                SELECT id FROM inventory_pallets
+                SELECT id, wattage as old_wattage, quantity as old_quantity, unassigned_module_item_id
+                FROM inventory_pallets
                 WHERE pallet_identifier = ? AND assigned_project_id = ?
             ");
             $stmt->bind_param("si", $palletId, $project_id);
@@ -656,20 +654,87 @@ function handleImport($conn, $user_id) {
             $stmt->close();
 
             if ($existingPallet) {
-                // Update existing pallet
-                $stmt = $conn->prepare("
-                    UPDATE inventory_pallets SET
-                        wattage = ?,
-                        quantity = ?,
-                        manufacturer_location_id = COALESCE(?, manufacturer_location_id)
-                    WHERE id = ?
-                ");
-                $stmt->bind_param("iiii", $wattage, $quantity, $manufacturer_location_id, $existingPallet['id']);
-                $stmt->execute();
-                $stmt->close();
+                // Update existing pallet - need to handle wattage/quantity changes properly
+                $oldWattage = (int)$existingPallet['old_wattage'];
+                $oldQuantity = (int)$existingPallet['old_quantity'];
+                $oldModuleItemId = $existingPallet['unassigned_module_item_id'];
+
+                // Check if wattage changed - need to update unassigned_module_items
+                if ($oldWattage != $wattage || $oldQuantity != $quantity) {
+                    // Subtract old quantity from old wattage's unassigned_module_item
+                    if ($oldModuleItemId) {
+                        $stmt = $conn->prepare("
+                            UPDATE unassigned_module_items
+                            SET quantity = GREATEST(0, quantity - ?)
+                            WHERE id = ?
+                        ");
+                        $stmt->bind_param("ii", $oldQuantity, $oldModuleItemId);
+                        $stmt->execute();
+                        $stmt->close();
+
+                        // Update project_wattage_orders for old wattage
+                        $stmt = $conn->prepare("
+                            UPDATE project_wattage_orders
+                            SET total_order = GREATEST(0, total_order - ?)
+                            WHERE project_id = ? AND wattage = ?
+                        ");
+                        $stmt->bind_param("iii", $oldQuantity, $project_id, $oldWattage);
+                        $stmt->execute();
+                        $stmt->close();
+                    }
+
+                    // Find or create module item for new wattage and add quantity
+                    $newModuleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity);
+
+                    // Update or insert project_wattage_orders for new wattage
+                    $stmt = $conn->prepare("
+                        INSERT INTO project_wattage_orders (project_id, wattage, total_order)
+                        VALUES (?, ?, ?)
+                        ON DUPLICATE KEY UPDATE total_order = total_order + ?
+                    ");
+                    $stmt->bind_param("iiii", $project_id, $wattage, $quantity, $quantity);
+                    $stmt->execute();
+                    $stmt->close();
+
+                    // Update pallet with new values and new module item reference
+                    $stmt = $conn->prepare("
+                        UPDATE inventory_pallets SET
+                            wattage = ?,
+                            quantity = ?,
+                            unassigned_module_item_id = ?,
+                            manufacturer_location_id = COALESCE(?, manufacturer_location_id)
+                        WHERE id = ?
+                    ");
+                    $stmt->bind_param("iiiii", $wattage, $quantity, $newModuleItemId, $manufacturer_location_id, $existingPallet['id']);
+                    $stmt->execute();
+                    $stmt->close();
+                } else {
+                    // No wattage/quantity change, just update location if needed
+                    $stmt = $conn->prepare("
+                        UPDATE inventory_pallets SET
+                            manufacturer_location_id = COALESCE(?, manufacturer_location_id)
+                        WHERE id = ?
+                    ");
+                    $stmt->bind_param("ii", $manufacturer_location_id, $existingPallet['id']);
+                    $stmt->execute();
+                    $stmt->close();
+                }
                 $palletsUpdated++;
             } else {
                 // Create new pallet
+                // Find or create unassigned_module_item for this wattage
+                $moduleItemId = findOrCreateModuleItem($conn, $moduleBatchId, $wattage, $quantity);
+
+                // Update or insert project_wattage_orders
+                $stmt = $conn->prepare("
+                    INSERT INTO project_wattage_orders (project_id, wattage, total_order)
+                    VALUES (?, ?, ?)
+                    ON DUPLICATE KEY UPDATE total_order = total_order + ?
+                ");
+                $stmt->bind_param("iiii", $project_id, $wattage, $quantity, $quantity);
+                $stmt->execute();
+                $stmt->close();
+
                 $defaultStatus = 'At Manufacturer';
                 $stmt = $conn->prepare("
                     INSERT INTO inventory_pallets (
