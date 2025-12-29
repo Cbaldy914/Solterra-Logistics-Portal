@@ -466,6 +466,31 @@ $conn->close();
             color: #856404;
         }
 
+        /* Duplicate Info Banner */
+        .duplicate-info-banner {
+            background: linear-gradient(135deg, #e7f3ff 0%, #d4edda 100%);
+            border: 2px solid #17a2b8;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }
+        .duplicate-info-banner h4 {
+            color: #0c5460;
+            margin: 0 0 12px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 1rem;
+        }
+        .duplicate-info-banner p {
+            color: #0c5460;
+            margin: 0 0 8px 0;
+            font-size: 0.9rem;
+        }
+        .duplicate-info-banner p:last-child {
+            margin-bottom: 0;
+        }
+
         /* Buttons */
         .btn-group {
             display: flex;
@@ -794,6 +819,11 @@ $conn->close();
                 <h2>Step 3: Preview Import</h2>
 
                 <div class="summary-stats" id="summaryStats">
+                    <!-- Populated by JavaScript -->
+                </div>
+
+                <!-- Duplicate BOL Info Banner -->
+                <div class="duplicate-info-banner" id="duplicateInfoBanner" style="display: none;">
                     <!-- Populated by JavaScript -->
                 </div>
 
@@ -1133,36 +1163,74 @@ $conn->close();
         // Summary stats
         const statsDiv = document.getElementById('summaryStats');
         const palletsNotFoundClass = summary.pallets_not_found > 0 ? 'danger' : '';
+        const hasExistingBols = summary.existing_bols && summary.existing_bols > 0;
 
         statsDiv.innerHTML = `
             <div class="stat-card">
                 <div class="stat-value">${summary.unique_shipments || 0}</div>
                 <div class="stat-label">Shipments (BOL/Container)</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-value">${summary.total_pallets || 0}</div>
-                <div class="stat-label">Total Pallet Lines</div>
+            ${hasExistingBols ? `
+            <div class="stat-card" style="border: 2px solid #17a2b8;">
+                <div class="stat-value" style="color: #17a2b8;">${summary.new_bols || 0}</div>
+                <div class="stat-label">New Shipments</div>
             </div>
+            <div class="stat-card" style="border: 2px solid #ffc107;">
+                <div class="stat-value" style="color: #856404;">${summary.existing_bols || 0}</div>
+                <div class="stat-label">Will Update</div>
+            </div>
+            ` : ''}
             <div class="stat-card">
                 <div class="stat-value">${summary.pallets_found || 0}</div>
                 <div class="stat-label">Pallets Found</div>
             </div>
             <div class="stat-card">
                 <div class="stat-value ${palletsNotFoundClass}">${summary.pallets_not_found || 0}</div>
-                <div class="stat-label">Pallets Not Found</div>
+                <div class="stat-label">Not Found</div>
             </div>
         `;
 
-        // Warnings
+        // Show BOL duplicate info banner if there are existing BOLs
+        const duplicateInfoDiv = document.getElementById('duplicateInfoBanner');
+        if (hasExistingBols && duplicateInfoDiv) {
+            const existingBolList = summary.existing_bol_list || [];
+            const examples = existingBolList.slice(0, 3).join(', ');
+
+            duplicateInfoDiv.innerHTML = `
+                <h4><span>🔄</span> Existing Shipments Detected</h4>
+                <p><strong>${summary.existing_bols}</strong> BOL/Container number(s) already exist in the system and their pallet assignments will be <strong>updated</strong>.</p>
+                <p><strong>${summary.new_bols}</strong> new shipment(s) will be created.</p>
+                ${existingBolList.length > 0 ? `<p style="font-size: 0.85rem; margin-top: 8px; opacity: 0.8;">Existing BOLs: ${examples}${existingBolList.length > 3 ? '...' : ''}</p>` : ''}
+            `;
+            duplicateInfoDiv.style.display = 'block';
+        } else if (duplicateInfoDiv) {
+            duplicateInfoDiv.style.display = 'none';
+        }
+
+        // Warnings - categorize by type
         const warningsDiv = document.getElementById('previewWarnings');
         const warningsList = document.getElementById('warningsList');
         if (warnings.length > 0) {
-            warningsList.innerHTML = warnings.slice(0, 20).map(w =>
-                `<li>Row ${w.row}: ${w.message}</li>`
-            ).join('');
-            if (warnings.length > 20) {
-                warningsList.innerHTML += `<li>...and ${warnings.length - 20} more warnings</li>`;
+            const errors = warnings.filter(w => w.type === 'error');
+            const warns = warnings.filter(w => w.type !== 'error');
+
+            let html = '';
+            if (errors.length > 0) {
+                html += '<li style="color: #dc3545; font-weight: 600; list-style: none; margin-bottom: 8px;">Errors (will be skipped):</li>';
+                html += errors.slice(0, 10).map(w =>
+                    `<li style="color: #dc3545;">${w.row > 0 ? `Row ${w.row}: ` : ''}${w.message}</li>`
+                ).join('');
+                if (errors.length > 10) html += `<li style="color: #dc3545;">...and ${errors.length - 10} more errors</li>`;
             }
+            if (warns.length > 0) {
+                if (errors.length > 0) html += '<li style="list-style: none; margin: 12px 0 8px 0; border-top: 1px solid #ddd; padding-top: 8px;"></li>';
+                html += '<li style="color: #856404; font-weight: 600; list-style: none; margin-bottom: 8px;">Warnings (review recommended):</li>';
+                html += warns.slice(0, 10).map(w =>
+                    `<li style="color: #856404;">${w.row > 0 ? `Row ${w.row}: ` : ''}${w.message}</li>`
+                ).join('');
+                if (warns.length > 10) html += `<li style="color: #856404;">...and ${warns.length - 10} more warnings</li>`;
+            }
+            warningsList.innerHTML = html;
             warningsDiv.style.display = 'block';
         } else {
             warningsDiv.style.display = 'none';
