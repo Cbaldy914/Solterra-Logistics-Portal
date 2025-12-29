@@ -87,13 +87,28 @@ if ($stmtMfgs = $conn->prepare('SELECT id, name FROM manufacturers WHERE is_acti
     $stmtMfgs->close();
 }
 
-// Load current wattages
+// Load current wattages with pallet counts
 $current_wattages = [];
 if ($stmtW = $conn->prepare('SELECT id, wattage, quantity FROM unassigned_module_items WHERE unassigned_module_id = ? ORDER BY wattage ASC')) {
     $stmtW->bind_param('i', $batch_id);
     $stmtW->execute();
     $r = $stmtW->get_result();
-    while ($row = $r->fetch_assoc()) { $current_wattages[] = $row; }
+    while ($row = $r->fetch_assoc()) {
+        // Count pallets for this wattage item
+        $pallet_count = 0;
+        $pallet_modules = 0;
+        if ($stmtP = $conn->prepare('SELECT COUNT(*) as cnt, COALESCE(SUM(quantity), 0) as modules FROM inventory_pallets WHERE unassigned_module_item_id = ?')) {
+            $stmtP->bind_param('i', $row['id']);
+            $stmtP->execute();
+            $pRes = $stmtP->get_result()->fetch_assoc();
+            $pallet_count = (int)($pRes['cnt'] ?? 0);
+            $pallet_modules = (int)($pRes['modules'] ?? 0);
+            $stmtP->close();
+        }
+        $row['pallet_count'] = $pallet_count;
+        $row['pallet_modules'] = $pallet_modules;
+        $current_wattages[] = $row;
+    }
     $stmtW->close();
 }
 
@@ -204,24 +219,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $new_totals[$w] = ($new_totals[$w] ?? 0) + $q;
             }
 
-            // Remove items not in new set (or zero them if pallets exist)
+            // Remove items not in new set - delete pallets if confirmed
+            $confirm_delete_pallets = isset($_POST['confirm_delete_pallets']) && $_POST['confirm_delete_pallets'] === 'yes';
+
             foreach ($existing_items as $w => $item) {
                 if (!isset($posted_watts_set[$w])) {
-                    $stmtC = $conn->prepare('SELECT COUNT(*) AS c FROM inventory_pallets WHERE unassigned_module_item_id = ?');
+                    // Check for associated pallets
+                    $stmtC = $conn->prepare('SELECT COUNT(*) AS c, COALESCE(SUM(quantity), 0) AS modules FROM inventory_pallets WHERE unassigned_module_item_id = ?');
                     $stmtC->bind_param('i', $item['id']);
                     $stmtC->execute();
-                    $rc = $stmtC->get_result()->fetch_assoc()['c'] ?? 0;
+                    $palletInfo = $stmtC->get_result()->fetch_assoc();
+                    $pallet_count = (int)($palletInfo['c'] ?? 0);
+                    $pallet_modules = (int)($palletInfo['modules'] ?? 0);
                     $stmtC->close();
-                    if ($rc == 0) {
+
+                    if ($pallet_count == 0) {
+                        // No pallets - safe to delete the wattage item
                         $stmtD = $conn->prepare('DELETE FROM unassigned_module_items WHERE id = ?');
                         $stmtD->bind_param('i', $item['id']);
                         if (!$stmtD->execute()) { throw new Exception('Failed deleting unused item: '.$stmtD->error); }
                         $stmtD->close();
+                    } else if ($confirm_delete_pallets) {
+                        // User confirmed - delete the pallets first, then the wattage item
+                        $stmtDelPallets = $conn->prepare('DELETE FROM inventory_pallets WHERE unassigned_module_item_id = ?');
+                        $stmtDelPallets->bind_param('i', $item['id']);
+                        if (!$stmtDelPallets->execute()) { throw new Exception('Failed deleting pallets: '.$stmtDelPallets->error); }
+                        $stmtDelPallets->close();
+
+                        // Now delete the wattage item
+                        $stmtD = $conn->prepare('DELETE FROM unassigned_module_items WHERE id = ?');
+                        $stmtD->bind_param('i', $item['id']);
+                        if (!$stmtD->execute()) { throw new Exception('Failed deleting item: '.$stmtD->error); }
+                        $stmtD->close();
                     } else {
-                        $stmtZ = $conn->prepare('UPDATE unassigned_module_items SET quantity = 0 WHERE id = ?');
-                        $stmtZ->bind_param('i', $item['id']);
-                        if (!$stmtZ->execute()) { throw new Exception('Failed zeroing item: '.$stmtZ->error); }
-                        $stmtZ->close();
+                        // Pallets exist but not confirmed - rollback and show error
+                        throw new Exception("Cannot remove {$w}W wattage: {$pallet_count} pallet(s) with {$pallet_modules} modules exist. Please confirm deletion or keep this wattage.");
                     }
                 }
             }
@@ -302,7 +334,16 @@ if ($prefManufacturerId) {
         $stmtL->close();
     }
 }
-foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantity']>0) $existingWattages[] = ['wattage'=>(int)$w['wattage'],'quantity'=>(int)$w['quantity']]; }
+foreach ($current_wattages as $w) {
+    if ((int)$w['wattage']>0 && (int)$w['quantity']>0) {
+        $existingWattages[] = [
+            'wattage'=>(int)$w['wattage'],
+            'quantity'=>(int)$w['quantity'],
+            'pallet_count'=>(int)($w['pallet_count'] ?? 0),
+            'pallet_modules'=>(int)($w['pallet_modules'] ?? 0)
+        ];
+    }
+}
 
 ?>
 <!DOCTYPE html>
@@ -595,6 +636,7 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
             <?php endif; ?>
 
             <form method="POST" id="editBatchForm">
+                <input type="hidden" name="confirm_delete_pallets" id="confirmDeletePallets" value="no">
                 <?php include __DIR__ . '/components/module_batch_section.php'; ?>
 
                 <div class="button-group">
@@ -602,6 +644,22 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
                     <button type="submit" class="btn-submit">Save Module Batch</button>
                 </div>
             </form>
+
+            <!-- Pallet Deletion Confirmation Modal -->
+            <div id="palletDeleteModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 9999; align-items: center; justify-content: center;">
+                <div style="background: #fff; border-radius: 12px; padding: 30px; max-width: 500px; width: 90%; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
+                    <h3 style="margin: 0 0 15px; color: #dc3545; display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 24px;">⚠️</span> Warning: Pallets Will Be Deleted
+                    </h3>
+                    <p style="color: #495057; margin-bottom: 15px;">You are about to remove the following wattage(s) that have existing pallets:</p>
+                    <div id="palletDeleteList" style="background: #f8f9fa; border-radius: 8px; padding: 15px; margin-bottom: 20px; max-height: 200px; overflow-y: auto;"></div>
+                    <p style="color: #dc3545; font-weight: 500; margin-bottom: 20px;">This action cannot be undone. All associated pallets and their modules will be permanently deleted.</p>
+                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button type="button" id="cancelPalletDelete" style="padding: 10px 20px; border: 1px solid #dee2e6; background: #fff; color: #495057; border-radius: 6px; cursor: pointer; font-size: 14px;">Cancel</button>
+                        <button type="button" id="confirmPalletDelete" style="padding: 10px 20px; border: none; background: #dc3545; color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">Delete Pallets & Save</button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -656,6 +714,9 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
         currentOrderedMw: <?php echo json_encode($current_ordered_mw); ?>,
         thisBatchMw: <?php echo json_encode($this_batch_mw); ?>
     };
+
+    // Original wattages with pallet info for removal confirmation
+    const originalWattages = <?php echo json_encode($existingWattages); ?>;
 
     function calculateNewBatchMw() {
         let batchMw = 0;
@@ -730,11 +791,89 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
         }
     });
 
-    // Form submission confirmation for over-capacity
+    // Check for removed wattages that have pallets
+    function getRemovedWattagesWithPallets() {
+        const currentWattages = new Set();
+        document.querySelectorAll('input[name="wattages[]"]').forEach(input => {
+            const val = parseInt(input.value);
+            if (val > 0) currentWattages.add(val);
+        });
+
+        const removedWithPallets = [];
+        originalWattages.forEach(orig => {
+            if (!currentWattages.has(orig.wattage) && orig.pallet_count > 0) {
+                removedWithPallets.push(orig);
+            }
+        });
+        return removedWithPallets;
+    }
+
+    // Form submission confirmation for over-capacity and pallet deletion
     document.addEventListener('DOMContentLoaded', function() {
         const form = document.getElementById('editBatchForm');
-        if (form && capacityData.projectSizeMw > 0) {
-            form.addEventListener('submit', function(e) {
+        const modal = document.getElementById('palletDeleteModal');
+        const confirmBtn = document.getElementById('confirmPalletDelete');
+        const cancelBtn = document.getElementById('cancelPalletDelete');
+        const palletList = document.getElementById('palletDeleteList');
+        const confirmInput = document.getElementById('confirmDeletePallets');
+
+        if (!form) return;
+
+        // Handle modal buttons
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', function() {
+                modal.style.display = 'none';
+            });
+        }
+
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', function() {
+                confirmInput.value = 'yes';
+                modal.style.display = 'none';
+                form.submit();
+            });
+        }
+
+        // Close modal on background click
+        if (modal) {
+            modal.addEventListener('click', function(e) {
+                if (e.target === modal) {
+                    modal.style.display = 'none';
+                }
+            });
+        }
+
+        form.addEventListener('submit', function(e) {
+            // Check for removed wattages with pallets
+            const removedWithPallets = getRemovedWattagesWithPallets();
+
+            if (removedWithPallets.length > 0 && confirmInput.value !== 'yes') {
+                e.preventDefault();
+
+                // Build the list of affected wattages
+                let listHtml = '';
+                let totalPallets = 0;
+                let totalModules = 0;
+
+                removedWithPallets.forEach(item => {
+                    totalPallets += item.pallet_count;
+                    totalModules += item.pallet_modules;
+                    listHtml += `<div style="padding: 8px 0; border-bottom: 1px solid #e9ecef;">
+                        <strong>${item.wattage}W</strong>: ${item.pallet_count} pallet(s) containing ${item.pallet_modules.toLocaleString()} modules
+                    </div>`;
+                });
+
+                listHtml += `<div style="padding: 10px 0 0; font-weight: 600; color: #dc3545;">
+                    Total: ${totalPallets} pallet(s), ${totalModules.toLocaleString()} modules
+                </div>`;
+
+                palletList.innerHTML = listHtml;
+                modal.style.display = 'flex';
+                return false;
+            }
+
+            // Check for over-capacity
+            if (capacityData.projectSizeMw > 0) {
                 const newBatchMw = calculateNewBatchMw();
                 const newTotalMw = capacityData.currentOrderedMw - capacityData.thisBatchMw + newBatchMw;
 
@@ -753,8 +892,8 @@ foreach ($current_wattages as $w) { if ((int)$w['wattage']>0 && (int)$w['quantit
                         return false;
                     }
                 }
-            });
-        }
+            }
+        });
     });
 </script>
 </body>
