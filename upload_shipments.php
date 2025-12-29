@@ -396,14 +396,25 @@ $conn->close();
             text-align: left;
             border-bottom: 1px solid #e9ecef;
             white-space: nowrap;
+            border: none;
+        }
+        .preview-table thead tr {
+            background: #488C9A !important;
         }
         .preview-table th {
+            background: #488C9A !important;
+            color: #ffffff !important;
             position: sticky;
             top: 0;
             font-weight: 600;
+            text-align: left;
         }
-        .preview-table tr:hover {
+        .preview-table tbody tr:hover {
             background: #f8f9fa;
+        }
+        .preview-table tbody td {
+            background: #ffffff;
+            color: #293E4C;
         }
         .preview-table .found { color: #28a745; }
         .preview-table .not-found { color: #dc3545; }
@@ -661,6 +672,7 @@ $conn->close();
                     <ul>
                         <li><strong>BOL/Container Number</strong> - Used to group pallets into shipments</li>
                         <li><strong>Pallet ID</strong> - Must match existing pallets in inventory</li>
+                        <li><strong>Ship Date</strong> - When the shipment departed from the manufacturer</li>
                     </ul>
                     <p style="margin-top: 8px;"><strong>Optional:</strong> Freight Cost, Estimated Delivery Date, Actual Delivery Date</p>
                 </div>
@@ -710,13 +722,6 @@ $conn->close();
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                    </div>
-
-                    <!-- Departure Date -->
-                    <div class="form-group">
-                        <label class="required" for="departure_date">Departure Date</label>
-                        <input type="date" name="departure_date" id="departure_date" value="<?php echo date('Y-m-d'); ?>" required>
-                        <div class="field-hint">When the shipments left the origin location.</div>
                     </div>
 
                     <!-- File Upload -->
@@ -851,7 +856,6 @@ $conn->close();
             return document.getElementById('destination_warehouse_id').value;
         }
     };
-    const getDepartureDate = () => document.getElementById('departure_date').value;
     const accountId = () => document.querySelector('[name="account_id"]')?.value || '<?php echo $account_id ?? ''; ?>';
 
     // System fields for shipment import
@@ -865,6 +869,11 @@ $conn->close();
             label: 'Pallet ID',
             required: true,
             common_names: ['Pallet', 'Pallet #', 'Pallet ID', 'Pallet Number', 'Serial', 'Serial #']
+        },
+        'ship_date': {
+            label: 'Ship Date',
+            required: true,
+            common_names: ['Ship Date', 'Shipping Date', 'Departure Date', 'Departure', 'Shipped', 'Ship', 'Dispatch Date', 'Date Shipped']
         },
         'freight_cost': {
             label: 'Freight Cost',
@@ -907,7 +916,6 @@ $conn->close();
 
     document.getElementById('destination_project_id').addEventListener('change', updateStep1Validation);
     document.getElementById('destination_warehouse_id').addEventListener('change', updateStep1Validation);
-    document.getElementById('departure_date').addEventListener('change', updateStep1Validation);
 
     // Step Navigation
     function goToStep(step) {
@@ -974,8 +982,7 @@ $conn->close();
 
     function updateStep1Validation() {
         const destId = getDestinationId();
-        const departureDate = getDepartureDate();
-        btnNext1.disabled = !(uploadedFile && destId && departureDate);
+        btnNext1.disabled = !(uploadedFile && destId);
     }
 
     // Step 1 -> Step 2
@@ -1090,7 +1097,6 @@ $conn->close();
         formData.append('action', 'parse_data');
         formData.append('destination_type', getDestinationType());
         formData.append('destination_id', getDestinationId());
-        formData.append('departure_date', getDepartureDate());
         formData.append('account_id', accountId());
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
@@ -1167,17 +1173,19 @@ $conn->close();
         const tbody = document.getElementById('previewTableBody');
 
         // Headers
-        const headerCols = ['BOL/Container', 'Pallet ID', 'Status', 'Pallet Found'];
+        const headerCols = ['BOL/Container', 'Pallet ID', 'Ship Date', 'Status', 'Pallet Found'];
         thead.innerHTML = headerCols.map(h => `<th>${h}</th>`).join('');
 
         // Rows (first 20)
         tbody.innerHTML = parsedData.slice(0, 20).map(row => {
             const foundClass = row.pallet_found ? 'found' : 'not-found';
             const foundText = row.pallet_found ? '✓ Yes' : '✗ Not Found';
+            const shipDate = row.ship_date || '-';
             return `
                 <tr>
                     <td>${row.bol_number || '-'}</td>
                     <td>${row.pallet_id || '-'}</td>
+                    <td>${shipDate}</td>
                     <td>${row.calculated_status || '-'}</td>
                     <td class="${foundClass}">${foundText}</td>
                 </tr>
@@ -1185,7 +1193,7 @@ $conn->close();
         }).join('');
 
         if (parsedData.length > 20) {
-            tbody.innerHTML += `<tr><td colspan="4" style="text-align:center; color:#6c757d;">...and ${parsedData.length - 20} more rows</td></tr>`;
+            tbody.innerHTML += `<tr><td colspan="5" style="text-align:center; color:#6c757d;">...and ${parsedData.length - 20} more rows</td></tr>`;
         }
     }
 
@@ -1211,7 +1219,6 @@ $conn->close();
         formData.append('action', 'import');
         formData.append('destination_type', getDestinationType());
         formData.append('destination_id', getDestinationId());
-        formData.append('departure_date', getDepartureDate());
         formData.append('account_id', accountId());
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
