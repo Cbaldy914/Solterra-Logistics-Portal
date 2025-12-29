@@ -284,6 +284,23 @@ $conn->close();
             box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
         }
 
+        /* Location Address Display */
+        .location-address-display {
+            margin-top: 8px;
+            padding: 10px 14px;
+            background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%);
+            border: 1px solid #b8daff;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            color: #0056b3;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .location-address-display .address-icon {
+            font-size: 1rem;
+        }
+
         /* Optional Fields Section */
         .optional-fields-toggle {
             background: #f8f9fa;
@@ -524,21 +541,23 @@ $conn->close();
         }
         .logistics-panel-header {
             padding: 20px 24px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            color: #fff;
+            background: #ffffff !important;
+            color: #293E4C !important;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            border-bottom: 1px solid #e9ecef;
         }
         .logistics-panel-header h3 {
             margin: 0;
             font-size: 18px;
             font-weight: 600;
+            color: #293E4C !important;
         }
         .logistics-panel-close {
             background: none;
             border: none;
-            color: #fff;
+            color: #6c757d !important;
             font-size: 24px;
             cursor: pointer;
             padding: 0;
@@ -1065,6 +1084,10 @@ $conn->close();
                         <select name="manufacturer_location_id" id="manufacturer_location_id">
                             <option value="">Select Location</option>
                         </select>
+                        <div id="locationAddressDisplay" class="location-address-display" style="display: none;">
+                            <span class="address-icon">📍</span>
+                            <span id="locationAddressText"></span>
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -1080,12 +1103,15 @@ $conn->close();
                         <div class="field-hint">Leave as "Unassigned" if these pallets are not yet assigned to a specific project.</div>
                     </div>
 
-                    <!-- Optional Module Details Section -->
-                    <div class="optional-fields-toggle" id="optionalFieldsToggle">
-                        <h4>Optional Logistics Specifications</h4>
-                        <span class="toggle-icon">&#9660;</span>
-                    </div>
-                    <div class="optional-fields-content" id="optionalFieldsContent">
+                    <!-- Logistics Specifications Button for Step 1 -->
+                    <button type="button" class="logistics-inline-btn" id="logisticsBtn1" onclick="openLogisticsPanel()">
+                        <span>📦</span>
+                        <span>Logistics Specifications</span>
+                        <span class="badge" id="logisticsBadge1" style="display: none;">Set</span>
+                    </button>
+
+                    <!-- Hidden fields container to store logistics values -->
+                    <div class="optional-fields-content" id="optionalFieldsContent" style="display: none;">
                         <p style="margin: 0 0 16px 0; color: #6c757d; font-size: 0.9rem;">
                             These fields are optional and will be applied to the module batch.
                             <strong>Modules per Pallet</strong> will be automatically calculated from your file's Quantity column.
@@ -1501,12 +1527,6 @@ $conn->close();
     const loadingOverlay = document.getElementById('loadingOverlay');
     const loadingText = document.getElementById('loadingText');
 
-    // Optional fields toggle
-    document.getElementById('optionalFieldsToggle').addEventListener('click', function() {
-        this.classList.toggle('open');
-        document.getElementById('optionalFieldsContent').classList.toggle('show');
-    });
-
     // Auto-calculate modules per truck
     document.getElementById('pallets_per_truck').addEventListener('input', function() {
         updateCalculatedFields();
@@ -1526,11 +1546,21 @@ $conn->close();
         }
     }
 
+    // Store location data for address display
+    let locationDataCache = {};
+
     // Manufacturer change - load locations
     document.getElementById('manufacturer_id').addEventListener('change', function() {
         const mfgId = this.value;
         const locationGroup = document.getElementById('locationGroup');
         const locationSelect = document.getElementById('manufacturer_location_id');
+        const addressDisplay = document.getElementById('locationAddressDisplay');
+        const addressText = document.getElementById('locationAddressText');
+
+        // Reset address display
+        addressDisplay.style.display = 'none';
+        addressText.textContent = '';
+        locationDataCache = {};
 
         if (mfgId) {
             fetch(`get_manufacturer_locations.php?manufacturer_id=${mfgId}`)
@@ -1539,7 +1569,13 @@ $conn->close();
                     locationSelect.innerHTML = '<option value="">Select Location</option>';
                     if (data.locations && data.locations.length > 0) {
                         data.locations.forEach(loc => {
-                            locationSelect.innerHTML += `<option value="${loc.id}">${loc.location_name || loc.city}</option>`;
+                            // Store location data for address display
+                            locationDataCache[loc.id] = loc.formatted_address || loc.city || '';
+                            // Show location name with address in dropdown
+                            const displayText = loc.location_name
+                                ? `${loc.location_name} — ${loc.formatted_address || loc.city}`
+                                : (loc.formatted_address || loc.city);
+                            locationSelect.innerHTML += `<option value="${loc.id}">${displayText}</option>`;
                         });
                         locationGroup.style.display = 'block';
                     } else {
@@ -1558,7 +1594,20 @@ $conn->close();
         updateStep1Validation();
     });
 
-    document.getElementById('manufacturer_location_id').addEventListener('change', updateStep1Validation);
+    // Location change - show address display
+    document.getElementById('manufacturer_location_id').addEventListener('change', function() {
+        const addressDisplay = document.getElementById('locationAddressDisplay');
+        const addressText = document.getElementById('locationAddressText');
+
+        if (this.value && locationDataCache[this.value]) {
+            addressText.textContent = locationDataCache[this.value];
+            addressDisplay.style.display = 'flex';
+        } else {
+            addressDisplay.style.display = 'none';
+            addressText.textContent = '';
+        }
+        updateStep1Validation();
+    });
 
     // Step Navigation
     function goToStep(step) {
@@ -2132,8 +2181,20 @@ $conn->close();
         formData.append('column_mapping', JSON.stringify(columnMapping));
         formData.append('save_mapping', document.getElementById('saveMappingCheckbox').checked ? '1' : '0');
 
-        // Add optional module details
-        formData.append('pallets_per_truck', document.getElementById('pallets_per_truck').value || '');
+        // Add all logistics specifications
+        const logisticsFields = [
+            'modules_per_pallet', 'pallets_per_truck', 'modules_per_truck', 'trucks_needed',
+            'pallet_length_mm', 'pallet_depth_mm', 'pallet_double_stacked_height_mm', 'pallet_total_weight_kg',
+            'forklift_truck_long_side_mm', 'forklift_truck_short_side_mm',
+            'pallet_jack_long_side_mm', 'pallet_jack_short_side_mm',
+            'stacking_in_warehouse', 'stacking_during_transport', 'module_notes'
+        ];
+        logisticsFields.forEach(field => {
+            const el = document.getElementById(field);
+            if (el && el.value) {
+                formData.append(field, el.value);
+            }
+        });
 
         try {
             const response = await fetch('process_pallet_upload.php', {
@@ -2225,8 +2286,10 @@ $conn->close();
     const logisticsPanel = document.getElementById('logisticsPanel');
     const logisticsPanelOverlay = document.getElementById('logisticsPanelOverlay');
     const logisticsPanelClose = document.getElementById('logisticsPanelClose');
+    const logisticsBtn1 = document.getElementById('logisticsBtn1');
     const logisticsBtn2 = document.getElementById('logisticsBtn2');
     const logisticsBtn3 = document.getElementById('logisticsBtn3');
+    const logisticsBadge1 = document.getElementById('logisticsBadge1');
     const logisticsBadge2 = document.getElementById('logisticsBadge2');
     const logisticsBadge3 = document.getElementById('logisticsBadge3');
 
@@ -2282,6 +2345,17 @@ $conn->close();
                 hasData = true;
             }
         });
+
+        // Update Step 1 button
+        if (logisticsBtn1) {
+            if (hasData) {
+                logisticsBtn1.classList.add('has-data');
+                if (logisticsBadge1) logisticsBadge1.style.display = 'inline';
+            } else {
+                logisticsBtn1.classList.remove('has-data');
+                if (logisticsBadge1) logisticsBadge1.style.display = 'none';
+            }
+        }
 
         // Update Step 2 button
         if (logisticsBtn2) {

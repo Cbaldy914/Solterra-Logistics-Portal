@@ -622,12 +622,52 @@ function handleImport($conn, $user_id) {
     $manufacturerName = $mfgResult ? $mfgResult['name'] : 'Unknown';
     $stmt->close();
 
+    // Get manufacturer location address for initial_location
+    $initial_location = '';
+    if ($manufacturer_location_id) {
+        $stmt = $conn->prepare("SELECT street_address, city, state, zip_code FROM manufacturer_locations WHERE id = ?");
+        $stmt->bind_param("i", $manufacturer_location_id);
+        $stmt->execute();
+        $locResult = $stmt->get_result()->fetch_assoc();
+        if ($locResult) {
+            $initial_location = implode(', ', array_filter([
+                $locResult['street_address'] ?? '',
+                $locResult['city'] ?? '',
+                $locResult['state'] ?? '',
+                $locResult['zip_code'] ?? ''
+            ]));
+        }
+        $stmt->close();
+    }
+    if (empty($initial_location)) {
+        $initial_location = $manufacturerName;
+    }
+
+    // Get logistics specifications from POST
+    $logistics = [
+        'modules_per_pallet' => !empty($_POST['modules_per_pallet']) ? intval($_POST['modules_per_pallet']) : null,
+        'pallets_per_truck' => !empty($_POST['pallets_per_truck']) ? intval($_POST['pallets_per_truck']) : null,
+        'modules_per_truck' => !empty($_POST['modules_per_truck']) ? intval($_POST['modules_per_truck']) : null,
+        'trucks_needed' => !empty($_POST['trucks_needed']) ? intval($_POST['trucks_needed']) : null,
+        'pallet_length_mm' => !empty($_POST['pallet_length_mm']) ? intval($_POST['pallet_length_mm']) : null,
+        'pallet_depth_mm' => !empty($_POST['pallet_depth_mm']) ? intval($_POST['pallet_depth_mm']) : null,
+        'pallet_double_stacked_height_mm' => !empty($_POST['pallet_double_stacked_height_mm']) ? intval($_POST['pallet_double_stacked_height_mm']) : null,
+        'pallet_total_weight_kg' => !empty($_POST['pallet_total_weight_kg']) ? intval($_POST['pallet_total_weight_kg']) : null,
+        'forklift_truck_long_side_mm' => !empty($_POST['forklift_truck_long_side_mm']) ? intval($_POST['forklift_truck_long_side_mm']) : null,
+        'forklift_truck_short_side_mm' => !empty($_POST['forklift_truck_short_side_mm']) ? intval($_POST['forklift_truck_short_side_mm']) : null,
+        'pallet_jack_long_side_mm' => !empty($_POST['pallet_jack_long_side_mm']) ? intval($_POST['pallet_jack_long_side_mm']) : null,
+        'pallet_jack_short_side_mm' => !empty($_POST['pallet_jack_short_side_mm']) ? intval($_POST['pallet_jack_short_side_mm']) : null,
+        'stacking_in_warehouse' => $_POST['stacking_in_warehouse'] ?? null,
+        'stacking_during_transport' => $_POST['stacking_during_transport'] ?? null,
+        'module_notes' => $_POST['module_notes'] ?? null
+    ];
+
     // Start transaction
     $conn->begin_transaction();
 
     try {
         // Find or create module batch for this manufacturer + project
-        $moduleBatchId = findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_id, $manufacturerName);
+        $moduleBatchId = findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_id, $manufacturerName, $initial_location, $logistics);
 
         $palletsCreated = 0;
         $palletsUpdated = 0;
@@ -789,7 +829,7 @@ function handleImport($conn, $user_id) {
 /**
  * Find or create module batch for manufacturer + project
  */
-function findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_id, $manufacturerName) {
+function findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_id, $manufacturerName, $initial_location = '', $logistics = []) {
     $stmt = $conn->prepare("
         SELECT id FROM modules
         WHERE account_id = ? AND project_id = ? AND vendor_name = ?
@@ -801,14 +841,69 @@ function findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_
     $stmt->close();
 
     if ($existing) {
+        // Update existing batch with logistics info if provided
+        if (!empty($logistics)) {
+            $updateFields = [];
+            $updateParams = [];
+            $updateTypes = '';
+
+            // Only update fields that have values
+            if (!empty($initial_location)) {
+                $updateFields[] = 'initial_location = ?';
+                $updateParams[] = $initial_location;
+                $updateTypes .= 's';
+            }
+            foreach (['modules_per_pallet', 'pallets_per_truck', 'modules_per_truck', 'pallet_length_mm',
+                      'pallet_depth_mm', 'pallet_double_stacked_height_mm', 'pallet_total_weight_kg',
+                      'forklift_truck_long_side_mm', 'forklift_truck_short_side_mm',
+                      'pallet_jack_long_side_mm', 'pallet_jack_short_side_mm'] as $field) {
+                if (isset($logistics[$field]) && $logistics[$field] !== null) {
+                    $updateFields[] = "$field = ?";
+                    $updateParams[] = $logistics[$field];
+                    $updateTypes .= 'i';
+                }
+            }
+            foreach (['stacking_in_warehouse', 'stacking_during_transport', 'module_notes'] as $field) {
+                if (isset($logistics[$field]) && $logistics[$field] !== null && $logistics[$field] !== '') {
+                    $updateFields[] = "$field = ?";
+                    $updateParams[] = $logistics[$field];
+                    $updateTypes .= 's';
+                }
+            }
+
+            if (!empty($updateFields)) {
+                $updateParams[] = $existing['id'];
+                $updateTypes .= 'i';
+                $sql = "UPDATE modules SET " . implode(', ', $updateFields) . " WHERE id = ?";
+                $stmt = $conn->prepare($sql);
+                $stmt->bind_param($updateTypes, ...$updateParams);
+                $stmt->execute();
+                $stmt->close();
+            }
+        }
         return $existing['id'];
     }
 
+    // Create new module batch with all fields
     $stmt = $conn->prepare("
-        INSERT INTO modules (account_id, project_id, vendor_name, data_source)
-        VALUES (?, ?, ?, 'pallet_import')
+        INSERT INTO modules (
+            account_id, project_id, vendor_name, initial_location, data_source,
+            modules_per_pallet, pallets_per_truck, modules_per_truck,
+            pallet_length_mm, pallet_depth_mm, pallet_double_stacked_height_mm, pallet_total_weight_kg,
+            forklift_truck_long_side_mm, forklift_truck_short_side_mm,
+            pallet_jack_long_side_mm, pallet_jack_short_side_mm,
+            stacking_in_warehouse, stacking_during_transport, module_notes
+        ) VALUES (?, ?, ?, ?, 'pallet_import', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
-    $stmt->bind_param("iis", $account_id, $project_id, $manufacturerName);
+    $stmt->bind_param("iissiiiiiiiiiiissss",
+        $account_id, $project_id, $manufacturerName, $initial_location,
+        $logistics['modules_per_pallet'], $logistics['pallets_per_truck'], $logistics['modules_per_truck'],
+        $logistics['pallet_length_mm'], $logistics['pallet_depth_mm'],
+        $logistics['pallet_double_stacked_height_mm'], $logistics['pallet_total_weight_kg'],
+        $logistics['forklift_truck_long_side_mm'], $logistics['forklift_truck_short_side_mm'],
+        $logistics['pallet_jack_long_side_mm'], $logistics['pallet_jack_short_side_mm'],
+        $logistics['stacking_in_warehouse'], $logistics['stacking_during_transport'], $logistics['module_notes']
+    );
     $stmt->execute();
     $batchId = $conn->insert_id;
     $stmt->close();
