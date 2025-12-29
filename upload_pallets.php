@@ -1277,7 +1277,7 @@ $conn->close();
                         <div class="mw-operator">+</div>
                         <div class="mw-box">
                             <div class="mw-box-value" id="importMwValue">0.00 MW</div>
-                            <div class="mw-box-label">This Import</div>
+                            <div class="mw-box-label" id="importMwLabel">This Import</div>
                         </div>
                         <div class="mw-operator">=</div>
                         <div class="mw-box total">
@@ -1859,11 +1859,34 @@ $conn->close();
         // Show duplicate info banner if there are existing pallets
         const duplicateInfoDiv = document.getElementById('duplicateInfoBanner');
         if (hasExisting && duplicateInfoDiv) {
+            const wattageChanges = summary.wattage_changes || 0;
+            const quantityChanges = summary.quantity_changes || 0;
+            const mwDiff = summary.mw_difference_from_updates || 0;
+
+            let changesHtml = '';
+            if (wattageChanges > 0 || quantityChanges > 0) {
+                changesHtml = '<div style="margin-top: 12px; padding: 12px; background: #fff; border-radius: 8px; border-left: 4px solid #ffc107;">';
+                changesHtml += '<strong style="color: #856404;">Changes Detected in Updates:</strong><ul style="margin: 8px 0 0 0; padding-left: 20px; color: #856404;">';
+                if (wattageChanges > 0) {
+                    changesHtml += `<li><strong>${wattageChanges}</strong> pallet(s) have different wattage values</li>`;
+                }
+                if (quantityChanges > 0) {
+                    changesHtml += `<li><strong>${quantityChanges}</strong> pallet(s) have different quantity values</li>`;
+                }
+                if (mwDiff !== 0) {
+                    const mwDiffStr = mwDiff > 0 ? `+${mwDiff.toFixed(2)}` : mwDiff.toFixed(2);
+                    const mwColor = mwDiff > 0 ? '#28a745' : '#dc3545';
+                    changesHtml += `<li>Net MW change from updates: <strong style="color: ${mwColor};">${mwDiffStr} MW</strong></li>`;
+                }
+                changesHtml += '</ul></div>';
+            }
+
             duplicateInfoDiv.innerHTML = `
                 <h4><span>🔄</span> Duplicate Pallets Detected</h4>
                 <p><strong>${summary.pallets_existing}</strong> pallet(s) already exist in this project and will be <strong>updated</strong> with the new data from your file.</p>
                 <p><strong>${summary.pallets_new}</strong> new pallet(s) will be added.</p>
-                <p style="font-size: 0.85rem; margin-top: 8px; opacity: 0.8;">Existing pallets are highlighted in <span style="background: #fff3cd; padding: 2px 6px; border-radius: 4px;">yellow</span> in the preview below.</p>
+                ${changesHtml}
+                <p style="font-size: 0.85rem; margin-top: 12px; opacity: 0.8;">Existing pallets are highlighted in <span style="background: #fff3cd; padding: 2px 6px; border-radius: 4px;">yellow</span> in the preview below.</p>
             `;
             duplicateInfoDiv.style.display = 'block';
         } else if (duplicateInfoDiv) {
@@ -1875,9 +1898,8 @@ $conn->close();
         const overCapacityWarning = document.getElementById('overCapacityWarning');
 
         if (projectData.projectSizeMw > 0 && projectId()) {
-            // Calculate MW being imported - only count NEW pallets, not updates
-            // Existing pallets are already counted in projectData.existingMw
-            let importMw = 0;
+            // Calculate MW being imported - count NEW pallets plus changes from updates
+            let newPalletsMw = 0;
             const existingPalletIds = summary.existing_pallet_ids || [];
             const existingPalletSet = new Set(existingPalletIds);
 
@@ -1886,18 +1908,40 @@ $conn->close();
                 if (!existingPalletSet.has(row.pallet_id)) {
                     const wattage = parseFloat(row.wattage) || 0;
                     const quantity = parseInt(row.quantity) || 0;
-                    importMw += (wattage * quantity) / 1000000;
+                    newPalletsMw += (wattage * quantity) / 1000000;
                 }
             });
 
+            // Add the MW difference from updates (can be positive or negative)
+            const mwDiffFromUpdates = summary.mw_difference_from_updates || 0;
+            const totalImportMw = newPalletsMw + mwDiffFromUpdates;
+
             const existingMw = projectData.existingMw || 0;
-            const totalMw = existingMw + importMw;
+            const totalMw = existingMw + totalImportMw;
             const targetMw = projectData.projectSizeMw;
             const percentOfTarget = targetMw > 0 ? (totalMw / targetMw) * 100 : 0;
 
             // Update MW comparison display
             document.getElementById('existingMwValue').textContent = existingMw.toFixed(2) + ' MW';
-            document.getElementById('importMwValue').textContent = importMw.toFixed(2) + ' MW';
+
+            // Format import MW with +/- sign and update label based on what's happening
+            const importMwEl = document.getElementById('importMwValue');
+            const importLabelEl = document.getElementById('importMwLabel');
+
+            if (totalImportMw === 0) {
+                importMwEl.textContent = '0.00 MW';
+                importLabelEl.textContent = 'Net Change';
+            } else if (totalImportMw > 0) {
+                importMwEl.textContent = '+' + totalImportMw.toFixed(2) + ' MW';
+                importMwEl.style.color = '#28a745';
+                importLabelEl.textContent = newPalletsMw > 0 && mwDiffFromUpdates !== 0 ? 'New + Updates' :
+                                           newPalletsMw > 0 ? 'New Pallets' : 'From Updates';
+            } else {
+                importMwEl.textContent = totalImportMw.toFixed(2) + ' MW';
+                importMwEl.style.color = '#dc3545';
+                importLabelEl.textContent = 'From Updates';
+            }
+
             document.getElementById('totalMwValue').textContent = totalMw.toFixed(2) + ' MW';
             document.getElementById('targetMwValue').textContent = targetMw.toFixed(2) + ' MW';
 
@@ -1938,16 +1982,30 @@ $conn->close();
             overCapacityWarning.classList.remove('show', 'critical');
         }
 
-        // Warnings
+        // Warnings - categorize by type
         const warningsDiv = document.getElementById('previewWarnings');
         const warningsList = document.getElementById('warningsList');
         if (warnings.length > 0) {
-            warningsList.innerHTML = warnings.slice(0, 20).map(w =>
-                `<li>Row ${w.row}: ${w.message}</li>`
-            ).join('');
-            if (warnings.length > 20) {
-                warningsList.innerHTML += `<li>...and ${warnings.length - 20} more warnings</li>`;
+            const errors = warnings.filter(w => w.type === 'error');
+            const warns = warnings.filter(w => w.type !== 'error');
+
+            let html = '';
+            if (errors.length > 0) {
+                html += '<li style="color: #dc3545; font-weight: 600; list-style: none; margin-bottom: 8px;">Errors (will be skipped):</li>';
+                html += errors.slice(0, 10).map(w =>
+                    `<li style="color: #dc3545;">${w.row > 0 ? `Row ${w.row}: ` : ''}${w.message}</li>`
+                ).join('');
+                if (errors.length > 10) html += `<li style="color: #dc3545;">...and ${errors.length - 10} more errors</li>`;
             }
+            if (warns.length > 0) {
+                if (errors.length > 0) html += '<li style="list-style: none; margin: 12px 0 8px 0; border-top: 1px solid #ddd; padding-top: 8px;"></li>';
+                html += '<li style="color: #856404; font-weight: 600; list-style: none; margin-bottom: 8px;">Warnings (review recommended):</li>';
+                html += warns.slice(0, 10).map(w =>
+                    `<li style="color: #856404;">${w.row > 0 ? `Row ${w.row}: ` : ''}${w.message}</li>`
+                ).join('');
+                if (warns.length > 10) html += `<li style="color: #856404;">...and ${warns.length - 10} more warnings</li>`;
+            }
+            warningsList.innerHTML = html;
             warningsDiv.style.display = 'block';
         } else {
             warningsDiv.style.display = 'none';
@@ -2007,24 +2065,36 @@ $conn->close();
     // Step 3 -> Confirm Import
     btnConfirm.addEventListener('click', async () => {
         // Check if over capacity and require explicit confirmation
-        let importMw = 0;
+        // Use same calculation as preview: only count NEW pallets + MW diff from updates
+        let newPalletsMw = 0;
+        const existingPalletIds = summary.existing_pallet_ids || [];
+        const existingPalletSet = new Set(existingPalletIds);
+
         parsedData.forEach(row => {
-            const wattage = parseFloat(row.wattage) || 0;
-            const quantity = parseInt(row.quantity) || 0;
-            importMw += (wattage * quantity) / 1000000;
+            // Only count MW for pallets that don't already exist
+            if (!existingPalletSet.has(row.pallet_id)) {
+                const wattage = parseFloat(row.wattage) || 0;
+                const quantity = parseInt(row.quantity) || 0;
+                newPalletsMw += (wattage * quantity) / 1000000;
+            }
         });
 
+        // Add the MW difference from updates (can be positive or negative)
+        const mwDiffFromUpdates = summary.mw_difference_from_updates || 0;
+        const totalImportMw = newPalletsMw + mwDiffFromUpdates;
+
         const existingMw = projectData.existingMw || 0;
-        const totalMw = existingMw + importMw;
+        const totalMw = existingMw + totalImportMw;
         const targetMw = projectData.projectSizeMw || 0;
 
         if (targetMw > 0 && totalMw > targetMw && projectId()) {
             const excessMw = totalMw - targetMw;
             const excessPercent = ((totalMw / targetMw) - 1) * 100;
 
+            const importLabel = totalImportMw >= 0 ? `+${totalImportMw.toFixed(2)}` : totalImportMw.toFixed(2);
             const confirmMsg = `WARNING: This import will exceed the project capacity!\n\n` +
                 `Current: ${existingMw.toFixed(2)} MW\n` +
-                `Import: +${importMw.toFixed(2)} MW\n` +
+                `Import: ${importLabel} MW\n` +
                 `New Total: ${totalMw.toFixed(2)} MW\n` +
                 `Target: ${targetMw.toFixed(2)} MW\n\n` +
                 `This is ${excessMw.toFixed(2)} MW (${excessPercent.toFixed(1)}%) over the target.\n\n` +
@@ -2034,7 +2104,18 @@ $conn->close();
                 return;
             }
         } else {
-            if (!confirm('Are you sure you want to import these pallets? This will add them to your inventory.')) {
+            // Build a more informative confirmation message
+            const palletsNew = summary.pallets_new || 0;
+            const palletsExisting = summary.pallets_existing || 0;
+            let confirmMsg = 'Are you sure you want to import these pallets?\n\n';
+            if (palletsNew > 0) confirmMsg += `• ${palletsNew} new pallet(s) will be added\n`;
+            if (palletsExisting > 0) confirmMsg += `• ${palletsExisting} existing pallet(s) will be updated\n`;
+            if (totalImportMw !== 0) {
+                const mwLabel = totalImportMw >= 0 ? `+${totalImportMw.toFixed(2)}` : totalImportMw.toFixed(2);
+                confirmMsg += `• Net MW change: ${mwLabel} MW`;
+            }
+
+            if (!confirm(confirmMsg)) {
                 return;
             }
         }

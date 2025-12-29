@@ -205,6 +205,28 @@ function handleParseData($conn, $user_id) {
     $parsedData = $data['data'];
     $warnings = $data['warnings'];
 
+    // Check for duplicate pallet IDs within the uploaded file
+    $palletIdCounts = [];
+    foreach ($parsedData as $row) {
+        $palletId = $row['pallet_id'] ?? '';
+        if (!empty($palletId)) {
+            if (!isset($palletIdCounts[$palletId])) {
+                $palletIdCounts[$palletId] = 0;
+            }
+            $palletIdCounts[$palletId]++;
+        }
+    }
+    $duplicatesInFile = array_filter($palletIdCounts, function($count) { return $count > 1; });
+    if (!empty($duplicatesInFile)) {
+        $dupCount = count($duplicatesInFile);
+        $examples = array_slice(array_keys($duplicatesInFile), 0, 3);
+        $warnings[] = [
+            'row' => 0,
+            'message' => "{$dupCount} pallet ID(s) appear multiple times in your file (e.g., " . implode(', ', $examples) . "). Only the last occurrence will be used.",
+            'type' => 'warning'
+        ];
+    }
+
     // Get summary
     $totalPallets = count($parsedData);
     $totalModules = 0;
@@ -235,10 +257,11 @@ function handleParseData($conn, $user_id) {
         'wattages' => $wattages
     ];
 
-    // Check for existing pallets
+    // Check for existing pallets and get their current data for comparison
     $existingCount = 0;
     $newCount = 0;
     $existingPalletsList = [];
+    $existingPalletsData = []; // Full data for comparison
 
     if ($project_id) {
         $palletIds = array_unique(array_filter(array_column($parsedData, 'pallet_id')));
@@ -247,7 +270,7 @@ function handleParseData($conn, $user_id) {
             $types = str_repeat('s', count($palletIds));
 
             $stmt = $conn->prepare("
-                SELECT pallet_identifier
+                SELECT pallet_identifier, wattage, quantity
                 FROM inventory_pallets
                 WHERE assigned_project_id = ? AND pallet_identifier IN ($placeholders)
             ");
@@ -260,6 +283,10 @@ function handleParseData($conn, $user_id) {
             while ($row = $result->fetch_assoc()) {
                 $existingPallets[$row['pallet_identifier']] = true;
                 $existingPalletsList[] = $row['pallet_identifier'];
+                $existingPalletsData[$row['pallet_identifier']] = [
+                    'wattage' => (int)$row['wattage'],
+                    'quantity' => (int)$row['quantity']
+                ];
             }
             $stmt->close();
 
@@ -268,9 +295,42 @@ function handleParseData($conn, $user_id) {
         }
     }
 
+    // Calculate changes for existing pallets
+    $wattageChanges = 0;
+    $quantityChanges = 0;
+    $currentMwFromExisting = 0;
+    $newMwFromExisting = 0;
+
+    foreach ($parsedData as $row) {
+        $palletId = $row['pallet_id'] ?? '';
+        if (isset($existingPalletsData[$palletId])) {
+            $oldData = $existingPalletsData[$palletId];
+            $newWattage = (int)($row['wattage'] ?? 0);
+            $newQuantity = (int)($row['quantity'] ?? 0);
+
+            // Track current MW from these pallets
+            $currentMwFromExisting += ($oldData['wattage'] * $oldData['quantity']) / 1000000;
+            // Track new MW from these pallets
+            $newMwFromExisting += ($newWattage * $newQuantity) / 1000000;
+
+            if ($oldData['wattage'] != $newWattage) {
+                $wattageChanges++;
+            }
+            if ($oldData['quantity'] != $newQuantity) {
+                $quantityChanges++;
+            }
+        }
+    }
+
+    $mwDifferenceFromUpdates = $newMwFromExisting - $currentMwFromExisting;
+
     $summary['pallets_existing'] = $existingCount;
     $summary['pallets_new'] = $project_id ? $newCount : $summary['total_rows'];
     $summary['existing_pallet_ids'] = $existingPalletsList;
+    $summary['existing_pallets_data'] = $existingPalletsData;
+    $summary['wattage_changes'] = $wattageChanges;
+    $summary['quantity_changes'] = $quantityChanges;
+    $summary['mw_difference_from_updates'] = round($mwDifferenceFromUpdates, 4);
 
     // Save mapping if requested
     if ($saveMapping && $manufacturer_id && $account_id) {
@@ -463,11 +523,38 @@ function mapPalletRow($row, $headerIndex, $columnMapping, $rowNum, &$warnings) {
     }
 
     if (!empty($missingRequired) && $hasRequiredData) {
-        $warnings[] = ['row' => $rowNum, 'message' => "Missing required fields: " . implode(', ', $missingRequired)];
+        $warnings[] = ['row' => $rowNum, 'message' => "Missing required fields: " . implode(', ', $missingRequired), 'type' => 'error'];
     }
 
     if (!$hasRequiredData) {
         return null;
+    }
+
+    // Additional data quality validations (soft warnings)
+    $wattage = $mapped['wattage'] ?? 0;
+    $quantity = $mapped['quantity'] ?? 0;
+    $palletId = $mapped['pallet_id'] ?? '';
+
+    // Wattage validation - typical solar panels are 300W-800W
+    if ($wattage > 0 && ($wattage < 100 || $wattage > 1000)) {
+        $warnings[] = ['row' => $rowNum, 'message' => "Unusual wattage value: {$wattage}W (typical range: 300-700W)", 'type' => 'warning'];
+    }
+
+    // Quantity validation - typical pallets have 20-40 modules
+    if ($quantity > 0 && ($quantity < 1 || $quantity > 100)) {
+        $warnings[] = ['row' => $rowNum, 'message' => "Unusual quantity: {$quantity} modules (typical range: 20-40)", 'type' => 'warning'];
+    }
+
+    // Pallet ID validation - should have reasonable format
+    if (!empty($palletId)) {
+        // Check if pallet ID is too short
+        if (strlen($palletId) < 3) {
+            $warnings[] = ['row' => $rowNum, 'message' => "Pallet ID '{$palletId}' is very short - verify this is correct", 'type' => 'warning'];
+        }
+        // Check if pallet ID is only numbers (might be wrong column)
+        if (preg_match('/^\d{1,5}$/', $palletId)) {
+            $warnings[] = ['row' => $rowNum, 'message' => "Pallet ID '{$palletId}' looks like a row number - verify correct column is mapped", 'type' => 'warning'];
+        }
     }
 
     $mapped['_row_number'] = $rowNum;
