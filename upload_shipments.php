@@ -1172,8 +1172,18 @@ $conn->close();
         const thead = document.getElementById('previewTableHead');
         const tbody = document.getElementById('previewTableBody');
 
-        // Headers
-        const headerCols = ['BOL/Container', 'Pallet ID', 'Ship Date', 'Status', 'Pallet Found'];
+        // Check which optional columns have data
+        const hasFreightCost = parsedData.some(row => row.freight_cost && row.freight_cost > 0);
+        const hasEstDelivery = parsedData.some(row => row.estimated_delivery);
+        const hasActualDelivery = parsedData.some(row => row.actual_delivery);
+
+        // Build headers dynamically based on mapped columns
+        let headerCols = ['BOL/Container', 'Pallet ID', 'Ship Date'];
+        if (hasEstDelivery) headerCols.push('Est. Delivery');
+        if (hasActualDelivery) headerCols.push('Actual Delivery');
+        if (hasFreightCost) headerCols.push('Freight Cost');
+        headerCols.push('Status', 'Pallet Found');
+
         thead.innerHTML = headerCols.map(h => `<th>${h}</th>`).join('');
 
         // Rows (first 20)
@@ -1181,19 +1191,28 @@ $conn->close();
             const foundClass = row.pallet_found ? 'found' : 'not-found';
             const foundText = row.pallet_found ? '✓ Yes' : '✗ Not Found';
             const shipDate = row.ship_date || '-';
-            return `
-                <tr>
-                    <td>${row.bol_number || '-'}</td>
-                    <td>${row.pallet_id || '-'}</td>
-                    <td>${shipDate}</td>
-                    <td>${row.calculated_status || '-'}</td>
-                    <td class="${foundClass}">${foundText}</td>
-                </tr>
+            const estDelivery = row.estimated_delivery || '-';
+            const actualDelivery = row.actual_delivery || '-';
+            const freightCost = row.freight_cost ? '$' + parseFloat(row.freight_cost).toFixed(2) : '-';
+
+            let cells = `
+                <td>${row.bol_number || '-'}</td>
+                <td>${row.pallet_id || '-'}</td>
+                <td>${shipDate}</td>
             `;
+            if (hasEstDelivery) cells += `<td>${estDelivery}</td>`;
+            if (hasActualDelivery) cells += `<td>${actualDelivery}</td>`;
+            if (hasFreightCost) cells += `<td>${freightCost}</td>`;
+            cells += `
+                <td>${row.calculated_status || '-'}</td>
+                <td class="${foundClass}">${foundText}</td>
+            `;
+
+            return `<tr>${cells}</tr>`;
         }).join('');
 
         if (parsedData.length > 20) {
-            tbody.innerHTML += `<tr><td colspan="5" style="text-align:center; color:#6c757d;">...and ${parsedData.length - 20} more rows</td></tr>`;
+            tbody.innerHTML += `<tr><td colspan="${headerCols.length}" style="text-align:center; color:#6c757d;">...and ${parsedData.length - 20} more rows</td></tr>`;
         }
     }
 

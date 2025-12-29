@@ -452,36 +452,42 @@ $conn->close();
             color: #293E4C;
         }
 
-        /* Floating Logistics Panel */
-        .logistics-fab {
-            position: fixed;
-            bottom: 30px;
-            right: 30px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            color: #fff;
-            border: none;
-            border-radius: 50px;
-            padding: 14px 20px;
+        /* Inline Logistics Button (for steps 2, 3, 4) */
+        .logistics-inline-btn {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border: 2px solid #488C9A;
+            border-radius: 8px;
+            padding: 12px 20px;
             font-size: 14px;
             font-weight: 500;
             cursor: pointer;
-            box-shadow: 0 4px 15px rgba(72, 140, 154, 0.4);
-            z-index: 1000;
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 8px;
-            transition: all 0.3s ease;
+            color: #488C9A;
+            transition: all 0.2s ease;
+            margin-bottom: 24px;
         }
-        .logistics-fab:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.5);
+        .logistics-inline-btn:hover {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
         }
-        .logistics-fab.has-data {
+        .logistics-inline-btn.has-data {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            border-color: #28a745;
+            color: #155724;
+        }
+        .logistics-inline-btn.has-data:hover {
             background: linear-gradient(135deg, #28a745 0%, #218838 100%);
-            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.4);
+            color: #fff;
         }
-        .logistics-fab.has-data:hover {
-            box-shadow: 0 6px 20px rgba(40, 167, 69, 0.5);
+        .logistics-inline-btn .badge {
+            background: #28a745;
+            color: white;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 4px;
         }
         .logistics-panel-overlay {
             position: fixed;
@@ -1197,6 +1203,13 @@ $conn->close();
             <div class="content-card">
                 <h2>Step 2: Map Columns</h2>
 
+                <!-- Inline Logistics Button for Step 2 -->
+                <button type="button" class="logistics-inline-btn" id="logisticsBtn2" onclick="openLogisticsPanel()">
+                    <span>📦</span>
+                    <span>Logistics Specifications</span>
+                    <span class="badge" id="logisticsBadge2" style="display: none;">Set</span>
+                </button>
+
                 <div class="info-banner">
                     <h3>Match Your Columns</h3>
                     <p>Map your file columns to the system fields. Fields marked with <span class="required-field">*</span> are required.</p>
@@ -1236,6 +1249,13 @@ $conn->close();
         <div class="step-content" id="step3">
             <div class="content-card">
                 <h2>Step 3: Preview Import</h2>
+
+                <!-- Inline Logistics Button for Step 3 -->
+                <button type="button" class="logistics-inline-btn" id="logisticsBtn3" onclick="openLogisticsPanel()">
+                    <span>📦</span>
+                    <span>Logistics Specifications</span>
+                    <span class="badge" id="logisticsBadge3" style="display: none;">Set</span>
+                </button>
 
                 <div class="summary-stats" id="summaryStats">
                     <!-- Populated by JavaScript -->
@@ -1317,12 +1337,6 @@ $conn->close();
             <div class="loading-text" id="loadingText">Processing...</div>
         </div>
     </div>
-
-    <!-- Floating Logistics Specs Button -->
-    <button type="button" class="logistics-fab" id="logisticsFab" title="View/Edit Logistics Specifications">
-        <span>📦</span>
-        <span>Logistics Specs</span>
-    </button>
 
     <!-- Logistics Panel Overlay -->
     <div class="logistics-panel-overlay" id="logisticsPanelOverlay"></div>
@@ -1861,12 +1875,19 @@ $conn->close();
         const overCapacityWarning = document.getElementById('overCapacityWarning');
 
         if (projectData.projectSizeMw > 0 && projectId()) {
-            // Calculate MW being imported
+            // Calculate MW being imported - only count NEW pallets, not updates
+            // Existing pallets are already counted in projectData.existingMw
             let importMw = 0;
+            const existingPalletIds = summary.existing_pallet_ids || [];
+            const existingPalletSet = new Set(existingPalletIds);
+
             parsedData.forEach(row => {
-                const wattage = parseFloat(row.wattage) || 0;
-                const quantity = parseInt(row.quantity) || 0;
-                importMw += (wattage * quantity) / 1000000;
+                // Only count MW for pallets that don't already exist
+                if (!existingPalletSet.has(row.pallet_id)) {
+                    const wattage = parseFloat(row.wattage) || 0;
+                    const quantity = parseInt(row.quantity) || 0;
+                    importMw += (wattage * quantity) / 1000000;
+                }
             });
 
             const existingMw = projectData.existingMw || 0;
@@ -2120,10 +2141,13 @@ $conn->close();
     window.goToStep = goToStep;
 
     // ========== Logistics Panel Sync ==========
-    const logisticsFab = document.getElementById('logisticsFab');
     const logisticsPanel = document.getElementById('logisticsPanel');
     const logisticsPanelOverlay = document.getElementById('logisticsPanelOverlay');
     const logisticsPanelClose = document.getElementById('logisticsPanelClose');
+    const logisticsBtn2 = document.getElementById('logisticsBtn2');
+    const logisticsBtn3 = document.getElementById('logisticsBtn3');
+    const logisticsBadge2 = document.getElementById('logisticsBadge2');
+    const logisticsBadge3 = document.getElementById('logisticsBadge3');
 
     // Field mappings between Step 1 form and panel
     const logisticsFieldMappings = [
@@ -2153,7 +2177,7 @@ $conn->close();
                 panelField.value = formField.value;
             }
         });
-        updateFabStatus();
+        updateLogisticsButtonStatus();
     }
 
     // Sync from panel to Step 1 form
@@ -2165,11 +2189,11 @@ $conn->close();
                 formField.value = panelField.value;
             }
         });
-        updateFabStatus();
+        updateLogisticsButtonStatus();
     }
 
-    // Update FAB appearance based on whether data exists
-    function updateFabStatus() {
+    // Update inline button appearance based on whether data exists
+    function updateLogisticsButtonStatus() {
         let hasData = false;
         logisticsFieldMappings.forEach(mapping => {
             const formField = document.getElementById(mapping.form);
@@ -2177,19 +2201,36 @@ $conn->close();
                 hasData = true;
             }
         });
-        if (hasData) {
-            logisticsFab.classList.add('has-data');
-        } else {
-            logisticsFab.classList.remove('has-data');
+
+        // Update Step 2 button
+        if (logisticsBtn2) {
+            if (hasData) {
+                logisticsBtn2.classList.add('has-data');
+                if (logisticsBadge2) logisticsBadge2.style.display = 'inline';
+            } else {
+                logisticsBtn2.classList.remove('has-data');
+                if (logisticsBadge2) logisticsBadge2.style.display = 'none';
+            }
+        }
+
+        // Update Step 3 button
+        if (logisticsBtn3) {
+            if (hasData) {
+                logisticsBtn3.classList.add('has-data');
+                if (logisticsBadge3) logisticsBadge3.style.display = 'inline';
+            } else {
+                logisticsBtn3.classList.remove('has-data');
+                if (logisticsBadge3) logisticsBadge3.style.display = 'none';
+            }
         }
     }
 
-    // Open panel
-    function openLogisticsPanel() {
+    // Open panel - made global so onclick can access it
+    window.openLogisticsPanel = function() {
         syncFormToPanel();
         logisticsPanel.classList.add('open');
         logisticsPanelOverlay.classList.add('open');
-    }
+    };
 
     // Close panel
     function closeLogisticsPanel() {
@@ -2199,9 +2240,6 @@ $conn->close();
     }
 
     // Event listeners
-    if (logisticsFab) {
-        logisticsFab.addEventListener('click', openLogisticsPanel);
-    }
     if (logisticsPanelClose) {
         logisticsPanelClose.addEventListener('click', closeLogisticsPanel);
     }
@@ -2220,12 +2258,12 @@ $conn->close();
                     // Trigger any calculations
                     formField.dispatchEvent(new Event('input', { bubbles: true }));
                 }
-                updateFabStatus();
+                updateLogisticsButtonStatus();
             });
         }
     });
 
-    // Also sync form changes to panel
+    // Also sync form changes to panel and update button status
     logisticsFieldMappings.forEach(mapping => {
         const formField = document.getElementById(mapping.form);
         if (formField) {
@@ -2234,13 +2272,13 @@ $conn->close();
                 if (panelField) {
                     panelField.value = this.value;
                 }
-                updateFabStatus();
+                updateLogisticsButtonStatus();
             });
         }
     });
 
-    // Initial status update
-    updateFabStatus();
+    // Initial update of button status
+    updateLogisticsButtonStatus();
 })();
 </script>
 </body>
