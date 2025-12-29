@@ -133,6 +133,7 @@ function suggestShipmentMappings($headers) {
     $shipmentFields = [
         'bol_number' => ['BOL', 'BOL #', 'BOL Number', 'Bill of Lading', 'B/L', 'Container', 'Container #', 'Container Number', 'CNTR', 'Tracking'],
         'pallet_id' => ['Pallet', 'Pallet #', 'Pallet ID', 'Pallet Number', 'Serial', 'Serial #', 'Pallet No'],
+        'ship_date' => ['Ship Date', 'Shipping Date', 'Departure Date', 'Departure', 'Shipped', 'Ship', 'Dispatch Date', 'Date Shipped', 'Ship Dt', 'Shipped Date'],
         'freight_cost' => ['Freight', 'Freight Cost', 'Cost', 'Shipping Cost', 'Price', 'Rate'],
         'estimated_delivery' => ['Est Delivery', 'Est. Delivery', 'ETA', 'Expected Delivery', 'Estimated Arrival', 'Due Date', 'Expected'],
         'actual_delivery' => ['Actual Delivery', 'Delivered', 'Delivery Date', 'Actual Del', 'Arrival Date']
@@ -194,7 +195,6 @@ function handleParseData($conn, $user_id) {
     $columnMapping = json_decode($_POST['column_mapping'] ?? '{}', true);
     $destination_type = $_POST['destination_type'] ?? 'project';
     $destination_id = intval($_POST['destination_id'] ?? 0);
-    $departure_date = $_POST['departure_date'] ?? date('Y-m-d');
     $account_id = intval($_POST['account_id'] ?? 0) ?: getAccountIdForUser($conn, $user_id);
 
     if (!$destination_id) {
@@ -351,8 +351,19 @@ function parseShipmentFile($filePath, $columnMapping) {
                 $warnings[] = ['row' => $rowNumber, 'message' => 'Missing Pallet ID'];
                 continue;
             }
+            if (empty($parsedRow['ship_date'])) {
+                $warnings[] = ['row' => $rowNumber, 'message' => 'Missing Ship Date'];
+                continue;
+            }
 
             // Parse dates
+            if (!empty($parsedRow['ship_date'])) {
+                $parsedRow['ship_date'] = parseDate($parsedRow['ship_date']);
+                if (empty($parsedRow['ship_date'])) {
+                    $warnings[] = ['row' => $rowNumber, 'message' => 'Invalid Ship Date format'];
+                    continue;
+                }
+            }
             if (!empty($parsedRow['estimated_delivery'])) {
                 $parsedRow['estimated_delivery'] = parseDate($parsedRow['estimated_delivery']);
             }
@@ -420,8 +431,19 @@ function parseShipmentFile($filePath, $columnMapping) {
                     $warnings[] = ['row' => $rowNumber, 'message' => 'Missing Pallet ID'];
                     continue;
                 }
+                if (empty($parsedRow['ship_date'])) {
+                    $warnings[] = ['row' => $rowNumber, 'message' => 'Missing Ship Date'];
+                    continue;
+                }
 
                 // Parse dates
+                if (!empty($parsedRow['ship_date'])) {
+                    $parsedRow['ship_date'] = parseDate($parsedRow['ship_date']);
+                    if (empty($parsedRow['ship_date'])) {
+                        $warnings[] = ['row' => $rowNumber, 'message' => 'Invalid Ship Date format'];
+                        continue;
+                    }
+                }
                 if (!empty($parsedRow['estimated_delivery'])) {
                     $parsedRow['estimated_delivery'] = parseDate($parsedRow['estimated_delivery']);
                 }
@@ -516,7 +538,6 @@ function handleImport($conn, $user_id) {
     $columnMapping = json_decode($_POST['column_mapping'] ?? '{}', true);
     $destination_type = $_POST['destination_type'] ?? 'project';
     $destination_id = intval($_POST['destination_id'] ?? 0);
-    $departure_date = $_POST['departure_date'] ?? date('Y-m-d');
     $account_id = intval($_POST['account_id'] ?? 0) ?: getAccountIdForUser($conn, $user_id);
 
     if (!$destination_id) {
@@ -574,6 +595,7 @@ function handleImport($conn, $user_id) {
             $shipmentGroups[$bol] = [
                 'bol_number' => $bol,
                 'pallets' => [],
+                'ship_date' => $row['ship_date'] ?? date('Y-m-d'),
                 'freight_cost' => $row['freight_cost'] ?? 0,
                 'estimated_delivery' => $row['estimated_delivery'] ?? null,
                 'actual_delivery' => $row['actual_delivery'] ?? null
@@ -672,9 +694,10 @@ function handleImport($conn, $user_id) {
                 $deliveryParams[] = $proportionalFreightCost;
                 $deliveryTypes .= 'd';
 
-                // Add departure date
+                // Add ship date (from file data)
+                $shipDate = $group['ship_date'] ?? date('Y-m-d');
                 $deliveryColumns[] = 'created_at';
-                $deliveryParams[] = $departure_date . ' ' . date('H:i:s');
+                $deliveryParams[] = $shipDate . ' ' . date('H:i:s');
                 $deliveryTypes .= 's';
 
                 // Create delivery record

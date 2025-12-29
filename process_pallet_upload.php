@@ -50,6 +50,10 @@ switch ($action) {
         handleImport($conn, $user_id);
         break;
 
+    case 'check_duplicates':
+        handleCheckDuplicates($conn, $user_id);
+        break;
+
     default:
         echo json_encode(['error' => 'Invalid action']);
 }
@@ -234,6 +238,7 @@ function handleParseData($conn, $user_id) {
     // Check for existing pallets
     $existingCount = 0;
     $newCount = 0;
+    $existingPalletsList = [];
 
     if ($project_id) {
         $palletIds = array_unique(array_filter(array_column($parsedData, 'pallet_id')));
@@ -254,6 +259,7 @@ function handleParseData($conn, $user_id) {
             $existingPallets = [];
             while ($row = $result->fetch_assoc()) {
                 $existingPallets[$row['pallet_identifier']] = true;
+                $existingPalletsList[] = $row['pallet_identifier'];
             }
             $stmt->close();
 
@@ -264,6 +270,7 @@ function handleParseData($conn, $user_id) {
 
     $summary['pallets_existing'] = $existingCount;
     $summary['pallets_new'] = $newCount > 0 ? $newCount : $summary['total_rows'];
+    $summary['existing_pallet_ids'] = $existingPalletsList;
 
     // Save mapping if requested
     if ($saveMapping && $manufacturer_id && $account_id) {

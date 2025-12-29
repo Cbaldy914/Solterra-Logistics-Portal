@@ -431,15 +431,168 @@ $conn->close();
             text-align: left;
             border-bottom: 1px solid #e9ecef;
             white-space: nowrap;
+            border: none;
+        }
+        .preview-table thead tr {
+            background: #488C9A !important;
         }
         .preview-table th {
-            background: #f8f9fa;
+            background: #488C9A !important;
+            color: #ffffff !important;
             position: sticky;
             top: 0;
             font-weight: 600;
+            text-align: left;
         }
-        .preview-table tr:hover {
+        .preview-table tbody tr:hover {
             background: #f8f9fa;
+        }
+        .preview-table tbody td {
+            background: #ffffff;
+            color: #293E4C;
+        }
+
+        /* Floating Logistics Panel */
+        .logistics-fab {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
+            border: none;
+            border-radius: 50px;
+            padding: 14px 20px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(72, 140, 154, 0.4);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+        }
+        .logistics-fab:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.5);
+        }
+        .logistics-fab.has-data {
+            background: linear-gradient(135deg, #28a745 0%, #218838 100%);
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.4);
+        }
+        .logistics-fab.has-data:hover {
+            box-shadow: 0 6px 20px rgba(40, 167, 69, 0.5);
+        }
+        .logistics-panel-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 1001;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+        .logistics-panel-overlay.open {
+            opacity: 1;
+            visibility: visible;
+        }
+        .logistics-panel {
+            position: fixed;
+            top: 0;
+            right: -450px;
+            width: 450px;
+            max-width: 90vw;
+            height: 100vh;
+            background: #fff;
+            box-shadow: -5px 0 25px rgba(0, 0, 0, 0.15);
+            z-index: 1002;
+            transition: right 0.3s ease;
+            display: flex;
+            flex-direction: column;
+        }
+        .logistics-panel.open {
+            right: 0;
+        }
+        .logistics-panel-header {
+            padding: 20px 24px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logistics-panel-header h3 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .logistics-panel-close {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+            opacity: 0.8;
+        }
+        .logistics-panel-close:hover {
+            opacity: 1;
+        }
+        .logistics-panel-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+        .logistics-panel-section {
+            margin-bottom: 24px;
+        }
+        .logistics-panel-section h5 {
+            margin: 0 0 12px 0;
+            color: #293E4C;
+            font-size: 14px;
+            font-weight: 600;
+            border-bottom: 1px solid #e9ecef;
+            padding-bottom: 8px;
+        }
+        .logistics-panel-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .logistics-panel-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .logistics-panel-field label {
+            font-size: 11px;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .logistics-panel-field input,
+        .logistics-panel-field textarea {
+            padding: 8px 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 13px;
+            transition: border-color 0.2s;
+        }
+        .logistics-panel-field input:focus,
+        .logistics-panel-field textarea:focus {
+            outline: none;
+            border-color: #488C9A;
+        }
+        .logistics-panel-field input[readonly] {
+            background: #f8f9fa;
+            color: #6c757d;
+        }
+        .logistics-panel-field.full-width {
+            grid-column: 1 / -1;
         }
 
         /* Summary Stats */
@@ -731,6 +884,61 @@ $conn->close();
         }
         .over-capacity-warning.critical p {
             color: #721c24;
+        }
+
+        /* Duplicate Info Banner */
+        .duplicate-info-banner {
+            background: linear-gradient(135deg, #e7f3ff 0%, #d4edda 100%);
+            border: 2px solid #17a2b8;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }
+        .duplicate-info-banner h4 {
+            color: #0c5460;
+            margin: 0 0 12px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 1rem;
+        }
+        .duplicate-info-banner p {
+            color: #0c5460;
+            margin: 0 0 8px 0;
+            font-size: 0.9rem;
+        }
+        .duplicate-info-banner p:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Highlight existing pallets in preview */
+        .preview-table tbody tr.existing-pallet {
+            background: #fff3cd !important;
+        }
+        .preview-table tbody tr.existing-pallet td {
+            background: #fff3cd !important;
+        }
+        .preview-table tbody tr.existing-pallet:hover {
+            background: #ffe8a1 !important;
+        }
+        .preview-table tbody tr.existing-pallet:hover td {
+            background: #ffe8a1 !important;
+        }
+        .pallet-status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .pallet-status-badge.new {
+            background: #d4edda;
+            color: #155724;
+        }
+        .pallet-status-badge.update {
+            background: #fff3cd;
+            color: #856404;
         }
     </style>
 </head>
@@ -1033,6 +1241,11 @@ $conn->close();
                     <!-- Populated by JavaScript -->
                 </div>
 
+                <!-- Duplicate Pallets Info Banner -->
+                <div class="duplicate-info-banner" id="duplicateInfoBanner" style="display: none;">
+                    <!-- Populated by JavaScript -->
+                </div>
+
                 <!-- MW Comparison Section (only shown when project has a size target) -->
                 <div class="mw-comparison" id="mwComparison" style="display: none;">
                     <h4>Capacity Impact Analysis</h4>
@@ -1102,6 +1315,116 @@ $conn->close();
         <div class="loading-overlay" id="loadingOverlay">
             <div class="spinner"></div>
             <div class="loading-text" id="loadingText">Processing...</div>
+        </div>
+    </div>
+
+    <!-- Floating Logistics Specs Button -->
+    <button type="button" class="logistics-fab" id="logisticsFab" title="View/Edit Logistics Specifications">
+        <span>📦</span>
+        <span>Logistics Specs</span>
+    </button>
+
+    <!-- Logistics Panel Overlay -->
+    <div class="logistics-panel-overlay" id="logisticsPanelOverlay"></div>
+
+    <!-- Logistics Slide-out Panel -->
+    <div class="logistics-panel" id="logisticsPanel">
+        <div class="logistics-panel-header">
+            <h3>Logistics Specifications</h3>
+            <button type="button" class="logistics-panel-close" id="logisticsPanelClose">&times;</button>
+        </div>
+        <div class="logistics-panel-body">
+            <p style="margin: 0 0 20px 0; color: #6c757d; font-size: 13px;">
+                These specifications will be applied to the imported module batch. Edit values here or in Step 1.
+            </p>
+
+            <!-- Truck & Pallet Info -->
+            <div class="logistics-panel-section">
+                <h5>Truck & Pallet Info</h5>
+                <div class="logistics-panel-grid">
+                    <div class="logistics-panel-field">
+                        <label>Modules per Pallet</label>
+                        <input type="number" id="panel_modules_per_pallet" readonly placeholder="From file">
+                    </div>
+                    <div class="logistics-panel-field">
+                        <label>Pallets per Truck</label>
+                        <input type="number" id="panel_pallets_per_truck" placeholder="e.g., 24">
+                    </div>
+                    <div class="logistics-panel-field">
+                        <label>Modules per Truck</label>
+                        <input type="number" id="panel_modules_per_truck" readonly placeholder="Auto">
+                    </div>
+                    <div class="logistics-panel-field">
+                        <label>Trucks Needed</label>
+                        <input type="number" id="panel_trucks_needed" readonly placeholder="Auto">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pallet Dimensions -->
+            <div class="logistics-panel-section">
+                <h5>Pallet Dimensions</h5>
+                <div class="logistics-panel-grid">
+                    <div class="logistics-panel-field">
+                        <label>Length (mm)</label>
+                        <input type="number" id="panel_pallet_length_mm" placeholder="e.g., 2384">
+                    </div>
+                    <div class="logistics-panel-field">
+                        <label>Depth (mm)</label>
+                        <input type="number" id="panel_pallet_depth_mm" placeholder="e.g., 1303">
+                    </div>
+                    <div class="logistics-panel-field">
+                        <label>Stack Height (mm)</label>
+                        <input type="number" id="panel_pallet_double_stacked_height_mm" placeholder="e.g., 2200">
+                    </div>
+                    <div class="logistics-panel-field">
+                        <label>Weight (kg)</label>
+                        <input type="number" id="panel_pallet_total_weight_kg" placeholder="e.g., 1200">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Handling Requirements -->
+            <div class="logistics-panel-section">
+                <h5>Handling Requirements</h5>
+                <div class="logistics-panel-grid">
+                    <div class="logistics-panel-field">
+                        <label>Forklift Long Side (mm)</label>
+                        <input type="number" id="panel_forklift_truck_long_side_mm" placeholder="e.g., 1200">
+                    </div>
+                    <div class="logistics-panel-field">
+                        <label>Forklift Short Side (mm)</label>
+                        <input type="number" id="panel_forklift_truck_short_side_mm" placeholder="e.g., 1000">
+                    </div>
+                    <div class="logistics-panel-field">
+                        <label>Pallet Jack Long (mm)</label>
+                        <input type="number" id="panel_pallet_jack_long_side_mm" placeholder="e.g., 1150">
+                    </div>
+                    <div class="logistics-panel-field">
+                        <label>Pallet Jack Short (mm)</label>
+                        <input type="number" id="panel_pallet_jack_short_side_mm" placeholder="e.g., 800">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stacking Instructions -->
+            <div class="logistics-panel-section">
+                <h5>Stacking Instructions</h5>
+                <div class="logistics-panel-grid">
+                    <div class="logistics-panel-field full-width">
+                        <label>Warehouse Stacking</label>
+                        <textarea id="panel_stacking_in_warehouse" rows="2" placeholder="Instructions..."></textarea>
+                    </div>
+                    <div class="logistics-panel-field full-width">
+                        <label>Transport Stacking</label>
+                        <textarea id="panel_stacking_during_transport" rows="2" placeholder="Instructions..."></textarea>
+                    </div>
+                    <div class="logistics-panel-field full-width">
+                        <label>Module Notes</label>
+                        <textarea id="panel_module_notes" rows="2" placeholder="General notes..."></textarea>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </main>
@@ -1488,11 +1811,23 @@ $conn->close();
     function buildPreview() {
         // Summary stats
         const statsDiv = document.getElementById('summaryStats');
+        const hasExisting = summary.pallets_existing && summary.pallets_existing > 0;
+
         statsDiv.innerHTML = `
             <div class="stat-card">
                 <div class="stat-value">${summary.total_pallets || 0}</div>
                 <div class="stat-label">Total Pallets</div>
             </div>
+            ${hasExisting ? `
+            <div class="stat-card" style="border: 2px solid #17a2b8;">
+                <div class="stat-value" style="color: #17a2b8;">${summary.pallets_new || 0}</div>
+                <div class="stat-label">New Pallets</div>
+            </div>
+            <div class="stat-card" style="border: 2px solid #ffc107;">
+                <div class="stat-value" style="color: #856404;">${summary.pallets_existing || 0}</div>
+                <div class="stat-label">Will Update</div>
+            </div>
+            ` : ''}
             <div class="stat-card">
                 <div class="stat-value">${(summary.total_modules || 0).toLocaleString()}</div>
                 <div class="stat-label">Total Modules</div>
@@ -1506,6 +1841,20 @@ $conn->close();
                 <div class="stat-label">Avg Modules/Pallet</div>
             </div>
         `;
+
+        // Show duplicate info banner if there are existing pallets
+        const duplicateInfoDiv = document.getElementById('duplicateInfoBanner');
+        if (hasExisting && duplicateInfoDiv) {
+            duplicateInfoDiv.innerHTML = `
+                <h4><span>🔄</span> Duplicate Pallets Detected</h4>
+                <p><strong>${summary.pallets_existing}</strong> pallet(s) already exist in this project and will be <strong>updated</strong> with the new data from your file.</p>
+                <p><strong>${summary.pallets_new}</strong> new pallet(s) will be added.</p>
+                <p style="font-size: 0.85rem; margin-top: 8px; opacity: 0.8;">Existing pallets are highlighted in <span style="background: #fff3cd; padding: 2px 6px; border-radius: 4px;">yellow</span> in the preview below.</p>
+            `;
+            duplicateInfoDiv.style.display = 'block';
+        } else if (duplicateInfoDiv) {
+            duplicateInfoDiv.style.display = 'none';
+        }
 
         // MW Comparison (only if project has a target size)
         const mwComparisonDiv = document.getElementById('mwComparison');
@@ -1587,21 +1936,47 @@ $conn->close();
         const thead = document.getElementById('previewTableHead');
         const tbody = document.getElementById('previewTableBody');
 
-        // Headers
-        const headerCols = ['Pallet ID', 'Wattage', 'Quantity'];
+        // Get list of existing pallet IDs
+        const existingPalletIds = summary.existing_pallet_ids || [];
+        const existingPalletSet = new Set(existingPalletIds);
+
+        // Headers - add Status column if there are duplicates
+        const headerCols = hasExisting
+            ? ['Status', 'Pallet ID', 'Wattage', 'Quantity']
+            : ['Pallet ID', 'Wattage', 'Quantity'];
         thead.innerHTML = headerCols.map(h => `<th>${h}</th>`).join('');
 
         // Rows (first 20)
-        tbody.innerHTML = parsedData.slice(0, 20).map(row => `
-            <tr>
-                <td>${row.pallet_id || '-'}</td>
-                <td>${row.wattage || '-'}W</td>
-                <td>${row.quantity || '-'}</td>
-            </tr>
-        `).join('');
+        tbody.innerHTML = parsedData.slice(0, 20).map(row => {
+            const isExisting = existingPalletSet.has(row.pallet_id);
+            const rowClass = isExisting ? 'existing-pallet' : '';
+            const statusBadge = isExisting
+                ? '<span class="pallet-status-badge update">Update</span>'
+                : '<span class="pallet-status-badge new">New</span>';
 
+            if (hasExisting) {
+                return `
+                    <tr class="${rowClass}">
+                        <td>${statusBadge}</td>
+                        <td>${row.pallet_id || '-'}</td>
+                        <td>${row.wattage || '-'}W</td>
+                        <td>${row.quantity || '-'}</td>
+                    </tr>
+                `;
+            } else {
+                return `
+                    <tr>
+                        <td>${row.pallet_id || '-'}</td>
+                        <td>${row.wattage || '-'}W</td>
+                        <td>${row.quantity || '-'}</td>
+                    </tr>
+                `;
+            }
+        }).join('');
+
+        const colSpan = hasExisting ? 4 : 3;
         if (parsedData.length > 20) {
-            tbody.innerHTML += `<tr><td colspan="3" style="text-align:center; color:#6c757d;">...and ${parsedData.length - 20} more rows</td></tr>`;
+            tbody.innerHTML += `<tr><td colspan="${colSpan}" style="text-align:center; color:#6c757d;">...and ${parsedData.length - 20} more rows</td></tr>`;
         }
     }
 
@@ -1694,18 +2069,22 @@ $conn->close();
                 viewLink = `<a href="dashboard.php" class="btn btn-primary">Go to Dashboard</a>`;
             }
 
+            const hasUpdates = result.pallets_updated && result.pallets_updated > 0;
+
             container.innerHTML = `
                 <div class="results-icon success">✓</div>
                 <h2>Import Complete!</h2>
                 <div class="summary-stats">
                     <div class="stat-card">
                         <div class="stat-value">${result.pallets_created}</div>
-                        <div class="stat-label">Pallets Created</div>
+                        <div class="stat-label">New Pallets Created</div>
                     </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${result.modules_created || 0}</div>
-                        <div class="stat-label">Module Items Created</div>
+                    ${hasUpdates ? `
+                    <div class="stat-card" style="border: 2px solid #ffc107;">
+                        <div class="stat-value" style="color: #856404;">${result.pallets_updated}</div>
+                        <div class="stat-label">Pallets Updated</div>
                     </div>
+                    ` : ''}
                     <div class="stat-card">
                         <div class="stat-value">${(result.total_modules || 0).toLocaleString()}</div>
                         <div class="stat-label">Total Modules</div>
@@ -1739,6 +2118,129 @@ $conn->close();
 
     // Make goToStep available globally for the results page
     window.goToStep = goToStep;
+
+    // ========== Logistics Panel Sync ==========
+    const logisticsFab = document.getElementById('logisticsFab');
+    const logisticsPanel = document.getElementById('logisticsPanel');
+    const logisticsPanelOverlay = document.getElementById('logisticsPanelOverlay');
+    const logisticsPanelClose = document.getElementById('logisticsPanelClose');
+
+    // Field mappings between Step 1 form and panel
+    const logisticsFieldMappings = [
+        { form: 'modules_per_pallet', panel: 'panel_modules_per_pallet' },
+        { form: 'pallets_per_truck', panel: 'panel_pallets_per_truck' },
+        { form: 'modules_per_truck', panel: 'panel_modules_per_truck' },
+        { form: 'trucks_needed', panel: 'panel_trucks_needed' },
+        { form: 'pallet_length_mm', panel: 'panel_pallet_length_mm' },
+        { form: 'pallet_depth_mm', panel: 'panel_pallet_depth_mm' },
+        { form: 'pallet_double_stacked_height_mm', panel: 'panel_pallet_double_stacked_height_mm' },
+        { form: 'pallet_total_weight_kg', panel: 'panel_pallet_total_weight_kg' },
+        { form: 'forklift_truck_long_side_mm', panel: 'panel_forklift_truck_long_side_mm' },
+        { form: 'forklift_truck_short_side_mm', panel: 'panel_forklift_truck_short_side_mm' },
+        { form: 'pallet_jack_long_side_mm', panel: 'panel_pallet_jack_long_side_mm' },
+        { form: 'pallet_jack_short_side_mm', panel: 'panel_pallet_jack_short_side_mm' },
+        { form: 'stacking_in_warehouse', panel: 'panel_stacking_in_warehouse' },
+        { form: 'stacking_during_transport', panel: 'panel_stacking_during_transport' },
+        { form: 'module_notes', panel: 'panel_module_notes' }
+    ];
+
+    // Sync from Step 1 form to panel
+    function syncFormToPanel() {
+        logisticsFieldMappings.forEach(mapping => {
+            const formField = document.getElementById(mapping.form);
+            const panelField = document.getElementById(mapping.panel);
+            if (formField && panelField) {
+                panelField.value = formField.value;
+            }
+        });
+        updateFabStatus();
+    }
+
+    // Sync from panel to Step 1 form
+    function syncPanelToForm() {
+        logisticsFieldMappings.forEach(mapping => {
+            const formField = document.getElementById(mapping.form);
+            const panelField = document.getElementById(mapping.panel);
+            if (formField && panelField && !formField.readOnly) {
+                formField.value = panelField.value;
+            }
+        });
+        updateFabStatus();
+    }
+
+    // Update FAB appearance based on whether data exists
+    function updateFabStatus() {
+        let hasData = false;
+        logisticsFieldMappings.forEach(mapping => {
+            const formField = document.getElementById(mapping.form);
+            if (formField && formField.value && formField.value.trim() !== '') {
+                hasData = true;
+            }
+        });
+        if (hasData) {
+            logisticsFab.classList.add('has-data');
+        } else {
+            logisticsFab.classList.remove('has-data');
+        }
+    }
+
+    // Open panel
+    function openLogisticsPanel() {
+        syncFormToPanel();
+        logisticsPanel.classList.add('open');
+        logisticsPanelOverlay.classList.add('open');
+    }
+
+    // Close panel
+    function closeLogisticsPanel() {
+        syncPanelToForm();
+        logisticsPanel.classList.remove('open');
+        logisticsPanelOverlay.classList.remove('open');
+    }
+
+    // Event listeners
+    if (logisticsFab) {
+        logisticsFab.addEventListener('click', openLogisticsPanel);
+    }
+    if (logisticsPanelClose) {
+        logisticsPanelClose.addEventListener('click', closeLogisticsPanel);
+    }
+    if (logisticsPanelOverlay) {
+        logisticsPanelOverlay.addEventListener('click', closeLogisticsPanel);
+    }
+
+    // Sync panel changes to form in real-time
+    logisticsFieldMappings.forEach(mapping => {
+        const panelField = document.getElementById(mapping.panel);
+        if (panelField && !panelField.readOnly) {
+            panelField.addEventListener('input', function() {
+                const formField = document.getElementById(mapping.form);
+                if (formField && !formField.readOnly) {
+                    formField.value = this.value;
+                    // Trigger any calculations
+                    formField.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                updateFabStatus();
+            });
+        }
+    });
+
+    // Also sync form changes to panel
+    logisticsFieldMappings.forEach(mapping => {
+        const formField = document.getElementById(mapping.form);
+        if (formField) {
+            formField.addEventListener('input', function() {
+                const panelField = document.getElementById(mapping.panel);
+                if (panelField) {
+                    panelField.value = this.value;
+                }
+                updateFabStatus();
+            });
+        }
+    });
+
+    // Initial status update
+    updateFabStatus();
 })();
 </script>
 </body>
