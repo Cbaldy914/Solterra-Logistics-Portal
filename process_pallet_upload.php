@@ -26,6 +26,7 @@ if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])) {
 
 require_once '../config.php';
 require_once 'schedule_parser.php';
+require_once 'document_helpers.php';
 
 $conn = getDBConnection();
 if (!$conn) {
@@ -800,6 +801,56 @@ function handleImport($conn, $user_id) {
         // Save mapping if requested
         if ($saveMapping) {
             savePalletColumnMapping($conn, $manufacturer_id, $account_id, $columnMapping, $user_id);
+        }
+
+        // Handle module documentation files if provided
+        $hasDocs = isset($_FILES['module_docs']) && (
+            (is_array($_FILES['module_docs']['error']) && count(array_filter($_FILES['module_docs']['error'], fn($e)=>$e!==UPLOAD_ERR_NO_FILE))>0) ||
+            (!is_array($_FILES['module_docs']['error']) && $_FILES['module_docs']['error'] !== UPLOAD_ERR_NO_FILE)
+        );
+
+        if ($hasDocs && $project_id > 0) {
+            $module_docs_sub_type = trim($_POST['module_docs_sub_type'] ?? '');
+            $module_docs_description = trim($_POST['module_docs_description'] ?? '');
+
+            if ($module_docs_sub_type === '') {
+                throw new Exception('Please choose a Document Sub-Type when uploading module documentation.');
+            }
+
+            $names = (array)$_FILES['module_docs']['name'];
+            $tmps  = (array)$_FILES['module_docs']['tmp_name'];
+            $errs  = (array)$_FILES['module_docs']['error'];
+            $sizes = (array)$_FILES['module_docs']['size'];
+
+            foreach ($names as $i => $orig) {
+                if (!isset($errs[$i]) || $errs[$i] === UPLOAD_ERR_NO_FILE) continue;
+                if ($errs[$i] !== UPLOAD_ERR_OK) {
+                    throw new Exception('Module document upload error for file: ' . $orig);
+                }
+
+                $tmpName = $tmps[$i];
+                $mime = mime_content_type($tmpName);
+                $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
+                $allowed_ext = ['pdf','doc','docx','xls','xlsx','jpg','jpeg','png','gif','txt','csv'];
+
+                if (!in_array($ext, $allowed_ext)) {
+                    throw new Exception('Invalid documentation file type: ' . $ext);
+                }
+
+                $doc = [
+                    'project_id' => $project_id,
+                    'document_type' => 'modules',
+                    'document_sub_type' => $module_docs_sub_type,
+                    'original_name' => $orig,
+                    'file_size' => $sizes[$i],
+                    'mime_type' => $mime,
+                    'uploaded_by' => $user_id,
+                    'tmp_name' => $tmpName,
+                    'description' => ($module_docs_description !== '' ? $module_docs_description : 'Module Documentation from Pallet Import')
+                ];
+
+                saveDocumentToProjectDocuments($conn, $doc);
+            }
         }
 
         $conn->commit();
