@@ -308,6 +308,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
+            // Auto-palletization - create pallets if enabled
+            $enable_palletization = isset($_POST['enable_palletization']) && $_POST['enable_palletization'] === '1';
+            $auto_modules_per_pallet = isset($_POST['auto_modules_per_pallet']) && $_POST['auto_modules_per_pallet'] !== '' ? intval($_POST['auto_modules_per_pallet']) : 0;
+
+            if ($enable_palletization && $auto_modules_per_pallet > 0 && $project_id > 0) {
+                // Get the unassigned_module_items we just created
+                $stmtItems = $conn->prepare("
+                    SELECT id, wattage, quantity
+                    FROM unassigned_module_items
+                    WHERE unassigned_module_id = ?
+                ");
+                $stmtItems->bind_param("i", $module_id);
+                $stmtItems->execute();
+                $itemsResult = $stmtItems->get_result();
+
+                $stmtPallet = $conn->prepare("
+                    INSERT INTO pallets (project_id, wattage, quantity, manufacturer_location_id, unassigned_module_item_id)
+                    VALUES (?, ?, ?, ?, ?)
+                ");
+
+                // Also update modules_per_pallet in the modules table if not already set
+                if ($modules_per_pallet === null || $modules_per_pallet === 0) {
+                    $stmtUpdateMpp = $conn->prepare("UPDATE modules SET modules_per_pallet = ? WHERE id = ?");
+                    $stmtUpdateMpp->bind_param("ii", $auto_modules_per_pallet, $module_id);
+                    $stmtUpdateMpp->execute();
+                    $stmtUpdateMpp->close();
+                }
+
+                $pallets_created = 0;
+
+                while ($item = $itemsResult->fetch_assoc()) {
+                    $item_id = $item['id'];
+                    $item_wattage = $item['wattage'];
+                    $item_quantity = $item['quantity'];
+
+                    // Calculate how many full pallets and partial pallet
+                    $full_pallets = floor($item_quantity / $auto_modules_per_pallet);
+                    $remaining_modules = $item_quantity % $auto_modules_per_pallet;
+
+                    // Create full pallets
+                    for ($p = 0; $p < $full_pallets; $p++) {
+                        $stmtPallet->bind_param("iiiii", $project_id, $item_wattage, $auto_modules_per_pallet, $location_id, $item_id);
+                        if (!$stmtPallet->execute()) {
+                            throw new Exception("Error creating pallet: " . $stmtPallet->error);
+                        }
+                        $pallets_created++;
+                    }
+
+                    // Create partial pallet if there are remaining modules
+                    if ($remaining_modules > 0) {
+                        $stmtPallet->bind_param("iiiii", $project_id, $item_wattage, $remaining_modules, $location_id, $item_id);
+                        if (!$stmtPallet->execute()) {
+                            throw new Exception("Error creating partial pallet: " . $stmtPallet->error);
+                        }
+                        $pallets_created++;
+                    }
+                }
+
+                $stmtItems->close();
+                $stmtPallet->close();
+            }
+
             // If documentation files are provided and a project is selected, save them to project_documents
             $hasDocs = isset($_FILES['module_docs']) && (
                 (is_array($_FILES['module_docs']['error']) && count(array_filter($_FILES['module_docs']['error'], fn($e)=>$e!==UPLOAD_ERR_NO_FILE))>0) ||
@@ -732,6 +794,23 @@ $conn->close();
             </div>
         </div>
 
+        <!-- Entry Method Toggle -->
+        <div class="entry-method-toggle" style="background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+            <h3 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1.1em;">How would you like to add modules?</h3>
+            <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #488C9A; border-radius: 12px; cursor: pointer; background: rgba(72,140,154,0.05); transition: all 0.2s ease;">
+                    <input type="radio" name="entry_method" value="manual" checked style="margin-right: 10px;">
+                    <strong style="color: #293E4C;">Manual Entry</strong>
+                    <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Enter generic module batch information manually. Pallets can be auto-generated with system IDs.</p>
+                </label>
+                <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #e9ecef; border-radius: 12px; cursor: pointer; background: #f8f9fa; transition: all 0.2s ease;">
+                    <input type="radio" name="entry_method" value="import" style="margin-right: 10px;">
+                    <strong style="color: #293E4C;">Import Pallets</strong>
+                    <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Upload real manufacturer pallet data from a CSV/Excel file.</p>
+                </label>
+            </div>
+        </div>
+
         <?php if ($project && $project_size_mw > 0): ?>
         <!-- Project Capacity Info Banner -->
         <div id="capacityBanner" style="background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%); border: 1px solid #b8daff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
@@ -768,23 +847,6 @@ $conn->close();
             </div>
         </div>
         <?php endif; ?>
-
-        <!-- Entry Method Toggle -->
-        <div class="entry-method-toggle" style="background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
-            <h3 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1.1em;">How would you like to add modules?</h3>
-            <div style="display: flex; gap: 16px; flex-wrap: wrap;">
-                <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #488C9A; border-radius: 12px; cursor: pointer; background: rgba(72,140,154,0.05); transition: all 0.2s ease;">
-                    <input type="radio" name="entry_method" value="manual" checked style="margin-right: 10px;">
-                    <strong style="color: #293E4C;">Manual Entry</strong>
-                    <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Enter module details manually using the form below.</p>
-                </label>
-                <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #e9ecef; border-radius: 12px; cursor: pointer; background: #f8f9fa; transition: all 0.2s ease;">
-                    <input type="radio" name="entry_method" value="import" style="margin-right: 10px;">
-                    <strong style="color: #293E4C;">Import Pallets</strong>
-                    <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Upload a CSV or Excel file with pallet data.</p>
-                </label>
-            </div>
-        </div>
 
         <div class="form-container" id="manualEntryContainer">
             
@@ -829,18 +891,71 @@ $conn->close();
                     <?php endif; ?>
 
                     <?php $prefManufacturerId = null; $prefLocationId = null; $existingWattages = []; include __DIR__ . '/components/module_batch_section.php'; ?>
-                    
-                     <!-- Module Documentation Section -->
-                     <div class="form-section">
-                         <h2>Module Documentation</h2>
-                         <div class="form-group">
-                             <label>Module Documentation <span style="color:#999; font-weight:400; font-size:0.85rem;">(optional)</span></label>
-                             <button type="button" class="add-wattage-btn" onclick="openPreModuleUploadModal()" style="background: #488C9A; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 1em;">
-                                 <i class="fas fa-upload" style="margin-right: 8px;"></i>Attach Module Documentation
-                             </button>
-                             <div id="preModuleDocsSummary" style="margin-top: 12px; color: #666; font-size: 0.9em; display: none;"></div>
-                         </div>
-                     </div>
+
+                    <!-- Palletization Section -->
+                    <div class="form-section" style="margin-top: 30px; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border: 1px solid #e9ecef; border-left: 4px solid #488C9A; border-radius: 12px; padding: 24px;">
+                        <h2 style="display: flex; align-items: center; gap: 10px; margin: 0 0 12px 0;">
+                            <span style="font-size: 1.2em;">📦</span> Auto-Palletization
+                            <span style="color: #999; font-weight: 400; font-size: 0.75rem;">(optional)</span>
+                        </h2>
+
+                        <!-- Explanation Box -->
+                        <div style="background: linear-gradient(135deg, #fff3cd 0%, #fff8e1 100%); border: 1px solid #ffc107; border-radius: 10px; padding: 16px; margin-bottom: 20px;">
+                            <div style="display: flex; align-items: flex-start; gap: 12px;">
+                                <span style="font-size: 1.2rem;">💡</span>
+                                <div>
+                                    <div style="font-weight: 600; color: #856404; margin-bottom: 6px;">How Auto-Palletization Works</div>
+                                    <ul style="margin: 0; padding-left: 18px; color: #856404; font-size: 0.9rem; line-height: 1.6;">
+                                        <li>Pallets will be created with <strong>system-generated IDs</strong> (e.g., PAL-0001, PAL-0002)</li>
+                                        <li>You can link actual <strong>manufacturer pallet IDs</strong> to these later when shipments arrive</li>
+                                        <li>This is ideal for planning and tracking before real pallet data is available</li>
+                                        <li>For importing real manufacturer pallet data, use the <strong>Import Pallets</strong> option instead</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; align-items: stretch; gap: 16px; flex-wrap: wrap;">
+                            <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 16px 20px; background: #fff; border-radius: 10px; border: 2px solid #e9ecef; transition: all 0.2s ease;" id="enablePalletizationLabel">
+                                <input type="checkbox" name="enable_palletization" id="enable_palletization" value="1" style="width: 22px; height: 22px; cursor: pointer; accent-color: #488C9A;">
+                                <div>
+                                    <div style="font-weight: 600; color: #293E4C; font-size: 1rem;">Enable Auto-Palletization</div>
+                                    <div style="font-size: 0.85rem; color: #6c757d;">Create pallets automatically on save</div>
+                                </div>
+                            </label>
+
+                            <div id="palletizationConfig" style="display: none; padding: 16px 20px; background: #fff; border-radius: 10px; border: 2px solid #488C9A; box-shadow: 0 4px 12px rgba(72,140,154,0.15);">
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <label for="auto_modules_per_pallet" style="font-weight: 600; color: #293E4C; font-size: 0.95rem; white-space: nowrap;">
+                                        Modules per Pallet:
+                                    </label>
+                                    <input type="number" name="auto_modules_per_pallet" id="auto_modules_per_pallet" min="1" placeholder="30" style="width: 80px; padding: 8px 12px; border: 2px solid #e9ecef; border-radius: 6px; font-size: 1rem; font-weight: 600; text-align: center;">
+                                    <div id="palletCalculation" style="display: none; padding: 6px 12px; background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border-radius: 6px; border: 1px solid #c8e6c9;">
+                                        <span style="font-size: 0.9rem; font-weight: 600; color: #28a745;" id="calcTotalPallets">0 pallets</span>
+                                        <span id="calcPartialPallet" style="color: #856404; font-size: 0.85rem; margin-left: 4px;"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Detailed pallet calculation (shown below when there's data) -->
+                        <div id="palletCalcDetails" style="display: none; margin-top: 16px; padding: 16px; background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border-radius: 10px; border: 1px solid #c8e6c9;">
+                            <div style="display: flex; gap: 24px; flex-wrap: wrap; justify-content: center;">
+                                <div style="text-align: center;">
+                                    <div style="font-size: 1.3rem; font-weight: 700; color: #293E4C;" id="calcTotalModules">0</div>
+                                    <div style="font-size: 0.75rem; color: #6c757d;">Total Modules</div>
+                                </div>
+                                <div style="text-align: center;">
+                                    <div style="font-size: 1.3rem; font-weight: 700; color: #28a745;" id="calcFullPallets">0</div>
+                                    <div style="font-size: 0.75rem; color: #6c757d;">Full Pallets</div>
+                                </div>
+                                <div style="text-align: center;">
+                                    <div style="font-size: 1.3rem; font-weight: 700; color: #ffc107;" id="calcPartialModules">0</div>
+                                    <div style="font-size: 0.75rem; color: #6c757d;">Partial Pallet</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <!-- Basic Information -->
                     <div class="form-section" style="display:none">
                         <h2>Basic Information</h2>
@@ -1250,11 +1365,9 @@ $conn->close();
              const batchMw = calculateBatchMw();
              const newTotalMw = capacityData.currentOrderedMw + batchMw;
              const previewDiv = document.getElementById('newMwPreview');
-             const newTotalSpan = document.getElementById('newTotalMw');
 
              if (batchMw > 0 && previewDiv) {
                  previewDiv.style.display = 'block';
-                 newTotalSpan.textContent = newTotalMw.toFixed(2) + ' MW';
 
                  // Update styling based on capacity
                  if (newTotalMw > capacityData.projectSizeMw) {
@@ -1271,6 +1384,9 @@ $conn->close();
                              This batch will exceed the project target by ${excessMw.toFixed(2)} MW (${excessPct.toFixed(1)}% over).
                              You will be asked to confirm before saving.
                          </div>
+                         <div style="font-size: 0.85rem; color: #856404; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.1);">
+                             This batch adds: <strong>+${batchMw.toFixed(4)} MW</strong>
+                         </div>
                      `;
                  } else {
                      previewDiv.style.borderColor = '#28a745';
@@ -1283,6 +1399,9 @@ $conn->close();
                          </div>
                          <div style="font-size: 0.85rem; color: #155724; margin-top: 4px;">
                              ${remainingAfter.toFixed(2)} MW remaining capacity
+                         </div>
+                         <div style="font-size: 0.85rem; color: #666; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.1);">
+                             This batch adds: <strong>+${batchMw.toFixed(4)} MW</strong>
                          </div>
                      `;
                  }
@@ -1328,6 +1447,92 @@ $conn->close();
                          }
                      }
                  });
+             }
+         });
+
+         // ========== Palletization Section ==========
+         document.addEventListener('DOMContentLoaded', function() {
+             const enableCheckbox = document.getElementById('enable_palletization');
+             const configDiv = document.getElementById('palletizationConfig');
+             const modulesPerPalletInput = document.getElementById('auto_modules_per_pallet');
+             const calcDiv = document.getElementById('palletCalculation');
+             const enableLabel = document.getElementById('enablePalletizationLabel');
+
+             if (!enableCheckbox || !configDiv) return;
+
+             // Toggle config visibility when checkbox changes
+             enableCheckbox.addEventListener('change', function() {
+                 configDiv.style.display = this.checked ? 'block' : 'none';
+                 if (this.checked) {
+                     enableLabel.style.borderColor = '#28a745';
+                     enableLabel.style.background = '#d4edda';
+                     updatePalletCalculation();
+                 } else {
+                     enableLabel.style.borderColor = '#e9ecef';
+                     enableLabel.style.background = '#f8f9fa';
+                 }
+             });
+
+             // Calculate pallets when modules per pallet changes
+             if (modulesPerPalletInput) {
+                 modulesPerPalletInput.addEventListener('input', updatePalletCalculation);
+             }
+
+             // Also recalculate when wattage/quantity inputs change
+             const form = document.getElementById('addBatchForm');
+             if (form) {
+                 form.addEventListener('input', function(e) {
+                     if (e.target.name === 'wattages[]' || e.target.name === 'quantities[]') {
+                         updatePalletCalculation();
+                     }
+                 });
+             }
+
+             function updatePalletCalculation() {
+                 if (!enableCheckbox.checked) return;
+
+                 const modulesPerPallet = parseInt(modulesPerPalletInput.value) || 0;
+                 const quantityInputs = document.querySelectorAll('input[name="quantities[]"]');
+
+                 let totalModules = 0;
+                 quantityInputs.forEach(input => {
+                     totalModules += parseInt(input.value) || 0;
+                 });
+
+                 const detailsDiv = document.getElementById('palletCalcDetails');
+
+                 if (modulesPerPallet > 0 && totalModules > 0) {
+                     const fullPallets = Math.floor(totalModules / modulesPerPallet);
+                     const partialModules = totalModules % modulesPerPallet;
+                     const totalPallets = fullPallets + (partialModules > 0 ? 1 : 0);
+
+                     // Update inline display
+                     document.getElementById('calcTotalPallets').textContent = totalPallets + ' pallet' + (totalPallets !== 1 ? 's' : '');
+                     const partialSpan = document.getElementById('calcPartialPallet');
+                     if (partialModules > 0) {
+                         partialSpan.textContent = '(+' + partialModules + ' partial)';
+                     } else {
+                         partialSpan.textContent = '';
+                     }
+
+                     // Update detailed display
+                     document.getElementById('calcTotalModules').textContent = totalModules.toLocaleString();
+                     document.getElementById('calcFullPallets').textContent = fullPallets;
+                     document.getElementById('calcPartialModules').textContent = partialModules > 0 ? partialModules : '0';
+
+                     calcDiv.style.display = 'block';
+                     if (detailsDiv) detailsDiv.style.display = 'block';
+                 } else {
+                     calcDiv.style.display = 'none';
+                     if (detailsDiv) detailsDiv.style.display = 'none';
+                 }
+             }
+
+             // Watch for changes to wattage container (new fields added)
+             const wattageContainer = document.getElementById('wattage-container');
+             if (wattageContainer) {
+                 const observer = new MutationObserver(updatePalletCalculation);
+                 observer.observe(wattageContainer, { childList: true, subtree: true });
              }
          });
     </script>

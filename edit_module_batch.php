@@ -574,6 +574,23 @@ foreach ($current_wattages as $w) {
         </div>
     </div>
 
+    <!-- Entry Method Toggle -->
+    <div class="entry-method-toggle" style="background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+        <h3 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1.1em;">How would you like to update modules?</h3>
+        <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+            <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #488C9A; border-radius: 12px; cursor: pointer; background: rgba(72,140,154,0.05); transition: all 0.2s ease;">
+                <input type="radio" name="entry_method" value="manual" checked style="margin-right: 10px;">
+                <strong style="color: #293E4C;">Manual Entry</strong>
+                <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Edit generic module batch information manually. System-generated pallet IDs.</p>
+            </label>
+            <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #e9ecef; border-radius: 12px; cursor: pointer; background: #f8f9fa; transition: all 0.2s ease;">
+                <input type="radio" name="entry_method" value="import" style="margin-right: 10px;">
+                <strong style="color: #293E4C;">Import Pallets</strong>
+                <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Upload real manufacturer pallet data from a CSV/Excel file.</p>
+            </label>
+        </div>
+    </div>
+
     <?php if ($project_id > 0 && $project_size_mw > 0): ?>
     <!-- Project Capacity Info Banner -->
     <div id="capacityBanner" style="background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%); border: 1px solid #b8daff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
@@ -609,23 +626,6 @@ foreach ($current_wattages as $w) {
         <div id="newMwPreview" style="display: none; margin-top: 16px; padding: 12px; background: white; border-radius: 8px; border: 2px solid #ffc107;"></div>
     </div>
     <?php endif; ?>
-
-    <!-- Entry Method Toggle -->
-    <div class="entry-method-toggle" style="background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
-        <h3 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1.1em;">How would you like to update modules?</h3>
-        <div style="display: flex; gap: 16px; flex-wrap: wrap;">
-            <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #488C9A; border-radius: 12px; cursor: pointer; background: rgba(72,140,154,0.05); transition: all 0.2s ease;">
-                <input type="radio" name="entry_method" value="manual" checked style="margin-right: 10px;">
-                <strong style="color: #293E4C;">Manual Entry</strong>
-                <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Edit module details manually using the form below.</p>
-            </label>
-            <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #e9ecef; border-radius: 12px; cursor: pointer; background: #f8f9fa; transition: all 0.2s ease;">
-                <input type="radio" name="entry_method" value="import" style="margin-right: 10px;">
-                <strong style="color: #293E4C;">Import Pallets</strong>
-                <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Upload a CSV or Excel file with pallet data.</p>
-            </label>
-        </div>
-    </div>
 
     <div class="form-container" id="manualEntryContainer">
         <div class="form-content">

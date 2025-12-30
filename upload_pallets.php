@@ -470,7 +470,8 @@ $conn->close();
         }
 
         /* Inline Logistics Button (for steps 2, 3, 4) */
-        .logistics-inline-btn {
+        .logistics-inline-btn,
+        .module-docs-inline-btn {
             background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
             border: 2px solid #488C9A;
             border-radius: 8px;
@@ -485,8 +486,17 @@ $conn->close();
             transition: all 0.2s ease;
             margin-bottom: 24px;
         }
+        .module-docs-inline-btn {
+            border-color: #6f42c1;
+            color: #6f42c1;
+            margin-left: 12px;
+        }
         .logistics-inline-btn:hover {
             background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
+        }
+        .module-docs-inline-btn:hover {
+            background: linear-gradient(135deg, #6f42c1 0%, #5a32a3 100%);
             color: #fff;
         }
         .logistics-inline-btn.has-data {
@@ -498,13 +508,36 @@ $conn->close();
             background: linear-gradient(135deg, #28a745 0%, #218838 100%);
             color: #fff;
         }
-        .logistics-inline-btn .badge {
+        .module-docs-inline-btn.has-data {
+            background: linear-gradient(135deg, #e2d9f3 0%, #d4c7eb 100%);
+            border-color: #6f42c1;
+            color: #6f42c1;
+        }
+        .module-docs-inline-btn.has-data:hover {
+            background: linear-gradient(135deg, #6f42c1 0%, #5a32a3 100%);
+            color: #fff;
+        }
+        .logistics-inline-btn .badge,
+        .module-docs-inline-btn .badge {
             background: #28a745;
             color: white;
             font-size: 10px;
             padding: 2px 6px;
             border-radius: 10px;
             margin-left: 4px;
+        }
+        .module-docs-inline-btn .badge {
+            background: #6f42c1;
+        }
+        .inline-buttons-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0;
+            margin-bottom: 24px;
+        }
+        .inline-buttons-row .logistics-inline-btn,
+        .inline-buttons-row .module-docs-inline-btn {
+            margin-bottom: 0;
         }
         .logistics-panel-overlay {
             position: fixed;
@@ -1103,12 +1136,19 @@ $conn->close();
                         <div class="field-hint">Leave as "Unassigned" if these pallets are not yet assigned to a specific project.</div>
                     </div>
 
-                    <!-- Logistics Specifications Button for Step 1 -->
-                    <button type="button" class="logistics-inline-btn" id="logisticsBtn1" onclick="openLogisticsPanel()">
-                        <span>📦</span>
-                        <span>Logistics Specifications</span>
-                        <span class="badge" id="logisticsBadge1" style="display: none;">Set</span>
-                    </button>
+                    <!-- Logistics & Documentation Buttons for Step 1 -->
+                    <div class="inline-buttons-row">
+                        <button type="button" class="logistics-inline-btn" id="logisticsBtn1" onclick="openLogisticsPanel()">
+                            <span>📦</span>
+                            <span>Logistics Specifications</span>
+                            <span class="badge" id="logisticsBadge1" style="display: none;">Set</span>
+                        </button>
+                        <button type="button" class="module-docs-inline-btn" id="moduleDocsBtn1" onclick="openModuleDocsPanel()">
+                            <span>📄</span>
+                            <span>Module Documentation</span>
+                            <span class="badge" id="moduleDocsBadge1" style="display: none;"></span>
+                        </button>
+                    </div>
 
                     <!-- Hidden fields container to store logistics values -->
                     <div class="optional-fields-content" id="optionalFieldsContent" style="display: none;">
@@ -1229,12 +1269,19 @@ $conn->close();
             <div class="content-card">
                 <h2>Step 2: Map Columns</h2>
 
-                <!-- Inline Logistics Button for Step 2 -->
-                <button type="button" class="logistics-inline-btn" id="logisticsBtn2" onclick="openLogisticsPanel()">
-                    <span>📦</span>
-                    <span>Logistics Specifications</span>
-                    <span class="badge" id="logisticsBadge2" style="display: none;">Set</span>
-                </button>
+                <!-- Logistics & Documentation Buttons for Step 2 -->
+                <div class="inline-buttons-row">
+                    <button type="button" class="logistics-inline-btn" id="logisticsBtn2" onclick="openLogisticsPanel()">
+                        <span>📦</span>
+                        <span>Logistics Specifications</span>
+                        <span class="badge" id="logisticsBadge2" style="display: none;">Set</span>
+                    </button>
+                    <button type="button" class="module-docs-inline-btn" id="moduleDocsBtn2" onclick="openModuleDocsPanel()">
+                        <span>📄</span>
+                        <span>Module Documentation</span>
+                        <span class="badge" id="moduleDocsBadge2" style="display: none;"></span>
+                    </button>
+                </div>
 
                 <div class="info-banner">
                     <h3>Match Your Columns</h3>
@@ -1276,12 +1323,19 @@ $conn->close();
             <div class="content-card">
                 <h2>Step 3: Preview Import</h2>
 
-                <!-- Inline Logistics Button for Step 3 -->
-                <button type="button" class="logistics-inline-btn" id="logisticsBtn3" onclick="openLogisticsPanel()">
-                    <span>📦</span>
-                    <span>Logistics Specifications</span>
-                    <span class="badge" id="logisticsBadge3" style="display: none;">Set</span>
-                </button>
+                <!-- Logistics & Documentation Buttons for Step 3 -->
+                <div class="inline-buttons-row">
+                    <button type="button" class="logistics-inline-btn" id="logisticsBtn3" onclick="openLogisticsPanel()">
+                        <span>📦</span>
+                        <span>Logistics Specifications</span>
+                        <span class="badge" id="logisticsBadge3" style="display: none;">Set</span>
+                    </button>
+                    <button type="button" class="module-docs-inline-btn" id="moduleDocsBtn3" onclick="openModuleDocsPanel()">
+                        <span>📄</span>
+                        <span>Module Documentation</span>
+                        <span class="badge" id="moduleDocsBadge3" style="display: none;"></span>
+                    </button>
+                </div>
 
                 <div class="summary-stats" id="summaryStats">
                     <!-- Populated by JavaScript -->
@@ -1464,6 +1518,65 @@ $conn->close();
                         <textarea id="panel_module_notes" rows="2" placeholder="General notes..."></textarea>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Module Documentation Panel Overlay -->
+    <div class="logistics-panel-overlay" id="moduleDocsPanelOverlay"></div>
+
+    <!-- Module Documentation Slide-out Panel -->
+    <div class="logistics-panel" id="moduleDocsPanel" style="border-left: 4px solid #6f42c1;">
+        <div class="logistics-panel-header" style="border-bottom: 2px solid #6f42c1;">
+            <h3 style="color: #6f42c1;"><span style="margin-right: 8px;">📄</span>Module Documentation</h3>
+            <button type="button" class="logistics-panel-close" id="moduleDocsPanelClose">&times;</button>
+        </div>
+        <div class="logistics-panel-body">
+            <p style="margin: 0 0 20px 0; color: #6c757d; font-size: 13px;">
+                Attach documentation files (spec sheets, flash test data, invoices) to this module batch.
+                Files will be saved to the project's document library.
+            </p>
+
+            <!-- Document Type Selection -->
+            <div class="logistics-panel-section">
+                <h5>Document Details</h5>
+                <div class="logistics-panel-field full-width" style="margin-bottom: 16px;">
+                    <label>Document Sub-Type</label>
+                    <select id="module_docs_sub_type" name="module_docs_sub_type" style="width: 100%; padding: 10px; border: 1px solid #dee2e6; border-radius: 6px; font-size: 13px;">
+                        <option value="">Choose sub-type...</option>
+                        <option value="Module Invoice">Module Invoice</option>
+                        <option value="Flash Test Data">Flash Test Data</option>
+                        <option value="Spec Sheets">Spec Sheets</option>
+                    </select>
+                </div>
+                <div class="logistics-panel-field full-width" style="margin-bottom: 16px;">
+                    <label>Description (Optional)</label>
+                    <input type="text" id="module_docs_description" name="module_docs_description" placeholder="Brief description of documents" style="width: 100%; padding: 10px; border: 1px solid #dee2e6; border-radius: 6px; font-size: 13px; box-sizing: border-box;">
+                </div>
+            </div>
+
+            <!-- File Upload Area -->
+            <div class="logistics-panel-section">
+                <h5>Select Files</h5>
+                <div id="moduleDocsDropArea" style="border: 2px dashed #6f42c1; border-radius: 12px; padding: 30px 20px; text-align: center; cursor: pointer; background: linear-gradient(135deg, #f8f5fc 0%, #ffffff 100%); transition: all 0.3s ease;">
+                    <div style="font-size: 36px; color: #6f42c1; margin-bottom: 12px;">📎</div>
+                    <div style="font-size: 0.95rem; font-weight: 600; color: #293E4C; margin-bottom: 6px;">Drop files here or click to browse</div>
+                    <div style="font-size: 0.8rem; color: #6c757d;">PDF, DOC, DOCX, XLS, XLSX, JPG, PNG, TXT, CSV</div>
+                </div>
+                <input type="file" id="module_docs_files" name="module_docs[]" multiple style="display: none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.txt,.csv">
+
+                <!-- Selected Files List -->
+                <div id="moduleDocsFileList" style="margin-top: 16px;"></div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div style="display: flex; gap: 12px; margin-top: 24px; padding-top: 16px; border-top: 1px solid #e9ecef;">
+                <button type="button" id="moduleDocsClearBtn" style="flex: 1; padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; cursor: pointer; font-size: 14px; color: #6c757d;">
+                    Clear All
+                </button>
+                <button type="button" id="moduleDocsDoneBtn" style="flex: 2; padding: 12px; background: linear-gradient(135deg, #6f42c1 0%, #5a32a3 100%); border: none; border-radius: 8px; cursor: pointer; font-size: 14px; color: white; font-weight: 600;">
+                    Done
+                </button>
             </div>
         </div>
     </div>
@@ -2196,6 +2309,16 @@ $conn->close();
             }
         });
 
+        // Add module documentation files if any
+        const moduleDocsFiles = window.getModuleDocsFiles ? window.getModuleDocsFiles() : [];
+        if (moduleDocsFiles.length > 0) {
+            moduleDocsFiles.forEach((file, index) => {
+                formData.append('module_docs[]', file);
+            });
+            formData.append('module_docs_sub_type', window.getModuleDocsSubType ? window.getModuleDocsSubType() : '');
+            formData.append('module_docs_description', window.getModuleDocsDescription ? window.getModuleDocsDescription() : '');
+        }
+
         try {
             const response = await fetch('process_pallet_upload.php', {
                 method: 'POST',
@@ -2434,6 +2557,203 @@ $conn->close();
 
     // Initial update of button status
     updateLogisticsButtonStatus();
+
+    // ========== Module Documentation Panel ==========
+    const moduleDocsPanel = document.getElementById('moduleDocsPanel');
+    const moduleDocsPanelOverlay = document.getElementById('moduleDocsPanelOverlay');
+    const moduleDocsPanelClose = document.getElementById('moduleDocsPanelClose');
+    const moduleDocsDropArea = document.getElementById('moduleDocsDropArea');
+    const moduleDocsFileInput = document.getElementById('module_docs_files');
+    const moduleDocsFileList = document.getElementById('moduleDocsFileList');
+    const moduleDocsClearBtn = document.getElementById('moduleDocsClearBtn');
+    const moduleDocsDoneBtn = document.getElementById('moduleDocsDoneBtn');
+
+    // Track selected files
+    let moduleDocsSelectedFiles = [];
+
+    // Open module docs panel - made global so onclick can access it
+    window.openModuleDocsPanel = function() {
+        moduleDocsPanel.classList.add('open');
+        moduleDocsPanelOverlay.classList.add('open');
+        updateModuleDocsFileList();
+    };
+
+    // Close module docs panel
+    function closeModuleDocsPanel() {
+        moduleDocsPanel.classList.remove('open');
+        moduleDocsPanelOverlay.classList.remove('open');
+        updateModuleDocsButtonStatus();
+    }
+
+    // Handle file drop area click
+    if (moduleDocsDropArea) {
+        moduleDocsDropArea.addEventListener('click', () => moduleDocsFileInput.click());
+
+        moduleDocsDropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            moduleDocsDropArea.style.borderColor = '#5a32a3';
+            moduleDocsDropArea.style.background = '#e2d9f3';
+        });
+
+        moduleDocsDropArea.addEventListener('dragleave', () => {
+            moduleDocsDropArea.style.borderColor = '#6f42c1';
+            moduleDocsDropArea.style.background = 'linear-gradient(135deg, #f8f5fc 0%, #ffffff 100%)';
+        });
+
+        moduleDocsDropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            moduleDocsDropArea.style.borderColor = '#6f42c1';
+            moduleDocsDropArea.style.background = 'linear-gradient(135deg, #f8f5fc 0%, #ffffff 100%)';
+            if (e.dataTransfer.files.length) {
+                handleModuleDocsFiles(e.dataTransfer.files);
+            }
+        });
+    }
+
+    // Handle file input change
+    if (moduleDocsFileInput) {
+        moduleDocsFileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) {
+                handleModuleDocsFiles(e.target.files);
+            }
+        });
+    }
+
+    // Process selected files
+    function handleModuleDocsFiles(files) {
+        const allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'gif', 'txt', 'csv'];
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const ext = file.name.split('.').pop().toLowerCase();
+
+            if (!allowedExtensions.includes(ext)) {
+                alert('Invalid file type: ' + file.name + '. Allowed: ' + allowedExtensions.join(', '));
+                continue;
+            }
+
+            // Check if file already added
+            const exists = moduleDocsSelectedFiles.some(f => f.name === file.name && f.size === file.size);
+            if (!exists) {
+                moduleDocsSelectedFiles.push(file);
+            }
+        }
+
+        updateModuleDocsFileList();
+    }
+
+    // Update file list display
+    function updateModuleDocsFileList() {
+        if (!moduleDocsFileList) return;
+
+        if (moduleDocsSelectedFiles.length === 0) {
+            moduleDocsFileList.innerHTML = '';
+            return;
+        }
+
+        let html = '';
+        moduleDocsSelectedFiles.forEach((file, index) => {
+            const sizeKB = (file.size / 1024).toFixed(1);
+            const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+            const sizeStr = file.size > 1024 * 1024 ? sizeMB + ' MB' : sizeKB + ' KB';
+
+            html += `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #f8f9fa; border-radius: 8px; margin-bottom: 8px; border: 1px solid #e9ecef;">
+                    <div style="display: flex; align-items: center; gap: 10px; overflow: hidden;">
+                        <span style="font-size: 16px;">📄</span>
+                        <div style="overflow: hidden;">
+                            <div style="font-size: 0.9rem; color: #293E4C; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${file.name}</div>
+                            <div style="font-size: 0.75rem; color: #6c757d;">${sizeStr}</div>
+                        </div>
+                    </div>
+                    <button type="button" onclick="removeModuleDocsFile(${index})" style="background: none; border: none; color: #dc3545; cursor: pointer; font-size: 18px; padding: 0 4px;">&times;</button>
+                </div>
+            `;
+        });
+
+        moduleDocsFileList.innerHTML = html;
+    }
+
+    // Remove a file from the list
+    window.removeModuleDocsFile = function(index) {
+        moduleDocsSelectedFiles.splice(index, 1);
+        updateModuleDocsFileList();
+        updateModuleDocsButtonStatus();
+    };
+
+    // Clear all files
+    if (moduleDocsClearBtn) {
+        moduleDocsClearBtn.addEventListener('click', () => {
+            moduleDocsSelectedFiles = [];
+            document.getElementById('module_docs_sub_type').value = '';
+            document.getElementById('module_docs_description').value = '';
+            updateModuleDocsFileList();
+            updateModuleDocsButtonStatus();
+        });
+    }
+
+    // Done button
+    if (moduleDocsDoneBtn) {
+        moduleDocsDoneBtn.addEventListener('click', () => {
+            // Validate if files are selected but no sub-type
+            if (moduleDocsSelectedFiles.length > 0) {
+                const subType = document.getElementById('module_docs_sub_type').value;
+                if (!subType) {
+                    alert('Please select a Document Sub-Type when uploading files.');
+                    return;
+                }
+            }
+            closeModuleDocsPanel();
+        });
+    }
+
+    // Close panel event listeners
+    if (moduleDocsPanelClose) {
+        moduleDocsPanelClose.addEventListener('click', closeModuleDocsPanel);
+    }
+    if (moduleDocsPanelOverlay) {
+        moduleDocsPanelOverlay.addEventListener('click', closeModuleDocsPanel);
+    }
+
+    // Update button status across all steps
+    function updateModuleDocsButtonStatus() {
+        const hasFiles = moduleDocsSelectedFiles.length > 0;
+        const fileCount = moduleDocsSelectedFiles.length;
+
+        const buttons = [
+            { btn: document.getElementById('moduleDocsBtn1'), badge: document.getElementById('moduleDocsBadge1') },
+            { btn: document.getElementById('moduleDocsBtn2'), badge: document.getElementById('moduleDocsBadge2') },
+            { btn: document.getElementById('moduleDocsBtn3'), badge: document.getElementById('moduleDocsBadge3') }
+        ];
+
+        buttons.forEach(({ btn, badge }) => {
+            if (btn) {
+                if (hasFiles) {
+                    btn.classList.add('has-data');
+                    if (badge) {
+                        badge.textContent = fileCount + ' file' + (fileCount > 1 ? 's' : '');
+                        badge.style.display = 'inline';
+                    }
+                } else {
+                    btn.classList.remove('has-data');
+                    if (badge) badge.style.display = 'none';
+                }
+            }
+        });
+    }
+
+    // Get files for form submission
+    window.getModuleDocsFiles = function() {
+        return moduleDocsSelectedFiles;
+    };
+
+    window.getModuleDocsSubType = function() {
+        return document.getElementById('module_docs_sub_type')?.value || '';
+    };
+
+    window.getModuleDocsDescription = function() {
+        return document.getElementById('module_docs_description')?.value || '';
+    };
 })();
 </script>
 </body>
