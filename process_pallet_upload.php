@@ -895,7 +895,7 @@ function findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_
             stacking_in_warehouse, stacking_during_transport, module_notes
         ) VALUES (?, ?, ?, ?, 'pallet_import', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
-    $stmt->bind_param("iissiiiiiiiiiiissss",
+    $stmt->bind_param("iissiiiiiiiiiiisss",
         $account_id, $project_id, $manufacturerName, $initial_location,
         $logistics['modules_per_pallet'], $logistics['pallets_per_truck'], $logistics['modules_per_truck'],
         $logistics['pallet_length_mm'], $logistics['pallet_depth_mm'],
