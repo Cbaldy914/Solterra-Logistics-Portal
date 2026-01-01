@@ -115,6 +115,118 @@ if ($stmtW = $conn->prepare('SELECT id, wattage, quantity FROM unassigned_module
 $errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Detect AJAX request
+    $isAjax = !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
+
+    // Handle delete action
+    if (isset($_POST['action']) && $_POST['action'] === 'delete') {
+        try {
+            $conn->begin_transaction();
+
+            // Get all unassigned_module_items for this batch to delete related pallets
+            $stmtGetItems = $conn->prepare("SELECT id FROM unassigned_module_items WHERE unassigned_module_id = ?");
+            $stmtGetItems->bind_param("i", $batch_id);
+            $stmtGetItems->execute();
+            $itemsResult = $stmtGetItems->get_result();
+            $itemIds = [];
+            while ($row = $itemsResult->fetch_assoc()) {
+                $itemIds[] = $row['id'];
+            }
+            $stmtGetItems->close();
+
+            // Delete inventory_pallets associated with these items
+            if (!empty($itemIds)) {
+                $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
+                $stmtDelPallets = $conn->prepare("DELETE FROM inventory_pallets WHERE unassigned_module_item_id IN ($placeholders)");
+                $types = str_repeat('i', count($itemIds));
+                $stmtDelPallets->bind_param($types, ...$itemIds);
+                $stmtDelPallets->execute();
+                $stmtDelPallets->close();
+            }
+
+            // Update project_wattage_orders if assigned to a project
+            if ($project_id > 0) {
+                foreach ($current_wattages as $wattage_row) {
+                    $w = (int)$wattage_row['wattage'];
+                    $q = (int)$wattage_row['quantity'];
+                    $wStr = (string)$w;
+
+                    // Decrease the project wattage order
+                    $stmtGetOrder = $conn->prepare("SELECT id, total_order FROM project_wattage_orders WHERE project_id = ? AND wattage = ? LIMIT 1");
+                    $stmtGetOrder->bind_param("is", $project_id, $wStr);
+                    $stmtGetOrder->execute();
+                    $stmtGetOrder->bind_result($orderId, $totalOrder);
+                    if ($stmtGetOrder->fetch()) {
+                        $stmtGetOrder->close();
+                        $newTotal = max(0, (int)$totalOrder - $q);
+                        if ($newTotal > 0) {
+                            $stmtUpdateOrder = $conn->prepare("UPDATE project_wattage_orders SET total_order = ? WHERE id = ?");
+                            $stmtUpdateOrder->bind_param("ii", $newTotal, $orderId);
+                            $stmtUpdateOrder->execute();
+                            $stmtUpdateOrder->close();
+                        } else {
+                            $stmtDeleteOrder = $conn->prepare("DELETE FROM project_wattage_orders WHERE id = ?");
+                            $stmtDeleteOrder->bind_param("i", $orderId);
+                            $stmtDeleteOrder->execute();
+                            $stmtDeleteOrder->close();
+                        }
+                    } else {
+                        $stmtGetOrder->close();
+                    }
+                }
+            }
+
+            // Delete unassigned_module_items
+            $stmtDelItems = $conn->prepare("DELETE FROM unassigned_module_items WHERE unassigned_module_id = ?");
+            $stmtDelItems->bind_param("i", $batch_id);
+            $stmtDelItems->execute();
+            $stmtDelItems->close();
+
+            // Delete the module batch itself
+            $stmtDelModule = $conn->prepare("DELETE FROM modules WHERE id = ?");
+            $stmtDelModule->bind_param("i", $batch_id);
+            $stmtDelModule->execute();
+            $stmtDelModule->close();
+
+            $conn->commit();
+
+            // Return JSON for AJAX requests
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => true,
+                    'message' => 'Module batch deleted successfully!',
+                    'action' => 'delete',
+                    'project_id' => $project_id,
+                    'redirect_url' => ($project_id > 0) ? "project_overview.php?project_id={$project_id}" : 'modules.php'
+                ]);
+                $conn->close();
+                exit();
+            }
+
+            // Redirect to appropriate page (non-AJAX fallback)
+            $redir = ($project_id > 0) ? ('project_overview.php?project_id=' . $project_id . '&success=batch_deleted') : 'modules.php?success=batch_deleted';
+            header('Location: ' . $redir);
+            exit();
+        } catch (Exception $ex) {
+            $conn->rollback();
+            $error_message = 'Error deleting module batch: ' . $ex->getMessage();
+
+            // Return JSON error for AJAX requests
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => false,
+                    'message' => $error_message
+                ]);
+                $conn->close();
+                exit();
+            }
+
+            $errors[] = $error_message;
+        }
+    }
+
     // Read posted values
     $manufacturer_id = isset($_POST['manufacturer_id']) && $_POST['manufacturer_id'] !== '' ? (int)$_POST['manufacturer_id'] : null;
     $location_id = isset($_POST['location_id']) && $_POST['location_id'] !== '' ? (int)$_POST['location_id'] : null;
@@ -298,12 +410,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $conn->commit();
+
+            // Calculate total modules for response
+            $total_modules = 0;
+            foreach ($posted_watts as $i => $w) {
+                $q = intval(trim($posted_qtys[$i] ?? 0));
+                if ($q > 0) $total_modules += $q;
+            }
+
+            // Return JSON for AJAX requests
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => true,
+                    'message' => 'Module batch updated successfully!',
+                    'action' => 'update',
+                    'batch_id' => $batch_id,
+                    'total_modules' => $total_modules,
+                    'project_id' => $project_id,
+                    'redirect_url' => ($project_id > 0) ? "project_overview.php?project_id={$project_id}" : 'modules.php'
+                ]);
+                $conn->close();
+                exit();
+            }
+
+            // Non-AJAX fallback
             $redir = ($project_id > 0) ? ('project_overview.php?project_id='.$project_id.'&success=batch_updated') : 'modules.php?success=batch_updated';
             header('Location: '.$redir);
             exit();
         } catch (Exception $ex) {
             $conn->rollback();
-            $errors[] = 'Error updating module batch: '.$ex->getMessage();
+            $error_message = 'Error updating module batch: '.$ex->getMessage();
+
+            // Return JSON error for AJAX requests
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => false,
+                    'message' => $error_message
+                ]);
+                $conn->close();
+                exit();
+            }
+
+            $errors[] = $error_message;
         }
     }
 }
@@ -465,43 +615,79 @@ foreach ($current_wattages as $w) {
         
         .button-group {
             display: flex;
-            justify-content: center;
+            justify-content: space-between;
             align-items: center;
             margin-top: 40px;
-            gap: 20px;
+            gap: 16px;
+            flex-wrap: wrap;
         }
-        
-        .btn-cancel {
-            background: #6c757d;
+
+        .button-group-left {
+            display: flex;
+            align-items: center;
+        }
+
+        .button-group-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .btn-delete {
+            background: #dc3545;
             color: white;
-            padding: 12px 30px;
+            padding: 14px 24px;
             border: none;
             border-radius: 8px;
             text-decoration: none;
             font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
             transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
         }
-        
+
+        .btn-delete:hover {
+            background: #c82333;
+            transform: translateY(-1px);
+        }
+
+        .btn-cancel {
+            background: #6c757d;
+            color: white;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+        }
+
         .btn-cancel:hover {
             background: #5a6268;
             transform: translateY(-1px);
         }
-        
+
         .btn-submit {
             background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
             color: white;
             border: none;
-            padding: 16px 48px;
-            border-radius: 50px;
-            font-size: 1.1em;
+            padding: 14px 36px;
+            border-radius: 8px;
+            font-size: 0.95rem;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
             box-shadow: 0 4px 16px rgba(40, 62, 76, 0.2);
         }
-        
+
         .btn-submit:hover {
-            transform: translateY(-2px);
+            transform: translateY(-1px);
             box-shadow: 0 8px 24px rgba(40, 62, 76, 0.3);
         }
 
@@ -509,18 +695,35 @@ foreach ($current_wattages as $w) {
             .form-container {
                 margin: 10px 0;
             }
-            
+
             .form-content {
                 padding: 20px;
             }
-            
+
             .form-section {
                 padding: 20px;
             }
-            
+
             .button-group {
                 flex-direction: column;
-                align-items: center;
+                align-items: stretch;
+                gap: 12px;
+            }
+
+            .button-group-left,
+            .button-group-right {
+                justify-content: center;
+            }
+
+            .button-group-right {
+                flex-direction: column;
+                gap: 12px;
+            }
+
+            .btn-delete, .btn-cancel, .btn-submit {
+                width: 100%;
+                justify-content: center;
+                text-align: center;
             }
             
             .form-header {
@@ -539,10 +742,56 @@ foreach ($current_wattages as $w) {
             .header-info h1 {
                 font-size: 2em;
             }
-            
+
             .header-subtitle {
                 font-size: 1em;
             }
+        }
+
+        /* Loading spinner modal styles */
+        .loading-modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+        }
+        .loading-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 40px 50px;
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        .loading-content h3 {
+            margin: 0 0 8px 0;
+            color: #293E4C;
+            font-size: 1.3em;
+        }
+        .loading-content p {
+            margin: 0;
+            color: #6c757d;
+            font-size: 0.95em;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #488C9A;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -640,10 +889,54 @@ foreach ($current_wattages as $w) {
                 <?php include __DIR__ . '/components/module_batch_section.php'; ?>
 
                 <div class="button-group">
-                    <a href="<?php echo $project_id ? ('project_overview.php?project_id='.(int)$project_id) : 'modules.php'; ?>" class="btn-cancel">Cancel</a>
-                    <button type="submit" class="btn-submit">Save Module Batch</button>
+                    <div class="button-group-left">
+                        <button type="button" id="deleteBatchBtn" class="btn-delete">
+                            <i class="fas fa-trash-alt"></i> Delete Batch
+                        </button>
+                    </div>
+                    <div class="button-group-right">
+                        <a href="<?php echo $project_id ? ('project_overview.php?project_id='.(int)$project_id) : 'modules.php'; ?>" class="btn-cancel">Cancel</a>
+                        <button type="submit" class="btn-submit">Save Module Batch</button>
+                    </div>
                 </div>
             </form>
+
+            <!-- Delete Batch Form (hidden) -->
+            <form id="deleteBatchForm" method="POST" style="display: none;">
+                <input type="hidden" name="action" value="delete">
+            </form>
+
+            <!-- Delete Batch Confirmation Modal -->
+            <div id="deleteBatchModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">
+                <div style="background: #fff; border-radius: 12px; padding: 30px; max-width: 500px; width: 90%; box-shadow: 0 10px 40px rgba(0,0,0,0.2);">
+                    <h3 style="margin: 0 0 15px; color: #dc3545; display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 24px;">🗑️</span> Delete Module Batch?
+                    </h3>
+                    <p style="color: #495057; margin-bottom: 15px;">You are about to permanently delete this module batch:</p>
+                    <div style="background: #f8f9fa; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                        <div style="margin-bottom: 8px;"><strong>Manufacturer:</strong> <?php echo htmlspecialchars($module['vendor_name'] ?? 'Unknown'); ?></div>
+                        <div style="margin-bottom: 8px;"><strong>Location:</strong> <?php echo htmlspecialchars($module['initial_location'] ?? 'Unknown'); ?></div>
+                        <div style="margin-bottom: 8px;"><strong>Total MW:</strong> <?php echo number_format($this_batch_mw, 2); ?> MW</div>
+                        <?php
+                        $total_pallets = 0;
+                        $total_pallet_modules = 0;
+                        foreach ($current_wattages as $cw) {
+                            $total_pallets += $cw['pallet_count'];
+                            $total_pallet_modules += $cw['pallet_modules'];
+                        }
+                        if ($total_pallets > 0): ?>
+                        <div style="color: #dc3545; font-weight: 500; margin-top: 10px; padding-top: 10px; border-top: 1px solid #dee2e6;">
+                            <i class="fas fa-exclamation-triangle"></i> <?php echo $total_pallets; ?> pallet(s) with <?php echo number_format($total_pallet_modules); ?> modules will also be deleted!
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <p style="color: #dc3545; font-weight: 500; margin-bottom: 20px;">This action cannot be undone.</p>
+                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button type="button" id="cancelDeleteBatch" style="padding: 10px 20px; border: 1px solid #dee2e6; background: #fff; color: #495057; border-radius: 6px; cursor: pointer; font-size: 14px;">Cancel</button>
+                        <button type="button" id="confirmDeleteBatch" style="padding: 10px 20px; border: none; background: #dc3545; color: #fff; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">Delete Permanently</button>
+                    </div>
+                </div>
+            </div>
 
             <!-- Pallet Deletion Confirmation Modal -->
             <div id="palletDeleteModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 9999; align-items: center; justify-content: center;">
@@ -675,6 +968,36 @@ foreach ($current_wattages as $w) {
                class="btn-submit" style="display: inline-block; text-decoration: none; padding: 16px 32px;">
                 Import Pallets →
             </a>
+        </div>
+    </div>
+
+    <!-- Loading Modal -->
+    <div id="loadingModal" class="loading-modal">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <h3 id="loadingTitle">Saving Changes...</h3>
+            <p id="loadingSubtitle">Please wait while we process your request.</p>
+        </div>
+    </div>
+
+    <!-- Result Modal (Success/Error) -->
+    <div id="resultModal" class="loading-modal" style="display: none;">
+        <div class="loading-content" style="max-width: 480px; padding: 32px 40px;">
+            <div id="resultIcon" style="font-size: 56px; margin-bottom: 16px;"></div>
+            <h3 id="resultTitle" style="margin: 0 0 12px 0; font-size: 1.4em;"></h3>
+            <p id="resultMessage" style="margin: 0 0 8px 0; color: #6c757d;"></p>
+            <div id="resultDetails" style="margin: 16px 0; padding: 16px; background: #f8f9fa; border-radius: 8px; text-align: center; display: none;">
+                <div style="font-size: 1.5rem; font-weight: 700; color: #488C9A;" id="resultModules">0</div>
+                <div style="font-size: 0.85rem; color: #6c757d;">Total Modules</div>
+            </div>
+            <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px; flex-wrap: wrap;">
+                <a href="#" id="resultGoBackBtn" style="background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center;">
+                    <i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Project Overview
+                </a>
+                <button type="button" id="resultCloseBtn" onclick="closeResultModal()" style="background: #e9ecef; color: #293E4C; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 500; display: none;">
+                    Close
+                </button>
+            </div>
         </div>
     </div>
 </main>
@@ -830,7 +1153,7 @@ foreach ($current_wattages as $w) {
             confirmBtn.addEventListener('click', function() {
                 confirmInput.value = 'yes';
                 modal.style.display = 'none';
-                form.submit();
+                submitFormViaAjax(form);
             });
         }
 
@@ -844,12 +1167,12 @@ foreach ($current_wattages as $w) {
         }
 
         form.addEventListener('submit', function(e) {
+            e.preventDefault();
+
             // Check for removed wattages with pallets
             const removedWithPallets = getRemovedWattagesWithPallets();
 
             if (removedWithPallets.length > 0 && confirmInput.value !== 'yes') {
-                e.preventDefault();
-
                 // Build the list of affected wattages
                 let listHtml = '';
                 let totalPallets = 0;
@@ -888,12 +1211,190 @@ foreach ($current_wattages as $w) {
                         `Are you sure you want to proceed?`;
 
                     if (!confirm(confirmMsg)) {
-                        e.preventDefault();
                         return false;
                     }
                 }
             }
+
+            // All checks passed, submit via AJAX
+            submitFormViaAjax(form);
         });
+    });
+
+    // ========== Loading Modal Functions ==========
+    function showLoadingModal(title = 'Saving Changes...', subtitle = 'Please wait while we process your request.') {
+        const modal = document.getElementById('loadingModal');
+        const titleEl = document.getElementById('loadingTitle');
+        const subtitleEl = document.getElementById('loadingSubtitle');
+
+        if (modal) {
+            if (titleEl) titleEl.textContent = title;
+            if (subtitleEl) subtitleEl.textContent = subtitle;
+            modal.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+    }
+
+    function hideLoadingModal() {
+        const modal = document.getElementById('loadingModal');
+        if (modal) {
+            modal.style.display = 'none';
+            document.body.style.overflow = '';
+        }
+    }
+
+    // ========== Result Modal Functions ==========
+    function showResultModal(success, data) {
+        hideLoadingModal();
+
+        const modal = document.getElementById('resultModal');
+        const icon = document.getElementById('resultIcon');
+        const title = document.getElementById('resultTitle');
+        const message = document.getElementById('resultMessage');
+        const details = document.getElementById('resultDetails');
+        const modulesEl = document.getElementById('resultModules');
+        const goBackBtn = document.getElementById('resultGoBackBtn');
+        const closeBtn = document.getElementById('resultCloseBtn');
+
+        if (success) {
+            icon.innerHTML = '&#10004;';
+            icon.style.color = '#28a745';
+
+            if (data.action === 'delete') {
+                title.textContent = 'Module Batch Deleted!';
+            } else {
+                title.textContent = 'Module Batch Updated!';
+            }
+
+            title.style.color = '#28a745';
+            message.textContent = data.message || 'Your changes have been saved successfully.';
+
+            // Show details for update action
+            if (data.action === 'update' && data.total_modules) {
+                details.style.display = 'block';
+                modulesEl.textContent = (data.total_modules || 0).toLocaleString();
+            } else {
+                details.style.display = 'none';
+            }
+
+            // Update go back button
+            if (data.project_id) {
+                goBackBtn.href = 'project_overview.php?project_id=' + data.project_id;
+                goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Project Overview';
+            } else {
+                goBackBtn.href = 'modules.php';
+                goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Modules';
+            }
+            goBackBtn.style.display = 'inline-flex';
+            closeBtn.style.display = 'none';
+        } else {
+            icon.innerHTML = '&#10006;';
+            icon.style.color = '#dc3545';
+            title.textContent = 'Error';
+            title.style.color = '#dc3545';
+            message.textContent = data.message || 'An error occurred. Please try again.';
+
+            details.style.display = 'none';
+            goBackBtn.style.display = 'none';
+            closeBtn.style.display = 'inline-flex';
+        }
+
+        modal.style.display = 'block';
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeResultModal() {
+        const modal = document.getElementById('resultModal');
+        if (modal) {
+            modal.style.display = 'none';
+            document.body.style.overflow = '';
+        }
+    }
+
+    // ========== AJAX Form Submission ==========
+    function submitFormViaAjax(form) {
+        showLoadingModal('Saving Changes...', 'Please wait while we update your module batch.');
+
+        const formData = new FormData(form);
+
+        fetch(form.action || window.location.href, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            showResultModal(data.success, data);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showResultModal(false, { message: 'An unexpected error occurred. Please try again.' });
+        });
+    }
+
+    function submitDeleteViaAjax(form) {
+        showLoadingModal('Deleting Module Batch...', 'Please wait while we remove the batch and associated pallets.');
+
+        const formData = new FormData(form);
+
+        fetch(form.action || window.location.href, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            showResultModal(data.success, data);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showResultModal(false, { message: 'An unexpected error occurred. Please try again.' });
+        });
+    }
+
+    // Delete batch modal handling
+    document.addEventListener('DOMContentLoaded', function() {
+        const deleteBatchBtn = document.getElementById('deleteBatchBtn');
+        const deleteBatchModal = document.getElementById('deleteBatchModal');
+        const cancelDeleteBatch = document.getElementById('cancelDeleteBatch');
+        const confirmDeleteBatch = document.getElementById('confirmDeleteBatch');
+        const deleteBatchForm = document.getElementById('deleteBatchForm');
+
+        // Hide modals on page load
+        hideLoadingModal();
+        closeResultModal();
+
+        if (deleteBatchBtn) {
+            deleteBatchBtn.addEventListener('click', function() {
+                deleteBatchModal.style.display = 'flex';
+            });
+        }
+
+        if (cancelDeleteBatch) {
+            cancelDeleteBatch.addEventListener('click', function() {
+                deleteBatchModal.style.display = 'none';
+            });
+        }
+
+        if (confirmDeleteBatch) {
+            confirmDeleteBatch.addEventListener('click', function() {
+                deleteBatchModal.style.display = 'none';
+                submitDeleteViaAjax(deleteBatchForm);
+            });
+        }
+
+        // Close modal on background click
+        if (deleteBatchModal) {
+            deleteBatchModal.addEventListener('click', function(e) {
+                if (e.target === deleteBatchModal) {
+                    deleteBatchModal.style.display = 'none';
+                }
+            });
+        }
     });
 </script>
 </body>
