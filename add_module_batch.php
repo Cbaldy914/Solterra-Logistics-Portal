@@ -112,6 +112,9 @@ $stmtManufacturers->close();
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Detect AJAX request
+    $isAjax = !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
+
     // Allow selecting project on page
     if (!$project_id) {
         $project_id = isset($_POST['project_id']) && $_POST['project_id'] !== '' ? intval($_POST['project_id']) : 0;
@@ -312,6 +315,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $enable_palletization = isset($_POST['enable_palletization']) && $_POST['enable_palletization'] === '1';
             $auto_modules_per_pallet = isset($_POST['auto_modules_per_pallet']) && $_POST['auto_modules_per_pallet'] !== '' ? intval($_POST['auto_modules_per_pallet']) : 0;
 
+            $pallets_created = 0;
             if ($enable_palletization && $auto_modules_per_pallet > 0 && $project_id > 0) {
                 // Get the unassigned_module_items we just created
                 $stmtItems = $conn->prepare("
@@ -323,11 +327,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmtItems->execute();
                 $itemsResult = $stmtItems->get_result();
 
-                $stmtPallet = $conn->prepare("
-                    INSERT INTO pallets (project_id, wattage, quantity, manufacturer_location_id, unassigned_module_item_id)
-                    VALUES (?, ?, ?, ?, ?)
-                ");
-
                 // Also update modules_per_pallet in the modules table if not already set
                 if ($modules_per_pallet === null || $modules_per_pallet === 0) {
                     $stmtUpdateMpp = $conn->prepare("UPDATE modules SET modules_per_pallet = ? WHERE id = ?");
@@ -336,7 +335,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmtUpdateMpp->close();
                 }
 
-                $pallets_created = 0;
+                // Get the next pallet number for auto-generated IDs
+                $stmtMaxPallet = $conn->query("SELECT MAX(CAST(SUBSTRING(pallet_identifier, 5) AS UNSIGNED)) as max_num FROM inventory_pallets WHERE pallet_identifier LIKE 'PAL-%'");
+                $maxRow = $stmtMaxPallet->fetch_assoc();
+                $nextPalletNum = ($maxRow['max_num'] ?? 0) + 1;
+
+                $defaultStatus = 'At Manufacturer';
+
+                // Handle NULL location_id properly
+                $loc_id_for_insert = $location_id !== null ? $location_id : null;
 
                 while ($item = $itemsResult->fetch_assoc()) {
                     $item_id = $item['id'];
@@ -349,25 +356,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     // Create full pallets
                     for ($p = 0; $p < $full_pallets; $p++) {
-                        $stmtPallet->bind_param("iiiii", $project_id, $item_wattage, $auto_modules_per_pallet, $location_id, $item_id);
+                        $pallet_id = 'PAL-' . str_pad($nextPalletNum++, 4, '0', STR_PAD_LEFT);
+
+                        // Use direct query to handle NULL properly
+                        $stmtPallet = $conn->prepare("
+                            INSERT INTO inventory_pallets (
+                                pallet_identifier, unassigned_module_item_id, wattage, quantity,
+                                status, manufacturer, manufacturer_location_id, assigned_project_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ");
+                        $stmtPallet->bind_param("siiissii",
+                            $pallet_id, $item_id, $item_wattage, $auto_modules_per_pallet,
+                            $defaultStatus, $vendor_name, $loc_id_for_insert, $project_id
+                        );
                         if (!$stmtPallet->execute()) {
                             throw new Exception("Error creating pallet: " . $stmtPallet->error);
                         }
+                        $stmtPallet->close();
                         $pallets_created++;
                     }
 
                     // Create partial pallet if there are remaining modules
                     if ($remaining_modules > 0) {
-                        $stmtPallet->bind_param("iiiii", $project_id, $item_wattage, $remaining_modules, $location_id, $item_id);
+                        $pallet_id = 'PAL-' . str_pad($nextPalletNum++, 4, '0', STR_PAD_LEFT);
+
+                        $stmtPallet = $conn->prepare("
+                            INSERT INTO inventory_pallets (
+                                pallet_identifier, unassigned_module_item_id, wattage, quantity,
+                                status, manufacturer, manufacturer_location_id, assigned_project_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ");
+                        $stmtPallet->bind_param("siiissii",
+                            $pallet_id, $item_id, $item_wattage, $remaining_modules,
+                            $defaultStatus, $vendor_name, $loc_id_for_insert, $project_id
+                        );
                         if (!$stmtPallet->execute()) {
                             throw new Exception("Error creating partial pallet: " . $stmtPallet->error);
                         }
+                        $stmtPallet->close();
                         $pallets_created++;
                     }
                 }
 
                 $stmtItems->close();
-                $stmtPallet->close();
             }
 
             // If documentation files are provided and a project is selected, save them to project_documents
@@ -436,13 +467,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $conn->commit();
 
-            $redirect = $project_id ? ("project_overview.php?project_id={$project_id}&success=batch_added") : 'modules.php';
+            // Calculate total modules for the response
+            $total_modules = 0;
+            for ($i = 0; $i < count($wattages); $i++) {
+                $qty = intval(trim($quantities[$i]));
+                if ($qty > 0) $total_modules += $qty;
+            }
+
+            // Return JSON for AJAX requests
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => true,
+                    'message' => 'Module batch created successfully!',
+                    'module_id' => $module_id,
+                    'pallets_created' => $pallets_created,
+                    'total_modules' => $total_modules,
+                    'project_id' => $project_id,
+                    'redirect_url' => $project_id ? "project_overview.php?project_id={$project_id}" : 'modules.php'
+                ]);
+                $conn->close();
+                exit();
+            }
+
+            // Build redirect URL with success message including pallets count (non-AJAX fallback)
+            $success_msg = 'batch_added';
+            if ($pallets_created > 0) {
+                $success_msg = 'batch_added&pallets_created=' . $pallets_created;
+            }
+            $redirect = $project_id ? ("project_overview.php?project_id={$project_id}&success={$success_msg}") : 'modules.php?success=batch_added';
             header("Location: $redirect");
             exit();
-            
+
         } catch (Exception $e) {
             $conn->rollback();
-            $errors[] = "Error creating module batch: " . $e->getMessage();
+            $error_message = "Error creating module batch: " . $e->getMessage();
+
+            // Return JSON error for AJAX requests
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => false,
+                    'message' => $error_message
+                ]);
+                $conn->close();
+                exit();
+            }
+
+            $errors[] = $error_message;
+        }
+    } else {
+        // Validation errors - return JSON for AJAX
+        if ($isAjax) {
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => false,
+                'message' => implode(', ', $errors)
+            ]);
+            $conn->close();
+            exit();
         }
     }
 }
@@ -713,55 +796,101 @@ $conn->close();
             .form-container {
                 margin: 10px 0;
             }
-            
+
             .form-content {
                 padding: 20px;
             }
-            
+
             .form-section {
                 padding: 20px;
             }
-            
+
             .form-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .wattage-entry {
                 grid-template-columns: 1fr;
                 gap: 10px;
             }
-            
+
              .button-group {
                  flex-direction: column;
                  align-items: center;
              }
-            
+
             .form-header {
                 padding: 20px;
                 margin-bottom: 20px;
             }
-            
+
             .header-content {
                 gap: 16px;
             }
-            
+
             .header-left {
                 gap: 16px;
             }
-            
+
             .header-icon {
                 width: 60px;
                 height: 60px;
                 font-size: 24px;
             }
-            
+
             .header-info h1 {
                 font-size: 2em;
             }
-            
+
             .header-subtitle {
                 font-size: 1em;
             }
+        }
+
+        /* Loading spinner modal styles */
+        .loading-modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+        }
+        .loading-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 40px 50px;
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        .loading-content h3 {
+            margin: 0 0 8px 0;
+            color: #293E4C;
+            font-size: 1.3em;
+        }
+        .loading-content p {
+            margin: 0;
+            color: #6c757d;
+            font-size: 0.95em;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #488C9A;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -1121,6 +1250,53 @@ $conn->close();
                  </div>
             </div>
         </div>
+
+        <!-- Loading Modal for Module Batch Creation -->
+        <div id="loadingModal" class="loading-modal">
+            <div class="loading-content">
+                <div class="spinner"></div>
+                <h3 id="loadingTitle">Creating Module Batch...</h3>
+                <p id="loadingSubtitle">Please wait while we process your request.</p>
+            </div>
+        </div>
+
+        <!-- Result Modal (Success/Error) -->
+        <div id="resultModal" class="loading-modal" style="display: none;">
+            <div class="loading-content" style="max-width: 480px; padding: 32px 40px;">
+                <div id="resultIcon" style="font-size: 56px; margin-bottom: 16px;"></div>
+                <h3 id="resultTitle" style="margin: 0 0 12px 0; font-size: 1.4em;"></h3>
+                <p id="resultMessage" style="margin: 0 0 8px 0; color: #6c757d;"></p>
+                <div id="resultDetails" style="margin: 16px 0; padding: 16px; background: #f8f9fa; border-radius: 8px; text-align: left; display: none;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #488C9A;" id="resultModules">0</div>
+                            <div style="font-size: 0.85rem; color: #6c757d;">Modules Added</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #28a745;" id="resultPallets">0</div>
+                            <div style="font-size: 0.85rem; color: #6c757d;">Pallets Created</div>
+                        </div>
+                    </div>
+                </div>
+                <div id="resultWarning" style="display: none; margin: 16px 0; padding: 12px 16px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; text-align: left;">
+                    <div style="display: flex; align-items: flex-start; gap: 10px;">
+                        <span style="font-size: 1.1rem;">&#9888;&#65039;</span>
+                        <div style="font-size: 0.9rem; color: #856404;" id="resultWarningText"></div>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px; flex-wrap: wrap;">
+                    <button type="button" id="resultAddAnotherBtn" onclick="resetFormForAnother()" style="background: #6c757d; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 500; display: none;">
+                        <i class="fas fa-plus" style="margin-right: 6px;"></i> Add Another Batch
+                    </button>
+                    <a href="#" id="resultGoBackBtn" style="background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center;">
+                        <i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Project Overview
+                    </a>
+                    <button type="button" id="resultCloseBtn" onclick="closeResultModal()" style="background: #e9ecef; color: #293E4C; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 500; display: none;">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
     </main>
     
     <script>
@@ -1421,35 +1597,6 @@ $conn->close();
              }
          });
 
-         // Form submission confirmation for over-capacity
-         document.addEventListener('DOMContentLoaded', function() {
-             const form = document.getElementById('addBatchForm');
-             if (form && capacityData.projectSizeMw > 0) {
-                 form.addEventListener('submit', function(e) {
-                     const batchMw = calculateBatchMw();
-                     const newTotalMw = capacityData.currentOrderedMw + batchMw;
-
-                     if (newTotalMw > capacityData.projectSizeMw) {
-                         const excessMw = newTotalMw - capacityData.projectSizeMw;
-                         const excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
-
-                         const confirmMsg = `WARNING: This batch will exceed the project capacity!\n\n` +
-                             `Current: ${capacityData.currentOrderedMw.toFixed(2)} MW\n` +
-                             `This Batch: +${batchMw.toFixed(2)} MW\n` +
-                             `New Total: ${newTotalMw.toFixed(2)} MW\n` +
-                             `Target: ${capacityData.projectSizeMw.toFixed(2)} MW\n\n` +
-                             `This is ${excessMw.toFixed(2)} MW (${excessPct.toFixed(1)}%) over the target.\n\n` +
-                             `Are you sure you want to proceed?`;
-
-                         if (!confirm(confirmMsg)) {
-                             e.preventDefault();
-                             return false;
-                         }
-                     }
-                 });
-             }
-         });
-
          // ========== Palletization Section ==========
          document.addEventListener('DOMContentLoaded', function() {
              const enableCheckbox = document.getElementById('enable_palletization');
@@ -1533,6 +1680,229 @@ $conn->close();
              if (wattageContainer) {
                  const observer = new MutationObserver(updatePalletCalculation);
                  observer.observe(wattageContainer, { childList: true, subtree: true });
+             }
+         });
+
+         // ========== Loading Modal Functions ==========
+         function showLoadingModal(withPalletization = false) {
+             const modal = document.getElementById('loadingModal');
+             const title = document.getElementById('loadingTitle');
+             const subtitle = document.getElementById('loadingSubtitle');
+
+             if (modal) {
+                 if (withPalletization) {
+                     title.textContent = 'Creating Module Batch & Pallets...';
+                     subtitle.textContent = 'Please wait while we create your modules and pallets.';
+                 } else {
+                     title.textContent = 'Creating Module Batch...';
+                     subtitle.textContent = 'Please wait while we process your request.';
+                 }
+                 modal.style.display = 'block';
+                 document.body.style.overflow = 'hidden';
+             }
+         }
+
+         function hideLoadingModal() {
+             const modal = document.getElementById('loadingModal');
+             if (modal) {
+                 modal.style.display = 'none';
+                 document.body.style.overflow = '';
+             }
+         }
+
+         // ========== Result Modal Functions ==========
+         function showResultModal(success, data) {
+             hideLoadingModal();
+
+             const modal = document.getElementById('resultModal');
+             const icon = document.getElementById('resultIcon');
+             const title = document.getElementById('resultTitle');
+             const message = document.getElementById('resultMessage');
+             const details = document.getElementById('resultDetails');
+             const warning = document.getElementById('resultWarning');
+             const warningText = document.getElementById('resultWarningText');
+             const modulesEl = document.getElementById('resultModules');
+             const palletsEl = document.getElementById('resultPallets');
+             const addAnotherBtn = document.getElementById('resultAddAnotherBtn');
+             const goBackBtn = document.getElementById('resultGoBackBtn');
+             const closeBtn = document.getElementById('resultCloseBtn');
+
+             if (success) {
+                 icon.innerHTML = '&#10004;';
+                 icon.style.color = '#28a745';
+                 title.textContent = 'Module Batch Created!';
+                 title.style.color = '#28a745';
+                 message.textContent = data.message || 'Your module batch has been created successfully.';
+
+                 // Show details
+                 details.style.display = 'block';
+                 modulesEl.textContent = (data.total_modules || 0).toLocaleString();
+                 palletsEl.textContent = data.pallets_created || 0;
+
+                 // Show warning if palletization was expected but none created
+                 const enablePalletization = document.getElementById('enable_palletization');
+                 const isPalletizing = enablePalletization && enablePalletization.checked;
+                 if (isPalletizing && data.pallets_created === 0) {
+                     warning.style.display = 'block';
+                     warningText.textContent = 'Auto-palletization was enabled but no pallets were created. Please check your modules per pallet setting.';
+                 } else {
+                     warning.style.display = 'none';
+                 }
+
+                 // Show buttons
+                 addAnotherBtn.style.display = 'inline-flex';
+                 closeBtn.style.display = 'none';
+
+                 // Update go back button
+                 if (data.project_id) {
+                     goBackBtn.href = 'project_overview.php?project_id=' + data.project_id;
+                     goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Project Overview';
+                     goBackBtn.style.display = 'inline-flex';
+                 } else {
+                     goBackBtn.href = 'modules.php';
+                     goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Modules';
+                     goBackBtn.style.display = 'inline-flex';
+                 }
+             } else {
+                 icon.innerHTML = '&#10006;';
+                 icon.style.color = '#dc3545';
+                 title.textContent = 'Error Creating Batch';
+                 title.style.color = '#dc3545';
+                 message.textContent = data.message || 'An error occurred while creating the module batch.';
+
+                 // Hide details, show close button
+                 details.style.display = 'none';
+                 warning.style.display = 'none';
+                 addAnotherBtn.style.display = 'none';
+                 goBackBtn.style.display = 'none';
+                 closeBtn.style.display = 'inline-flex';
+             }
+
+             modal.style.display = 'block';
+             document.body.style.overflow = 'hidden';
+         }
+
+         function closeResultModal() {
+             const modal = document.getElementById('resultModal');
+             if (modal) {
+                 modal.style.display = 'none';
+                 document.body.style.overflow = '';
+             }
+         }
+
+         function resetFormForAnother() {
+             closeResultModal();
+
+             // Reset the form
+             const form = document.getElementById('addBatchForm');
+             if (form) {
+                 // Clear wattage/quantity inputs but keep one entry
+                 const wattageContainer = document.getElementById('wattage-container');
+                 if (wattageContainer) {
+                     const entries = wattageContainer.querySelectorAll('.wattage-entry');
+                     entries.forEach((entry, index) => {
+                         if (index === 0) {
+                             // Clear first entry values
+                             entry.querySelectorAll('input').forEach(input => input.value = '');
+                         } else {
+                             // Remove extra entries
+                             entry.remove();
+                         }
+                     });
+                 }
+
+                 // Reset palletization checkbox
+                 const enablePalletization = document.getElementById('enable_palletization');
+                 if (enablePalletization) {
+                     enablePalletization.checked = false;
+                     const configDiv = document.getElementById('palletizationConfig');
+                     if (configDiv) configDiv.style.display = 'none';
+                     const enableLabel = document.getElementById('enablePalletizationLabel');
+                     if (enableLabel) {
+                         enableLabel.style.borderColor = '#e9ecef';
+                         enableLabel.style.background = '#f8f9fa';
+                     }
+                 }
+
+                 // Clear modules per pallet
+                 const modulesPerPallet = document.getElementById('auto_modules_per_pallet');
+                 if (modulesPerPallet) modulesPerPallet.value = '';
+
+                 // Hide pallet calculation
+                 const calcDiv = document.getElementById('palletCalculation');
+                 const detailsDiv = document.getElementById('palletCalcDetails');
+                 if (calcDiv) calcDiv.style.display = 'none';
+                 if (detailsDiv) detailsDiv.style.display = 'none';
+             }
+
+             // Scroll to top
+             window.scrollTo({ top: 0, behavior: 'smooth' });
+         }
+
+         // ========== AJAX Form Submission Handler ==========
+         document.addEventListener('DOMContentLoaded', function() {
+             const form = document.getElementById('addBatchForm');
+
+             // Hide modals on page load (in case of back button)
+             hideLoadingModal();
+             closeResultModal();
+
+             if (form) {
+                 form.addEventListener('submit', function(e) {
+                     e.preventDefault();
+
+                     // Check if auto-palletization is enabled
+                     const enablePalletization = document.getElementById('enable_palletization');
+                     const isPalletizing = enablePalletization && enablePalletization.checked;
+                     const modulesPerPalletInput = document.getElementById('auto_modules_per_pallet');
+                     const hasModulesPerPallet = modulesPerPalletInput && parseInt(modulesPerPalletInput.value) > 0;
+
+                     // Check capacity before submitting
+                     if (capacityData.projectSizeMw > 0) {
+                         const batchMw = calculateBatchMw();
+                         const newTotalMw = capacityData.currentOrderedMw + batchMw;
+
+                         if (newTotalMw > capacityData.projectSizeMw) {
+                             const excessMw = newTotalMw - capacityData.projectSizeMw;
+                             const excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
+
+                             const confirmMsg = `WARNING: This batch will exceed the project capacity!\n\n` +
+                                 `Current: ${capacityData.currentOrderedMw.toFixed(2)} MW\n` +
+                                 `This Batch: +${batchMw.toFixed(2)} MW\n` +
+                                 `New Total: ${newTotalMw.toFixed(2)} MW\n` +
+                                 `Target: ${capacityData.projectSizeMw.toFixed(2)} MW\n\n` +
+                                 `This is ${excessMw.toFixed(2)} MW (${excessPct.toFixed(1)}%) over the target.\n\n` +
+                                 `Are you sure you want to proceed?`;
+
+                             if (!confirm(confirmMsg)) {
+                                 return;
+                             }
+                         }
+                     }
+
+                     // Show loading modal
+                     showLoadingModal(isPalletizing && hasModulesPerPallet);
+
+                     // Create FormData from the form
+                     const formData = new FormData(form);
+
+                     // Submit via AJAX
+                     fetch(form.action || window.location.href, {
+                         method: 'POST',
+                         body: formData,
+                         headers: {
+                             'X-Requested-With': 'XMLHttpRequest'
+                         }
+                     })
+                     .then(response => response.json())
+                     .then(data => {
+                         showResultModal(data.success, data);
+                     })
+                     .catch(error => {
+                         console.error('Error:', error);
+                         showResultModal(false, { message: 'An unexpected error occurred. Please try again.' });
+                     });
+                 });
              }
          });
     </script>
