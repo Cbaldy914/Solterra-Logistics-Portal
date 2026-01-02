@@ -1536,76 +1536,10 @@ $deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+<link rel="stylesheet" href="components/project_overview/project_overview.css">
+<!-- All CSS styles moved to project_overview.css for maintainability -->
 <style>
-/* Modern Toggle Buttons */
-.toggle-buttons {
-    margin: 30px auto;
-    max-width: fit-content;
-    background: #ffffff;
-    padding: 8px;
-    border-radius: 12px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-    display: flex;
-    gap: 4px;
-    border: 1px solid #e9ecef;
-    position: relative;
-}
-
-.toggle-buttons button {
-    padding: 12px 28px;
-    margin: 0;
-    cursor: pointer;
-    font-size: 16px;
-    font-weight: 500;
-    border: none;
-    border-radius: 8px;
-    transition: all 0.3s ease;
-    background: transparent;
-    color: #6c757d;
-    position: relative;
-}
-
-.toggle-buttons button.active {
-    background: #293E4C;
-    color: #fff;
-    box-shadow: 0 4px 12px rgba(41, 62, 76, 0.3);
-    transform: translateY(-1px);
-}
-
-.toggle-buttons button:not(.active):hover {
-    background: #f8f9fa;
-    color: #495057;
-}
-
-/* Enhanced visual connection between tabs and content */
-.toggle-buttons::after {
-    content: '';
-    position: absolute;
-    bottom: -2px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 20px;
-    height: 4px;
-    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-    border-radius: 0 0 4px 4px;
-    opacity: 0.7;
-}
-
-/* Circular Progress Indicator - Jony Ive Inspired */
-.circular-progress-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    margin-bottom: 40px;
-    position: relative;
-}
-
-.circular-progress {
-    width: 160px;
-    height: 160px;
-    transform: rotate(-90deg);
-    filter: drop-shadow(0 8px 20px rgba(72, 140, 154, 0.2));
-}
+/* SVG gradient definitions needed inline for proper rendering */
 
 .progress-track {
     fill: none;
@@ -7534,97 +7468,7 @@ document.getElementById('editBatchForm').addEventListener('submit', function(e) 
 <?php endif; ?>
 </script>
 
-<!-- Delete Confirmation Modal -->
-<?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
-<div id="deleteModal" class="delete-modal">
-    <div class="delete-modal-content">
-        <h3>⚠️ Confirm Project Deletion</h3>
-        <p id="deleteModalText">Are you sure you want to delete this project? This action cannot be undone.</p>
-        <div class="modal-buttons">
-            <button class="modal-btn btn-cancel" onclick="closeDeleteModal()">Cancel</button>
-            <button class="modal-btn btn-delete" onclick="confirmDelete()">Delete Project</button>
-        </div>
-    </div>
-</div>
-
-<!-- Add Module Modal -->
-<div id="addModuleModal" class="add-module-modal">
-    <div class="add-module-modal-content">
-        <h3>Add New Module Batch</h3>
-        <form id="addModuleForm">
-            <div class="modal-form-grid">
-                <div class="modal-form-group">
-                    <label for="modal_manufacturer_id">Manufacturer:</label>
-                    <select id="modal_manufacturer_id" name="manufacturer_id">
-                        <option value="">Select Manufacturer</option>
-                    </select>
-                </div>
-                
-                <div class="modal-form-group">
-                    <label for="modal_vendor_name">Vendor Name:</label>
-                    <input type="text" id="modal_vendor_name" name="vendor_name" required>
-                </div>
-                
-                <div class="modal-form-group">
-                    <label for="modal_initial_location">Location:</label>
-                    <input type="text" id="modal_initial_location" name="initial_location" required>
-                </div>
-                
-                <div class="modal-form-group">
-                    <label for="modal_modules_per_pallet">Modules per Pallet:</label>
-                    <input type="number" id="modal_modules_per_pallet" name="modules_per_pallet" min="1">
-                </div>
-                
-                <div class="wattage-section">
-                    <h4>Module Wattages & Quantities</h4>
-                    <div id="modal_wattage_container">
-                        <!-- Wattage entries will be added here -->
-                    </div>
-                    <button type="button" class="add-wattage-btn" onclick="addModalWattageField()">+ Add Wattage</button>
-                </div>
-            </div>
-            
-            <div class="modal-buttons">
-                <button type="button" class="modal-btn btn-secondary" onclick="closeAddModuleModal()">Cancel</button>
-                <button type="submit" class="modal-btn btn-primary">Add Module Batch</button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<!-- Edit Batch Modal -->
-<div id="editBatchModal" class="add-module-modal">
-    <div class="add-module-modal-content">
-        <h3 id="editBatchModalTitle">Edit Module Batch</h3>
-        <form id="editBatchForm">
-            <input type="hidden" id="edit_batch_id" name="batch_id">
-            <div class="wattage-section">
-                <h4>Module Wattages & Quantities</h4>
-                <div id="edit_wattage_container">
-                    <!-- Existing wattage entries will be loaded here -->
-                </div>
-                <button type="button" class="add-wattage-btn" onclick="addEditWattageField()">+ Add Wattage</button>
-            </div>
-            
-            <div class="modal-buttons">
-                <button type="button" class="modal-btn btn-secondary" onclick="closeEditBatchModal()">Cancel</button>
-                <button type="submit" class="modal-btn btn-primary">Update Module Batch</button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<!-- Admin Shipping Modal -->
-<div id="shippingModal" class="warehouse-selection-modal" style="display:none;">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 id="shippingModalTitle"></h3>
-            <span class="close-modal" onclick="closeShippingModal()">&times;</span>
-        </div>
-        <div class="modal-body" id="shippingModalContent"></div>
-    </div>
-</div>
-<?php endif; ?>
+<?php include 'components/project_overview/modals.php'; ?>
 
 </body>
 </html>

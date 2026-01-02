@@ -7,7 +7,8 @@
       "Bash(del /f \"C:\\xampp\\htdocs\\Solterra-Solutions\\Solterra-Logistics-Portal\\add_project_wizard.html\" \"C:\\xampp\\htdocs\\Solterra-Solutions\\Solterra-Logistics-Portal\\add_project_new.php\")",
       "Bash(php -l:*)",
       "Bash(php -r:*)",
-      "Bash(copy \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\project_overview.php\" \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\project_overview_backup.php\")"
+      "Bash(copy \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\project_overview.php\" \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\project_overview_backup.php\")",
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": []
