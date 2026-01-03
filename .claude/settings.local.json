@@ -12,7 +12,8 @@
       "Bash(powershell -Command:*)",
       "Bash(php:*)",
       "Bash(del /f \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\temp_restructure_views.php\" \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\temp_restructure_user_view.php\")",
-      "Bash(del /f \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\temp_restore_inline_boxes.php\")"
+      "Bash(del /f \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\temp_restore_inline_boxes.php\")",
+      "Bash(del /f \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\nul\")"
     ],
     "deny": [],
     "ask": []

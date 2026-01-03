@@ -784,51 +784,124 @@
 }
 
 /* Status-specific styling for inline boxes - matching pie chart colors */
+/* Use ::before for gradient top that blends into the box */
 .shipping-boxes-container .shipping-box.at-manufacturer {
-    border-top: 4px solid #293E4C;
-    background: linear-gradient(145deg, #ffffff 0%, #e8eaed 100%);
+    background: linear-gradient(180deg, rgba(41, 62, 76, 0.15) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box.at-manufacturer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #1a2a36 0%, #293E4C 50%, #3a5060 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box.at-manufacturer .status-count { color: #293E4C; }
 
 .shipping-boxes-container .shipping-box.on-water {
-    border-top: 4px solid #66B2FF;
-    background: linear-gradient(145deg, #ffffff 0%, #e3f2fd 100%);
+    background: linear-gradient(180deg, rgba(102, 178, 255, 0.15) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box.on-water::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #4da6ff 0%, #66B2FF 50%, #99ccff 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box.on-water .status-count { color: #66B2FF; }
 
 .shipping-boxes-container .shipping-box.cleared-customs {
-    border-top: 4px solid #32CD32;
-    background: linear-gradient(145deg, #ffffff 0%, #e8f5e9 100%);
+    background: linear-gradient(180deg, rgba(50, 205, 50, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box.cleared-customs::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #28a428 0%, #32CD32 50%, #5cd85c 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box.cleared-customs .status-count { color: #2eb82e; }
 
 .shipping-boxes-container .shipping-box.in-transit-warehouse {
-    border-top: 4px solid #9370DB;
-    background: linear-gradient(145deg, #ffffff 0%, #f3e5f5 100%);
+    background: linear-gradient(180deg, rgba(147, 112, 219, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box.in-transit-warehouse::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #7b5fc7 0%, #9370DB 50%, #b8a2e8 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box.in-transit-warehouse .status-count { color: #9370DB; }
 
 .shipping-boxes-container .shipping-box.in-warehouse {
-    border-top: 4px solid #FF6B6B;
-    background: linear-gradient(145deg, #ffffff 0%, #ffebee 100%);
+    background: linear-gradient(180deg, rgba(255, 107, 107, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box.in-warehouse::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #ff4d4d 0%, #FF6B6B 50%, #ff9999 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box.in-warehouse .status-count { color: #FF6B6B; }
 
 .shipping-boxes-container .shipping-box.in-transit-project {
-    border-top: 4px solid #C0C0C0;
-    background: linear-gradient(145deg, #ffffff 0%, #f5f5f5 100%);
+    background: linear-gradient(180deg, rgba(192, 192, 192, 0.15) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box.in-transit-project::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #a0a0a0 0%, #C0C0C0 50%, #d9d9d9 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box.in-transit-project .status-count { color: #909090; }
 
 .shipping-boxes-container .shipping-box.delivered {
-    border-top: 4px solid #488C9A;
-    background: linear-gradient(145deg, #ffffff 0%, #e0f2f1 100%);
+    background: linear-gradient(180deg, rgba(72, 140, 154, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box.delivered::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #3a7080 0%, #488C9A 50%, #6aa8b4 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box.delivered .status-count { color: #488C9A; }
 
 .shipping-boxes-container .shipping-box.exceptions {
-    border-top: 4px solid #f57c00;
-    background: linear-gradient(145deg, #ffffff 0%, #fff3e0 100%);
+    background: linear-gradient(180deg, rgba(245, 124, 0, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box.exceptions::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #d66a00 0%, #f57c00 50%, #ff9f40 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box.exceptions .status-count { color: #f57c00; }
 
@@ -899,51 +972,124 @@
 }
 
 /* Status-specific styling for customer inline boxes - colors match Delivery Overview pie chart */
+/* Use ::before for gradient top that blends into the box */
 .shipping-boxes-container .shipping-box-customer.at-manufacturer {
-    border-top: 4px solid #293E4C;
-    background: linear-gradient(145deg, #ffffff 0%, #e8eaed 100%);
+    background: linear-gradient(180deg, rgba(41, 62, 76, 0.15) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box-customer.at-manufacturer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #1a2a36 0%, #293E4C 50%, #3a5060 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box-customer.at-manufacturer .status-count { color: #293E4C; }
 
 .shipping-boxes-container .shipping-box-customer.on-water {
-    border-top: 4px solid #66B2FF;
-    background: linear-gradient(145deg, #ffffff 0%, #e6f2ff 100%);
+    background: linear-gradient(180deg, rgba(102, 178, 255, 0.15) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box-customer.on-water::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #4da6ff 0%, #66B2FF 50%, #99ccff 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box-customer.on-water .status-count { color: #66B2FF; }
 
 .shipping-boxes-container .shipping-box-customer.cleared-customs {
-    border-top: 4px solid #32CD32;
-    background: linear-gradient(145deg, #ffffff 0%, #e8f8e8 100%);
+    background: linear-gradient(180deg, rgba(50, 205, 50, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box-customer.cleared-customs::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #28a428 0%, #32CD32 50%, #5cd85c 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box-customer.cleared-customs .status-count { color: #32CD32; }
 
 .shipping-boxes-container .shipping-box-customer.in-transit-warehouse {
-    border-top: 4px solid #9370DB;
-    background: linear-gradient(145deg, #ffffff 0%, #f0ebf8 100%);
+    background: linear-gradient(180deg, rgba(147, 112, 219, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box-customer.in-transit-warehouse::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #7b5fc7 0%, #9370DB 50%, #b8a2e8 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box-customer.in-transit-warehouse .status-count { color: #9370DB; }
 
 .shipping-boxes-container .shipping-box-customer.in-warehouse {
-    border-top: 4px solid #FF6B6B;
-    background: linear-gradient(145deg, #ffffff 0%, #ffeded 100%);
+    background: linear-gradient(180deg, rgba(255, 107, 107, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box-customer.in-warehouse::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #ff4d4d 0%, #FF6B6B 50%, #ff9999 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box-customer.in-warehouse .status-count { color: #FF6B6B; }
 
 .shipping-boxes-container .shipping-box-customer.in-transit-project {
-    border-top: 4px solid #C0C0C0;
-    background: linear-gradient(145deg, #ffffff 0%, #f5f5f5 100%);
+    background: linear-gradient(180deg, rgba(192, 192, 192, 0.15) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box-customer.in-transit-project::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #a0a0a0 0%, #C0C0C0 50%, #d9d9d9 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box-customer.in-transit-project .status-count { color: #808080; }
 
 .shipping-boxes-container .shipping-box-customer.delivered {
-    border-top: 4px solid #488C9A;
-    background: linear-gradient(145deg, #ffffff 0%, #e8f2f4 100%);
+    background: linear-gradient(180deg, rgba(72, 140, 154, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box-customer.delivered::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #3a7080 0%, #488C9A 50%, #6aa8b4 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box-customer.delivered .status-count { color: #488C9A; }
 
 .shipping-boxes-container .shipping-box-customer.exceptions {
-    border-top: 4px solid #f57c00;
-    background: linear-gradient(145deg, #ffffff 0%, #fff3e6 100%);
+    background: linear-gradient(180deg, rgba(245, 124, 0, 0.12) 0%, #ffffff 25%, #f8fafc 100%);
+}
+.shipping-boxes-container .shipping-box-customer.exceptions::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #d66a00 0%, #f57c00 50%, #ff9f40 100%);
+    border-radius: 14px 14px 0 0;
 }
 .shipping-boxes-container .shipping-box-customer.exceptions .status-count { color: #f57c00; }
 
