@@ -949,7 +949,7 @@ $combined_ppw = ($sum_watts>0)?($combined_total_costs/$sum_watts):0;
 
 // Cost Breakdown Pie
 $pieChartDataFinancial = [
-    'Freight'       => $total_freight_cost,
+    'Freight Cost'  => $total_freight_cost,
     'Warehousing'   => $total_warehousing_cost,
     'Accessorial'   => $total_accessorial_costs,
 ];
@@ -1529,4 +1529,4 @@ $deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
 
 // Role helper variables for unified view
 $isAdmin = in_array($role, ['admin', 'global_admin', 'customer_admin']);
-$isGlobalAdmin = in_array($role, ['admin', 'global_admin']);
+$isGlobalAdmin = in_array($role, ['admin', 'global_admin', 'customer_admin']);

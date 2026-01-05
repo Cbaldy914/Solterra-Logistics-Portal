@@ -337,7 +337,7 @@
                 <h2>Module Information</h2>
                 <?php if ($isGlobalAdmin): ?>
                 <div class="dropdown" style="display:inline-block;">
-                    <button class="dropdown-btn info-action-button" onclick="toggleDropdown('moduleActionsDropdown')" style="margin:0; padding:10px 16px;">
+                    <button class="dropdown-btn info-action-button" type="button" onclick="event.stopPropagation(); toggleDropdown('moduleActionsDropdown');" style="margin:0; padding:10px 16px;">
                         Actions <span class="dropdown-arrow">▼</span>
                     </button>
                     <div class="dropdown-content" id="moduleActionsDropdown" style="right:0;left:auto;">
