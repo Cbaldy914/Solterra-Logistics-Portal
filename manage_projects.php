@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure the user is either an admin or global_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
+// Ensure the user is either an admin, global_admin, or customer_admin
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     header("Location: unauthorized");
     exit();
 }
@@ -43,12 +43,7 @@ if ($role === 'global_admin') {
             p.city,
             p.state,
             p.zip_code,
-            COALESCE((
-                SELECT SUM(d2.wattage * d2.quantity)
-                FROM deliveries d2
-                WHERE d2.project_id = p.id
-                  AND (d2.status_of_delivery IS NULL OR d2.status_of_delivery <> 'Canceled')
-            ), 0) AS project_size,
+            COALESCE(p.project_size, 0) AS project_size,
             COALESCE((
                 SELECT COUNT(*)
                 FROM deliveries d3
@@ -99,12 +94,7 @@ if ($role === 'global_admin') {
                 p.city,
                 p.state,
                 p.zip_code,
-                COALESCE((
-                    SELECT SUM(d2.wattage * d2.quantity)
-                    FROM deliveries d2
-                    WHERE d2.project_id = p.id
-                      AND (d2.status_of_delivery IS NULL OR d2.status_of_delivery <> 'Canceled')
-                ), 0) AS project_size,
+                COALESCE(p.project_size, 0) AS project_size,
                 COALESCE((
                     SELECT COUNT(*)
                     FROM deliveries d3
@@ -176,7 +166,7 @@ $stmtProjects->close();
 $total_projects = count($projects);
 $completed_projects = count(array_filter($projects, fn($p) => $p['project_status'] === 'Completed'));
 $in_progress_projects = count(array_filter($projects, fn($p) => $p['project_status'] === 'In Progress'));
-$total_mw = array_sum(array_map(fn($p) => (float)($p['project_size'] ?? 0) / 1_000_000, $projects));
+$total_mw = array_sum(array_map(fn($p) => (float)($p['project_size'] ?? 0), $projects));
 
 $conn->close(); // Close connection after fetching project data
 ?>
@@ -1076,8 +1066,7 @@ $conn->close(); // Close connection after fetching project data
         <?php if (!empty($projects)): ?>
             <?php foreach ($projects as $project): ?>
                 <?php
-                    $project_size = (float)($project['project_size'] ?? 0);
-                    $project_size_mw = $project_size / 1_000_000; // convert watts to MW
+                    $project_size_mw = (float)($project['project_size'] ?? 0); // project_size is already in MW
                     $delivery_progress = $project['delivery_progress'];
                     $project_status = $project['project_status'];
                     

@@ -97,7 +97,7 @@ if (count($accountIds) > 0) {
     // Build an IN() clause with placeholders
     $placeholders = implode(',', array_fill(0, count($accountIds), '?'));
     $sqlProj = "
-        SELECT id, project_name, project_address, image_url, estimated_completion_date
+        SELECT id, project_name, project_address, image_url, estimated_completion_date, project_size
         FROM projects
         WHERE account_id IN ($placeholders)
         ORDER BY id ASC
@@ -127,16 +127,13 @@ if (count($accountIds) > 0) {
         $wattage_orders_result = $stmt_wattage_orders->get_result();
         $stmt_wattage_orders->close();
 
-        $total_mws = 0;
         $total_order_quantity = 0;
         while ($wattage_row = $wattage_orders_result->fetch_assoc()) {
-            $wattage = (float)$wattage_row['wattage'];
             $torder  = (int)$wattage_row['total_order'];
-
             $total_order_quantity += $torder;
-            $total_mws += ($wattage * $torder) / 1_000_000; // Convert to MW
         }
-        $project['project_size'] = $total_mws;
+        // Use project_size from database, default to 0 if not set
+        $project['project_size'] = isset($project['project_size']) ? (float)$project['project_size'] : 0;
 
         // ---- Modules Delivered
         $stmt_delivered = $conn->prepare("
@@ -709,7 +706,8 @@ $conn->close();
                         </h3>
                     </div>
                     <div class="project-image">
-                        <img src="<?php echo htmlspecialchars($project['image_url']); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>">
+                        <?php $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/project_default.png'; ?>
+                        <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/project_default.png'">
                         <div class="project-overlay">
                             <div class="project-overlay-text">View Project Details</div>
                         </div>
@@ -752,7 +750,7 @@ $conn->close();
                 </div>
             <?php endforeach; ?>
 
-            <?php if ($role === 'admin' || $role === 'global_admin'): ?>
+            <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
                 <div class="project-item project-item--add" onclick="window.location.href='add_project.php'">
                     <div class="add-project-icon">＋</div>
                     <div class="add-project-text">Add New Project</div>

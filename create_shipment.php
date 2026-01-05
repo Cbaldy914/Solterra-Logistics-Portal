@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-// Only allow admin and global_admin roles for shipment creation
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
+// Only allow admin, global_admin, and customer_admin roles for shipment creation
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     header("Location: unauthorized.php");
     exit();
 }
@@ -1952,6 +1952,29 @@ if (!empty($bolCompletionMessage)) {
         </div>
     </div>
 
+    <!-- Shipment Creation Options -->
+    <div style="display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 280px; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border: 2px solid #488C9A; border-radius: 12px; padding: 20px; display: flex; align-items: center; gap: 16px;">
+            <div style="width: 48px; height: 48px; background: linear-gradient(135deg, #488C9A 0%, #3a7086 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                <span style="font-size: 24px; filter: grayscale(1) brightness(10);">🚚</span>
+            </div>
+            <div style="flex: 1;">
+                <h3 style="margin: 0 0 4px 0; color: #293E4C; font-size: 1rem;">Manual Shipment</h3>
+                <p style="margin: 0; color: #6c757d; font-size: 0.85rem;">Select pallets below and click "Create Shipment" to create deliveries one at a time</p>
+            </div>
+        </div>
+        <a href="upload_shipments.php<?php echo $project_id_from_url ? '?project_id='.$project_id_from_url : ''; ?>" style="flex: 1; min-width: 280px; background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%); border: 2px solid #0056b3; border-radius: 12px; padding: 20px; display: flex; align-items: center; gap: 16px; text-decoration: none; transition: all 0.2s ease;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(0,86,179,0.15)';" onmouseout="this.style.transform=''; this.style.boxShadow='';">
+            <div style="width: 48px; height: 48px; background: linear-gradient(135deg, #0056b3 0%, #004494 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                <span style="font-size: 24px; filter: grayscale(1) brightness(10);">📥</span>
+            </div>
+            <div style="flex: 1;">
+                <h3 style="margin: 0 0 4px 0; color: #0056b3; font-size: 1rem;">Import Shipments</h3>
+                <p style="margin: 0; color: #6c757d; font-size: 0.85rem;">Upload a shipping schedule to create multiple shipments at once from a CSV or Excel file</p>
+            </div>
+            <span style="color: #0056b3; font-size: 1.2rem;">→</span>
+        </a>
+    </div>
+
     <?php if (!empty($sessionMessage)): ?>
         <?php $messageClass = (strpos(strtolower($sessionMessage), 'error') !== false) ? 'error-message' : 'success-message'; ?>
         <div class="<?php echo $messageClass; ?>">
@@ -2684,11 +2707,27 @@ function renderPalletsTable(pallets) {
     const tbody = document.getElementById('palletsTableBody');
 
     if (pallets.length === 0) {
+        // Check if a project filter is selected
+        const projectFilter = document.getElementById('cs_project');
+        const selectedProject = projectFilter ? projectFilter.value : '';
+
+        let emptyMessage = 'No pallets found matching your criteria.';
+        let subMessage = '';
+
+        if (selectedProject && selectedProject !== 'Unassigned') {
+            emptyMessage = `No pallets available for project "${selectedProject}".`;
+            subMessage = '<p style="margin-top: 8px; font-size: 13px; color: #888;">Import pallets first using the Import Pallets feature, or assign existing pallets to this project.</p>';
+        } else if (selectedProject === 'Unassigned') {
+            emptyMessage = 'No unassigned pallets available.';
+            subMessage = '<p style="margin-top: 8px; font-size: 13px; color: #888;">All pallets are currently assigned to projects.</p>';
+        }
+
         tbody.innerHTML = `
             <tr>
                 <td colspan="8" style="text-align: center; padding: 40px; color: #666;">
                     <i class="fas fa-box-open" style="font-size: 24px;"></i>
-                    <p style="margin-top: 10px;">No pallets found matching your criteria.</p>
+                    <p style="margin-top: 10px;">${emptyMessage}</p>
+                    ${subMessage}
                 </td>
             </tr>
         `;

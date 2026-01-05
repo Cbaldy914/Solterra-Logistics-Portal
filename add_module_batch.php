@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure the user is either an admin or global_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
+// Ensure the user is either an admin, global_admin, or customer_admin
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     header('Location: unauthorized.php');
     exit();
 }
@@ -18,6 +18,11 @@ if (!$conn) {
 $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'];
 $project_id = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
+
+// Project capacity tracking variables
+$project_size_mw = 0;
+$current_ordered_mw = 0;
+$remaining_mw = 0;
 
 // If a project is provided, verify access and load it; otherwise enable unassigned flow
 $project = null;
@@ -48,6 +53,24 @@ if ($project_id) {
     }
     $project = $result->fetch_assoc();
     $stmtAccess->close();
+
+    // Get project size and current MW ordered
+    $project_size_mw = floatval($project['project_size'] ?? 0);
+
+    // Calculate current ordered MW from existing modules
+    $stmtMw = $conn->prepare("
+        SELECT SUM(umi.wattage * umi.quantity) / 1000000 as ordered_mw
+        FROM unassigned_module_items umi
+        JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE m.project_id = ?
+    ");
+    $stmtMw->bind_param("i", $project_id);
+    $stmtMw->execute();
+    $mwResult = $stmtMw->get_result()->fetch_assoc();
+    $current_ordered_mw = floatval($mwResult['ordered_mw'] ?? 0);
+    $stmtMw->close();
+
+    $remaining_mw = max(0, $project_size_mw - $current_ordered_mw);
 }
 
 // For admin/global_admin with no project selected, prepare account/projects for selection
@@ -89,6 +112,9 @@ $stmtManufacturers->close();
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Detect AJAX request
+    $isAjax = !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
+
     // Allow selecting project on page
     if (!$project_id) {
         $project_id = isset($_POST['project_id']) && $_POST['project_id'] !== '' ? intval($_POST['project_id']) : 0;
@@ -285,6 +311,96 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
+            // Auto-palletization - create pallets if enabled
+            $enable_palletization = isset($_POST['enable_palletization']) && $_POST['enable_palletization'] === '1';
+            $auto_modules_per_pallet = isset($_POST['auto_modules_per_pallet']) && $_POST['auto_modules_per_pallet'] !== '' ? intval($_POST['auto_modules_per_pallet']) : 0;
+
+            $pallets_created = 0;
+            if ($enable_palletization && $auto_modules_per_pallet > 0 && $project_id > 0) {
+                // Get the unassigned_module_items we just created
+                $stmtItems = $conn->prepare("
+                    SELECT id, wattage, quantity
+                    FROM unassigned_module_items
+                    WHERE unassigned_module_id = ?
+                ");
+                $stmtItems->bind_param("i", $module_id);
+                $stmtItems->execute();
+                $itemsResult = $stmtItems->get_result();
+
+                // Also update modules_per_pallet in the modules table if not already set
+                if ($modules_per_pallet === null || $modules_per_pallet === 0) {
+                    $stmtUpdateMpp = $conn->prepare("UPDATE modules SET modules_per_pallet = ? WHERE id = ?");
+                    $stmtUpdateMpp->bind_param("ii", $auto_modules_per_pallet, $module_id);
+                    $stmtUpdateMpp->execute();
+                    $stmtUpdateMpp->close();
+                }
+
+                // Get the next pallet number for auto-generated IDs
+                $stmtMaxPallet = $conn->query("SELECT MAX(CAST(SUBSTRING(pallet_identifier, 5) AS UNSIGNED)) as max_num FROM inventory_pallets WHERE pallet_identifier LIKE 'PAL-%'");
+                $maxRow = $stmtMaxPallet->fetch_assoc();
+                $nextPalletNum = ($maxRow['max_num'] ?? 0) + 1;
+
+                $defaultStatus = 'At Manufacturer';
+
+                // Handle NULL location_id properly
+                $loc_id_for_insert = $location_id !== null ? $location_id : null;
+
+                while ($item = $itemsResult->fetch_assoc()) {
+                    $item_id = $item['id'];
+                    $item_wattage = $item['wattage'];
+                    $item_quantity = $item['quantity'];
+
+                    // Calculate how many full pallets and partial pallet
+                    $full_pallets = floor($item_quantity / $auto_modules_per_pallet);
+                    $remaining_modules = $item_quantity % $auto_modules_per_pallet;
+
+                    // Create full pallets
+                    for ($p = 0; $p < $full_pallets; $p++) {
+                        $pallet_id = 'PAL-' . str_pad($nextPalletNum++, 4, '0', STR_PAD_LEFT);
+
+                        // Use direct query to handle NULL properly
+                        $stmtPallet = $conn->prepare("
+                            INSERT INTO inventory_pallets (
+                                pallet_identifier, unassigned_module_item_id, wattage, quantity,
+                                status, manufacturer, manufacturer_location_id, assigned_project_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ");
+                        $stmtPallet->bind_param("siiissii",
+                            $pallet_id, $item_id, $item_wattage, $auto_modules_per_pallet,
+                            $defaultStatus, $vendor_name, $loc_id_for_insert, $project_id
+                        );
+                        if (!$stmtPallet->execute()) {
+                            throw new Exception("Error creating pallet: " . $stmtPallet->error);
+                        }
+                        $stmtPallet->close();
+                        $pallets_created++;
+                    }
+
+                    // Create partial pallet if there are remaining modules
+                    if ($remaining_modules > 0) {
+                        $pallet_id = 'PAL-' . str_pad($nextPalletNum++, 4, '0', STR_PAD_LEFT);
+
+                        $stmtPallet = $conn->prepare("
+                            INSERT INTO inventory_pallets (
+                                pallet_identifier, unassigned_module_item_id, wattage, quantity,
+                                status, manufacturer, manufacturer_location_id, assigned_project_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ");
+                        $stmtPallet->bind_param("siiissii",
+                            $pallet_id, $item_id, $item_wattage, $remaining_modules,
+                            $defaultStatus, $vendor_name, $loc_id_for_insert, $project_id
+                        );
+                        if (!$stmtPallet->execute()) {
+                            throw new Exception("Error creating partial pallet: " . $stmtPallet->error);
+                        }
+                        $stmtPallet->close();
+                        $pallets_created++;
+                    }
+                }
+
+                $stmtItems->close();
+            }
+
             // If documentation files are provided and a project is selected, save them to project_documents
             $hasDocs = isset($_FILES['module_docs']) && (
                 (is_array($_FILES['module_docs']['error']) && count(array_filter($_FILES['module_docs']['error'], fn($e)=>$e!==UPLOAD_ERR_NO_FILE))>0) ||
@@ -351,13 +467,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $conn->commit();
 
-            $redirect = $project_id ? ("project_overview.php?project_id={$project_id}&success=batch_added") : 'modules.php';
+            // Calculate total modules for the response
+            $total_modules = 0;
+            for ($i = 0; $i < count($wattages); $i++) {
+                $qty = intval(trim($quantities[$i]));
+                if ($qty > 0) $total_modules += $qty;
+            }
+
+            // Return JSON for AJAX requests
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => true,
+                    'message' => 'Module batch created successfully!',
+                    'module_id' => $module_id,
+                    'pallets_created' => $pallets_created,
+                    'total_modules' => $total_modules,
+                    'project_id' => $project_id,
+                    'redirect_url' => $project_id ? "project_overview.php?project_id={$project_id}" : 'modules.php'
+                ]);
+                $conn->close();
+                exit();
+            }
+
+            // Build redirect URL with success message including pallets count (non-AJAX fallback)
+            $success_msg = 'batch_added';
+            if ($pallets_created > 0) {
+                $success_msg = 'batch_added&pallets_created=' . $pallets_created;
+            }
+            $redirect = $project_id ? ("project_overview.php?project_id={$project_id}&success={$success_msg}") : 'modules.php?success=batch_added';
             header("Location: $redirect");
             exit();
-            
+
         } catch (Exception $e) {
             $conn->rollback();
-            $errors[] = "Error creating module batch: " . $e->getMessage();
+            $error_message = "Error creating module batch: " . $e->getMessage();
+
+            // Return JSON error for AJAX requests
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => false,
+                    'message' => $error_message
+                ]);
+                $conn->close();
+                exit();
+            }
+
+            $errors[] = $error_message;
+        }
+    } else {
+        // Validation errors - return JSON for AJAX
+        if ($isAjax) {
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => false,
+                'message' => implode(', ', $errors)
+            ]);
+            $conn->close();
+            exit();
         }
     }
 }
@@ -628,55 +796,101 @@ $conn->close();
             .form-container {
                 margin: 10px 0;
             }
-            
+
             .form-content {
                 padding: 20px;
             }
-            
+
             .form-section {
                 padding: 20px;
             }
-            
+
             .form-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .wattage-entry {
                 grid-template-columns: 1fr;
                 gap: 10px;
             }
-            
+
              .button-group {
                  flex-direction: column;
                  align-items: center;
              }
-            
+
             .form-header {
                 padding: 20px;
                 margin-bottom: 20px;
             }
-            
+
             .header-content {
                 gap: 16px;
             }
-            
+
             .header-left {
                 gap: 16px;
             }
-            
+
             .header-icon {
                 width: 60px;
                 height: 60px;
                 font-size: 24px;
             }
-            
+
             .header-info h1 {
                 font-size: 2em;
             }
-            
+
             .header-subtitle {
                 font-size: 1em;
             }
+        }
+
+        /* Loading spinner modal styles */
+        .loading-modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+        }
+        .loading-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 40px 50px;
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        .loading-content h3 {
+            margin: 0 0 8px 0;
+            color: #293E4C;
+            font-size: 1.3em;
+        }
+        .loading-content p {
+            margin: 0;
+            color: #6c757d;
+            font-size: 0.95em;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #488C9A;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -708,8 +922,62 @@ $conn->close();
                 </div>
             </div>
         </div>
-        
-        <div class="form-container">
+
+        <!-- Entry Method Toggle -->
+        <div class="entry-method-toggle" style="background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+            <h3 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1.1em;">How would you like to add modules?</h3>
+            <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #488C9A; border-radius: 12px; cursor: pointer; background: rgba(72,140,154,0.05); transition: all 0.2s ease;">
+                    <input type="radio" name="entry_method" value="manual" checked style="margin-right: 10px;">
+                    <strong style="color: #293E4C;">Manual Entry</strong>
+                    <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Enter generic module batch information manually. Pallets can be auto-generated with system IDs.</p>
+                </label>
+                <label class="method-option" style="flex: 1; min-width: 200px; padding: 20px; border: 2px solid #e9ecef; border-radius: 12px; cursor: pointer; background: #f8f9fa; transition: all 0.2s ease;">
+                    <input type="radio" name="entry_method" value="import" style="margin-right: 10px;">
+                    <strong style="color: #293E4C;">Import Pallets</strong>
+                    <p style="margin: 8px 0 0 0; font-size: 0.9em; color: #6c757d;">Upload real manufacturer pallet data from a CSV/Excel file.</p>
+                </label>
+            </div>
+        </div>
+
+        <?php if ($project && $project_size_mw > 0): ?>
+        <!-- Project Capacity Info Banner -->
+        <div id="capacityBanner" style="background: linear-gradient(135deg, #f0f8ff 0%, #e7f3ff 100%); border: 1px solid #b8daff; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+            <h3 style="margin: 0 0 16px 0; color: #0056b3; font-size: 1.1em; display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 1.2em;">&#9889;</span> Project Capacity Status
+            </h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 16px;">
+                <div style="background: white; border-radius: 12px; padding: 16px; text-align: center;">
+                    <div style="font-size: 1.6rem; font-weight: 700; color: #488C9A;"><?php echo number_format($current_ordered_mw, 2); ?> MW</div>
+                    <div style="font-size: 0.85rem; color: #6c757d;">Currently Ordered</div>
+                </div>
+                <div style="background: white; border-radius: 12px; padding: 16px; text-align: center;">
+                    <div style="font-size: 1.6rem; font-weight: 700; color: #293E4C;"><?php echo number_format($project_size_mw, 2); ?> MW</div>
+                    <div style="font-size: 0.85rem; color: #6c757d;">Project Target</div>
+                </div>
+                <div style="background: white; border-radius: 12px; padding: 16px; text-align: center;">
+                    <div style="font-size: 1.6rem; font-weight: 700; color: <?php echo $remaining_mw > 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo number_format($remaining_mw, 2); ?> MW</div>
+                    <div style="font-size: 0.85rem; color: #6c757d;">Remaining Capacity</div>
+                </div>
+            </div>
+            <?php
+            $capacity_pct = $project_size_mw > 0 ? min(100, ($current_ordered_mw / $project_size_mw) * 100) : 0;
+            ?>
+            <div style="background: #e9ecef; border-radius: 8px; height: 20px; overflow: hidden;">
+                <div style="background: linear-gradient(90deg, #488C9A 0%, #3a7086 100%); height: 100%; width: <?php echo $capacity_pct; ?>%; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: 600;">
+                    <?php echo number_format($capacity_pct, 1); ?>%
+                </div>
+            </div>
+            <div id="newMwPreview" style="display: none; margin-top: 16px; padding: 12px; background: white; border-radius: 8px; border: 2px solid #ffc107;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #856404; font-weight: 500;">New Total After This Batch:</span>
+                    <span id="newTotalMw" style="font-weight: 700; color: #856404;">0.00 MW</span>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <div class="form-container" id="manualEntryContainer">
             
             <div class="form-content">
                 <?php if (!empty($errors)): ?>
@@ -752,18 +1020,71 @@ $conn->close();
                     <?php endif; ?>
 
                     <?php $prefManufacturerId = null; $prefLocationId = null; $existingWattages = []; include __DIR__ . '/components/module_batch_section.php'; ?>
-                    
-                     <!-- Module Documentation Section -->
-                     <div class="form-section">
-                         <h2>Module Documentation</h2>
-                         <div class="form-group">
-                             <label>Module Documentation <span style="color:#999; font-weight:400; font-size:0.85rem;">(optional)</span></label>
-                             <button type="button" class="add-wattage-btn" onclick="openPreModuleUploadModal()" style="background: #488C9A; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 1em;">
-                                 <i class="fas fa-upload" style="margin-right: 8px;"></i>Attach Module Documentation
-                             </button>
-                             <div id="preModuleDocsSummary" style="margin-top: 12px; color: #666; font-size: 0.9em; display: none;"></div>
-                         </div>
-                     </div>
+
+                    <!-- Palletization Section -->
+                    <div class="form-section" style="margin-top: 30px; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border: 1px solid #e9ecef; border-left: 4px solid #488C9A; border-radius: 12px; padding: 24px;">
+                        <h2 style="display: flex; align-items: center; gap: 10px; margin: 0 0 12px 0;">
+                            <span style="font-size: 1.2em;">📦</span> Auto-Palletization
+                            <span style="color: #999; font-weight: 400; font-size: 0.75rem;">(optional)</span>
+                        </h2>
+
+                        <!-- Explanation Box -->
+                        <div style="background: linear-gradient(135deg, #fff3cd 0%, #fff8e1 100%); border: 1px solid #ffc107; border-radius: 10px; padding: 16px; margin-bottom: 20px;">
+                            <div style="display: flex; align-items: flex-start; gap: 12px;">
+                                <span style="font-size: 1.2rem;">💡</span>
+                                <div>
+                                    <div style="font-weight: 600; color: #856404; margin-bottom: 6px;">How Auto-Palletization Works</div>
+                                    <ul style="margin: 0; padding-left: 18px; color: #856404; font-size: 0.9rem; line-height: 1.6;">
+                                        <li>Pallets will be created with <strong>system-generated IDs</strong> (e.g., PAL-0001, PAL-0002)</li>
+                                        <li>You can link actual <strong>manufacturer pallet IDs</strong> to these later when shipments arrive</li>
+                                        <li>This is ideal for planning and tracking before real pallet data is available</li>
+                                        <li>For importing real manufacturer pallet data, use the <strong>Import Pallets</strong> option instead</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; align-items: stretch; gap: 16px; flex-wrap: wrap;">
+                            <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 16px 20px; background: #fff; border-radius: 10px; border: 2px solid #e9ecef; transition: all 0.2s ease;" id="enablePalletizationLabel">
+                                <input type="checkbox" name="enable_palletization" id="enable_palletization" value="1" style="width: 22px; height: 22px; cursor: pointer; accent-color: #488C9A;">
+                                <div>
+                                    <div style="font-weight: 600; color: #293E4C; font-size: 1rem;">Enable Auto-Palletization</div>
+                                    <div style="font-size: 0.85rem; color: #6c757d;">Create pallets automatically on save</div>
+                                </div>
+                            </label>
+
+                            <div id="palletizationConfig" style="display: none; padding: 16px 20px; background: #fff; border-radius: 10px; border: 2px solid #488C9A; box-shadow: 0 4px 12px rgba(72,140,154,0.15);">
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <label for="auto_modules_per_pallet" style="font-weight: 600; color: #293E4C; font-size: 0.95rem; white-space: nowrap;">
+                                        Modules per Pallet:
+                                    </label>
+                                    <input type="number" name="auto_modules_per_pallet" id="auto_modules_per_pallet" min="1" placeholder="30" style="width: 80px; padding: 8px 12px; border: 2px solid #e9ecef; border-radius: 6px; font-size: 1rem; font-weight: 600; text-align: center;">
+                                    <div id="palletCalculation" style="display: none; padding: 6px 12px; background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border-radius: 6px; border: 1px solid #c8e6c9;">
+                                        <span style="font-size: 0.9rem; font-weight: 600; color: #28a745;" id="calcTotalPallets">0 pallets</span>
+                                        <span id="calcPartialPallet" style="color: #856404; font-size: 0.85rem; margin-left: 4px;"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Detailed pallet calculation (shown below when there's data) -->
+                        <div id="palletCalcDetails" style="display: none; margin-top: 16px; padding: 16px; background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border-radius: 10px; border: 1px solid #c8e6c9;">
+                            <div style="display: flex; gap: 24px; flex-wrap: wrap; justify-content: center;">
+                                <div style="text-align: center;">
+                                    <div style="font-size: 1.3rem; font-weight: 700; color: #293E4C;" id="calcTotalModules">0</div>
+                                    <div style="font-size: 0.75rem; color: #6c757d;">Total Modules</div>
+                                </div>
+                                <div style="text-align: center;">
+                                    <div style="font-size: 1.3rem; font-weight: 700; color: #28a745;" id="calcFullPallets">0</div>
+                                    <div style="font-size: 0.75rem; color: #6c757d;">Full Pallets</div>
+                                </div>
+                                <div style="text-align: center;">
+                                    <div style="font-size: 1.3rem; font-weight: 700; color: #ffc107;" id="calcPartialModules">0</div>
+                                    <div style="font-size: 0.75rem; color: #6c757d;">Partial Pallet</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <!-- Basic Information -->
                     <div class="form-section" style="display:none">
                         <h2>Basic Information</h2>
@@ -873,6 +1194,21 @@ $conn->close();
             </div>
         </div>
         
+        <!-- Import Container (hidden by default) -->
+        <div id="importContainer" style="display: none; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); padding: 40px; margin-bottom: 20px;">
+            <div style="text-align: center; padding: 40px 20px;">
+                <div style="font-size: 48px; color: #488C9A; margin-bottom: 16px;">📦</div>
+                <h2 style="color: #293E4C; margin-bottom: 12px;">Import Pallets</h2>
+                <p style="color: #6c757d; margin-bottom: 24px; max-width: 500px; margin-left: auto; margin-right: auto;">
+                    Upload a CSV or Excel file with pallet data from your manufacturer to add pallets to inventory. Each row = one pallet.
+                </p>
+                <a href="upload_pallets.php<?php echo $project_id ? '?project_id='.$project_id : ''; ?>"
+                   class="btn-submit" style="display: inline-block; text-decoration: none; padding: 16px 32px;">
+                    Import Pallets →
+                </a>
+            </div>
+        </div>
+
         <!-- Module Documentation Upload Modal -->
         <div id="moduleUploadModal" class="upload-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
             <div class="modal-content" style="background: white; border-radius: 12px; padding: 0; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;">
@@ -912,6 +1248,53 @@ $conn->close();
                          <button type="button" onclick="confirmPreModuleDocs()" style="background: #488C9A; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600;">Done</button>
                      </div>
                  </div>
+            </div>
+        </div>
+
+        <!-- Loading Modal for Module Batch Creation -->
+        <div id="loadingModal" class="loading-modal">
+            <div class="loading-content">
+                <div class="spinner"></div>
+                <h3 id="loadingTitle">Creating Module Batch...</h3>
+                <p id="loadingSubtitle">Please wait while we process your request.</p>
+            </div>
+        </div>
+
+        <!-- Result Modal (Success/Error) -->
+        <div id="resultModal" class="loading-modal" style="display: none;">
+            <div class="loading-content" style="max-width: 480px; padding: 32px 40px;">
+                <div id="resultIcon" style="font-size: 56px; margin-bottom: 16px;"></div>
+                <h3 id="resultTitle" style="margin: 0 0 12px 0; font-size: 1.4em;"></h3>
+                <p id="resultMessage" style="margin: 0 0 8px 0; color: #6c757d;"></p>
+                <div id="resultDetails" style="margin: 16px 0; padding: 16px; background: #f8f9fa; border-radius: 8px; text-align: left; display: none;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #488C9A;" id="resultModules">0</div>
+                            <div style="font-size: 0.85rem; color: #6c757d;">Modules Added</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: #28a745;" id="resultPallets">0</div>
+                            <div style="font-size: 0.85rem; color: #6c757d;">Pallets Created</div>
+                        </div>
+                    </div>
+                </div>
+                <div id="resultWarning" style="display: none; margin: 16px 0; padding: 12px 16px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; text-align: left;">
+                    <div style="display: flex; align-items: flex-start; gap: 10px;">
+                        <span style="font-size: 1.1rem;">&#9888;&#65039;</span>
+                        <div style="font-size: 0.9rem; color: #856404;" id="resultWarningText"></div>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px; flex-wrap: wrap;">
+                    <button type="button" id="resultAddAnotherBtn" onclick="resetFormForAnother()" style="background: #6c757d; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 500; display: none;">
+                        <i class="fas fa-plus" style="margin-right: 6px;"></i> Add Another Batch
+                    </button>
+                    <a href="#" id="resultGoBackBtn" style="background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center;">
+                        <i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Project Overview
+                    </a>
+                    <button type="button" id="resultCloseBtn" onclick="closeResultModal()" style="background: #e9ecef; color: #293E4C; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 500; display: none;">
+                        Close
+                    </button>
+                </div>
             </div>
         </div>
     </main>
@@ -1086,7 +1469,7 @@ $conn->close();
          document.addEventListener('DOMContentLoaded', function() {
              const fileInput = document.getElementById('module_docs');
              const fileList = document.getElementById('moduleDocFileList');
-             
+
              if (fileInput && fileList) {
                  fileInput.addEventListener('change', function() {
                      fileList.innerHTML = '';
@@ -1102,6 +1485,423 @@ $conn->close();
                              fileList.appendChild(fileItem);
                          }
                      }
+                 });
+             }
+
+             // Entry method toggle
+             const methodRadios = document.querySelectorAll('input[name="entry_method"]');
+             const manualContainer = document.getElementById('manualEntryContainer');
+             const importContainer = document.getElementById('importContainer');
+             const methodOptions = document.querySelectorAll('.method-option');
+
+             methodRadios.forEach(radio => {
+                 radio.addEventListener('change', function() {
+                     if (this.value === 'manual') {
+                         manualContainer.style.display = 'block';
+                         importContainer.style.display = 'none';
+                         methodOptions[0].style.border = '2px solid #488C9A';
+                         methodOptions[0].style.background = 'rgba(72,140,154,0.05)';
+                         methodOptions[1].style.border = '2px solid #e9ecef';
+                         methodOptions[1].style.background = '#f8f9fa';
+                     } else {
+                         manualContainer.style.display = 'none';
+                         importContainer.style.display = 'block';
+                         methodOptions[1].style.border = '2px solid #488C9A';
+                         methodOptions[1].style.background = 'rgba(72,140,154,0.05)';
+                         methodOptions[0].style.border = '2px solid #e9ecef';
+                         methodOptions[0].style.background = '#f8f9fa';
+                     }
+                 });
+             });
+         });
+
+         // MW Capacity tracking
+         const capacityData = {
+             projectSizeMw: <?php echo json_encode($project_size_mw); ?>,
+             currentOrderedMw: <?php echo json_encode($current_ordered_mw); ?>
+         };
+
+         function calculateBatchMw() {
+             let batchMw = 0;
+             // Get wattages and quantities from the component form
+             const wattageInputs = document.querySelectorAll('input[name="wattages[]"]');
+             const quantityInputs = document.querySelectorAll('input[name="quantities[]"]');
+
+             wattageInputs.forEach((wInput, i) => {
+                 const wattage = parseFloat(wInput.value) || 0;
+                 const quantity = parseInt(quantityInputs[i]?.value) || 0;
+                 batchMw += (wattage * quantity) / 1000000;
+             });
+             return batchMw;
+         }
+
+         function updateMwPreview() {
+             if (capacityData.projectSizeMw <= 0) return;
+
+             const batchMw = calculateBatchMw();
+             const newTotalMw = capacityData.currentOrderedMw + batchMw;
+             const previewDiv = document.getElementById('newMwPreview');
+
+             if (batchMw > 0 && previewDiv) {
+                 previewDiv.style.display = 'block';
+
+                 // Update styling based on capacity
+                 if (newTotalMw > capacityData.projectSizeMw) {
+                     const excessMw = newTotalMw - capacityData.projectSizeMw;
+                     const excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
+                     previewDiv.style.borderColor = '#dc3545';
+                     previewDiv.style.background = '#f8d7da';
+                     previewDiv.innerHTML = `
+                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                             <span style="color: #721c24; font-weight: 600;">&#9888; Over Capacity Warning</span>
+                             <span style="font-weight: 700; color: #721c24;">${newTotalMw.toFixed(2)} MW</span>
+                         </div>
+                         <div style="font-size: 0.9rem; color: #721c24;">
+                             This batch will exceed the project target by ${excessMw.toFixed(2)} MW (${excessPct.toFixed(1)}% over).
+                             You will be asked to confirm before saving.
+                         </div>
+                         <div style="font-size: 0.85rem; color: #856404; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.1);">
+                             This batch adds: <strong>+${batchMw.toFixed(4)} MW</strong>
+                         </div>
+                     `;
+                 } else {
+                     previewDiv.style.borderColor = '#28a745';
+                     previewDiv.style.background = '#d4edda';
+                     const remainingAfter = capacityData.projectSizeMw - newTotalMw;
+                     previewDiv.innerHTML = `
+                         <div style="display: flex; justify-content: space-between; align-items: center;">
+                             <span style="color: #155724; font-weight: 500;">New Total After This Batch:</span>
+                             <span style="font-weight: 700; color: #155724;">${newTotalMw.toFixed(2)} MW</span>
+                         </div>
+                         <div style="font-size: 0.85rem; color: #155724; margin-top: 4px;">
+                             ${remainingAfter.toFixed(2)} MW remaining capacity
+                         </div>
+                         <div style="font-size: 0.85rem; color: #666; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.1);">
+                             This batch adds: <strong>+${batchMw.toFixed(4)} MW</strong>
+                         </div>
+                     `;
+                 }
+             } else if (previewDiv) {
+                 previewDiv.style.display = 'none';
+             }
+         }
+
+         // Add listeners to wattage container for dynamic updates
+         document.addEventListener('DOMContentLoaded', function() {
+             const wattageContainer = document.getElementById('wattage-container');
+             if (wattageContainer) {
+                 wattageContainer.addEventListener('input', updateMwPreview);
+                 // Also observe for new fields being added
+                 const observer = new MutationObserver(updateMwPreview);
+                 observer.observe(wattageContainer, { childList: true, subtree: true });
+             }
+         });
+
+         // ========== Palletization Section ==========
+         document.addEventListener('DOMContentLoaded', function() {
+             const enableCheckbox = document.getElementById('enable_palletization');
+             const configDiv = document.getElementById('palletizationConfig');
+             const modulesPerPalletInput = document.getElementById('auto_modules_per_pallet');
+             const calcDiv = document.getElementById('palletCalculation');
+             const enableLabel = document.getElementById('enablePalletizationLabel');
+
+             if (!enableCheckbox || !configDiv) return;
+
+             // Toggle config visibility when checkbox changes
+             enableCheckbox.addEventListener('change', function() {
+                 configDiv.style.display = this.checked ? 'block' : 'none';
+                 if (this.checked) {
+                     enableLabel.style.borderColor = '#28a745';
+                     enableLabel.style.background = '#d4edda';
+                     updatePalletCalculation();
+                 } else {
+                     enableLabel.style.borderColor = '#e9ecef';
+                     enableLabel.style.background = '#f8f9fa';
+                 }
+             });
+
+             // Calculate pallets when modules per pallet changes
+             if (modulesPerPalletInput) {
+                 modulesPerPalletInput.addEventListener('input', updatePalletCalculation);
+             }
+
+             // Also recalculate when wattage/quantity inputs change
+             const form = document.getElementById('addBatchForm');
+             if (form) {
+                 form.addEventListener('input', function(e) {
+                     if (e.target.name === 'wattages[]' || e.target.name === 'quantities[]') {
+                         updatePalletCalculation();
+                     }
+                 });
+             }
+
+             function updatePalletCalculation() {
+                 if (!enableCheckbox.checked) return;
+
+                 const modulesPerPallet = parseInt(modulesPerPalletInput.value) || 0;
+                 const quantityInputs = document.querySelectorAll('input[name="quantities[]"]');
+
+                 let totalModules = 0;
+                 quantityInputs.forEach(input => {
+                     totalModules += parseInt(input.value) || 0;
+                 });
+
+                 const detailsDiv = document.getElementById('palletCalcDetails');
+
+                 if (modulesPerPallet > 0 && totalModules > 0) {
+                     const fullPallets = Math.floor(totalModules / modulesPerPallet);
+                     const partialModules = totalModules % modulesPerPallet;
+                     const totalPallets = fullPallets + (partialModules > 0 ? 1 : 0);
+
+                     // Update inline display
+                     document.getElementById('calcTotalPallets').textContent = totalPallets + ' pallet' + (totalPallets !== 1 ? 's' : '');
+                     const partialSpan = document.getElementById('calcPartialPallet');
+                     if (partialModules > 0) {
+                         partialSpan.textContent = '(+' + partialModules + ' partial)';
+                     } else {
+                         partialSpan.textContent = '';
+                     }
+
+                     // Update detailed display
+                     document.getElementById('calcTotalModules').textContent = totalModules.toLocaleString();
+                     document.getElementById('calcFullPallets').textContent = fullPallets;
+                     document.getElementById('calcPartialModules').textContent = partialModules > 0 ? partialModules : '0';
+
+                     calcDiv.style.display = 'block';
+                     if (detailsDiv) detailsDiv.style.display = 'block';
+                 } else {
+                     calcDiv.style.display = 'none';
+                     if (detailsDiv) detailsDiv.style.display = 'none';
+                 }
+             }
+
+             // Watch for changes to wattage container (new fields added)
+             const wattageContainer = document.getElementById('wattage-container');
+             if (wattageContainer) {
+                 const observer = new MutationObserver(updatePalletCalculation);
+                 observer.observe(wattageContainer, { childList: true, subtree: true });
+             }
+         });
+
+         // ========== Loading Modal Functions ==========
+         function showLoadingModal(withPalletization = false) {
+             const modal = document.getElementById('loadingModal');
+             const title = document.getElementById('loadingTitle');
+             const subtitle = document.getElementById('loadingSubtitle');
+
+             if (modal) {
+                 if (withPalletization) {
+                     title.textContent = 'Creating Module Batch & Pallets...';
+                     subtitle.textContent = 'Please wait while we create your modules and pallets.';
+                 } else {
+                     title.textContent = 'Creating Module Batch...';
+                     subtitle.textContent = 'Please wait while we process your request.';
+                 }
+                 modal.style.display = 'block';
+                 document.body.style.overflow = 'hidden';
+             }
+         }
+
+         function hideLoadingModal() {
+             const modal = document.getElementById('loadingModal');
+             if (modal) {
+                 modal.style.display = 'none';
+                 document.body.style.overflow = '';
+             }
+         }
+
+         // ========== Result Modal Functions ==========
+         function showResultModal(success, data) {
+             hideLoadingModal();
+
+             const modal = document.getElementById('resultModal');
+             const icon = document.getElementById('resultIcon');
+             const title = document.getElementById('resultTitle');
+             const message = document.getElementById('resultMessage');
+             const details = document.getElementById('resultDetails');
+             const warning = document.getElementById('resultWarning');
+             const warningText = document.getElementById('resultWarningText');
+             const modulesEl = document.getElementById('resultModules');
+             const palletsEl = document.getElementById('resultPallets');
+             const addAnotherBtn = document.getElementById('resultAddAnotherBtn');
+             const goBackBtn = document.getElementById('resultGoBackBtn');
+             const closeBtn = document.getElementById('resultCloseBtn');
+
+             if (success) {
+                 icon.innerHTML = '&#10004;';
+                 icon.style.color = '#28a745';
+                 title.textContent = 'Module Batch Created!';
+                 title.style.color = '#28a745';
+                 message.textContent = data.message || 'Your module batch has been created successfully.';
+
+                 // Show details
+                 details.style.display = 'block';
+                 modulesEl.textContent = (data.total_modules || 0).toLocaleString();
+                 palletsEl.textContent = data.pallets_created || 0;
+
+                 // Show warning if palletization was expected but none created
+                 const enablePalletization = document.getElementById('enable_palletization');
+                 const isPalletizing = enablePalletization && enablePalletization.checked;
+                 if (isPalletizing && data.pallets_created === 0) {
+                     warning.style.display = 'block';
+                     warningText.textContent = 'Auto-palletization was enabled but no pallets were created. Please check your modules per pallet setting.';
+                 } else {
+                     warning.style.display = 'none';
+                 }
+
+                 // Show buttons
+                 addAnotherBtn.style.display = 'inline-flex';
+                 closeBtn.style.display = 'none';
+
+                 // Update go back button
+                 if (data.project_id) {
+                     goBackBtn.href = 'project_overview.php?project_id=' + data.project_id;
+                     goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Project Overview';
+                     goBackBtn.style.display = 'inline-flex';
+                 } else {
+                     goBackBtn.href = 'modules.php';
+                     goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Modules';
+                     goBackBtn.style.display = 'inline-flex';
+                 }
+             } else {
+                 icon.innerHTML = '&#10006;';
+                 icon.style.color = '#dc3545';
+                 title.textContent = 'Error Creating Batch';
+                 title.style.color = '#dc3545';
+                 message.textContent = data.message || 'An error occurred while creating the module batch.';
+
+                 // Hide details, show close button
+                 details.style.display = 'none';
+                 warning.style.display = 'none';
+                 addAnotherBtn.style.display = 'none';
+                 goBackBtn.style.display = 'none';
+                 closeBtn.style.display = 'inline-flex';
+             }
+
+             modal.style.display = 'block';
+             document.body.style.overflow = 'hidden';
+         }
+
+         function closeResultModal() {
+             const modal = document.getElementById('resultModal');
+             if (modal) {
+                 modal.style.display = 'none';
+                 document.body.style.overflow = '';
+             }
+         }
+
+         function resetFormForAnother() {
+             closeResultModal();
+
+             // Reset the form
+             const form = document.getElementById('addBatchForm');
+             if (form) {
+                 // Clear wattage/quantity inputs but keep one entry
+                 const wattageContainer = document.getElementById('wattage-container');
+                 if (wattageContainer) {
+                     const entries = wattageContainer.querySelectorAll('.wattage-entry');
+                     entries.forEach((entry, index) => {
+                         if (index === 0) {
+                             // Clear first entry values
+                             entry.querySelectorAll('input').forEach(input => input.value = '');
+                         } else {
+                             // Remove extra entries
+                             entry.remove();
+                         }
+                     });
+                 }
+
+                 // Reset palletization checkbox
+                 const enablePalletization = document.getElementById('enable_palletization');
+                 if (enablePalletization) {
+                     enablePalletization.checked = false;
+                     const configDiv = document.getElementById('palletizationConfig');
+                     if (configDiv) configDiv.style.display = 'none';
+                     const enableLabel = document.getElementById('enablePalletizationLabel');
+                     if (enableLabel) {
+                         enableLabel.style.borderColor = '#e9ecef';
+                         enableLabel.style.background = '#f8f9fa';
+                     }
+                 }
+
+                 // Clear modules per pallet
+                 const modulesPerPallet = document.getElementById('auto_modules_per_pallet');
+                 if (modulesPerPallet) modulesPerPallet.value = '';
+
+                 // Hide pallet calculation
+                 const calcDiv = document.getElementById('palletCalculation');
+                 const detailsDiv = document.getElementById('palletCalcDetails');
+                 if (calcDiv) calcDiv.style.display = 'none';
+                 if (detailsDiv) detailsDiv.style.display = 'none';
+             }
+
+             // Scroll to top
+             window.scrollTo({ top: 0, behavior: 'smooth' });
+         }
+
+         // ========== AJAX Form Submission Handler ==========
+         document.addEventListener('DOMContentLoaded', function() {
+             const form = document.getElementById('addBatchForm');
+
+             // Hide modals on page load (in case of back button)
+             hideLoadingModal();
+             closeResultModal();
+
+             if (form) {
+                 form.addEventListener('submit', function(e) {
+                     e.preventDefault();
+
+                     // Check if auto-palletization is enabled
+                     const enablePalletization = document.getElementById('enable_palletization');
+                     const isPalletizing = enablePalletization && enablePalletization.checked;
+                     const modulesPerPalletInput = document.getElementById('auto_modules_per_pallet');
+                     const hasModulesPerPallet = modulesPerPalletInput && parseInt(modulesPerPalletInput.value) > 0;
+
+                     // Check capacity before submitting
+                     if (capacityData.projectSizeMw > 0) {
+                         const batchMw = calculateBatchMw();
+                         const newTotalMw = capacityData.currentOrderedMw + batchMw;
+
+                         if (newTotalMw > capacityData.projectSizeMw) {
+                             const excessMw = newTotalMw - capacityData.projectSizeMw;
+                             const excessPct = ((newTotalMw / capacityData.projectSizeMw) - 1) * 100;
+
+                             const confirmMsg = `WARNING: This batch will exceed the project capacity!\n\n` +
+                                 `Current: ${capacityData.currentOrderedMw.toFixed(2)} MW\n` +
+                                 `This Batch: +${batchMw.toFixed(2)} MW\n` +
+                                 `New Total: ${newTotalMw.toFixed(2)} MW\n` +
+                                 `Target: ${capacityData.projectSizeMw.toFixed(2)} MW\n\n` +
+                                 `This is ${excessMw.toFixed(2)} MW (${excessPct.toFixed(1)}%) over the target.\n\n` +
+                                 `Are you sure you want to proceed?`;
+
+                             if (!confirm(confirmMsg)) {
+                                 return;
+                             }
+                         }
+                     }
+
+                     // Show loading modal
+                     showLoadingModal(isPalletizing && hasModulesPerPallet);
+
+                     // Create FormData from the form
+                     const formData = new FormData(form);
+
+                     // Submit via AJAX
+                     fetch(form.action || window.location.href, {
+                         method: 'POST',
+                         body: formData,
+                         headers: {
+                             'X-Requested-With': 'XMLHttpRequest'
+                         }
+                     })
+                     .then(response => response.json())
+                     .then(data => {
+                         showResultModal(data.success, data);
+                     })
+                     .catch(error => {
+                         console.error('Error:', error);
+                         showResultModal(false, { message: 'An unexpected error occurred. Please try again.' });
+                     });
                  });
              }
          });
