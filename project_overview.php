@@ -137,7 +137,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         </svg>
                         <span class="progress-ring-text"><?php echo number_format($order_progress_pct, 0); ?>%</span>
                     </div>
-                    <p class="project-stat-label">Progress</p>
+                    <p class="project-stat-label">Order Progress</p>
                 </div>
                 <?php endif; ?>
             </div>
@@ -188,13 +188,28 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
             </div>
 
-            <!-- Warehousing Button -->
-            <button class="nav-btn" onclick="<?php echo $isAdmin ? 'handleAdminWarehousing()' : "window.location.href='warehouse_info?project_id={$project_id}'"; ?>">
-                Warehousing
-            </button>
+            <!-- Warehousing Dropdown -->
+            <div class="nav-dropdown">
+                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'warehousingDropdown')">
+                    Warehousing <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                </button>
+                <div class="nav-dropdown-content" id="warehousingDropdown">
+                    <?php if (!empty($warehouses_with_inventory)): ?>
+                        <?php foreach ($warehouses_with_inventory as $wh): ?>
+                        <a href="<?php echo $isAdmin ? 'manage_warehouse_inventory.php' : 'warehouse_info'; ?>?warehouse_id=<?php echo $wh['id']; ?>&project_id=<?php echo $project_id; ?>">
+                            <?php echo htmlspecialchars($wh['name']); ?>
+                            <?php if ($wh['modules_in_warehouse'] > 0 || $wh['modules_in_transit_to_wh'] > 0): ?>
+                            <span style="font-size: 0.75rem; color: #6c757d; margin-left: 4px;">(<?php echo number_format($wh['modules_in_warehouse'] + $wh['modules_in_transit_to_wh']); ?>)</span>
+                            <?php endif; ?>
+                        </a>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <span class="nav-dropdown-empty">No inventory in storage</span>
+                    <?php endif; ?>
+                </div>
+            </div>
 
-            <?php if (!$isAdmin): ?>
-            <!-- Reports Dropdown (Non-Admin) -->
+            <!-- Reports Dropdown (All Roles) -->
             <div class="nav-dropdown">
                 <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'reportsDropdown')">
                     Reports <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
@@ -205,14 +220,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     <a href="warranty.php?project_id=<?php echo $project_id; ?>">Exceptions</a>
                 </div>
             </div>
-            <?php endif; ?>
-
-            <?php if ($isAdmin): ?>
-            <!-- Exceptions Button (Admin) -->
-            <button class="nav-btn" onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">
-                Exceptions
-            </button>
-            <?php endif; ?>
 
             <!-- Documents Dropdown -->
             <div class="nav-dropdown">
@@ -759,7 +766,7 @@ function initCostPieChart() {
             labels: costPieLabels,
             datasets: [{
                 data: hasData ? costPieData : [1, 1, 1], // Show equal slices if no data
-                backgroundColor: ['#488C9A', '#293E4C', '#66B2FF']
+                backgroundColor: ['#488C9A', '#293E4C', '#5ba3b1', '#fbb040', '#6c757d']
             }]
         },
         options: {
@@ -2221,10 +2228,11 @@ function initializeFinancialCharts(){
         'Freight Cost': '#488C9A',
         'Warehousing':   '#293E4C',
         'Accessorial':   '#fbb040',
-        'Solterra Fee':  '#BFBFBF'
+        'Solterra Fee':  '#5ba3b1',
+        'Other':         '#6c757d'
     };
     var backgroundColors = costPieLabels.map(function(lbl){
-        return colorMap[lbl] || '#000000';
+        return colorMap[lbl] || '#6c757d';
     });
 
     new Chart(costPie,{
@@ -2659,24 +2667,28 @@ document.addEventListener('click', function(event) {
     }
 });
 
-<?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
-// Project Actions Functions
+// Project Actions Functions (settings gear dropdown)
 function toggleProjectActions() {
     const dropdown = document.getElementById('projectActionsDropdown');
-    const isOpen = dropdown.classList.contains('show') || dropdown.style.display === 'block';
+    if (!dropdown) return;
+    const isOpen = dropdown.classList.contains('show');
+    // Close other dropdowns
+    document.querySelectorAll('.project-settings-dropdown').forEach(d => d.classList.remove('show'));
     dropdown.classList.toggle('show', !isOpen);
-    dropdown.style.display = isOpen ? 'none' : 'block';
 }
 
 // Module Actions Functions
 function toggleModuleActions() {
     const dropdown = document.getElementById('moduleActionsDropdown');
-    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+    if (!dropdown) return;
+    const isOpen = dropdown.style.display === 'block';
+    dropdown.style.display = isOpen ? 'none' : 'block';
 }
 
 // Batch Actions Functions
 function toggleBatchActions(batchId) {
     const dropdown = document.getElementById('batchActionsDropdown_' + batchId);
+    if (!dropdown) return;
     // Close all other batch dropdowns
     document.querySelectorAll('.batch-actions-content').forEach(function(content) {
         if (content.id !== 'batchActionsDropdown_' + batchId) {
@@ -2685,6 +2697,15 @@ function toggleBatchActions(batchId) {
     });
     dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
 }
+
+// Close project settings dropdown when clicking outside
+document.addEventListener('click', function(event) {
+    if (!event.target.closest('.project-header-actions') && !event.target.closest('.project-settings-btn')) {
+        document.querySelectorAll('.project-settings-dropdown').forEach(d => d.classList.remove('show'));
+    }
+});
+
+<?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
 
 // Delete Project Functions
 let deleteProjectId = null;
