@@ -329,34 +329,65 @@ function updateAnalyticsTables(unit) {
     var data = analyticsTableData;
     if (!data || !data.combined) return;
 
+    var subRowKeys = Object.keys(data.sub_rows);
+    var subRowStatusKeys = Object.keys(data.sub_rows_status);
+
+    // Calculate combined values by summing converted sub-row values (more accurate than converting combined MW)
+    function calcCombinedFromSubRows(subRows, keys, field) {
+        var total = 0;
+        keys.forEach(function(key) {
+            var sr = subRows[key];
+            var wattage = parseInt(sr.wattage_label) || conversionFactors.avgWattage;
+            var value = sr[field] || 0;
+            total += convertValue(value, unit, wattage);
+        });
+        return total;
+    }
+
     // Update Table 1 (Next 5 Weeks of Deliveries)
     if (table1) {
         var tbody1 = table1.querySelector('tbody');
         if (tbody1) {
             var allRows = tbody1.querySelectorAll('tr');
 
+            // Calculate combined values from sub-rows
+            var combinedTotalOrder = calcCombinedFromSubRows(data.sub_rows, subRowKeys, 'total_order');
+            var combinedDelivered = calcCombinedFromSubRows(data.sub_rows, subRowKeys, 'delivered');
+
+            // Calculate combined anticipated quantities for each week
+            var numWeeks = (data.combined.anticipated_quantities || []).length;
+            var combinedAnticipated = [];
+            for (var w = 0; w < numWeeks; w++) {
+                var weekTotal = 0;
+                subRowKeys.forEach(function(key) {
+                    var sr = data.sub_rows[key];
+                    var wattage = parseInt(sr.wattage_label) || conversionFactors.avgWattage;
+                    var value = (sr.anticipated_quantities && sr.anticipated_quantities[w]) || 0;
+                    weekTotal += convertValue(value, unit, wattage);
+                });
+                combinedAnticipated.push(weekTotal);
+            }
+
             // Main combined row (first row - not a sub-row)
             if (allRows[0] && !allRows[0].classList.contains('delivery-row')) {
                 var cells = allRows[0].querySelectorAll('td');
                 if (cells.length >= 3) {
-                    cells[1].textContent = formatValue(convertValue(data.combined.total_order, unit), unit);
-                    cells[2].textContent = formatValue(convertValue(data.combined.delivered, unit), unit);
+                    cells[1].textContent = formatValue(combinedTotalOrder, unit);
+                    cells[2].textContent = formatValue(combinedDelivered, unit);
                     // Week columns
-                    for (var i = 0; i < (data.combined.anticipated_quantities || []).length && i + 3 < cells.length; i++) {
-                        cells[i + 3].textContent = formatValue(convertValue(data.combined.anticipated_quantities[i], unit), unit);
+                    for (var i = 0; i < combinedAnticipated.length && i + 3 < cells.length; i++) {
+                        cells[i + 3].textContent = formatValue(combinedAnticipated[i], unit);
                     }
                 }
             }
 
             // Get all sub-rows with class 'delivery-row'
             var deliverySubRows = tbody1.querySelectorAll('tr.delivery-row');
-            var subRowKeys = Object.keys(data.sub_rows);
 
             deliverySubRows.forEach(function(subRow, index) {
                 if (index < subRowKeys.length) {
                     var sr = data.sub_rows[subRowKeys[index]];
                     var cells = subRow.querySelectorAll('td');
-                    // Extract wattage from label (e.g., "585W" -> 585)
                     var wattage = parseInt(sr.wattage_label) || conversionFactors.avgWattage;
                     if (cells.length >= 3) {
                         cells[1].textContent = formatValue(convertValue(sr.total_order, unit, wattage), unit);
@@ -376,23 +407,32 @@ function updateAnalyticsTables(unit) {
         if (tbody2) {
             var allRows = tbody2.querySelectorAll('tr');
 
+            // Calculate combined values from sub-rows for status table
+            var combinedStatusTotalOrder = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'total_order');
+            var combinedStatusAtMfr = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'at_manufacturer');
+            var combinedStatusOnWater = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'on_water');
+            var combinedStatusCleared = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'cleared_customs');
+            var combinedStatusToWarehouse = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'in_transit_to_warehouse');
+            var combinedStatusInWarehouse = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'in_warehouse');
+            var combinedStatusToProject = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'in_transit_to_project');
+            var combinedStatusDelivered = calcCombinedFromSubRows(data.sub_rows_status, subRowStatusKeys, 'delivered');
+
             // Main combined row (first row - not a sub-row)
             if (allRows[0] && !allRows[0].classList.contains('status-row')) {
                 var cells = allRows[0].querySelectorAll('td');
                 var cellIndex = 1;
-                if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.total_order, unit), unit);
-                if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.at_manufacturer, unit), unit);
-                if (data.combined.on_water > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.on_water, unit), unit);
-                if (data.combined.cleared_customs > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.cleared_customs, unit), unit);
-                if (data.combined.in_transit_to_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.in_transit_to_warehouse, unit), unit);
-                if (data.combined.in_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.in_warehouse, unit), unit);
-                if (data.combined.in_transit_to_project > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.in_transit_to_project, unit), unit);
-                if (cells[cellIndex]) cells[cellIndex].textContent = formatValue(convertValue(data.combined.delivered, unit), unit);
+                if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusTotalOrder, unit);
+                if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusAtMfr, unit);
+                if (data.combined.on_water > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusOnWater, unit);
+                if (data.combined.cleared_customs > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusCleared, unit);
+                if (data.combined.in_transit_to_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusToWarehouse, unit);
+                if (data.combined.in_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusInWarehouse, unit);
+                if (data.combined.in_transit_to_project > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(combinedStatusToProject, unit);
+                if (cells[cellIndex]) cells[cellIndex].textContent = formatValue(combinedStatusDelivered, unit);
             }
 
             // Get all sub-rows with class 'status-row'
             var statusSubRows = tbody2.querySelectorAll('tr.status-row');
-            var subRowStatusKeys = Object.keys(data.sub_rows_status);
 
             statusSubRows.forEach(function(subRow, index) {
                 if (index < subRowStatusKeys.length) {
