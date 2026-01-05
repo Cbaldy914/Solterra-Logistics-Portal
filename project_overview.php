@@ -766,7 +766,7 @@ function initCostPieChart() {
             labels: costPieLabels,
             datasets: [{
                 data: hasData ? costPieData : [1, 1, 1], // Show equal slices if no data
-                backgroundColor: ['#488C9A', '#293E4C', '#5ba3b1', '#fbb040', '#6c757d']
+                backgroundColor: ['#488C9A', '#293E4C', '#fbb040', '#5ba3b1', '#6c757d']
             }]
         },
         options: {
