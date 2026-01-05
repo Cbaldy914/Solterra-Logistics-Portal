@@ -218,6 +218,12 @@ section {
     font-size: 16px;
     border-radius: 5px;
     border: 1px solid #ccc;
+    box-sizing: border-box;
+}
+
+.form-group select,
+.form-group textarea {
+    box-sizing: border-box;
 }
 
 .login-btn {
@@ -240,9 +246,6 @@ section {
 /* Styles for Main Dashboard */
 
 
-h1, h2, h3, p {
-    color: #293E4C;
-}
 
 /* Header and Navigation */
 header {
@@ -1014,10 +1017,18 @@ main {
     flex-wrap: wrap; /* Allow wrapping on smaller screens */
 }
 
-.project-overview-image img {
+.project-overview-image {
     max-width: 350px;
     height: 200px;
     margin-top: 15px;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.project-overview-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .project-info {

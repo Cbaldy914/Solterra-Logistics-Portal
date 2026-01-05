@@ -8,8 +8,8 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// 2) Verify user is admin or global_admin
-if (!in_array($_SESSION['role'], ['admin', 'global_admin'])) {
+// 2) Verify user is admin, global_admin, or customer_admin
+if (!in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     die("Access denied. You must be an admin to view this page.");
 }
 

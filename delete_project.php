@@ -2,8 +2,8 @@
 session_name("logistics_session");
 session_start();
 
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin'])) {
-    die("Unauthorized: You must be 'admin' or 'global_admin' to add projects.");
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','global_admin','customer_admin'])) {
+    die("Unauthorized: You must be 'admin', 'global_admin', or 'customer_admin' to delete projects.");
 }
 
 

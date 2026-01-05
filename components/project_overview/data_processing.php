@@ -1,0 +1,1532 @@
+﻿<?php
+session_name("logistics_session");
+session_start();
+
+
+
+// Check if the user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login");
+    exit();
+}
+
+// Grab the user's role from the session
+$role = $_SESSION['role'] ?? 'user';
+
+if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
+    die("Project ID is missing.");
+}
+
+$project_id = intval($_GET['project_id']);
+
+// Database connection
+require_once '../config.php';
+require_once 'anticipated_schedule_helpers.php';
+$conn = getDBConnection();
+if (!$conn) {
+    die("Connection failed");
+}
+
+// Inline update of module batch info (admin/global_admin only)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_module_batch' && in_array($role, ['admin','global_admin','customer_admin'])) {
+    $upd_batch_id = intval($_POST['batch_id'] ?? 0);
+    if ($upd_batch_id > 0) {
+        $fields = [
+            'modules_per_pallet' => FILTER_VALIDATE_INT,
+            'pallets_per_truck' => FILTER_VALIDATE_INT,
+            'modules_per_truck' => FILTER_VALIDATE_INT,
+            'pallet_length_mm' => FILTER_VALIDATE_INT,
+            'pallet_depth_mm' => FILTER_VALIDATE_INT,
+            'pallet_double_stacked_height_mm' => FILTER_VALIDATE_INT,
+            'pallet_total_weight_kg' => FILTER_VALIDATE_INT,
+            'forklift_truck_long_side_mm' => FILTER_VALIDATE_INT,
+            'forklift_truck_short_side_mm' => FILTER_VALIDATE_INT,
+            'pallet_jack_long_side_mm' => FILTER_VALIDATE_INT,
+            'pallet_jack_short_side_mm' => FILTER_VALIDATE_INT
+        ];
+        $ints = [];
+        foreach ($fields as $k => $f) { $ints[$k] = ($_POST[$k] ?? '') !== '' ? intval($_POST[$k]) : null; }
+        $module_notes = trim($_POST['module_notes'] ?? '');
+
+        // Build dynamic update
+        $sets = [
+            'modules_per_pallet = ?', 'pallets_per_truck = ?', 'modules_per_truck = ?',
+            'pallet_length_mm = ?', 'pallet_depth_mm = ?', 'pallet_double_stacked_height_mm = ?',
+            'pallet_total_weight_kg = ?', 'forklift_truck_long_side_mm = ?', 'forklift_truck_short_side_mm = ?',
+            'pallet_jack_long_side_mm = ?', 'pallet_jack_short_side_mm = ?', 'module_notes = ?'
+        ];
+        $sql = 'UPDATE modules SET ' . implode(', ', $sets) . ', last_updated_at = NOW() WHERE id = ?';
+        $stmtU = $conn->prepare($sql);
+        if ($stmtU) {
+            $stmtU->bind_param(
+                'iiiiiiiiiiisi',
+                $ints['modules_per_pallet'], $ints['pallets_per_truck'], $ints['modules_per_truck'],
+                $ints['pallet_length_mm'], $ints['pallet_depth_mm'], $ints['pallet_double_stacked_height_mm'],
+                $ints['pallet_total_weight_kg'], $ints['forklift_truck_long_side_mm'], $ints['forklift_truck_short_side_mm'],
+                $ints['pallet_jack_long_side_mm'], $ints['pallet_jack_short_side_mm'], $module_notes, $upd_batch_id
+            );
+            $stmtU->execute();
+            $stmtU->close();
+        }
+        $_SESSION['project_overview_message'] = 'Module batch updated successfully.';
+    }
+    header('Location: project_overview.php?project_id=' . $project_id . '&view_mode=' . urlencode($view_mode));
+    exit();
+}
+
+$view_mode = isset($_GET['view_mode']) ? $_GET['view_mode'] : 'mw';
+
+/**
+ * Calculate a quantity based on the user's chosen view mode:
+ *   - modules => raw quantity
+ *   - mw => (quantity * wattage) / 1,000,000
+ */
+function calculateQuantity($quantity, $wattage, $view_mode) {
+    if ($view_mode == 'modules') {
+        return $quantity;
+    } elseif ($view_mode == 'mw') {
+        return ($quantity * $wattage) / 1000000;
+    } else {
+        return $quantity; // default
+    }
+}
+
+// Fetch project
+$stmt = $conn->prepare("SELECT * FROM projects WHERE id = ?");
+$stmt->bind_param("i", $project_id);
+$stmt->execute();
+$result = $stmt->get_result();
+if ($result->num_rows == 0) {
+    die("Project not found.");
+}
+$project = $result->fetch_assoc();
+$stmt->close();
+
+// Grab the Solterra fee if any
+$solterra_fee = isset($project['solterra_fee']) ? (float)$project['solterra_fee'] : 0.0;
+
+// Parse forecasted costs if available
+$forecasted_costs = [];
+if (!empty($project['forecasted_costs'])) {
+    $forecasted_costs = json_decode($project['forecasted_costs'], true);
+    if (!is_array($forecasted_costs)) {
+        $forecasted_costs = [];
+    }
+}
+$forecasted_freight     = $forecasted_costs['freight']     ?? 0;
+$forecasted_warehousing = $forecasted_costs['warehousing'] ?? 0; 
+$forecasted_accessorial = $forecasted_costs['accessorial'] ?? 0;
+
+// Ensure project_wattage_orders reflects all module batches assigned to this project
+// We compare against actual batch items, and if mismatched, we rebuild the totals.
+try {
+    $actual_totals = [];
+    if ($stmtA = $conn->prepare("\n        SELECT umi.wattage, SUM(umi.quantity) AS total_qty\n        FROM unassigned_module_items umi\n        JOIN modules m ON umi.unassigned_module_id = m.id\n        WHERE m.project_id = ?\n          AND NOT EXISTS (\n              SELECT 1\n              FROM inventory_pallets ip\n              JOIN warranty_claim_replacements wcr ON wcr.pallet_id = ip.id\n              WHERE ip.unassigned_module_item_id = umi.id\n          )\n        GROUP BY umi.wattage\n    ")) {
+        $stmtA->bind_param("i", $project_id);
+        $stmtA->execute();
+        $resA = $stmtA->get_result();
+        while ($row = $resA->fetch_assoc()) {
+            $w = (int)$row['wattage'];
+            $q = (int)$row['total_qty'];
+            if ($w > 0 && $q > 0) { $actual_totals[$w] = $q; }
+        }
+        $stmtA->close();
+    }
+
+    $pwo_totals = [];
+    if ($stmtP = $conn->prepare("SELECT wattage, total_order FROM project_wattage_orders WHERE project_id = ?")) {
+        $stmtP->bind_param("i", $project_id);
+        $stmtP->execute();
+        $resP = $stmtP->get_result();
+        while ($row = $resP->fetch_assoc()) {
+            $pwo_totals[(int)$row['wattage']] = (int)$row['total_order'];
+        }
+        $stmtP->close();
+    }
+
+    $needs_sync = false;
+    if (count($actual_totals) !== count($pwo_totals)) {
+        $needs_sync = true;
+    } else {
+        foreach ($actual_totals as $w => $q) {
+            if (!isset($pwo_totals[$w]) || $pwo_totals[$w] !== $q) { $needs_sync = true; break; }
+        }
+    }
+
+    if ($needs_sync) {
+        $conn->begin_transaction();
+        if ($stmtDel = $conn->prepare("DELETE FROM project_wattage_orders WHERE project_id = ?")) {
+            $stmtDel->bind_param("i", $project_id);
+            $stmtDel->execute();
+            $stmtDel->close();
+        }
+        if (!empty($actual_totals)) {
+            if ($stmtIns = $conn->prepare("INSERT INTO project_wattage_orders (project_id, wattage, total_order) VALUES (?, ?, ?)")) {
+                foreach ($actual_totals as $w => $q) {
+                    $stmtIns->bind_param("iii", $project_id, $w, $q);
+                    $stmtIns->execute();
+                }
+                $stmtIns->close();
+            }
+        }
+        $conn->commit();
+    }
+} catch (Exception $e) {
+    // If anything fails, do not block page rendering; leave existing data in place
+}
+
+// Fetch total orders
+$stmt = $conn->prepare("
+    SELECT wattage, total_order
+    FROM project_wattage_orders
+    WHERE project_id = ?
+");
+$stmt->bind_param("i", $project_id);
+$stmt->execute();
+$total_orders_result = $stmt->get_result();
+
+$total_orders = [];
+$project_size_mw = isset($project['project_size']) ? (float)$project['project_size'] : 0;
+$wattages = [];
+
+while ($row = $total_orders_result->fetch_assoc()) {
+    $w = (float)$row['wattage'];
+    $t = (int)$row['total_order'];
+    $wattages[] = $w;
+
+    $label = $w . 'W';
+    $total_orders[$label] = [
+        'wattage'     => $w,
+        'total_order' => calculateQuantity($t, $w, $view_mode),
+        'raw_quantity'=> $t,
+    ];
+}
+$stmt->close();
+
+// Count total raw modules for forecast
+$total_raw_modules = 0;
+foreach($total_orders as $lbl => $info) {
+    $total_raw_modules += $info['raw_quantity'];
+}
+
+// Create combined wattage label
+$non_zero_watts = array_filter($wattages, fn($v)=>$v>0);
+if (count($non_zero_watts) > 0) {
+    $min_w = min($non_zero_watts);
+    $max_w = max($non_zero_watts);
+    $module_type_combined = ($min_w == $max_w)
+        ? ($min_w . 'W')
+        : ($min_w . 'W-' . $max_w . 'W');
+    // Calculate average wattage for conversions
+    $avg_wattage = array_sum($non_zero_watts) / count($non_zero_watts);
+} else {
+    $module_type_combined = "N/A";
+    $avg_wattage = 585; // Default wattage if none specified
+}
+
+/**
+ * For grouping deliveries by week, we define a helper
+ * that returns the Sunday of that week.
+ */
+function getWeekEndingSunday($dateStr) {
+    $dt = new DateTime($dateStr);
+    if ($dt->format('w') != 0) {
+        $dt->modify('next Sunday');
+    }
+    return $dt->format('Y-m-d');
+}
+
+// --------------- Anticipated vs Actual Deliveries (line chart) ---------------
+function fetchDeliveriesByDate($conn, $project_id, $date_field, $status_filter = null) {
+    // Build dynamic SQL allowing optional status filtering
+    $sql = "SELECT wattage, $date_field AS delivery_date, SUM(quantity) AS quantity
+            FROM deliveries
+            WHERE project_id = ? AND $date_field IS NOT NULL";
+    if ($status_filter !== null) {
+        $sql .= " AND status_of_delivery = ?";
+    }
+    $sql .= " GROUP BY wattage, $date_field ORDER BY $date_field ASC";
+
+    $stmt = $conn->prepare($sql);
+    if ($status_filter !== null) {
+        $stmt->bind_param("is", $project_id, $status_filter);
+    } else {
+        $stmt->bind_param("i", $project_id);
+    }
+    $stmt->execute();
+    return $stmt->get_result();
+}
+
+// NEW: Check if anticipated delivery schedule exists - use it if available
+$schedule_data = generateAnticipatedDeliveriesFromSchedule($conn, $project_id);
+$anticipated_deliveries = [];
+$date_labels = [];
+
+if ($schedule_data && !empty($schedule_data['dates'])) {
+    // Use schedule data - convert cumulative MW to non-cumulative (delta) values
+    $prev_cumulative = 0;
+    foreach ($schedule_data['dates'] as $idx => $date) {
+        $cumulative_mw = $schedule_data['cumulative_mw'][$idx];
+        $delta_mw = $cumulative_mw - $prev_cumulative;
+        
+        // Convert delta MW to view mode
+        if ($view_mode === 'modules') {
+            // Convert MW to modules using average wattage
+            $avg_wattage = getProjectAverageWattage($conn, $project_id);
+            $anticipated_deliveries[$date] = ($delta_mw * 1000000) / $avg_wattage;
+        } else {
+            // Keep as MW
+            $anticipated_deliveries[$date] = $delta_mw;
+        }
+        
+        if (!in_array($date, $date_labels)) {
+            $date_labels[] = $date;
+        }
+        
+        $prev_cumulative = $cumulative_mw;
+    }
+} else {
+    // Fallback to old method - fetch from deliveries table
+    $anticipated_res = fetchDeliveriesByDate($conn, $project_id, 'anticipated_delivery_date');
+    
+    while ($r = $anticipated_res->fetch_assoc()) {
+        $w = (float)$r['wattage'];
+        $dOriginal = $r['delivery_date'];
+        $d = getWeekEndingSunday($dOriginal);
+        $q_raw = (int)$r['quantity'];
+        $q_calc = calculateQuantity($q_raw, $w, $view_mode);
+
+        if (!isset($anticipated_deliveries[$d])) {
+            $anticipated_deliveries[$d] = 0;
+        }
+        $anticipated_deliveries[$d] += $q_calc;
+        if (!in_array($d, $date_labels)) {
+            $date_labels[] = $d;
+        }
+    }
+}
+
+// Fetch actual deliveries: include all with status Delivered to Project (even if future-dated)
+$actual_res = fetchDeliveriesByDate($conn, $project_id, 'actual_delivery_date', 'Delivered to Project');
+$actual_deliveries = [];
+while ($r = $actual_res->fetch_assoc()) {
+    $w = (float)$r['wattage'];
+    $dOriginal = $r['delivery_date'];
+    $d = getWeekEndingSunday($dOriginal);
+
+    $q_raw = (int)$r['quantity'];
+    $q_calc = calculateQuantity($q_raw, $w, $view_mode);
+
+    if (!isset($actual_deliveries[$d])) {
+        $actual_deliveries[$d] = 0;
+    }
+    $actual_deliveries[$d] += $q_calc;
+    if (!in_array($d, $date_labels)) {
+        $date_labels[] = $d;
+    }
+}
+sort($date_labels);
+
+$today = new DateTime();
+$today_str = $today->format('Y-m-d');
+$current_week_ending = getWeekEndingSunday($today_str);
+
+// Check if there are any actual deliveries in the future
+$has_future_actual_deliveries = false;
+foreach ($actual_deliveries as $delivery_date => $qty) {
+    if ($delivery_date > $current_week_ending && $qty > 0) {
+        $has_future_actual_deliveries = true;
+        break;
+    }
+}
+
+$cumulative_ant = 0;
+$cumulative_act = 0;
+$lineChartData_anticipated = [];
+$lineChartData_actual      = [];
+
+foreach ($date_labels as $dt) {
+    $val_ant = $anticipated_deliveries[$dt] ?? 0;
+    $cumulative_ant += $val_ant;
+    $lineChartData_anticipated[] = $cumulative_ant;
+
+    // For actuals: if there are future deliveries marked as Delivered to Project, show them
+    // Otherwise, stop the line at the current week (use null for future data points)
+    $val_act = $actual_deliveries[$dt] ?? 0;
+    $cumulative_act += $val_act;
+
+    if ($has_future_actual_deliveries) {
+        // Show all actuals including future ones (demo mode)
+        $lineChartData_actual[] = $cumulative_act;
+    } else {
+        // Only show actuals up to the current week
+        if ($dt <= $current_week_ending) {
+            $lineChartData_actual[] = $cumulative_act;
+        } else {
+            // Use null to stop the line (Chart.js will not draw a line to null points)
+            $lineChartData_actual[] = null;
+        }
+    }
+}
+
+$lineChartData = [
+    'anticipated' => $lineChartData_anticipated,
+    'actual'      => $lineChartData_actual,
+];
+$dateLabelsJSON    = json_encode($date_labels);
+$lineChartDataJSON = json_encode($lineChartData);
+
+// --------------- Delivery Status Table ---------------
+// Gather pallet statuses directly from inventory_pallets
+
+// First get detailed breakdown from inventory_pallets
+$status_totals = [
+    'At Manufacturer' => ['pallets' => 0, 'modules' => 0],
+    'On Water' => ['pallets' => 0, 'modules' => 0],
+    'Delivered to Project' => ['pallets' => 0, 'modules' => 0],
+    'Cleared Customs' => ['pallets' => 0, 'modules' => 0],
+    'In Transit to Warehouse' => ['pallets' => 0, 'modules' => 0],
+    'In Warehouse' => ['pallets' => 0, 'modules' => 0],
+    'In Transit to Project' => ['pallets' => 0, 'modules' => 0],
+    'Damaged' => ['pallets' => 0, 'modules' => 0]
+];
+$detailed_breakdown = [];
+
+$stmt_status = $conn->prepare(
+    "SELECT ip.status, ip.wattage, ip.quantity, ip.current_warehouse_id, w.name AS warehouse_name,
+            ip.current_project_id, p.project_name
+       FROM inventory_pallets ip
+       LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+       LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+       LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
+       LEFT JOIN projects p ON ip.current_project_id = p.id
+       WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)"
+);
+$stmt_status->bind_param('iii', $project_id, $project_id, $project_id);
+$stmt_status->execute();
+$res_status = $stmt_status->get_result();
+
+// Also fetch damaged pallets from warranty claims JSON
+$warranty_damaged_pallets = [];
+$stmt_warranty = $conn->prepare(
+    "SELECT wc.notes, s.project_id 
+     FROM warranty_claims wc 
+     LEFT JOIN site_scheduling s ON wc.scheduling_id = s.id 
+     WHERE s.project_id = ? AND wc.notes IS NOT NULL AND wc.notes != ''"
+);
+$stmt_warranty->bind_param('i', $project_id);
+$stmt_warranty->execute();
+$res_warranty = $stmt_warranty->get_result();
+
+while ($warranty_row = $res_warranty->fetch_assoc()) {
+    $notes = $warranty_row['notes'];
+    if ($notes) {
+        $decoded = json_decode($notes, true);
+        if (isset($decoded['pallets']) && is_array($decoded['pallets'])) {
+            foreach ($decoded['pallets'] as $pallet_info) {
+                if (isset($pallet_info['pallet_id']) && $pallet_info['damaged'] > 0) {
+                    $warranty_damaged_pallets[] = [
+                        'pallet_id' => $pallet_info['pallet_id'],
+                        'wattage' => $pallet_info['wattage'],
+                        'damaged' => $pallet_info['damaged'],
+                        'actual' => $pallet_info['actual']
+                    ];
+                }
+            }
+        }
+    }
+}
+$stmt_warranty->close();
+
+// Build delivery_totals structure to match expected format
+$delivery_totals = [];
+$delivered_raw_total = 0; // Raw module count for timeline calculations
+$delivered_damaged_total = 0; // Count of damaged modules that were delivered to project
+
+while ($row = $res_status->fetch_assoc()) {
+    $status  = $row['status'];
+    $wattage = (int)$row['wattage'];
+    $qty     = (int)$row['quantity'];
+    $wh_id   = $row['current_warehouse_id'];
+    $wh_name = $row['warehouse_name'];
+    $proj_id = $row['current_project_id'];
+    $proj_name = $row['project_name'];
+
+    // Build delivery_totals by wattage for the main table
+    $w = (float)$wattage;
+    $lbl = $w . 'W';
+    $q_calc = calculateQuantity($qty, $w, $view_mode);
+
+    if (!isset($delivery_totals[$lbl])) {
+        $delivery_totals[$lbl] = [
+            'At Manufacturer'        => 0,
+            'On Water'               => 0,
+            'Cleared Customs'        => 0,
+            'In Transit to Warehouse'=> 0,
+            'In Warehouse'           => 0,
+            'In Transit to Project'  => 0,
+            'Delivered to Project'   => 0,
+        ];
+    }
+    
+    // Only count healthy pallets toward delivery totals
+    if ($status !== 'Damaged') {
+        $delivery_totals[$lbl][$status] += $q_calc;
+        if ($status === 'Delivered to Project') {
+            $delivered_raw_total += $qty;
+        }
+    }
+
+    // Build status_totals for overall tracking (include all pallets for status counts)
+    if (!isset($status_totals[$status])) {
+        $status_totals[$status] = ['pallets' => 0, 'modules' => 0];
+    }
+    $status_totals[$status]['pallets'] += 1;
+    $status_totals[$status]['modules'] += $qty;
+
+    // Build detailed_breakdown for the overview section
+    // Only include non-damaged pallets to match delivery_totals (sub rows)
+    if ($status === 'Damaged') {
+        continue; // Skip damaged pallets for detailed_breakdown to match sub row calculations
+    }
+
+    if ($status === 'In Warehouse' && $wh_name) {
+        $key = 'In Warehouse - ' . $wh_name;
+    } elseif ($status === 'In Transit to Warehouse' && $wh_name) {
+        $key = 'In Transit to Warehouse - ' . $wh_name;
+    } elseif ($status === 'In Transit to Project' && $proj_name) {
+        $key = 'In Transit to Project - ' . $proj_name;
+    } elseif ($status === 'At Manufacturer') {
+        $key = 'At Manufacturer';
+    } else {
+        $key = $status;
+    }
+
+    if (!isset($detailed_breakdown[$key])) {
+        $detailed_breakdown[$key] = [
+            'pallet_count' => 0,
+            'total_modules' => 0,
+            'wattage_breakdown' => [],
+            'warehouse_id' => $wh_id,
+            'project_id' => $proj_id
+        ];
+    }
+    $detailed_breakdown[$key]['pallet_count']++;
+    $detailed_breakdown[$key]['total_modules'] += $qty;
+    if (!isset($detailed_breakdown[$key]['wattage_breakdown'][$wattage])) {
+        $detailed_breakdown[$key]['wattage_breakdown'][$wattage] = ['pallets' => 0, 'modules' => 0];
+    }
+    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['pallets']++;
+    $detailed_breakdown[$key]['wattage_breakdown'][$wattage]['modules'] += $qty;
+}
+$stmt_status->close();
+
+// Process warranty damaged pallets for delivered damaged total calculation only
+// Note: Don't add to status_totals as damaged pallets are already counted with status='Damaged' in main loop
+foreach ($warranty_damaged_pallets as $damaged_pallet) {
+    $damaged_qty = $damaged_pallet['damaged'];
+    $pallet_id = $damaged_pallet['pallet_id'];
+    
+    // Check if this damaged pallet was delivered to project site
+    $stmt_check_delivery = $conn->prepare(
+        "SELECT COUNT(*) as is_delivered FROM deliveries d 
+         LEFT JOIN delivery_pallets dp ON d.id = dp.delivery_id 
+         WHERE dp.inventory_pallet_id = ? AND d.status_of_delivery = 'Delivered to Project'"
+    );
+    $stmt_check_delivery->bind_param('i', $pallet_id);
+    $stmt_check_delivery->execute();
+    $delivery_result = $stmt_check_delivery->get_result();
+    $delivery_row = $delivery_result->fetch_assoc();
+    $is_delivered_to_project = ($delivery_row['is_delivered'] > 0);
+    $stmt_check_delivery->close();
+    
+    // If this damaged pallet was delivered to project, add to delivered damaged total
+    if ($is_delivered_to_project) {
+        $delivered_damaged_total += $damaged_qty;
+    }
+}
+
+// Calculate combined totals - use status_totals for status data, total_orders for total_order
+$total_order_combined             = 0;
+$at_manufacturer_combined         = 0;
+$on_water_combined                = 0;
+$cleared_customs_combined         = 0;
+$in_transit_to_warehouse_combined = 0;
+$in_warehouse_combined            = 0;
+$in_transit_to_project_combined   = 0;
+$delivered_combined               = 0;
+$exceptions_combined              = 0;
+
+
+// Calculate exceptions (damaged) from detailed_breakdown since they're not in delivery_totals
+// Other combined values will be calculated by summing sub rows below
+foreach ($status_totals as $status => $data) {
+    if ($status === 'Damaged' && ($data['modules'] ?? 0) > 0) {
+        foreach ($detailed_breakdown as $key => $breakdown) {
+            if ($key === 'Damaged') {
+                foreach ($breakdown['wattage_breakdown'] as $wattage => $watt_data) {
+                    $watt_modules = $watt_data['modules'];
+                    $mw_for_this_wattage = calculateQuantity($watt_modules, $wattage, $view_mode);
+                    $exceptions_combined += $mw_for_this_wattage;
+                }
+            }
+        }
+    }
+}
+
+$pieChartData = [
+    'Delivered to Project'    => 0,
+    'At Manufacturer'         => 0,
+    'On Water'                => 0,
+    'Cleared Customs'         => 0,
+    'In Transit to Warehouse' => 0,
+    'In Transit to Project'   => 0,
+    'In Warehouse'            => 0,
+    'Exceptions'              => 0,
+];
+
+$sub_rows        = [];
+$sub_rows_status = [];
+
+// First, create a comprehensive list of all wattages (both from orders and from actual inventory)
+$all_wattages = [];
+foreach ($total_orders as $lbl => $info) {
+    $all_wattages[$lbl] = $info;
+}
+// Add any wattages that exist in inventory but not in orders
+foreach ($delivery_totals as $lbl => $statuses) {
+    if (!isset($all_wattages[$lbl])) {
+        // Extract wattage from label (e.g., "555W" -> 555)
+        $w = (float)str_replace('W', '', $lbl);
+        $all_wattages[$lbl] = [
+            'wattage' => $w,
+            'total_order' => 0, // No formal order, but inventory exists
+            'raw_quantity' => 0,
+        ];
+    }
+}
+
+foreach ($all_wattages as $lbl => $info) {
+    $w  = (float)$info['wattage'];
+    $to = (float)$info['total_order'];
+
+    $atman = $delivery_totals[$lbl]['At Manufacturer'] ?? 0;
+    $onw   = $delivery_totals[$lbl]['On Water'] ?? 0;
+    $clr   = $delivery_totals[$lbl]['Cleared Customs'] ?? 0;
+    $itw   = $delivery_totals[$lbl]['In Transit to Warehouse'] ?? 0;
+    $inw   = $delivery_totals[$lbl]['In Warehouse'] ?? 0;
+    $itp   = $delivery_totals[$lbl]['In Transit to Project'] ?? 0;
+    $del   = $delivery_totals[$lbl]['Delivered to Project'] ?? 0;
+
+    // Next 5 Weeks
+    $sub_rows[$lbl] = [
+        'wattage_label'         => $lbl,
+        'total_order'           => $to,
+        'delivered'             => $del,
+        'anticipated_quantities'=> [],
+    ];
+    // Delivery Status
+    $sub_rows_status[$lbl] = [
+        'wattage_label'          => $lbl,
+        'total_order'            => $to,
+        'at_manufacturer'        => $atman,
+        'on_water'               => $onw,
+        'cleared_customs'        => $clr,
+        'in_transit_to_warehouse'=> $itw,
+        'in_warehouse'           => $inw,
+        'in_transit_to_project'  => $itp,
+        'delivered'              => $del,
+    ];
+
+    $total_order_combined             += $to;
+}
+
+// Calculate combined values by explicitly summing from the sub_rows arrays
+// This guarantees the main row exactly matches the sum of sub rows
+$delivered_combined = 0;
+$at_manufacturer_combined = 0;
+$on_water_combined = 0;
+$cleared_customs_combined = 0;
+$in_transit_to_warehouse_combined = 0;
+$in_warehouse_combined = 0;
+$in_transit_to_project_combined = 0;
+
+foreach ($sub_rows as $sr) {
+    $delivered_combined += $sr['delivered'];
+}
+foreach ($sub_rows_status as $srs) {
+    $at_manufacturer_combined += ($srs['at_manufacturer'] ?? 0);
+    $on_water_combined += ($srs['on_water'] ?? 0);
+    $cleared_customs_combined += ($srs['cleared_customs'] ?? 0);
+    $in_transit_to_warehouse_combined += ($srs['in_transit_to_warehouse'] ?? 0);
+    $in_warehouse_combined += ($srs['in_warehouse'] ?? 0);
+    $in_transit_to_project_combined += ($srs['in_transit_to_project'] ?? 0);
+}
+
+// Calculate pieChartData using the correct combined values
+$pieChartData['Delivered to Project']    = $delivered_combined;
+$pieChartData['At Manufacturer']         = $at_manufacturer_combined;
+$pieChartData['On Water']                = $on_water_combined;
+$pieChartData['Cleared Customs']         = $cleared_customs_combined;
+$pieChartData['In Transit to Warehouse'] = $in_transit_to_warehouse_combined;
+$pieChartData['In Transit to Project']   = $in_transit_to_project_combined;
+$pieChartData['In Warehouse']            = $in_warehouse_combined;
+$pieChartData['Exceptions']              = $exceptions_combined;
+
+// Filter out statuses with 0 values (except always-visible ones)
+$filteredPieChartData = [];
+$alwaysVisible = ['At Manufacturer', 'Delivered to Project'];
+foreach ($pieChartData as $k => $v) {
+    if ($v > 0 || in_array($k, $alwaysVisible)) {
+        $filteredPieChartData[$k] = $v;
+    }
+}
+
+$total_pie = array_sum($filteredPieChartData);
+$pieChartPercentages = [];
+foreach ($filteredPieChartData as $k => $v) {
+    $perc = ($total_pie>0)?(($v/$total_pie)*100):0;
+    $pieChartPercentages[$k] = $perc;
+}
+
+// Next 5 weeks
+$today2 = new DateTime();
+$weeks  = [];
+$weekEnding = clone $today2;
+if ($weekEnding->format('w') != 0) {
+    $weekEnding->modify('next Sunday');
+}
+for ($i=0; $i<5; $i++) {
+    $start= clone $weekEnding;
+    $start->modify('-6 days');
+    $weeks[] = ['start'=>$start,'end'=>clone $weekEnding];
+    $weekEnding->modify('+1 week');
+}
+
+// Fill the sub_rows for Next 5 Weeks
+$anticipated_deliveries_by_lbl = [];
+foreach ($total_orders as $lbl => $info) {
+    $anticipated_deliveries_by_lbl[$lbl] = [];
+}
+$stmt = $conn->prepare("
+    SELECT wattage, anticipated_delivery_date AS ddate, SUM(quantity) AS q
+    FROM deliveries
+    WHERE project_id=? AND anticipated_delivery_date IS NOT NULL
+    GROUP BY wattage, ddate
+");
+$stmt->bind_param("i", $project_id);
+$stmt->execute();
+$res2 = $stmt->get_result();
+while ($r2 = $res2->fetch_assoc()) {
+    $w   = (float)$r2['wattage'];
+    $lbl = $w . 'W';
+    $d   = $r2['ddate'];
+    $raw = (int)$r2['q'];
+    $qcalc = calculateQuantity($raw, $w, $view_mode);
+
+    if (!isset($anticipated_deliveries_by_lbl[$lbl][$d])) {
+        $anticipated_deliveries_by_lbl[$lbl][$d] = 0;
+    }
+    $anticipated_deliveries_by_lbl[$lbl][$d] += $qcalc;
+}
+$stmt->close();
+
+// Populate
+foreach ($sub_rows as &$sr) {
+    $wl = $sr['wattage_label'];
+    $sr['anticipated_quantities'] = array_fill(0, count($weeks), 0);
+    if (isset($anticipated_deliveries_by_lbl[$wl])) {
+        foreach ($weeks as $ix => $wk) {
+            $sumwk = 0;
+            foreach ($anticipated_deliveries_by_lbl[$wl] as $dt => $quan) {
+                $dtemp = new DateTime($dt);
+                if ($dtemp >= $wk['start'] && $dtemp <= $wk['end']) {
+                    $sumwk += $quan;
+                }
+            }
+            $sr['anticipated_quantities'][$ix] = $sumwk;
+        }
+    }
+}
+unset($sr);
+
+$anticipated_quantities_combined = array_fill(0, count($weeks), 0);
+foreach ($weeks as $ix => $wobj) {
+    $sumwk = 0;
+    foreach ($anticipated_deliveries as $d3 => $amt) {
+        $tmpdt = new DateTime($d3);
+        if ($tmpdt >= $wobj['start'] && $tmpdt <= $wobj['end']) {
+            $sumwk += $amt;
+        }
+    }
+    $anticipated_quantities_combined[$ix] = $sumwk;
+}
+
+// -------------- Financial View --------------
+$deliveries = [];
+$stmt = $conn->prepare("SELECT * FROM deliveries WHERE project_id=?");
+$stmt->bind_param("i", $project_id);
+$stmt->execute();
+$dres = $stmt->get_result();
+$stmt->close();
+
+// Totals
+$total_freight_cost      = 0;
+$total_accessorial_costs = 0;
+$total_warehousing_cost  = 0;
+$total_solterra_fee      = 0;
+$total_logistics_cost    = 0;
+
+// For cost-per-unit
+$costs_by_key    = [];
+$quantity_by_key = [];
+$keys_list_fin   = [];
+
+function calcWarehousingCost($dv, $warehouse) {
+    if (!$warehouse) return 0;
+    $res = 0;
+    if (!empty($dv['warehouse_arrival_date'])) {
+        $in_fee  = $warehouse['in_fee'];
+        $out_fee = (!empty($dv['left_warehouse_date'])) ? $warehouse['out_fee'] : 0;
+        $sd=new DateTime($dv['warehouse_arrival_date']);
+        $ed=(!empty($dv['left_warehouse_date']))?new DateTime($dv['left_warehouse_date']):new DateTime();
+        $diff=$sd->diff($ed);
+        $days=$diff->days+1;
+        $daily= $warehouse['monthly_storage_fee']/30;
+        $store=$days*$daily;
+        $res=$in_fee + $store + $out_fee;
+    }
+    return $res;
+}
+
+// fetch warehouse if any
+$stmt = $conn->prepare("
+    SELECT w.id
+    FROM warehouses w
+    INNER JOIN projects p ON p.warehouse_id = w.id
+    WHERE p.id=?
+");
+$stmt->bind_param("i",$project_id);
+$stmt->execute();
+$whres = $stmt->get_result();
+$stmt->close();
+$warehouse = null;
+if ($whres->num_rows > 0) {
+    $warehouse_basic = $whres->fetch_assoc();
+    $warehouse_id = $warehouse_basic['id'];
+    
+    // Fetch cost items for this warehouse
+    $cost_stmt = $conn->prepare("
+        SELECT trigger_event, amount 
+        FROM warehouse_cost_items 
+        WHERE warehouse_id = ? AND is_active = 1
+    ");
+    $cost_stmt->bind_param("i", $warehouse_id);
+    $cost_stmt->execute();
+    $cost_result = $cost_stmt->get_result();
+    
+    $warehouse = ['id' => $warehouse_id];
+    $warehouse['in_fee'] = 0;
+    $warehouse['out_fee'] = 0;
+    $warehouse['monthly_storage_fee'] = 0;
+    
+    while ($cost = $cost_result->fetch_assoc()) {
+        switch ($cost['trigger_event']) {
+            case 'entry':
+                $warehouse['in_fee'] = $cost['amount'];
+                break;
+            case 'exit':
+                $warehouse['out_fee'] = $cost['amount'];
+                break;
+            case 'monthly':
+                $warehouse['monthly_storage_fee'] = $cost['amount'];
+                break;
+        }
+    }
+    $cost_stmt->close();
+}
+
+// Build actual total cost from deliveries
+while ($dv = $dres->fetch_assoc()) {
+    $stat = $dv['status_of_delivery'];
+    $watt= (float)$dv['wattage'];
+    $fc  = (float)$dv['freight_cost'];  // Use freight_cost instead of customer_cost
+    $a   = (float)$dv['accessorial_costs'];
+    $q   = (int)$dv['quantity'];
+
+    $wcost = calcWarehousingCost($dv, $warehouse);
+
+    if (!empty($dv['actual_delivery_date'])) {
+        $soltFeeForThisDelivery = $solterra_fee * ($watt * $q);
+    } else {
+        $soltFeeForThisDelivery = 0;
+    }
+
+    $tc = $fc + $a + $wcost + $soltFeeForThisDelivery;
+
+    $total_freight_cost      += $fc;
+    $total_accessorial_costs += $a;
+    $total_warehousing_cost  += $wcost;
+    $total_solterra_fee      += $soltFeeForThisDelivery;
+    $total_logistics_cost    += $tc;
+
+    if ($stat==='Canceled') {
+        $thisKey = 'canceled';
+    } else {
+        if($watt>0) {
+            $thisKey = (string)$watt;
+        } else {
+            continue;
+        }
+    }
+    if(!isset($costs_by_key[$thisKey])) {
+        $costs_by_key[$thisKey] = 0;
+        $quantity_by_key[$thisKey] = 0;
+        $keys_list_fin[] = $thisKey;
+    }
+    $costs_by_key[$thisKey]    += $tc;
+    $quantity_by_key[$thisKey] += $q;
+}
+
+// Build cost_data
+$cost_data = [];
+$combined_total_costs = 0;
+$combined_qty = 0;
+
+foreach ($keys_list_fin as $k) {
+    $tc = $costs_by_key[$k];
+    $qt = $quantity_by_key[$k];
+
+    $lbl = ($k==='canceled') ? 'Canceled' : ($k.'W');
+
+    $pallets = $qt/30;
+    $ppp = ($pallets>0) ? ($tc/$pallets) : 0;       // price per pallet
+    $ppm = ($qt>0) ? ($tc/$qt) : 0;                // price per module
+    $ppw = 0;
+    if($k!=='canceled') {
+        $numW = floatval($k);
+        if($qt*$numW>0) {
+            $ppw = $tc/($qt*$numW);
+        }
+    }
+    $cost_data[$k] = [
+        'module_type'      => $lbl,
+        'total_costs'      => $tc,
+        'price_per_pallet' => $ppp,
+        'price_per_module' => $ppm,
+        'price_per_watt'   => $ppw,
+    ];
+
+    $combined_total_costs += $tc;
+    $combined_qty         += $qt;
+}
+
+$non_zero_wattage_list_fin=[];
+foreach ($keys_list_fin as $kk) {
+    if($kk!=='canceled') {
+        $valW = floatval($kk);
+        if($valW>0) {
+            $non_zero_wattage_list_fin[] = $valW;
+        }
+    }
+}
+$minf = (count($non_zero_wattage_list_fin)>0)? min($non_zero_wattage_list_fin) : 0;
+$maxf = (count($non_zero_wattage_list_fin)>0)? max($non_zero_wattage_list_fin) : 0;
+if(count($non_zero_wattage_list_fin)==0) {
+    $combined_label="N/A";
+} else {
+    $combined_label= ($minf==$maxf)?($minf.'W'):($minf.'W-'.$maxf.'W');
+}
+
+$combined_pallets = $combined_qty/30;
+$combined_ppp = ($combined_pallets>0)?($combined_total_costs/$combined_pallets):0;
+$combined_ppm = ($combined_qty>0)?($combined_total_costs/$combined_qty):0;
+$sum_watts=0;
+foreach($non_zero_wattage_list_fin as $ww) {
+    $sum_watts += ($quantity_by_key[strval($ww)] * $ww);
+}
+$combined_ppw = ($sum_watts>0)?($combined_total_costs/$sum_watts):0;
+
+// Cost Breakdown Pie
+$pieChartDataFinancial = [
+    'Freight Cost'  => $total_freight_cost,
+    'Warehousing'   => $total_warehousing_cost,
+    'Accessorial'   => $total_accessorial_costs,
+];
+
+// Next 5 weeks for Invoices/Cashflow
+$weeks_financial = [];
+$weekEndingFin = new DateTime();
+if ($weekEndingFin->format('w') != 0) {
+    $weekEndingFin->modify('next Sunday');
+}
+for($i=0;$i<5;$i++){
+    $startFin = clone $weekEndingFin;
+    $startFin->modify('-6 days');
+    $weeks_financial[] = ['start'=>$startFin,'end'=>clone $weekEndingFin];
+    $weekEndingFin->modify('+1 week');
+}
+
+// Forecast next 5 weeks
+$anticipated_deliveries_financial = [];
+foreach($weeks_financial as $ix=>$wf) {
+    $anticipated_deliveries_financial[$ix] = 0;
+}
+$stmt = $conn->prepare("
+    SELECT anticipated_delivery_date AS dd, quantity, wattage
+    FROM deliveries
+    WHERE project_id=? AND anticipated_delivery_date IS NOT NULL
+    ORDER BY anticipated_delivery_date ASC
+");
+$stmt->bind_param("i", $project_id);
+$stmt->execute();
+$res_fin = $stmt->get_result();
+while($rf=$res_fin->fetch_assoc()) {
+    $dd   = new DateTime($rf['dd']);
+    $w    = (float)$rf['wattage'];
+    $q    = (int)$rf['quantity'];
+
+    $perModFreight     = ($total_raw_modules>0)?($forecasted_freight / $total_raw_modules):0;
+    $perModAccessorial = ($total_raw_modules>0)?($forecasted_accessorial / $total_raw_modules):0;
+    $forecastVal = ($perModFreight + $perModAccessorial)*$q + ($solterra_fee*($w*$q));
+
+    foreach($weeks_financial as $ix=>$wk) {
+        if($dd>=$wk['start'] && $dd<=$wk['end']) {
+            $anticipated_deliveries_financial[$ix] += $forecastVal;
+            break;
+        }
+    }
+}
+$stmt->close();
+
+// open invoices
+$stmt = $conn->prepare("
+    SELECT SUM(amount) as open_invoices_total
+    FROM project_invoices
+    WHERE project_id=? AND status='Open'
+");
+$stmt->bind_param("i", $project_id);
+$stmt->execute();
+$stmt->bind_result($open_invoices_total);
+$stmt->fetch();
+$stmt->close();
+$open_invoices_total=$open_invoices_total?:0;
+
+// For Forecasted vs Actual Cost line chart
+$deliveries_by_date_actual_cost  = [];
+$deliveries_by_date_anticipated = [];
+$stmt = $conn->prepare("
+    SELECT *
+    FROM deliveries
+    WHERE project_id=?
+");
+$stmt->bind_param("i", $project_id);
+$stmt->execute();
+$allDel = $stmt->get_result();
+$stmt->close();
+
+while($dv = $allDel->fetch_assoc()) {
+    $adate = $dv['actual_delivery_date'];
+    $ddate = $dv['anticipated_delivery_date'];
+    $stat  = $dv['status_of_delivery'];
+    $watt  = (float)$dv['wattage'];
+    $qty   = (int)$dv['quantity'];
+
+    // Actual cost
+    if(empty($adate) && $stat==='Canceled') {
+        $adate = (!empty($ddate)) ? $ddate : date('Y-m-d');
+    }
+    if(!empty($adate)){
+        $weekKey = getWeekEndingSunday($adate);
+        $wh   = calcWarehousingCost($dv, $warehouse);
+        $cc   = (float)$dv['customer_cost'];
+        $ac   = (float)$dv['accessorial_costs'];
+        $fee  = $solterra_fee*($watt*$qty);
+        $actual_tc = $cc + $ac + $wh + $fee;
+        if(!isset($deliveries_by_date_actual_cost[$weekKey])) {
+            $deliveries_by_date_actual_cost[$weekKey] = 0;
+        }
+        $deliveries_by_date_actual_cost[$weekKey] += $actual_tc;
+    }
+
+    // Anticipated cost
+    $cost_date = $dv['actual_delivery_date'];
+    if(empty($cost_date) && $stat==='Canceled'){
+        $cost_date = (!empty($ddate))? $ddate : date('Y-m-d');
+    } else if(empty($cost_date)){
+        $cost_date = $ddate;
+    }
+    if(!empty($cost_date)) {
+        $weekKey = getWeekEndingSunday($cost_date);
+        $pmFreight     = ($total_raw_modules>0)?($forecasted_freight / $total_raw_modules):0;
+        $pmAccessorial = ($total_raw_modules>0)?($forecasted_accessorial / $total_raw_modules):0;
+        $forecast_tc   = ($pmFreight + $pmAccessorial)*$qty + ($solterra_fee*($watt*$qty));
+        if(!isset($deliveries_by_date_anticipated[$weekKey])) {
+            $deliveries_by_date_anticipated[$weekKey] = 0;
+        }
+        $deliveries_by_date_anticipated[$weekKey] += $forecast_tc;
+    }
+}
+
+$all_dates_cost = array_unique(array_merge(
+    array_keys($deliveries_by_date_actual_cost),
+    array_keys($deliveries_by_date_anticipated)
+));
+sort($all_dates_cost);
+
+$budgetLine_anticipated = [];
+$budgetLine_actual = [];
+$acc_ant=0;
+$acc_act=0;
+$today_str=(new DateTime())->format('Y-m-d');
+
+foreach($all_dates_cost as $d) {
+    $acc_ant += ($deliveries_by_date_anticipated[$d] ?? 0);
+    if($d<=$today_str) {
+        $acc_act += ($deliveries_by_date_actual_cost[$d] ?? 0);
+        $budgetLine_actual[]=$acc_act;
+    } else {
+        $budgetLine_actual[]=null;
+    }
+    $budgetLine_anticipated[]=$acc_ant;
+}
+
+$budgetLineChartData = [
+    'anticipated_cost'=> $budgetLine_anticipated,
+    'actual_cost'     => $budgetLine_actual,
+];
+$budgetLineChartDataJSON=json_encode($budgetLineChartData);
+$dateLabelsForBudget=json_encode($all_dates_cost);
+
+// For Admin Warehousing functionality - check if project has pallets in multiple warehouses
+$warehouses_with_inventory = [];
+$stmt_warehouses = $conn->prepare("
+    SELECT DISTINCT 
+        w.id, 
+        w.name,
+        w.address, 
+        w.image_url,
+        COUNT(ip.id) as pallets_in_warehouse,
+        SUM(ip.quantity) as modules_in_warehouse,
+        COUNT(DISTINCT d_transit.id) as pallets_in_transit_to_wh,
+        SUM(CASE WHEN d_transit.status_of_delivery LIKE 'In Transit%' THEN d_transit.quantity ELSE 0 END) as modules_in_transit_to_wh
+    FROM warehouses w
+    LEFT JOIN inventory_pallets ip ON w.id = ip.current_warehouse_id 
+        AND ip.status = 'In Warehouse' 
+        AND (ip.assigned_project_id = ? OR ip.current_project_id = ?)
+    LEFT JOIN deliveries d_transit ON w.id = d_transit.warehouse_id
+        AND d_transit.project_id = ?
+        AND d_transit.status_of_delivery LIKE 'In Transit%'
+        AND d_transit.warehouse_arrival_date IS NULL
+    WHERE
+        EXISTS (
+            SELECT 1 FROM inventory_pallets ip_check
+            WHERE ip_check.current_warehouse_id = w.id
+                AND ip_check.status = 'In Warehouse'
+                AND (ip_check.assigned_project_id = ? OR ip_check.current_project_id = ?)
+        )
+        OR EXISTS (
+            SELECT 1 FROM deliveries d_check
+            WHERE d_check.warehouse_id = w.id
+                AND d_check.project_id = ?
+                AND d_check.status_of_delivery LIKE 'In Transit%'
+                AND d_check.warehouse_arrival_date IS NULL
+        )
+        OR EXISTS (
+            SELECT 1 FROM deliveries d_hist
+            WHERE d_hist.warehouse_id = w.id
+                AND d_hist.project_id = ?
+        )
+    GROUP BY w.id, w.name, w.address, w.image_url
+    ORDER BY w.name ASC
+");
+$stmt_warehouses->bind_param("iiiiiii", $project_id, $project_id, $project_id, $project_id, $project_id, $project_id, $project_id);
+$stmt_warehouses->execute();
+$result_warehouses = $stmt_warehouses->get_result();
+while ($wh = $result_warehouses->fetch_assoc()) {
+    $warehouses_with_inventory[] = $wh;
+}
+$stmt_warehouses->close();
+
+// --- Shipping Status Breakdown ---
+// Data already calculated above in the delivery status section
+
+// Move all remaining database queries here before HTML output
+// Better calculation for palletized modules - count actual pallets in inventory_pallets
+$stmt_palletized = $conn->prepare("
+    SELECT COUNT(*) as palletized_count
+    FROM inventory_pallets ip
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
+");
+$stmt_palletized->bind_param("iii", $project_id, $project_id, $project_id);
+$stmt_palletized->execute();
+$stmt_palletized->bind_result($actual_palletized_count);
+$stmt_palletized->fetch();
+$stmt_palletized->close();
+
+// Calculate total EXPECTED pallets based on total modules / modules per pallet
+// This shows what SHOULD be palletized, not what IS palletized
+$modules_per_pallet = 30; // Default
+
+// Try to get project-specific modules_per_pallet if column exists
+if (isset($project['modules_per_pallet']) && $project['modules_per_pallet'] > 0) {
+    $modules_per_pallet = (int)$project['modules_per_pallet'];
+}
+
+$expected_pallets = 0;
+if ($total_raw_modules > 0) {
+    $expected_pallets = ceil($total_raw_modules / $modules_per_pallet);
+}
+
+// Also get the actual count of existing pallets (for comparison)
+$stmt_existing_pallets = $conn->prepare("
+    SELECT COUNT(*) as existing
+    FROM inventory_pallets ip
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
+");
+$stmt_existing_pallets->bind_param("iii", $project_id, $project_id, $project_id);
+$stmt_existing_pallets->execute();
+$stmt_existing_pallets->bind_result($existing_pallet_count);
+$stmt_existing_pallets->fetch();
+$stmt_existing_pallets->close();
+
+// Get delivered modules breakdown for JavaScript (using inventory_pallets for accuracy)
+$delivered_by_wattage = [];
+$delivered_damaged_by_wattage = [];
+$stmt_delivered = $conn->prepare("
+    SELECT ip.wattage, 
+           COUNT(*) as pallet_count, 
+           SUM(ip.quantity) as total_modules,
+           SUM(CASE WHEN ip.status = 'Damaged' THEN 1 ELSE 0 END) as damaged_pallets,
+           SUM(CASE WHEN ip.status = 'Damaged' THEN ip.quantity ELSE 0 END) as damaged_modules
+    FROM inventory_pallets ip
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE (m.project_id = ? OR ip.assigned_project_id = ? OR ip.current_project_id = ?)
+      AND (ip.status = 'Delivered to Project' OR ip.status = 'Damaged')
+    GROUP BY ip.wattage
+");
+$stmt_delivered->bind_param("iii", $project_id, $project_id, $project_id);
+$stmt_delivered->execute();
+$delivered_result = $stmt_delivered->get_result();
+while ($row = $delivered_result->fetch_assoc()) {
+    $wattage = (float)$row['wattage'];
+    $total_pallets = (int)$row['pallet_count'];
+    $total_modules = (int)$row['total_modules'];
+    $damaged_pallets = (int)$row['damaged_pallets'];
+    $damaged_modules = (int)$row['damaged_modules'];
+    
+    // Only include if there are delivered (non-damaged) modules
+    if ($total_pallets > $damaged_pallets) {
+        $delivered_by_wattage[] = [
+            'wattage' => $wattage,
+            'pallets' => $total_pallets - $damaged_pallets,
+            'modules' => $total_modules - $damaged_modules,
+            'damaged_pallets' => $damaged_pallets,
+            'damaged_modules' => $damaged_modules
+        ];
+    }
+}
+$stmt_delivered->close();
+
+// Determine current step logic
+$step1_completed = true; // Project always created
+$step2_completed = $total_raw_modules > 0;
+$step3_completed = $actual_palletized_count >= $expected_pallets && $total_raw_modules > 0;
+
+// Step 4 (Shipping) is completed when:
+// 1. Some shipping has actually occurred (deliveries exist for this project)
+// 2. AND no pallets are currently in shipping statuses
+$has_shipping_started = false;
+$stmt_shipping_check = $conn->prepare("SELECT COUNT(*) as delivery_count FROM deliveries WHERE project_id = ?");
+$stmt_shipping_check->bind_param("i", $project_id);
+$stmt_shipping_check->execute();
+$stmt_shipping_check->bind_result($delivery_count);
+$stmt_shipping_check->fetch();
+$stmt_shipping_check->close();
+$has_shipping_started = $delivery_count > 0;
+
+$step4_completed = $has_shipping_started && 
+                  ($status_totals['At Manufacturer']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['On Water']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['Cleared Customs']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['In Transit to Warehouse']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['In Warehouse']['pallets'] ?? 0) == 0 && 
+                  ($status_totals['In Transit to Project']['pallets'] ?? 0) == 0;
+
+$step5_completed = $delivered_raw_total >= $total_raw_modules && $total_raw_modules > 0;
+
+// Determine current step (the next step that needs to be completed)
+$current_step = 1;
+if ($step1_completed && !$step2_completed) $current_step = 2;
+elseif ($step2_completed && !$step3_completed) $current_step = 3;
+elseif ($step3_completed && !$step4_completed) $current_step = 4;
+elseif ($step4_completed && !$step5_completed) $current_step = 5;
+elseif ($step5_completed) $current_step = 6; // All completed
+
+// Calculate progress percentage for timeline - only go to current step, not beyond
+$progress_percentage = 0;
+if ($current_step >= 2 && $step1_completed) $progress_percentage = 20;
+if ($current_step >= 3 && $step2_completed) $progress_percentage = 40;
+if ($current_step >= 4 && $step3_completed) $progress_percentage = 60;
+if ($current_step >= 5 && $step4_completed) $progress_percentage = 80;
+if ($step5_completed) $progress_percentage = 100;
+
+// Calculate ordered MW (total MW of modules added to the project)
+$ordered_mw = 0;
+foreach ($total_orders as $lbl => $info) {
+    $ordered_mw += ($info['raw_quantity'] * $info['wattage']) / 1000000;
+}
+
+// Calculate delivered MW (based on delivered modules with their wattages)
+// We need to get delivered quantities by wattage to calculate accurate MW
+$delivered_mw = 0;
+$delivered_by_wattage_query = $conn->prepare("
+    SELECT ip.wattage, SUM(ip.quantity) as qty
+    FROM inventory_pallets ip
+    WHERE ip.assigned_project_id = ? AND ip.status = 'Delivered to Project'
+    GROUP BY ip.wattage
+");
+$delivered_by_wattage_query->bind_param("i", $project_id);
+$delivered_by_wattage_query->execute();
+$delivered_wattage_result = $delivered_by_wattage_query->get_result();
+while ($dw_row = $delivered_wattage_result->fetch_assoc()) {
+    $delivered_mw += ($dw_row['qty'] * $dw_row['wattage']) / 1000000;
+}
+$delivered_by_wattage_query->close();
+
+// Delivered-based completion percentage for the circular indicator (of ordered modules)
+$delivered_percentage = 0;
+if ($total_raw_modules > 0) {
+    $delivered_percentage = max(0, min(100, (int)round(($delivered_raw_total / $total_raw_modules) * 100)));
+}
+
+// Project target completion percentage (based on project_size_mw)
+$project_completion_percentage = 0;
+if ($project_size_mw > 0) {
+    $project_completion_percentage = max(0, min(100, (int)round(($delivered_mw / $project_size_mw) * 100)));
+}
+
+// Ordered vs target percentage (how much of the project target has been ordered)
+$ordered_vs_target_percentage = 0;
+if ($project_size_mw > 0) {
+    $ordered_vs_target_percentage = max(0, min(100, (int)round(($ordered_mw / $project_size_mw) * 100)));
+}
+
+// Fetch module batches for this project with wattage information
+$module_batches = [];
+$stmt_modules = $conn->prepare("
+    SELECT m.*, c.name as account_name,
+        EXISTS (
+            SELECT 1
+            FROM unassigned_module_items umi2
+            JOIN inventory_pallets ip2 ON ip2.unassigned_module_item_id = umi2.id
+            JOIN warranty_claim_replacements wcr2 ON wcr2.pallet_id = ip2.id
+            WHERE umi2.unassigned_module_id = m.id
+        ) AS is_replacement_batch
+    FROM modules m 
+    JOIN customer_accounts c ON m.account_id = c.id
+    WHERE m.project_id = ?
+    ORDER BY m.vendor_name, m.created_at
+");
+$stmt_modules->bind_param("i", $project_id);
+$stmt_modules->execute();
+$modules_result = $stmt_modules->get_result();
+while ($module = $modules_result->fetch_assoc()) {
+    // Get wattage information for this module batch
+    $stmt_wattages = $conn->prepare("
+        SELECT wattage, quantity 
+        FROM unassigned_module_items 
+        WHERE unassigned_module_id = ? AND wattage > 0 AND quantity > 0
+        ORDER BY wattage ASC
+    ");
+    $stmt_wattages->bind_param("i", $module['id']);
+    $stmt_wattages->execute();
+    $wattages_result = $stmt_wattages->get_result();
+    
+    $module['wattages'] = [];
+    while ($wattage_row = $wattages_result->fetch_assoc()) {
+        $module['wattages'][] = $wattage_row;
+    }
+    $stmt_wattages->close();
+    
+    $module_batches[] = $module;
+}
+$stmt_modules->close();
+
+// Calculate averages for conversion settings from module batches
+$pallets_per_truck_values = [];
+$modules_per_truck_values = [];
+$total_modules_for_ppt = 0;
+$weighted_ppt_sum = 0;
+$total_modules_for_mpt = 0;
+$weighted_mpt_sum = 0;
+
+// For modules per pallet (project-level and by wattage)
+$has_modules_per_pallet_data = false;
+$total_modules_for_mpp = 0;
+$weighted_mpp_sum = 0;
+$mpp_by_wattage = [];
+$modules_by_wattage_for_mpp = [];
+
+foreach ($module_batches as $batch) {
+    // Weighted average pallets per truck
+    $batch_modules_total = 0;
+    foreach ($batch['wattages'] as $wattage_info) {
+        $batch_modules_total += (int)$wattage_info['quantity'];
+    }
+    if (!empty($batch['pallets_per_truck']) && $batch['pallets_per_truck'] > 0) {
+        $ppt = (int)$batch['pallets_per_truck'];
+        $pallets_per_truck_values[] = $ppt;
+        $weighted_ppt_sum += ($ppt * $batch_modules_total);
+        $total_modules_for_ppt += $batch_modules_total;
+    }
+    // Weighted average modules per truck
+    if (!empty($batch['modules_per_truck']) && $batch['modules_per_truck'] > 0) {
+        $mpt = (int)$batch['modules_per_truck'];
+        $modules_per_truck_values[] = $mpt;
+        $weighted_mpt_sum += ($mpt * $batch_modules_total);
+        $total_modules_for_mpt += $batch_modules_total;
+    }
+    // Modules per pallet (project-level and by wattage)
+    if (!empty($batch['modules_per_pallet']) && $batch['modules_per_pallet'] > 0) {
+        $has_modules_per_pallet_data = true;
+        $mpp = (int)$batch['modules_per_pallet'];
+        $weighted_mpp_sum += ($mpp * $batch_modules_total);
+        $total_modules_for_mpp += $batch_modules_total;
+        foreach ($batch['wattages'] as $wattage_info) {
+            $w = (int)$wattage_info['wattage'];
+            $qty = (int)$wattage_info['quantity'];
+            if (!isset($mpp_by_wattage[$w])) {
+                $mpp_by_wattage[$w] = 0;
+                $modules_by_wattage_for_mpp[$w] = 0;
+            }
+            $mpp_by_wattage[$w] += ($mpp * $qty);
+            $modules_by_wattage_for_mpp[$w] += $qty;
+        }
+    }
+}
+
+$has_pallets_per_truck_data = ($total_modules_for_ppt > 0 && $weighted_ppt_sum > 0) || !empty($pallets_per_truck_values);
+$has_modules_per_truck_data = ($total_modules_for_mpt > 0 && $weighted_mpt_sum > 0) || !empty($modules_per_truck_values);
+
+if ($total_modules_for_ppt > 0 && $weighted_ppt_sum > 0) {
+    $average_pallets_per_truck = round($weighted_ppt_sum / $total_modules_for_ppt);
+} elseif (!empty($pallets_per_truck_values)) {
+    $average_pallets_per_truck = round(array_sum($pallets_per_truck_values) / count($pallets_per_truck_values));
+} else {
+    // No data present; leave undefined for N/A behavior in UI
+    $average_pallets_per_truck = null;
+}
+
+if ($total_modules_for_mpt > 0 && $weighted_mpt_sum > 0) {
+    $average_modules_per_truck = round($weighted_mpt_sum / $total_modules_for_mpt);
+} elseif (!empty($modules_per_truck_values)) {
+    $average_modules_per_truck = round(array_sum($modules_per_truck_values) / count($modules_per_truck_values));
+} else {
+    $average_modules_per_truck = null;
+}
+$weighted_avg_modules_per_truck = $average_modules_per_truck;
+
+$average_modules_per_pallet = null;
+if ($has_modules_per_pallet_data && $total_modules_for_mpp > 0) {
+    $average_modules_per_pallet = round($weighted_mpp_sum / $total_modules_for_mpp);
+}
+
+// Compute project-level pallets per status (actuals) for Module Delivery Status table
+$statuses_of_interest = [
+    'At Manufacturer',
+    'On Water',
+    'Cleared Customs',
+    'In Transit to Warehouse',
+    'In Warehouse',
+    'In Transit to Project',
+    'Delivered to Project',
+];
+
+$pallets_status_main = [
+    'total_order' => 0,
+    'delivered' => 0,
+    'at_manufacturer' => 0,
+    'on_water' => 0,
+    'cleared_customs' => 0,
+    'in_transit_to_warehouse' => 0,
+    'in_warehouse' => 0,
+    'in_transit_to_project' => 0,
+];
+foreach ($statuses_of_interest as $s) {
+    $count = (int)($status_totals[$s]['pallets'] ?? 0);
+    switch ($s) {
+        case 'At Manufacturer': $pallets_status_main['at_manufacturer'] = $count; break;
+        case 'On Water': $pallets_status_main['on_water'] = $count; break;
+        case 'Cleared Customs': $pallets_status_main['cleared_customs'] = $count; break;
+        case 'In Transit to Warehouse': $pallets_status_main['in_transit_to_warehouse'] = $count; break;
+        case 'In Warehouse': $pallets_status_main['in_warehouse'] = $count; break;
+        case 'In Transit to Project': $pallets_status_main['in_transit_to_project'] = $count; break;
+        case 'Delivered to Project': $pallets_status_main['delivered'] = $count; break;
+    }
+    $pallets_status_main['total_order'] += $count;
+}
+
+// Build per-wattage pallets for sub rows using detailed_breakdown actuals
+$pallets_sub_rows_status = [];
+foreach ($statuses_of_interest as $s) {
+    foreach ($detailed_breakdown as $key => $breakdown) {
+        // Normalize key to base status (strip location suffixes like " - <name>")
+        $base = explode(' - ', $key)[0];
+        if ($base !== $s) continue;
+        foreach ($breakdown['wattage_breakdown'] as $w => $wd) {
+            $label = $w . 'W';
+            if (!isset($pallets_sub_rows_status[$label])) {
+                $pallets_sub_rows_status[$label] = [
+                    'total_order' => 0,
+                    'delivered' => 0,
+                    'at_manufacturer' => 0,
+                    'on_water' => 0,
+                    'cleared_customs' => 0,
+                    'in_transit_to_warehouse' => 0,
+                    'in_warehouse' => 0,
+                    'in_transit_to_project' => 0,
+                ];
+            }
+            $pal = (int)($wd['pallets'] ?? 0);
+            switch ($s) {
+                case 'At Manufacturer': $pallets_sub_rows_status[$label]['at_manufacturer'] += $pal; break;
+                case 'On Water': $pallets_sub_rows_status[$label]['on_water'] += $pal; break;
+                case 'Cleared Customs': $pallets_sub_rows_status[$label]['cleared_customs'] += $pal; break;
+                case 'In Transit to Warehouse': $pallets_sub_rows_status[$label]['in_transit_to_warehouse'] += $pal; break;
+                case 'In Warehouse': $pallets_sub_rows_status[$label]['in_warehouse'] += $pal; break;
+                case 'In Transit to Project': $pallets_sub_rows_status[$label]['in_transit_to_project'] += $pal; break;
+                case 'Delivered to Project': $pallets_sub_rows_status[$label]['delivered'] += $pal; break;
+            }
+            $pallets_sub_rows_status[$label]['total_order'] += $pal;
+        }
+    }
+}
+
+// Fetch manufacturers for modal dropdown
+$manufacturers = [];
+$stmt_manufacturers = $conn->prepare("SELECT id, name FROM manufacturers WHERE is_active = 1 ORDER BY name ASC");
+$stmt_manufacturers->execute();
+$manufacturers_result = $stmt_manufacturers->get_result();
+while ($manufacturer = $manufacturers_result->fetch_assoc()) {
+    $manufacturers[] = $manufacturer;
+}
+$stmt_manufacturers->close();
+
+// Close database connection
+$conn->close();
+
+// Determine the correct link for the "Deliveries" button
+// If user is "admin", go to manage_deliveries.php; else "view_project.php"
+$deliveriesLink = in_array($role, ['admin', 'global_admin', 'customer_admin'])
+    ? "manage_deliveries?project_id={$project_id}"
+    : "view_project?project_id={$project_id}";
+
+// Role helper variables for unified view
+$isAdmin = in_array($role, ['admin', 'global_admin', 'customer_admin']);
+$isGlobalAdmin = in_array($role, ['admin', 'global_admin', 'customer_admin']);

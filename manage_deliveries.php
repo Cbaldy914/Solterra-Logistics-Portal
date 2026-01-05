@@ -2626,9 +2626,12 @@ if (isset($_GET['export_csv']) && $_GET['export_csv'] === '1') {
         echo slp_render_breadcrumbs($crumb_opts);
     ?>
 
-    <h1>Manage Deliveries: <?php echo htmlspecialchars($project_name); ?></h1>
-
-
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 20px;">
+        <h1 style="margin: 0;">Manage Deliveries: <?php echo htmlspecialchars($project_name); ?></h1>
+        <a href="upload_shipments.php?project_id=<?php echo $project_id; ?>" style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; background: linear-gradient(135deg, #488C9A 0%, #3a7086 100%); color: white; border-radius: 8px; text-decoration: none; font-weight: 500; transition: all 0.2s ease;">
+            <span>📥</span> Import Shipments
+        </a>
+    </div>
 
     <!-- Display Messages -->
     <?php
