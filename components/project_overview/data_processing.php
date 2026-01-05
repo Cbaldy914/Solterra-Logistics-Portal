@@ -217,8 +217,11 @@ if (count($non_zero_watts) > 0) {
     $module_type_combined = ($min_w == $max_w)
         ? ($min_w . 'W')
         : ($min_w . 'W-' . $max_w . 'W');
+    // Calculate average wattage for conversions
+    $avg_wattage = array_sum($non_zero_watts) / count($non_zero_watts);
 } else {
     $module_type_combined = "N/A";
+    $avg_wattage = 585; // Default wattage if none specified
 }
 
 /**
@@ -768,7 +771,7 @@ $dres = $stmt->get_result();
 $stmt->close();
 
 // Totals
-$total_customer_cost     = 0;
+$total_freight_cost      = 0;
 $total_accessorial_costs = 0;
 $total_warehousing_cost  = 0;
 $total_solterra_fee      = 0;
@@ -847,7 +850,7 @@ if ($whres->num_rows > 0) {
 while ($dv = $dres->fetch_assoc()) {
     $stat = $dv['status_of_delivery'];
     $watt= (float)$dv['wattage'];
-    $c   = (float)$dv['customer_cost'];
+    $fc  = (float)$dv['freight_cost'];  // Use freight_cost instead of customer_cost
     $a   = (float)$dv['accessorial_costs'];
     $q   = (int)$dv['quantity'];
 
@@ -859,9 +862,9 @@ while ($dv = $dres->fetch_assoc()) {
         $soltFeeForThisDelivery = 0;
     }
 
-    $tc = $c + $a + $wcost + $soltFeeForThisDelivery;
+    $tc = $fc + $a + $wcost + $soltFeeForThisDelivery;
 
-    $total_customer_cost     += $c;
+    $total_freight_cost      += $fc;
     $total_accessorial_costs += $a;
     $total_warehousing_cost  += $wcost;
     $total_solterra_fee      += $soltFeeForThisDelivery;
@@ -946,10 +949,9 @@ $combined_ppw = ($sum_watts>0)?($combined_total_costs/$sum_watts):0;
 
 // Cost Breakdown Pie
 $pieChartDataFinancial = [
-    'Freight Cost' => $total_customer_cost,
+    'Freight'       => $total_freight_cost,
     'Warehousing'   => $total_warehousing_cost,
     'Accessorial'   => $total_accessorial_costs,
-    'Solterra Fee'  => $total_solterra_fee,
 ];
 
 // Next 5 weeks for Invoices/Cashflow

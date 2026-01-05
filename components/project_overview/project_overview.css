@@ -2560,6 +2560,67 @@
     margin-top: 5px;
 }
 
+/* Module Batch Section Styling */
+.module-batch-section {
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 16px;
+    padding: 25px;
+    margin-bottom: 20px;
+    border: 1px solid rgba(72, 140, 154, 0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.module-batch-section:last-child {
+    margin-bottom: 0;
+}
+
+.batch-title {
+    margin: 0 0 20px 0;
+    color: #293E4C;
+    font-size: 1.25rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.batch-badge {
+    font-size: 11px;
+    font-weight: 600;
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.batch-actions {
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(233, 236, 239, 0.5);
+    text-align: center;
+}
+
+.no-data-message {
+    text-align: center;
+    padding: 50px 30px;
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 12px;
+    border: 2px dashed #e9ecef;
+    color: #6c757d;
+}
+
+.no-data-message p {
+    margin: 0 0 20px 0;
+    font-size: 1rem;
+}
+
+.no-data-message .info-action-button {
+    margin-top: 10px;
+}
+
+/* Legacy support */
 .no-modules-message {
     text-align: center;
     padding: 40px;
