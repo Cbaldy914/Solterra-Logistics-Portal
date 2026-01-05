@@ -1,7 +1,7 @@
 <?php
 /**
  * Project Overview Views Component - Unified Version
- * Contains unified views for all roles with role-based buttons and permissions
+ * Contains the main tabs and content sections for project overview
  *
  * Structure:
  * - Main Tabs: Project Overview | Analytics
@@ -16,85 +16,6 @@
  * - All step completion variables, status totals, module data, etc.
  */
 ?>
-
-<!-- Unified Button Group -->
-<div class="button-group unified-buttons" style="display: flex;">
-    <!-- Modules Dropdown -->
-    <div class="dropdown">
-        <button class="dropdown-btn" onclick="toggleDropdown('modulesDropdown')">
-            Modules <span class="dropdown-arrow">▼</span>
-        </button>
-        <div class="dropdown-content" id="modulesDropdown">
-            <a href="module_overview.php?project_id=<?php echo $project_id; ?>">
-                <?php echo $isAdmin ? '' : '📦 '; ?>Module Overview
-            </a>
-            <a href="<?php echo $isAdmin ? 'create_shipment.php' : 'manage_pallets.php'; ?>?project_id=<?php echo $project_id; ?>">
-                <?php echo $isAdmin ? 'Manage Pallets' : '📋 View Pallets'; ?>
-            </a>
-            <a href="module_movements.php?project_id=<?php echo $project_id; ?>">
-                <?php echo $isAdmin ? '' : '📍 '; ?>Module Movements
-            </a>
-        </div>
-    </div>
-
-    <!-- Deliveries Dropdown -->
-    <div class="dropdown">
-        <button class="dropdown-btn" onclick="toggleDropdown('deliveriesDropdown')">
-            Deliveries <span class="dropdown-arrow">▼</span>
-        </button>
-        <div class="dropdown-content" id="deliveriesDropdown">
-            <?php if ($isAdmin): ?>
-                <a href="create_shipment.php?project_id=<?php echo $project_id; ?>">Create Shipments</a>
-                <a href="manage_deliveries.php?project_id=<?php echo $project_id; ?>">Manage Deliveries</a>
-                <a href="scheduling.php?project_id=<?php echo $project_id; ?>">Scheduling</a>
-            <?php else: ?>
-                <a href="<?php echo $deliveriesLink; ?>">📋 Delivery Schedule</a>
-            <?php endif; ?>
-            <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>">
-                <?php echo $isAdmin ? 'Anticipated Schedule' : '📅 Anticipated Schedule'; ?>
-            </a>
-        </div>
-    </div>
-
-    <!-- Warehousing Button -->
-    <button onclick="<?php echo $isAdmin ? 'handleAdminWarehousing()' : "window.location.href='warehouse_info?project_id={$project_id}'"; ?>">
-        Warehousing
-    </button>
-
-    <?php if (!$isAdmin): ?>
-    <!-- Reports Dropdown (Non-Admin Only) -->
-    <div class="dropdown">
-        <button class="dropdown-btn" onclick="toggleDropdown('reportsDropdown')">
-            Reports <span class="dropdown-arrow">▼</span>
-        </button>
-        <div class="dropdown-content" id="reportsDropdown">
-            <a href="project_cost_details?project_id=<?php echo $project_id; ?>">💰 Cost Report</a>
-            <a href="project_sustainability_details?project_id=<?php echo $project_id; ?>">🌱 Sustainability Report</a>
-            <a href="warranty.php?project_id=<?php echo $project_id; ?>">⚠️ Exceptions</a>
-        </div>
-    </div>
-    <?php endif; ?>
-
-    <?php if ($isAdmin): ?>
-    <!-- Exceptions Button (Admin Only) -->
-    <button onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">
-        Exceptions
-    </button>
-    <?php endif; ?>
-
-    <!-- Documents Dropdown -->
-    <div class="dropdown">
-        <button class="dropdown-btn" onclick="toggleDropdown('documentsDropdown')">
-            Documents <span class="dropdown-arrow">▼</span>
-        </button>
-        <div class="dropdown-content" id="documentsDropdown">
-            <a href="project_documents?project_id=<?php echo $project_id; ?>">📁 Project Documents</a>
-            <a href="global_documents.php?project_id=<?php echo $project_id; ?>&from=project_overview">🌐 Global Documents</a>
-        </div>
-    </div>
-</div>
-</div>
-</div>
 
 <!-- Main Tabs -->
 <div class="main-tabs-container">

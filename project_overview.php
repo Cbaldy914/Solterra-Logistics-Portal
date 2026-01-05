@@ -62,138 +62,208 @@ document.addEventListener('DOMContentLoaded', function() {
 <?php include 'header.php'; ?>
 <main>
     <?php
-    $backLink = 'dashboard.php';
+    require_once 'components/breadcrumbs.php';
+    echo slp_render_breadcrumbs([
+        'project_id'  => (int)$project_id,
+        'omit_current'=> true,
+    ]);
+
+    // Calculate values for the header
+    $remaining_mw = $project_size_mw - $ordered_mw;
+    $order_progress_pct = $project_size_mw > 0 ? min(100, ($ordered_mw / $project_size_mw) * 100) : 0;
+    $can_add_modules = isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']);
+    $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/project_default.png';
     ?>
-    <?php
-        require_once 'components/breadcrumbs.php';
-        // On project overview, show only: Dashboard » <Project Name>
-        echo slp_render_breadcrumbs([
-            'project_id'  => (int)$project_id,
-            'omit_current'=> true,
-        ]);
-    ?>
 
-
-
-    <div class="project-overview-container">
-        <!-- Mobile Project Name -->
-        <h1 class="project-name-mobile"><?php echo htmlspecialchars($project['project_name']); ?></h1>
-        
-        <div class="project-overview-image">
-            <?php $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/project_default.png'; ?>
-            <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/project_default.png'">
-        </div>
-        
-        <div class="project-info">
-            <!-- Desktop Project Name -->
-            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                <div style="flex: 1;">
-                    <h1 class="project-name-desktop"><?php echo htmlspecialchars($project['project_name']); ?></h1>
-                    <p><strong>Project Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
-
-                    <!-- Project Capacity Overview -->
-                    <?php
-                    $remaining_mw = $project_size_mw - $ordered_mw;
-                    $order_progress_pct = $project_size_mw > 0 ? min(100, ($ordered_mw / $project_size_mw) * 100) : 0;
-                    $can_add_modules = isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']);
-                    ?>
-                    <div class="capacity-wrapper" style="max-width: 60%; margin-top: 12px;">
-                        <div class="capacity-overview" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-                            <!-- Project Size Box -->
-                            <div class="capacity-box" style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 10px; padding: 10px 14px; border: 1px solid #dee2e6;">
-                                <div style="font-size: 10px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Project Size</div>
-                                <div style="font-size: 20px; font-weight: 700; color: #293E4C;"><?php echo number_format($project_size_mw, 2); ?> <span style="font-size: 13px; font-weight: 500;">MW</span></div>
-                            </div>
-
-                            <!-- Modules Ordered Box -->
-                            <div class="capacity-box modules-ordered-box" style="background: linear-gradient(135deg, #f0f7f8 0%, #e3eff1 100%); border-radius: 10px; padding: 10px 14px; border: 1px solid rgba(72, 140, 154, 0.2); position: relative; <?php echo $can_add_modules ? 'cursor: pointer;' : ''; ?>" <?php echo $can_add_modules ? 'onclick="toggleWattageBreakdown(event)"' : ''; ?>>
-                                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                                    <div>
-                                        <div style="font-size: 10px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Modules Ordered</div>
-                                        <div style="display: flex; align-items: baseline; gap: 6px;">
-                                            <span style="font-size: 20px; font-weight: 700; color: #488C9A;"><?php echo number_format($total_raw_modules); ?></span>
-                                            <span style="font-size: 12px; color: #495057;">(<?php echo number_format($ordered_mw, 2); ?> MW)</span>
-                                        </div>
-                                    </div>
-                                    <?php if (!empty($total_orders) && count($total_orders) > 0): ?>
-                                    <span class="wattage-toggle-icon" style="font-size: 10px; color: #488C9A; transition: transform 0.2s;">▼</span>
-                                    <?php endif; ?>
-                                </div>
-                                <?php if (!empty($total_orders) && count($total_orders) > 0): ?>
-                                <!-- Wattage Breakdown Dropdown -->
-                                <div class="wattage-breakdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid rgba(72, 140, 154, 0.25); border-radius: 8px; padding: 10px 12px; margin-top: 4px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-                                    <div style="font-size: 10px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Wattage Breakdown</div>
-                                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-                                        <?php foreach ($total_orders as $label => $info): ?>
-                                        <span style="font-size: 11px; padding: 3px 8px; background: rgba(72, 140, 154, 0.1); border-radius: 4px; color: #3A6E7F;">
-                                            <?php echo number_format($info['raw_quantity']); ?> × <?php echo $label; ?>
-                                        </span>
-                                        <?php endforeach; ?>
-                                    </div>
-                                    <?php if ($can_add_modules): ?>
-                                    <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" style="display: block; margin-top: 10px; padding: 8px 12px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color: #fff; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 500; text-align: center; transition: opacity 0.2s;" onclick="event.stopPropagation();" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
-                                        + Add More Modules
-                                    </a>
-                                    <?php endif; ?>
-                                </div>
-                                <?php endif; ?>
-                            </div>
-
-                            <!-- Remaining/Status Box -->
-                            <div class="capacity-box remaining-box" style="border-radius: 10px; padding: 10px 14px; border: 1px solid <?php echo $remaining_mw > 0 ? 'rgba(255, 193, 7, 0.3)' : 'rgba(40, 167, 69, 0.3)'; ?>; background: <?php echo $remaining_mw > 0 ? 'linear-gradient(135deg, #fffbf0 0%, #fff3cd 100%)' : 'linear-gradient(135deg, #f0fff4 0%, #d4edda 100%)'; ?>; display: flex; justify-content: space-between; align-items: center;">
-                                <?php if ($remaining_mw > 0): ?>
-                                <div>
-                                    <div style="font-size: 10px; color: #856404; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Remaining</div>
-                                    <div style="font-size: 20px; font-weight: 700; color: #856404;"><?php echo number_format($remaining_mw, 2); ?> <span style="font-size: 13px; font-weight: 500;">MW</span></div>
-                                </div>
-                                <?php if ($can_add_modules): ?>
-                                <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" style="font-size: 18px; color: #856404; text-decoration: none; opacity: 0.6; line-height: 1;" title="Add Modules" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">+</a>
-                                <?php endif; ?>
-                                <?php elseif ($remaining_mw < 0): ?>
-                                <div>
-                                    <div style="font-size: 10px; color: #155724; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Over Target</div>
-                                    <div style="font-size: 20px; font-weight: 700; color: #155724;">+<?php echo number_format(abs($remaining_mw), 2); ?> <span style="font-size: 13px; font-weight: 500;">MW</span></div>
-                                </div>
-                                <?php else: ?>
-                                <div>
-                                    <div style="font-size: 10px; color: #155724; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;">Status</div>
-                                    <div style="font-size: 16px; font-weight: 700; color: #155724;">Target Reached</div>
-                                </div>
-                                <?php endif; ?>
-                            </div>
+    <!-- Redesigned Project Header -->
+    <div class="project-header-redesign">
+        <!-- Header Content -->
+        <div class="project-header-content">
+            <div class="project-header-left">
+                <div class="project-header-icon">
+                    <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/project_default.png'">
+                </div>
+                <div class="project-header-info">
+                    <h1><?php echo htmlspecialchars($project['project_name']); ?></h1>
+                    <p class="project-header-subtitle"><?php echo htmlspecialchars($project['project_address']); ?></p>
+                </div>
+            </div>
+            <div class="project-header-stats">
+                <div class="project-stat-item">
+                    <p class="project-stat-number"><?php echo number_format($project_size_mw, 2); ?></p>
+                    <p class="project-stat-label">MW Target</p>
+                </div>
+                <div class="project-stat-item stat-clickable <?php echo (!empty($total_orders) && count($total_orders) > 0) ? 'has-dropdown' : ''; ?>" <?php echo (!empty($total_orders) && count($total_orders) > 0) ? 'onclick="toggleWattageBreakdown(event)"' : ''; ?>>
+                    <p class="project-stat-number highlight"><?php echo number_format($ordered_mw, 2); ?></p>
+                    <p class="project-stat-label">MW Ordered</p>
+                    <p class="project-stat-sub"><?php echo number_format($total_raw_modules); ?> modules</p>
+                    <?php if (!empty($total_orders) && count($total_orders) > 0): ?>
+                    <!-- Wattage Breakdown Dropdown -->
+                    <div class="stat-dropdown wattage-breakdown">
+                        <div class="stat-dropdown-title">Module Breakdown</div>
+                        <div class="stat-dropdown-chips">
+                            <?php foreach ($total_orders as $label => $info): ?>
+                            <span class="breakdown-chip"><?php echo number_format($info['raw_quantity']); ?> × <?php echo $label; ?></span>
+                            <?php endforeach; ?>
                         </div>
-
-                        <!-- Progress Bar -->
-                        <?php if ($project_size_mw > 0): ?>
-                        <div class="capacity-progress" style="margin-top: 8px;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
-                                <span style="font-size: 10px; color: #6c757d;">Order Progress</span>
-                                <span style="font-size: 10px; font-weight: 600; color: <?php echo $order_progress_pct >= 100 ? '#155724' : '#488C9A'; ?>;"><?php echo number_format($order_progress_pct, 1); ?>%</span>
-                            </div>
-                            <div style="height: 5px; background: #e9ecef; border-radius: 3px; overflow: hidden;">
-                                <div style="height: 100%; width: <?php echo min(100, $order_progress_pct); ?>%; background: <?php echo $order_progress_pct >= 100 ? 'linear-gradient(90deg, #28a745 0%, #20c997 100%)' : 'linear-gradient(90deg, #488C9A 0%, #5ba3b1 100%)'; ?>; border-radius: 3px; transition: width 0.5s ease;"></div>
-                            </div>
-                        </div>
+                        <?php if ($can_add_modules): ?>
+                        <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" class="stat-dropdown-action" onclick="event.stopPropagation();">+ Add Modules</a>
                         <?php endif; ?>
                     </div>
+                    <?php endif; ?>
                 </div>
-                <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
-                <div class="project-actions-dropdown">
-                    <button class="project-actions-btn" onclick="toggleProjectActions()">
-                        <span style="font-size: 18px;">⚙️</span>
-                    </button>
-                    <div class="project-actions-content" id="projectActionsDropdown">
-                        <a href="edit_project.php?project_id=<?php echo $project_id; ?>">✏️ Edit Project</a>
-                        <a href="#" onclick="confirmDeleteProject(<?php echo $project_id; ?>, '<?php echo htmlspecialchars($project['project_name'], ENT_QUOTES); ?>')">🗑️ Delete Project</a>
+                <?php if ($remaining_mw > 0): ?>
+                <div class="project-stat-item stat-warning">
+                    <p class="project-stat-number"><?php echo number_format($remaining_mw, 2); ?></p>
+                    <p class="project-stat-label">MW Remaining</p>
+                </div>
+                <?php elseif ($remaining_mw < 0): ?>
+                <div class="project-stat-item stat-success">
+                    <p class="project-stat-number">+<?php echo number_format(abs($remaining_mw), 2); ?></p>
+                    <p class="project-stat-label">MW Over Target</p>
+                </div>
+                <?php else: ?>
+                <div class="project-stat-item stat-success">
+                    <p class="project-stat-number">100%</p>
+                    <p class="project-stat-label">Target Reached</p>
+                </div>
+                <?php endif; ?>
+                <?php if ($project_size_mw > 0): ?>
+                <div class="project-stat-item project-stat-progress">
+                    <div class="progress-ring-container">
+                        <svg class="progress-ring" width="50" height="50">
+                            <circle class="progress-ring-bg" cx="25" cy="25" r="20" fill="none" stroke="#e9ecef" stroke-width="5"/>
+                            <circle class="progress-ring-fill <?php echo $order_progress_pct >= 100 ? 'complete' : ''; ?>" cx="25" cy="25" r="20" fill="none" stroke="<?php echo $order_progress_pct >= 100 ? '#28a745' : '#488C9A'; ?>" stroke-width="5" stroke-linecap="round" stroke-dasharray="125.6" stroke-dashoffset="<?php echo 125.6 - (125.6 * min(100, $order_progress_pct) / 100); ?>" transform="rotate(-90 25 25)"/>
+                        </svg>
+                        <span class="progress-ring-text"><?php echo number_format($order_progress_pct, 0); ?>%</span>
                     </div>
+                    <p class="project-stat-label">Progress</p>
                 </div>
                 <?php endif; ?>
             </div>
-            
-            <?php include 'components/project_overview/views_unified.php'; ?>
+            <?php if (isset($_SESSION['role']) && in_array($_SESSION['role'], ['admin', 'global_admin'])): ?>
+            <div class="project-header-actions">
+                <button class="project-settings-btn" onclick="toggleProjectActions()" title="Project Settings">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                </button>
+                <div class="project-settings-dropdown" id="projectActionsDropdown">
+                    <a href="edit_project.php?project_id=<?php echo $project_id; ?>">Edit Project</a>
+                    <a href="#" class="danger" onclick="confirmDeleteProject(<?php echo $project_id; ?>, '<?php echo htmlspecialchars($project['project_name'], ENT_QUOTES); ?>')">Delete Project</a>
+                </div>
+            </div>
+            <?php endif; ?>
+        </div>
+
+        <!-- Quick Navigation -->
+        <div class="project-quick-nav">
+            <!-- Modules Dropdown -->
+            <div class="nav-dropdown">
+                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'modulesDropdown')">
+                    Modules <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                </button>
+                <div class="nav-dropdown-content" id="modulesDropdown">
+                    <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Module Overview</a>
+                    <a href="<?php echo $isAdmin ? 'create_shipment.php' : 'manage_pallets.php'; ?>?project_id=<?php echo $project_id; ?>"><?php echo $isAdmin ? 'Manage Pallets' : 'View Pallets'; ?></a>
+                    <a href="module_movements.php?project_id=<?php echo $project_id; ?>">Module Movements</a>
+                </div>
+            </div>
+
+            <!-- Deliveries Dropdown -->
+            <div class="nav-dropdown">
+                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'deliveriesDropdown')">
+                    Deliveries <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                </button>
+                <div class="nav-dropdown-content" id="deliveriesDropdown">
+                    <?php if ($isAdmin): ?>
+                    <a href="create_shipment.php?project_id=<?php echo $project_id; ?>">Create Shipments</a>
+                    <a href="manage_deliveries.php?project_id=<?php echo $project_id; ?>">Manage Deliveries</a>
+                    <a href="scheduling.php?project_id=<?php echo $project_id; ?>">Scheduling</a>
+                    <?php else: ?>
+                    <a href="<?php echo $deliveriesLink; ?>">Delivery Schedule</a>
+                    <?php endif; ?>
+                    <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>">Anticipated Schedule</a>
+                </div>
+            </div>
+
+            <!-- Warehousing Button -->
+            <button class="nav-btn" onclick="<?php echo $isAdmin ? 'handleAdminWarehousing()' : "window.location.href='warehouse_info?project_id={$project_id}'"; ?>">
+                Warehousing
+            </button>
+
+            <?php if (!$isAdmin): ?>
+            <!-- Reports Dropdown (Non-Admin) -->
+            <div class="nav-dropdown">
+                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'reportsDropdown')">
+                    Reports <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                </button>
+                <div class="nav-dropdown-content" id="reportsDropdown">
+                    <a href="project_cost_details?project_id=<?php echo $project_id; ?>">Cost Report</a>
+                    <a href="project_sustainability_details?project_id=<?php echo $project_id; ?>">Sustainability Report</a>
+                    <a href="warranty.php?project_id=<?php echo $project_id; ?>">Exceptions</a>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <?php if ($isAdmin): ?>
+            <!-- Exceptions Button (Admin) -->
+            <button class="nav-btn" onclick="window.location.href='warranty.php?project_id=<?php echo $project_id; ?>'">
+                Exceptions
+            </button>
+            <?php endif; ?>
+
+            <!-- Documents Dropdown -->
+            <div class="nav-dropdown">
+                <button class="nav-dropdown-btn" onclick="toggleNavDropdown(event, 'documentsDropdown')">
+                    Documents <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+                </button>
+                <div class="nav-dropdown-content" id="documentsDropdown">
+                    <a href="project_documents?project_id=<?php echo $project_id; ?>">Project Documents</a>
+                    <a href="global_documents.php?project_id=<?php echo $project_id; ?>&from=project_overview">Global Documents</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <?php include 'components/project_overview/views_unified.php'; ?>
 </main>
 
 <script>
+// ==================== NAV DROPDOWN TOGGLE ====================
+function toggleNavDropdown(event, dropdownId) {
+    event.stopPropagation();
+    const dropdown = document.getElementById(dropdownId);
+    const allDropdowns = document.querySelectorAll('.nav-dropdown-content');
+    const allNavDropdowns = document.querySelectorAll('.nav-dropdown');
+
+    // Close all other dropdowns
+    allDropdowns.forEach(d => {
+        if (d.id !== dropdownId) {
+            d.classList.remove('show');
+        }
+    });
+    allNavDropdowns.forEach(nd => {
+        if (!nd.contains(dropdown)) {
+            nd.classList.remove('open');
+        }
+    });
+
+    // Toggle the clicked dropdown
+    const isOpen = dropdown.classList.contains('show');
+    dropdown.classList.toggle('show', !isOpen);
+    dropdown.closest('.nav-dropdown').classList.toggle('open', !isOpen);
+}
+
+// Close nav dropdowns when clicking outside
+document.addEventListener('click', function(event) {
+    if (!event.target.closest('.nav-dropdown')) {
+        document.querySelectorAll('.nav-dropdown-content').forEach(d => d.classList.remove('show'));
+        document.querySelectorAll('.nav-dropdown').forEach(nd => nd.classList.remove('open'));
+    }
+});
+
 // ==================== TAB NAVIGATION ====================
 
 // Main tab switching
@@ -2548,8 +2618,12 @@ window.onclick = function(event) {
     // Users must now use the "x" button to close modals
     
     // Close dropdowns when clicking outside
-    if (!event.target.closest('.project-actions-dropdown')) {
-        document.getElementById('projectActionsDropdown').style.display = 'none';
+    if (!event.target.closest('.project-actions-dropdown') && !event.target.closest('.project-header-settings')) {
+        const projectDropdown = document.getElementById('projectActionsDropdown');
+        if (projectDropdown) {
+            projectDropdown.classList.remove('show');
+            projectDropdown.style.display = 'none';
+        }
     }
     if (!event.target.closest('.module-actions-dropdown')) {
         document.getElementById('moduleActionsDropdown').style.display = 'none';
@@ -2562,42 +2636,36 @@ window.onclick = function(event) {
     <?php endif; ?>
 }
 
-<?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
-// Wattage Breakdown Toggle
+// Wattage Breakdown Toggle (available for all users who can see module breakdown)
 function toggleWattageBreakdown(event) {
     event.stopPropagation();
     const box = event.currentTarget;
     const dropdown = box.querySelector('.wattage-breakdown');
-    const icon = box.querySelector('.wattage-toggle-icon');
 
     if (dropdown) {
-        const isOpen = dropdown.style.display === 'block';
-        dropdown.style.display = isOpen ? 'none' : 'block';
-        if (icon) {
-            icon.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
-        }
+        const isOpen = dropdown.classList.contains('show');
+        dropdown.classList.toggle('show', !isOpen);
     }
 }
 
 // Close wattage breakdown when clicking outside
 document.addEventListener('click', function(event) {
-    const modulesBox = document.querySelector('.modules-ordered-box');
+    const modulesBox = document.querySelector('.project-stat-item.stat-clickable') || document.querySelector('.stat-chip.has-dropdown') || document.querySelector('.modules-ordered-box');
     if (modulesBox && !modulesBox.contains(event.target)) {
         const dropdown = modulesBox.querySelector('.wattage-breakdown');
-        const icon = modulesBox.querySelector('.wattage-toggle-icon');
         if (dropdown) {
-            dropdown.style.display = 'none';
-        }
-        if (icon) {
-            icon.style.transform = 'rotate(0deg)';
+            dropdown.classList.remove('show');
         }
     }
 });
 
+<?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
 // Project Actions Functions
 function toggleProjectActions() {
     const dropdown = document.getElementById('projectActionsDropdown');
-    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+    const isOpen = dropdown.classList.contains('show') || dropdown.style.display === 'block';
+    dropdown.classList.toggle('show', !isOpen);
+    dropdown.style.display = isOpen ? 'none' : 'block';
 }
 
 // Module Actions Functions
