@@ -2,10 +2,10 @@
 session_name("logistics_session");
 session_start();
 
-// Ensure user has role admin or global_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin'])) {
+// Ensure user has role admin, global_admin, or customer_admin
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
     $_SESSION['move_pallet_message'] = "Error: Unauthorized access.";
-    header("Location: manage_warehouses.php"); 
+    header("Location: manage_warehouses.php");
     exit();
 }
 

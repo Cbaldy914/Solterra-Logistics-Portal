@@ -2,7 +2,23 @@
   "permissions": {
     "allow": [
       "Bash(dir:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(del /f \"C:\\xampp\\htdocs\\Solterra-Solutions\\Solterra-Logistics-Portal\\add_project_wizard.html\" \"C:\\xampp\\htdocs\\Solterra-Solutions\\Solterra-Logistics-Portal\\add_project_new.php\")",
+      "Bash(php -l:*)",
+      "Bash(php -r:*)",
+      "Bash(copy \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\project_overview.php\" \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\project_overview_backup.php\")",
+      "Bash(mkdir:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(php:*)",
+      "Bash(del /f \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\temp_restructure_views.php\" \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\temp_restructure_user_view.php\")",
+      "Bash(del /f \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\temp_restore_inline_boxes.php\")",
+      "Bash(del /f \"C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\nul\")",
+      "Bash(powershell -File - <<'SCRIPT'\n$content = Get-Content \"project_overview.php\" -Raw\n$lines = $content -split \"`r?`n\"\n$htmlSection = $lines[1526..\\($lines.Length-1\\)]\n$header = \"<?php`nrequire_once 'components/project_overview/data_processing.php';`n?>\"\n$newContent = $header + \"`n\" + \\($htmlSection -join \"`n\"\\)\nSet-Content \"project_overview_new.php\" -Value $newContent -Encoding UTF8\nWrite-Host \"Created project_overview_new.php with\" \\($lines.Length - 1526\\) \"lines from HTML section\"\nSCRIPT)",
+      "Bash(copy project_overview.php project_overview_backup.php)",
+      "Bash(copy /Y project_overview_new.php project_overview.php)",
+      "Bash(del temp_extract.php project_overview_new.php)",
+      "Bash(cmd /c \"copy project_overview.php project_overview_backup.php && copy /Y project_overview_new.php project_overview.php && del temp_extract.php project_overview_new.php\")"
     ],
     "deny": [],
     "ask": []
