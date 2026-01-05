@@ -196,31 +196,44 @@ document.addEventListener('DOMContentLoaded', function() {
 <script>
 // ==================== TAB NAVIGATION ====================
 
+// Main tab switching
 function switchMainTab(tabId) {
+    // Update main tab button states
     document.querySelectorAll('.main-tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tabId);
     });
+
+    // Show/hide main tab content
     document.querySelectorAll('.main-tab-content').forEach(content => {
         const isTarget = content.id === tabId + '-tab';
         content.style.display = isTarget ? 'block' : 'none';
         content.classList.toggle('active', isTarget);
     });
+
+    // Initialize charts when switching to analytics
     if (tabId === 'analytics') {
         initializeDeliveryCharts();
     }
 }
 
+// Sub-tab switching
 function switchSubTab(mainTab, subTabId) {
     const mainTabContent = document.getElementById(mainTab + '-tab');
     if (!mainTabContent) return;
+
+    // Update sub-tab button states within this main tab
     mainTabContent.querySelectorAll('.sub-tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.subtab === subTabId);
     });
+
+    // Show/hide sub-tab content within this main tab
     mainTabContent.querySelectorAll('.sub-tab-content').forEach(content => {
         const isTarget = content.id === 'subtab-' + subTabId;
         content.style.display = isTarget ? 'block' : 'none';
         content.classList.toggle('active', isTarget);
     });
+
+    // Initialize financial charts when switching to financial sub-tab
     if (subTabId === 'financial') {
         initializeFinancialCharts();
     }
@@ -239,18 +252,30 @@ document.addEventListener('click', function(e) {
     }
 });
 
-// Unit filter sync
+// Unit filter sync - works with both old .unit-filter-btn and new .filter-chip
 function syncUnitFilters(unit) {
+    // Update old unit filter buttons
     document.querySelectorAll('.unit-filter-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.unit === unit);
+    });
+    // Update new filter chips
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+        chip.classList.toggle('active', chip.dataset.unit === unit);
     });
     updateShippingBoxes(unit);
     updateAnalyticsTables(unit);
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Old unit filter buttons
     document.querySelectorAll('.unit-filter-btn').forEach(btn => {
         btn.addEventListener('click', function() {
+            syncUnitFilters(this.dataset.unit);
+        });
+    });
+    // New filter chips
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+        chip.addEventListener('click', function() {
             syncUnitFilters(this.dataset.unit);
         });
     });
