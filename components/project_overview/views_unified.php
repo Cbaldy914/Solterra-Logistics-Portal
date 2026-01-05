@@ -96,7 +96,7 @@
 </div>
 </div>
 
-<!-- Main Tabs Navigation -->
+<!-- Main Tabs -->
 <div class="main-tabs-container">
     <div class="main-tabs">
         <button class="main-tab-btn active" data-tab="project-overview" onclick="switchMainTab('project-overview')">
@@ -108,10 +108,9 @@
     </div>
 </div>
 
-<!-- ==================== PROJECT OVERVIEW TAB ==================== -->
+<!-- Project Overview Tab Content -->
 <div id="project-overview-tab" class="main-tab-content active">
-
-    <!-- Sub-tabs for Project Overview -->
+    <!-- Sub-tabs -->
     <div class="sub-tabs-container">
         <div class="sub-tabs">
             <button class="sub-tab-btn active" data-subtab="timeline" onclick="switchSubTab('project-overview', 'timeline')">
@@ -126,15 +125,16 @@
         </div>
     </div>
 
-    <!-- ===== TIMELINE SUB-TAB ===== -->
+    <!-- Timeline Sub-tab -->
     <div id="subtab-timeline" class="sub-tab-content active">
-        <!-- Unit Filters (only shown on Timeline) -->
-        <div class="unit-filters-container">
-            <div class="unit-filters">
-                <button type="button" class="unit-filter-btn active" data-unit="mws">MWs</button>
-                <button type="button" class="unit-filter-btn" data-unit="modules">Modules</button>
-                <button type="button" class="unit-filter-btn" data-unit="pallets">Pallets</button>
-                <button type="button" class="unit-filter-btn" data-unit="truckloads">Truckloads</button>
+        <!-- Unit Filters (inside content) -->
+        <div class="unit-filter-bar">
+            <span class="filter-label">View as:</span>
+            <div class="filter-chips">
+                <button type="button" class="filter-chip active" data-unit="mws">MWs</button>
+                <button type="button" class="filter-chip" data-unit="modules">Modules</button>
+                <button type="button" class="filter-chip" data-unit="pallets">Pallets</button>
+                <button type="button" class="filter-chip" data-unit="truckloads">Trucks</button>
             </div>
         </div>
 
@@ -363,7 +363,7 @@
         </div>
     </div>
 
-    <!-- ===== SITE SUB-TAB ===== -->
+    <!-- Site Sub-tab -->
     <div id="subtab-site" class="sub-tab-content" style="display:none;">
         <div class="info-container">
             <div class="header-with-button">
@@ -409,7 +409,7 @@
         </div>
     </div>
 
-    <!-- ===== MODULES SUB-TAB ===== -->
+    <!-- Modules Sub-tab -->
     <div id="subtab-modules" class="sub-tab-content" style="display:none;">
         <div class="info-container">
             <div class="header-with-button">
@@ -512,10 +512,9 @@
     </div>
 </div>
 
-<!-- ==================== ANALYTICS TAB ==================== -->
+<!-- Analytics Tab Content -->
 <div id="analytics-tab" class="main-tab-content" style="display:none;">
-
-    <!-- Sub-tabs for Analytics -->
+    <!-- Sub-tabs -->
     <div class="sub-tabs-container">
         <div class="sub-tabs">
             <button class="sub-tab-btn active" data-subtab="deliveries" onclick="switchSubTab('analytics', 'deliveries')">
@@ -527,15 +526,16 @@
         </div>
     </div>
 
-    <!-- ===== DELIVERIES SUB-TAB ===== -->
+    <!-- Deliveries Sub-tab -->
     <div id="subtab-deliveries" class="sub-tab-content active">
-        <!-- Unit Filters (only shown on Deliveries) -->
-        <div class="unit-filters-container">
-            <div class="unit-filters">
-                <button type="button" class="unit-filter-btn active" data-unit="mws">MWs</button>
-                <button type="button" class="unit-filter-btn" data-unit="modules">Modules</button>
-                <button type="button" class="unit-filter-btn" data-unit="pallets">Pallets</button>
-                <button type="button" class="unit-filter-btn" data-unit="truckloads">Truckloads</button>
+        <!-- Unit Filters (inside content) -->
+        <div class="unit-filter-bar">
+            <span class="filter-label">View as:</span>
+            <div class="filter-chips">
+                <button type="button" class="filter-chip active" data-unit="mws">MWs</button>
+                <button type="button" class="filter-chip" data-unit="modules">Modules</button>
+                <button type="button" class="filter-chip" data-unit="pallets">Pallets</button>
+                <button type="button" class="filter-chip" data-unit="truckloads">Trucks</button>
             </div>
         </div>
 
@@ -597,13 +597,13 @@
                                     <th data-full="Cleared Customs"><span class="th-short">Customs</span></th>
                                     <?php endif; ?>
                                     <?php if ($in_transit_to_warehouse_combined > 0): ?>
-                                    <th data-full="In Transit to Warehouse"><span class="th-short">To Whse</span></th>
+                                    <th data-full="In Transit to Warehouse" title="In Transit to Warehouse"><span class="th-short">Transit-Whse</span></th>
                                     <?php endif; ?>
                                     <?php if ($in_warehouse_combined > 0): ?>
                                     <th data-full="In Warehouse"><span class="th-short">Whse</span></th>
                                     <?php endif; ?>
                                     <?php if ($in_transit_to_project_combined > 0): ?>
-                                    <th data-full="In Transit to Project"><span class="th-short">To Proj</span></th>
+                                    <th data-full="In Transit to Project" title="In Transit to Project"><span class="th-short">Transit-Proj</span></th>
                                     <?php endif; ?>
                                     <th data-full="Delivered to Project"><span class="th-short">Delivered</span></th>
                                 </tr>
@@ -665,7 +665,7 @@
         </div>
     </div>
 
-    <!-- ===== FINANCIAL SUB-TAB ===== -->
+    <!-- Financial Sub-tab -->
     <div id="subtab-financial" class="sub-tab-content" style="display:none;">
         <div class="customer-content-wrapper">
             <div class="tables-and-charts">

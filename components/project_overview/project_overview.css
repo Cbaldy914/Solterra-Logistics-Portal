@@ -3243,3 +3243,88 @@
         text-align: center;
     }
 }
+
+/* ==================== UNIT FILTER BAR (Inside Content) ==================== */
+.unit-filter-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+    border-radius: 12px;
+    border: 1px solid rgba(72, 140, 154, 0.12);
+}
+
+.unit-filter-bar .filter-label {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #6c757d;
+}
+
+.filter-chips {
+    display: flex;
+    gap: 6px;
+}
+
+.filter-chip {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 20px;
+    font-weight: 500;
+    font-size: 0.85rem;
+    color: #6c757d;
+    background: #ffffff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid #e9ecef;
+}
+
+.filter-chip:hover:not(.active) {
+    background: rgba(72, 140, 154, 0.08);
+    border-color: rgba(72, 140, 154, 0.3);
+    color: #488C9A;
+}
+
+.filter-chip.active {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 2px 8px rgba(72, 140, 154, 0.3);
+}
+
+/* ==================== UNIT FILTER BAR RESPONSIVE ==================== */
+@media (max-width: 768px) {
+    .unit-filter-bar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        padding: 10px;
+        margin: 0 0 15px 0;
+    }
+
+    .unit-filter-bar .filter-label {
+        text-align: center;
+        font-size: 0.8rem;
+    }
+
+    .filter-chips {
+        justify-content: center;
+        flex-wrap: nowrap;
+    }
+
+    .filter-chip {
+        padding: 8px 12px;
+        font-size: 0.8rem;
+        flex: 1;
+        text-align: center;
+    }
+}
+
+@media (max-width: 480px) {
+    .filter-chip {
+        padding: 6px 8px;
+        font-size: 0.75rem;
+    }
+}
