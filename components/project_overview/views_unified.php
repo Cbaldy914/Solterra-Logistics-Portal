@@ -539,8 +539,7 @@
             </div>
         </div>
 
-        <div class="customer-content-wrapper">
-            <div class="tables-and-charts">
+        <div class="tables-and-charts">
                 <div class="left-side">
                     <h2>Next 5 Weeks of Deliveries</h2>
                     <div class="table-responsive">
@@ -662,13 +661,11 @@
                     </div>
                 </div>
             </div>
-        </div>
     </div>
 
     <!-- Financial Sub-tab -->
     <div id="subtab-financial" class="sub-tab-content" style="display:none;">
-        <div class="customer-content-wrapper">
-            <div class="tables-and-charts">
+        <div class="tables-and-charts">
                 <div class="left-side">
                     <h2>Invoices and Cashflow Forecast</h2>
                     <div class="table-responsive">
@@ -746,7 +743,6 @@
                     </div>
                 </div>
             </div>
-        </div>
     </div>
 </div>
 
