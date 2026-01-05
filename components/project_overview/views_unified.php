@@ -411,7 +411,7 @@
 
     <!-- ===== MODULES SUB-TAB ===== -->
     <div id="subtab-modules" class="sub-tab-content" style="display:none;">
-        <div class="info-container module-info-container">
+        <div class="info-container">
             <div class="header-with-button">
                 <h2>Module Information</h2>
                 <?php if ($isGlobalAdmin): ?>
@@ -431,39 +431,67 @@
 
             <?php if (!empty($module_batches)): ?>
                 <?php foreach ($module_batches as $batch): ?>
-                    <div class="module-batch-card" style="margin-bottom: 20px; padding: 20px; background: #f8f9fa; border-radius: 12px; border: 1px solid #e9ecef;">
-                        <h3 style="margin-top: 0; color: #293E4C;">
+                    <div class="module-batch-section">
+                        <h3 class="batch-title">
                             <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Module Batch'); ?>
                             <?php if (!empty($batch['is_replacement_batch'])): ?>
-                                <span style="font-size: 12px; background: #488C9A; color: white; padding: 2px 8px; border-radius: 4px; margin-left: 8px;">Replacement</span>
+                                <span class="batch-badge">Replacement</span>
                             <?php endif; ?>
                         </h3>
 
-                        <div class="module-batch-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                            <div class="batch-info-section">
-                                <h4 style="margin-bottom: 8px; color: #488C9A;">Basic Info</h4>
-                                <p><strong>Account:</strong> <?php echo htmlspecialchars($batch['account_name'] ?? 'N/A'); ?></p>
+                        <div class="info-grid">
+                            <div class="info-section">
+                                <h3>Basic Information</h3>
+                                <div class="info-item">
+                                    <label>Account:</label>
+                                    <span><?php echo htmlspecialchars($batch['account_name'] ?? 'N/A'); ?></span>
+                                </div>
                                 <?php if (!empty($batch['wattages'])): ?>
-                                    <p><strong>Wattages:</strong>
-                                        <?php
-                                        $wattage_labels = array_map(function($w) {
-                                            return $w['wattage'] . 'W (' . number_format($w['quantity']) . ')';
-                                        }, $batch['wattages']);
-                                        echo implode(', ', $wattage_labels);
-                                        ?>
-                                    </p>
+                                    <div class="info-item">
+                                        <label>Wattages:</label>
+                                        <span>
+                                            <?php
+                                            $wattage_labels = array_map(function($w) {
+                                                return $w['wattage'] . 'W (' . number_format($w['quantity']) . ')';
+                                            }, $batch['wattages']);
+                                            echo implode(', ', $wattage_labels);
+                                            ?>
+                                        </span>
+                                    </div>
                                 <?php endif; ?>
+                                <?php
+                                // Calculate total modules for this batch
+                                $batch_total_modules = 0;
+                                if (!empty($batch['wattages'])) {
+                                    foreach ($batch['wattages'] as $w) {
+                                        $batch_total_modules += $w['quantity'];
+                                    }
+                                }
+                                ?>
+                                <div class="info-item">
+                                    <label>Total Modules:</label>
+                                    <span><?php echo number_format($batch_total_modules); ?></span>
+                                </div>
                             </div>
 
-                            <div class="batch-info-section">
-                                <h4 style="margin-bottom: 8px; color: #488C9A;">Pallet Specs</h4>
-                                <p><strong>Modules/Pallet:</strong> <?php echo $batch['modules_per_pallet'] ?? 'N/A'; ?></p>
-                                <p><strong>Pallets/Truck:</strong> <?php echo $batch['pallets_per_truck'] ?? 'N/A'; ?></p>
-                                <p><strong>Modules/Truck:</strong> <?php echo $batch['modules_per_truck'] ?? 'N/A'; ?></p>
+                            <div class="info-section">
+                                <h3>Pallet Specifications</h3>
+                                <div class="info-item">
+                                    <label>Modules per Pallet:</label>
+                                    <span><?php echo $batch['modules_per_pallet'] ?? 'N/A'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Pallets per Truck:</label>
+                                    <span><?php echo $batch['pallets_per_truck'] ?? 'N/A'; ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <label>Modules per Truck:</label>
+                                    <span><?php echo $batch['modules_per_truck'] ?? 'N/A'; ?></span>
+                                </div>
                             </div>
                         </div>
 
-                        <div style="margin-top: 15px; text-align: center;">
+                        <div class="batch-actions">
                             <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="info-action-button">
                                 View Pallets & Module Status
                             </a>
@@ -471,14 +499,12 @@
                     </div>
                 <?php endforeach; ?>
             <?php else: ?>
-                <div class="no-modules-message" style="text-align: center; color: #666; margin: 40px 0;">
+                <div class="no-data-message">
                     <p>No module batches have been added to this project yet.</p>
                     <?php if ($isGlobalAdmin): ?>
-                        <div style="margin-top: 20px;">
-                            <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" class="info-action-button">
-                                + Add Module Batch
-                            </a>
-                        </div>
+                        <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" class="info-action-button">
+                            + Add Module Batch
+                        </a>
                     <?php endif; ?>
                 </div>
             <?php endif; ?>

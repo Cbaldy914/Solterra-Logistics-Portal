@@ -245,6 +245,7 @@ function syncUnitFilters(unit) {
         btn.classList.toggle('active', btn.dataset.unit === unit);
     });
     updateShippingBoxes(unit);
+    updateAnalyticsTables(unit);
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -270,6 +271,147 @@ function updateShippingBoxes(unit) {
         countEl.textContent = (unit === 'mws') ? value.toFixed(2) : (unit === 'truckloads') ? value.toFixed(1) : Math.round(value).toLocaleString();
         unitEl.textContent = unitLabel;
     });
+}
+
+// Analytics tables data and conversion factors
+var analyticsTableData = <?php echo json_encode([
+    'sub_rows' => $sub_rows ?? [],
+    'sub_rows_status' => $sub_rows_status ?? [],
+    'combined' => [
+        'total_order' => $total_order_combined ?? 0,
+        'delivered' => $delivered_combined ?? 0,
+        'at_manufacturer' => $at_manufacturer_combined ?? 0,
+        'on_water' => $on_water_combined ?? 0,
+        'cleared_customs' => $cleared_customs_combined ?? 0,
+        'in_transit_to_warehouse' => $in_transit_to_warehouse_combined ?? 0,
+        'in_warehouse' => $in_warehouse_combined ?? 0,
+        'in_transit_to_project' => $in_transit_to_project_combined ?? 0,
+        'anticipated_quantities' => $anticipated_quantities_combined ?? []
+    ],
+    'module_type_combined' => $module_type_combined ?? 'N/A'
+], JSON_UNESCAPED_UNICODE) ?: '{}'; ?>;
+
+var conversionFactors = {
+    avgWattage: <?php echo $avg_wattage ?? 0; ?>,
+    modulesPerPallet: <?php echo $average_modules_per_pallet ?? 30; ?>,
+    palletsPerTruck: <?php echo $average_pallets_per_truck ?? 24; ?>
+};
+
+function convertValue(mwValue, unit, wattage) {
+    if (!mwValue || mwValue === 0) return 0;
+    var w = wattage || conversionFactors.avgWattage || 1;
+    if (w === 0) w = 1;
+
+    // MW value is already in MW, convert to modules first
+    var modules = (mwValue * 1000000) / w;
+
+    switch(unit) {
+        case 'modules': return Math.round(modules);
+        case 'pallets': return Math.round(modules / conversionFactors.modulesPerPallet);
+        case 'truckloads':
+            var pallets = modules / conversionFactors.modulesPerPallet;
+            return pallets / conversionFactors.palletsPerTruck;
+        default: return mwValue; // MWs
+    }
+}
+
+function formatValue(value, unit) {
+    if (unit === 'mws') return value.toFixed(2);
+    if (unit === 'truckloads') return value.toFixed(1);
+    return Math.round(value).toLocaleString();
+}
+
+function updateAnalyticsTables(unit) {
+    var table1 = document.getElementById('table1');
+    var table2 = document.getElementById('table2');
+    if (!table1 && !table2) return;
+
+    var data = analyticsTableData;
+    if (!data || !data.combined) return;
+
+    // Update Table 1 (Next 5 Weeks of Deliveries)
+    if (table1) {
+        var tbody1 = table1.querySelector('tbody');
+        if (tbody1) {
+            var allRows = tbody1.querySelectorAll('tr');
+
+            // Main combined row (first row - not a sub-row)
+            if (allRows[0] && !allRows[0].classList.contains('delivery-row')) {
+                var cells = allRows[0].querySelectorAll('td');
+                if (cells.length >= 3) {
+                    cells[1].textContent = formatValue(convertValue(data.combined.total_order, unit), unit);
+                    cells[2].textContent = formatValue(convertValue(data.combined.delivered, unit), unit);
+                    // Week columns
+                    for (var i = 0; i < (data.combined.anticipated_quantities || []).length && i + 3 < cells.length; i++) {
+                        cells[i + 3].textContent = formatValue(convertValue(data.combined.anticipated_quantities[i], unit), unit);
+                    }
+                }
+            }
+
+            // Get all sub-rows with class 'delivery-row'
+            var deliverySubRows = tbody1.querySelectorAll('tr.delivery-row');
+            var subRowKeys = Object.keys(data.sub_rows);
+
+            deliverySubRows.forEach(function(subRow, index) {
+                if (index < subRowKeys.length) {
+                    var sr = data.sub_rows[subRowKeys[index]];
+                    var cells = subRow.querySelectorAll('td');
+                    // Extract wattage from label (e.g., "585W" -> 585)
+                    var wattage = parseInt(sr.wattage_label) || conversionFactors.avgWattage;
+                    if (cells.length >= 3) {
+                        cells[1].textContent = formatValue(convertValue(sr.total_order, unit, wattage), unit);
+                        cells[2].textContent = formatValue(convertValue(sr.delivered, unit, wattage), unit);
+                        for (var i = 0; i < (sr.anticipated_quantities || []).length && i + 3 < cells.length; i++) {
+                            cells[i + 3].textContent = formatValue(convertValue(sr.anticipated_quantities[i], unit, wattage), unit);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    // Update Table 2 (Module Delivery Status)
+    if (table2) {
+        var tbody2 = table2.querySelector('tbody');
+        if (tbody2) {
+            var allRows = tbody2.querySelectorAll('tr');
+
+            // Main combined row (first row - not a sub-row)
+            if (allRows[0] && !allRows[0].classList.contains('status-row')) {
+                var cells = allRows[0].querySelectorAll('td');
+                var cellIndex = 1;
+                if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.total_order, unit), unit);
+                if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.at_manufacturer, unit), unit);
+                if (data.combined.on_water > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.on_water, unit), unit);
+                if (data.combined.cleared_customs > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.cleared_customs, unit), unit);
+                if (data.combined.in_transit_to_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.in_transit_to_warehouse, unit), unit);
+                if (data.combined.in_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.in_warehouse, unit), unit);
+                if (data.combined.in_transit_to_project > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(data.combined.in_transit_to_project, unit), unit);
+                if (cells[cellIndex]) cells[cellIndex].textContent = formatValue(convertValue(data.combined.delivered, unit), unit);
+            }
+
+            // Get all sub-rows with class 'status-row'
+            var statusSubRows = tbody2.querySelectorAll('tr.status-row');
+            var subRowStatusKeys = Object.keys(data.sub_rows_status);
+
+            statusSubRows.forEach(function(subRow, index) {
+                if (index < subRowStatusKeys.length) {
+                    var srs = data.sub_rows_status[subRowStatusKeys[index]];
+                    var cells = subRow.querySelectorAll('td');
+                    var wattage = parseInt(srs.wattage_label) || conversionFactors.avgWattage;
+                    var cellIndex = 1;
+                    if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.total_order, unit, wattage), unit);
+                    if (cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.at_manufacturer || 0, unit, wattage), unit);
+                    if (data.combined.on_water > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.on_water || 0, unit, wattage), unit);
+                    if (data.combined.cleared_customs > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.cleared_customs || 0, unit, wattage), unit);
+                    if (data.combined.in_transit_to_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.in_transit_to_warehouse || 0, unit, wattage), unit);
+                    if (data.combined.in_warehouse > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.in_warehouse || 0, unit, wattage), unit);
+                    if (data.combined.in_transit_to_project > 0 && cells[cellIndex]) cells[cellIndex++].textContent = formatValue(convertValue(srs.in_transit_to_project || 0, unit, wattage), unit);
+                    if (cells[cellIndex]) cells[cellIndex].textContent = formatValue(convertValue(srs.delivered, unit, wattage), unit);
+                }
+            });
+        }
+    }
 }
 
 // Chart initialization flags
@@ -316,6 +458,20 @@ function toggleAdminDocumentsDropdown() { toggleDropdown('documentsDropdown'); }
 function toggleCustomerDocumentsDropdown() { toggleDropdown('documentsDropdown'); }
 function toggleCustomerModulesDropdown() { toggleDropdown('modulesDropdown'); }
 function toggleCustomerReportsDropdown() { toggleDropdown('reportsDropdown'); }
+
+// Toggle sub-rows in tables (for wattage breakdowns)
+function toggleSubRows(className) {
+    const rows = document.querySelectorAll('.' + className);
+    rows.forEach(row => {
+        row.style.display = row.style.display === 'none' || row.style.display === '' ? 'table-row' : 'none';
+    });
+}
+
+// Close shipping modal
+function closeShippingModal() {
+    const modal = document.getElementById('shippingModal');
+    if (modal) modal.style.display = 'none';
+}
 
 // Shipping modals
 function showCustomerShippingModal(status) {
@@ -385,23 +541,109 @@ function initPieChart() {
     });
 }
 
+// Financial chart data from PHP
+var budgetChartData = <?php echo $budgetLineChartDataJSON ?? '{"anticipated_cost":[],"actual_cost":[]}'; ?>;
+var budgetDateLabels = <?php echo $dateLabelsForBudget ?? '[]'; ?>;
+var costPieData = <?php echo json_encode(array_values($pieChartDataFinancial ?? []), JSON_UNESCAPED_UNICODE) ?: '[0,0,0]'; ?>;
+var costPieLabels = <?php echo json_encode(array_keys($pieChartDataFinancial ?? []), JSON_UNESCAPED_UNICODE) ?: '["Freight","Warehousing","Accessorial"]'; ?>;
+var totalActualCost = <?php echo $total_logistics_cost ?? 0; ?>;
+var totalForecastedCost = <?php echo ($forecasted_freight + $forecasted_warehousing + $forecasted_accessorial) ?? 0; ?>;
+
 function initBudgetLineChart() {
     var el = document.getElementById('budgetLineChart');
     if (!el) return;
     new Chart(el.getContext('2d'), {
         type: 'line',
-        data: { labels: [], datasets: [{ label: 'Forecasted', data: [], borderColor: '#488C9A', borderDash: [5,5] }] },
-        options: { responsive: true }
+        data: {
+            labels: budgetDateLabels,
+            datasets: [
+                {
+                    label: 'Forecasted',
+                    data: budgetChartData.anticipated_cost,
+                    borderColor: '#488C9A',
+                    borderDash: [5, 5],
+                    borderWidth: 2,
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0.1
+                },
+                {
+                    label: 'Actual',
+                    data: budgetChartData.actual_cost,
+                    borderColor: '#293E4C',
+                    borderWidth: 2,
+                    fill: false,
+                    pointRadius: 0,
+                    spanGaps: false,
+                    tension: 0.1
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'top' },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.dataset.label + ': $' + (context.parsed.y || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { parser: 'yyyy-MM-dd', unit: 'week', displayFormats: { week: 'MMM d' } },
+                    title: { display: true, text: 'Date' }
+                },
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'Cost ($)' },
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toLocaleString();
+                        }
+                    }
+                }
+            }
+        }
     });
 }
 
 function initCostPieChart() {
     var el = document.getElementById('costPieChart');
     if (!el) return;
+
+    // Check if there's any data
+    var hasData = costPieData.some(v => v > 0);
+
     new Chart(el.getContext('2d'), {
         type: 'pie',
-        data: { labels: ['Freight', 'Warehousing', 'Accessorial'], datasets: [{ data: [0, 0, 0], backgroundColor: ['#488C9A', '#293E4C', '#66B2FF'] }] },
-        options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+        data: {
+            labels: costPieLabels,
+            datasets: [{
+                data: hasData ? costPieData : [1, 1, 1], // Show equal slices if no data
+                backgroundColor: ['#488C9A', '#293E4C', '#66B2FF']
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'bottom' },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            if (!hasData) return context.label + ': No data yet';
+                            var value = context.parsed || 0;
+                            var total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            var percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return context.label + ': $' + value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' (' + percentage + '%)';
+                        }
+                    }
+                }
+            }
+        }
     });
 }
 
