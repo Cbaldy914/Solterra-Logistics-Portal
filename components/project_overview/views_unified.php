@@ -228,7 +228,7 @@
                     <?php endif; ?>
                 </li>
 
-                <!-- Step 5: Project Completion -->
+                <!-- Step 5: Delivery Progress -->
                 <li class="timeline-item timeline-progress-step<?php echo $step5_completed ? ' completed' : ''; ?><?php echo $current_step == 5 ? ' current' : ''; ?>">
                     <!-- SVG Gradient Definition -->
                     <svg style="position: absolute; width: 0; height: 0;">
@@ -247,7 +247,7 @@
                     <div class="completion-hub">
                         <div class="completion-hub-inner">
                             <span class="percentage"><?php echo $project_completion_percentage; ?>%</span>
-                            <span class="percentage-label">Complete</span>
+                            <span class="percentage-label">Delivered</span>
                         </div>
                         <svg class="progress-ring" viewBox="0 0 100 100">
                             <circle class="progress-ring-track" cx="50" cy="50" r="45"></circle>
@@ -257,9 +257,9 @@
 
                     <span class="label">
                         <?php if ($step5_completed): ?>
-                            Project Completed
+                            Deliveries Complete
                         <?php else: ?>
-                            Project Completion
+                            Delivery Progress
                         <?php endif; ?>
                     </span>
                     <div class="description timeline-progress-details">
