@@ -26,7 +26,23 @@ function createReplacementPalletsFromPlan(mysqli $conn, array $planItems, int $p
         if ($totalModules <= 0) { continue; }
 
         $vendorName = ($manufacturer !== '') ? $manufacturer : 'Replacement';
-        $initialLocation = 'Manufacturer';
+
+        // Look up the actual manufacturer location address
+        $initialLocation = '';
+        if ($locationId) {
+            $stmtLoc = $conn->prepare("SELECT street_address, city, state, zip_code FROM manufacturer_locations WHERE id = ?");
+            $stmtLoc->bind_param("i", $locationId);
+            $stmtLoc->execute();
+            $stmtLoc->bind_result($street, $city, $state, $zip);
+            if ($stmtLoc->fetch()) {
+                $initialLocation = implode(', ', array_filter([$street, $city, $state, $zip]));
+            }
+            $stmtLoc->close();
+        }
+        // Fallback to manufacturer name if no location found
+        if ($initialLocation === '') {
+            $initialLocation = ($manufacturer !== '') ? $manufacturer : 'Manufacturer';
+        }
         $stmtMod = $conn->prepare('INSERT INTO modules (account_id, vendor_name, initial_location, project_id, modules_per_pallet, pallets_per_truck, modules_per_truck) VALUES (?, ?, ?, ?, ?, ?, ?)');
         $mppParam = $mpp;
         $pptParam = $ppt;
