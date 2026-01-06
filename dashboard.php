@@ -282,7 +282,8 @@ $conn->close();
         .view-toggle button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
         .view-toggle button.active { background: #fff; color: #293E4C; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
 
-        .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 320px)); gap: 20px; justify-content: start; }
+        .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 28px; justify-content: start; max-width: 1400px; margin-top: 20px; }
+        @media (min-width: 1400px) { .projects-grid { grid-template-columns: repeat(4, 1fr); } }
         .project-card { background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; overflow: hidden; transition: all 0.2s; cursor: pointer; }
         .project-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.12); }
         .project-card-image { width: 100%; height: 160px; background: #f0f2f4; position: relative; overflow: hidden; }
