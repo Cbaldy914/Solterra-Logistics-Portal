@@ -5,85 +5,47 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: login");
     exit();
 }
 
-// We'll need the user's role to decide which page to link to
-$role = isset($_SESSION['role']) ? $_SESSION['role'] : 'user'; // default to 'user' if not set
+$role = isset($_SESSION['role']) ? $_SESSION['role'] : 'user';
 
-// Database connection
 require_once '../config.php';
 $conn = getDBConnection();
-if (!$conn) {
-    die("Connection failed");
-}
+if (!$conn) { die("Connection failed"); }
 
-// Enable error reporting for debugging (remove in production)
-
-
-// 1) Determine which account(s) the user belongs to
 $user_id = $_SESSION['user_id'];
 $accountIds = [];
 
-// Get user's display name (first name if available, otherwise username)
-$displayName = $_SESSION['username']; // default to username
+$displayName = $_SESSION['username'];
 $stmtUser = $conn->prepare("SELECT first_name FROM users WHERE id = ?");
 $stmtUser->bind_param("i", $user_id);
 $stmtUser->execute();
 $stmtUser->bind_result($firstName);
 $stmtUser->fetch();
 $stmtUser->close();
-
-if (!empty($firstName)) {
-    $displayName = $firstName;
-}
+if (!empty($firstName)) { $displayName = $firstName; }
 
 if ($role === 'global_admin') {
-    // Global admins can view all accounts
     $resultAccts = $conn->query("SELECT id FROM customer_accounts");
-    if ($resultAccts) {
-        while ($row = $resultAccts->fetch_assoc()) {
-            $accountIds[] = (int)$row['id'];
-        }
-    }
+    if ($resultAccts) { while ($row = $resultAccts->fetch_assoc()) { $accountIds[] = (int)$row['id']; } }
 } else {
-    $sqlAccts = "
-        SELECT account_id
-        FROM customer_account_users
-        WHERE user_id = ?
-    ";
-    $stmtAccts = $conn->prepare($sqlAccts);
+    $stmtAccts = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ?");
     $stmtAccts->bind_param("i", $user_id);
     $stmtAccts->execute();
     $resultAccts = $stmtAccts->get_result();
-    while ($row = $resultAccts->fetch_assoc()) {
-        $accountIds[] = (int)$row['account_id'];
-    }
+    while ($row = $resultAccts->fetch_assoc()) { $accountIds[] = (int)$row['account_id']; }
     $stmtAccts->close();
 }
 
-// 2) Calculate unassigned modules
 $unassigned_modules_count = 0;
 if (count($accountIds) > 0) {
     $placeholders_unassigned = implode(',', array_fill(0, count($accountIds), '?'));
-    $sqlUnassigned = "
-        SELECT COUNT(DISTINCT umi.id) as unassigned_count
-        FROM unassigned_module_items umi
-        JOIN modules m ON umi.unassigned_module_id = m.id
-        LEFT JOIN projects p ON p.account_id IN ($placeholders_unassigned)
-        WHERE umi.id NOT IN (
-            SELECT ip.unassigned_module_item_id 
-            FROM inventory_pallets ip 
-            WHERE ip.assigned_project_id IS NOT NULL 
-            AND ip.unassigned_module_item_id IS NOT NULL
-        )
-    ";
+    $sqlUnassigned = "SELECT COUNT(DISTINCT umi.id) as unassigned_count FROM unassigned_module_items umi JOIN modules m ON umi.unassigned_module_id = m.id LEFT JOIN projects p ON p.account_id IN ($placeholders_unassigned) WHERE umi.id NOT IN (SELECT ip.unassigned_module_item_id FROM inventory_pallets ip WHERE ip.assigned_project_id IS NOT NULL AND ip.unassigned_module_item_id IS NOT NULL)";
     $stmtUnassigned = $conn->prepare($sqlUnassigned);
-    $types_unassigned = str_repeat('i', count($accountIds));
-    $stmtUnassigned->bind_param($types_unassigned, ...$accountIds);
+    $stmtUnassigned->bind_param(str_repeat('i', count($accountIds)), ...$accountIds);
     $stmtUnassigned->execute();
     $stmtUnassigned->bind_result($unassigned_modules_count);
     $stmtUnassigned->fetch();
@@ -91,98 +53,150 @@ if (count($accountIds) > 0) {
     $unassigned_modules_count = $unassigned_modules_count ?: 0;
 }
 
-// 3) If user has accounts, fetch projects for those accounts
 $projects = [];
+$dashboard_totals = [
+    'total_modules' => 0, 'total_delivered' => 0, 'total_in_storage' => 0,
+    'total_project_size_mw' => 0, 'total_ordered_mw' => 0, 'delivered_mw' => 0, 'storage_mw' => 0,
+    'health_counts' => ['on_track' => 0, 'at_risk' => 0, 'behind' => 0, 'completed' => 0]
+];
+
 if (count($accountIds) > 0) {
-    // Build an IN() clause with placeholders
     $placeholders = implode(',', array_fill(0, count($accountIds), '?'));
-    $sqlProj = "
-        SELECT id, project_name, project_address, image_url, estimated_completion_date, project_size
-        FROM projects
-        WHERE account_id IN ($placeholders)
-        ORDER BY id ASC
-    ";
-    $stmt = $conn->prepare($sqlProj);
-
-    // Bind each account_id (all integers)
-    $types = str_repeat('i', count($accountIds)); 
-    $stmt->bind_param($types, ...$accountIds);
-
+    $stmt = $conn->prepare("SELECT id, project_name, project_address, image_url, estimated_completion_date, project_size FROM projects WHERE account_id IN ($placeholders) ORDER BY id ASC");
+    $stmt->bind_param(str_repeat('i', count($accountIds)), ...$accountIds);
     $stmt->execute();
     $result = $stmt->get_result();
 
-    // 3) For each project row, gather additional data
     while ($row = $result->fetch_assoc()) {
         $project_id = $row['id'];
         $project = $row;
 
-        // ---- Fetch wattage orders
-        $stmt_wattage_orders = $conn->prepare("
-            SELECT wattage, total_order
-            FROM project_wattage_orders
-            WHERE project_id = ?
-        ");
-        $stmt_wattage_orders->bind_param("i", $project_id);
-        $stmt_wattage_orders->execute();
-        $wattage_orders_result = $stmt_wattage_orders->get_result();
-        $stmt_wattage_orders->close();
+        $stmt_wattage = $conn->prepare("SELECT wattage, total_order FROM project_wattage_orders WHERE project_id = ? ORDER BY wattage ASC");
+        $stmt_wattage->bind_param("i", $project_id);
+        $stmt_wattage->execute();
+        $wattage_result = $stmt_wattage->get_result();
+        $stmt_wattage->close();
 
         $total_order_quantity = 0;
-        while ($wattage_row = $wattage_orders_result->fetch_assoc()) {
-            $torder  = (int)$wattage_row['total_order'];
-            $total_order_quantity += $torder;
+        $weighted_wattage_sum = 0;
+        $wattage_breakdown = [];
+        while ($wattage_row = $wattage_result->fetch_assoc()) {
+            $qty = (int)$wattage_row['total_order'];
+            $watt = (float)$wattage_row['wattage'];
+            $total_order_quantity += $qty;
+            $weighted_wattage_sum += ($qty * $watt);
+            if ($qty > 0) { $wattage_breakdown[] = ['wattage' => $watt, 'quantity' => $qty, 'mw' => ($qty * $watt) / 1000000]; }
         }
-        // Use project_size from database, default to 0 if not set
-        $project['project_size'] = isset($project['project_size']) ? (float)$project['project_size'] : 0;
 
-        // ---- Modules Delivered
-        $stmt_delivered = $conn->prepare("
-            SELECT SUM(quantity) AS total_delivered
-            FROM deliveries
-            WHERE project_id = ? AND status_of_delivery = 'Delivered to Project'
-        ");
+        $avg_wattage = $total_order_quantity > 0 ? $weighted_wattage_sum / $total_order_quantity : 0;
+        $project['project_size'] = isset($project['project_size']) ? (float)$project['project_size'] : 0;
+        $project['total_modules'] = $total_order_quantity;
+        $project['wattage_breakdown'] = $wattage_breakdown;
+        $project['ordered_mw'] = ($total_order_quantity * $avg_wattage) / 1000000;
+        $project['order_progress'] = $project['project_size'] > 0 ? min(100, ($project['ordered_mw'] / $project['project_size']) * 100) : 0;
+
+        $stmt_delivered = $conn->prepare("SELECT d.wattage, SUM(d.quantity) as delivered_qty FROM deliveries d WHERE d.project_id = ? AND d.status_of_delivery = 'Delivered to Project' GROUP BY d.wattage");
         $stmt_delivered->bind_param("i", $project_id);
         $stmt_delivered->execute();
-        $stmt_delivered->bind_result($total_delivered);
-        $stmt_delivered->fetch();
+        $delivered_result = $stmt_delivered->get_result();
         $stmt_delivered->close();
-        $total_delivered = $total_delivered ? $total_delivered : 0;
 
-        // ---- Delivery Completion
-        $module_delivery_completion = 0;
-        if ($total_order_quantity > 0) {
-            $module_delivery_completion = ($total_delivered / $total_order_quantity) * 100;
+        $total_delivered = 0;
+        $delivered_mw = 0;
+        $delivered_breakdown = [];
+        while ($del_row = $delivered_result->fetch_assoc()) {
+            $del_qty = (int)$del_row['delivered_qty'];
+            $del_watt = (float)$del_row['wattage'];
+            $total_delivered += $del_qty;
+            $del_mw = ($del_qty * $del_watt) / 1000000;
+            $delivered_mw += $del_mw;
+            if ($del_qty > 0) { $delivered_breakdown[] = ['wattage' => $del_watt, 'quantity' => $del_qty, 'mw' => $del_mw]; }
         }
+        $project['delivered_modules'] = $total_delivered;
+        $project['delivered_mw'] = $delivered_mw;
+        $project['delivered_breakdown'] = $delivered_breakdown;
+        $project['delivery_progress'] = $project['project_size'] > 0 ? min(100, ($delivered_mw / $project['project_size']) * 100) : 0;
 
-        // ---- In Warehouse (current status, not historical)
-        $stmt_in_storage = $conn->prepare("
-            SELECT SUM(ip.quantity) AS total_in_storage
-            FROM inventory_pallets ip
-            WHERE ip.assigned_project_id = ? AND ip.status = 'In Warehouse'
-        ");
-        $stmt_in_storage->bind_param("i", $project_id);
-        $stmt_in_storage->execute();
-        $stmt_in_storage->bind_result($total_in_storage);
-        $stmt_in_storage->fetch();
-        $stmt_in_storage->close();
-        $total_in_storage = $total_in_storage ? $total_in_storage : 0;
+        $stmt_storage = $conn->prepare("SELECT SUM(ip.quantity) AS total_in_storage FROM inventory_pallets ip WHERE ip.assigned_project_id = ? AND ip.status = 'In Warehouse'");
+        $stmt_storage->bind_param("i", $project_id);
+        $stmt_storage->execute();
+        $stmt_storage->bind_result($total_in_storage);
+        $stmt_storage->fetch();
+        $stmt_storage->close();
+        $total_in_storage = $total_in_storage ?: 0;
+        $project['storage_modules'] = $total_in_storage;
+        $project['storage_mw'] = ($total_in_storage * $avg_wattage) / 1000000;
 
-        $modules_in_storage = 0;
-        if ($total_order_quantity > 0) {
-            $modules_in_storage = ($total_in_storage / $total_order_quantity) * 100;
+        $stmt_pallets = $conn->prepare("SELECT COUNT(*) FROM inventory_pallets WHERE assigned_project_id = ?");
+        $stmt_pallets->bind_param("i", $project_id);
+        $stmt_pallets->execute();
+        $stmt_pallets->bind_result($pallet_count);
+        $stmt_pallets->fetch();
+        $stmt_pallets->close();
+
+        $stmt_transit = $conn->prepare("SELECT SUM(quantity) FROM deliveries WHERE project_id = ? AND status_of_delivery IN ('On Water', 'In Transit to Warehouse', 'In Transit to Project')");
+        $stmt_transit->bind_param("i", $project_id);
+        $stmt_transit->execute();
+        $stmt_transit->bind_result($in_transit);
+        $stmt_transit->fetch();
+        $stmt_transit->close();
+        $project['in_transit'] = $in_transit ?: 0;
+
+        $timeline_step = 1;
+        if ($total_order_quantity > 0) $timeline_step = 2;
+        if ($pallet_count > 0) $timeline_step = 3;
+        if ($total_delivered > 0 || ($in_transit ?: 0) > 0) $timeline_step = 4;
+        if ($project['delivery_progress'] >= 100) $timeline_step = 5;
+        $project['timeline_step'] = $timeline_step;
+        $timeline_labels = [1 => 'Planning', 2 => 'Ordered', 3 => 'Palletized', 4 => 'Shipping', 5 => 'Completed'];
+        $project['timeline_label'] = $timeline_labels[$timeline_step];
+
+        $today = new DateTime();
+        $health = 'on_track';
+        $health_text = 'On Track';
+        $health_reason = 'Project is progressing normally';
+
+        if ($project['delivery_progress'] >= 100) {
+            $health = 'completed';
+            $health_text = 'Completed';
+            $health_reason = 'All modules have been delivered to the project site';
+        } elseif (!empty($project['estimated_completion_date'])) {
+            $est_date = new DateTime($project['estimated_completion_date']);
+            $diff = $today->diff($est_date);
+            $days_remaining = $diff->days;
+            $is_past = $est_date < $today;
+
+            if ($is_past && $project['delivery_progress'] < 100) {
+                $health = 'behind';
+                $health_text = 'Behind';
+                $health_reason = 'Past completion date (' . $est_date->format('M j, Y') . ') with ' . round($project['delivery_progress']) . '% delivered';
+            } elseif (!$is_past && $days_remaining <= 30 && $project['delivery_progress'] < 80) {
+                $health = 'at_risk';
+                $health_text = 'At Risk';
+                $health_reason = $days_remaining . ' days until deadline with only ' . round($project['delivery_progress']) . '% delivered';
+            } else {
+                $health_reason = $is_past ? 'Completed on schedule' : $days_remaining . ' days remaining with ' . round($project['delivery_progress']) . '% delivered';
+            }
         }
+        $project['health'] = $health;
+        $project['health_text'] = $health_text;
+        $project['health_reason'] = $health_reason;
+        $dashboard_totals['health_counts'][$health]++;
 
-        // Add these computed values
-        $project['module_delivery_completion'] = round($module_delivery_completion, 2);
-        $project['modules_in_storage']         = round($modules_in_storage, 2);
+        $dashboard_totals['total_modules'] += $total_order_quantity;
+        $dashboard_totals['total_delivered'] += $total_delivered;
+        $dashboard_totals['total_in_storage'] += $total_in_storage;
+        $dashboard_totals['total_project_size_mw'] += $project['project_size'];
+        $dashboard_totals['total_ordered_mw'] += $project['ordered_mw'];
+        $dashboard_totals['delivered_mw'] += $delivered_mw;
+        $dashboard_totals['storage_mw'] += $project['storage_mw'];
 
         $projects[] = $project;
     }
     $stmt->close();
-} 
-// else, no accounts => no projects
+}
 
-// close DB
+$mw_gap = $dashboard_totals['total_project_size_mw'] - $dashboard_totals['total_ordered_mw'];
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -190,582 +204,429 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Logistics Dashboard</title>
+    <title>Dashboard</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* Modern Dashboard Styling */
         .dashboard-header {
-            background: #ffffff;
-            color: #293E4C;
-            padding: 30px 20px;
-            border-radius: 16px;
-            margin: 20px 0 30px 0;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-            border: 1px solid #e9ecef;
-            border-left: 6px solid #488C9A;
-        }
-
-        .dashboard-header h1 {
-            margin: 0 0 8px 0;
-            font-size: 2.5em;
-            font-weight: 600;
-            color: #293E4C;
-        }
-
-        .dashboard-header p {
-            margin: 0;
-            font-size: 1.1em;
-            color: #6c757d;
-        }
-
-        /* Dashboard Stats Cards */
-        .dashboard-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-
-        .stat-card {
-            background: #ffffff;
-            padding: 25px;
-            border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-            border: 1px solid #e9ecef;
-            text-align: center;
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-            text-decoration: none;
-            color: inherit;
-            display: block;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
-            text-decoration: none;
-            color: inherit;
-        }
-
-        .stat-card.clickable {
-            cursor: pointer;
-        }
-
-        .stat-number {
-            font-size: 2.5em;
-            font-weight: 700;
-            color: #488C9A;
-            margin: 0;
-        }
-
-        .stat-label {
-            font-size: 1em;
-            color: #6c757d;
-            margin: 8px 0 0 0;
-            font-weight: 500;
-        }
-
-        .stat-icon {
-            font-size: 3em;
-            margin-bottom: 15px;
-            opacity: 0.3;
-        }
-
-        .project-item {
-            background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-            border: 1px solid #e9ecef;
-            overflow: hidden;
-            transition: all 0.3s ease;
-            cursor: pointer;
-            min-width: 300px;
-        }
-
-        .project-item:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
-        }
-
-        .project-image {
-            width: 100%;
-            height: 200px;
-            overflow: hidden;
-            position: relative;
-        }
-
-        .project-image img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transition: transform 0.3s ease;
-        }
-
-        .project-item:hover .project-image img {
-            transform: scale(1.05);
-        }
-
-        .project-title {
-            padding: 20px 20px 15px 20px;
-            background: #ffffff;
-            border-bottom: 1px solid #f1f3f4;
-        }
-
-        .project-title h3 {
-            margin: 0;
-            font-size: 1.4em;
-            color: #293E4C;
-            font-weight: 600;
-            text-align: center;
-        }
-
-        .project-title h3 a {
-            text-decoration: none;
-            color: inherit;
-        }
-
-        .project-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(45deg, rgba(72, 140, 154, 0.9), rgba(58, 110, 127, 0.9));
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            opacity: 0;
-            transition: opacity 0.3s ease;
-            z-index: 3;
-        }
-
-        .project-item:hover .project-overlay {
-            opacity: 1;
-        }
-
-        .project-overlay-text {
-            color: white;
-            font-size: 1.2em;
-            font-weight: 600;
-            text-align: center;
-        }
-
-        .project-content {
-            padding: 15px;
-            background: #fafbfc;
-            border-top: 1px solid #f1f3f4;
-        }
-
-        .project-details {
-            background: #ffffff;
-            border-radius: 8px;
-            margin-bottom: 15px;
-            border: 1px solid #f1f3f4;
-        }
-
-        .project-details p {
-            margin: 8px 0;
-            color: #495057;
-            font-size: 0.95em;
-            line-height: 1.5;
-        }
-
-        .project-details strong {
-            color: #293E4C;
-            font-weight: 600;
-        }
-
-        /* Progress Bars */
-        .progress-container {
+            background: #fff;
+            padding: 20px;
+            border-radius: 12px;
             margin: 15px 0;
-        }
-
-        .progress-label {
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            border: 1px solid #e9ecef;
+            border-left: 5px solid #488C9A;
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
-            font-size: 0.9em;
-            font-weight: 500;
-            color: #495057;
-        }
-
-        .progress-bar {
-            background: #e9ecef;
-            border-radius: 10px;
-            height: 8px;
-            overflow: hidden;
-        }
-
-        .progress-fill {
-            height: 100%;
-            border-radius: 10px;
-            transition: width 0.8s ease;
-        }
-
-        .progress-delivery {
-            background: linear-gradient(90deg, #488C9A, #5AA8B7);
-        }
-
-        .progress-storage {
-            background: linear-gradient(90deg, #fbb040, #FFC857);
-        }
-
-        /* Project Status Badge */
-        .project-status {
-            display: inline-block;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 0.8em;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-top: 15px;
-        }
-
-        .status-on-track {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .status-behind {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        .status-completed {
-            background: #cce7ff;
-            color: #004085;
-        }
-
-        /* Quick Actions Section */
-        .quick-actions {
-            background: #ffffff;
-            padding: 25px;
-            border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-            border: 1px solid #e9ecef;
-            margin-bottom: 30px;
-        }
-
-        .quick-actions h2 {
-            margin: 0 0 20px 0;
-            color: #293E4C;
-            font-size: 1.3em;
-            font-weight: 600;
-        }
-
-        .action-buttons {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            align-items: center;
+            flex-wrap: wrap;
             gap: 15px;
         }
+        .dashboard-header h1 { margin: 0; font-size: 1.8em; font-weight: 600; color: #293E4C; }
+        .dashboard-header p { margin: 4px 0 0; font-size: 0.95em; color: #6c757d; }
+        .unit-toggle { display: inline-flex; background: #f1f3f4; border-radius: 8px; padding: 3px; gap: 3px; }
+        .unit-toggle button { padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 0.85em; border: none; cursor: pointer; color: #6c757d; background: transparent; transition: all 0.2s; }
+        .unit-toggle button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
+        .unit-toggle button.active { background: #fff; color: #293E4C; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
 
-        .action-btn {
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            color: white;
-            padding: 15px 20px;
-            border: none;
-            border-radius: 12px;
-            font-weight: 600;
-            text-decoration: none;
-            text-align: center;
-            transition: all 0.3s ease;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-        }
+        .stats-charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
+        .stats-section { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        .stat-card { background: #fff; padding: 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; text-align: center; transition: transform 0.2s, box-shadow 0.2s; text-decoration: none; color: inherit; display: block; }
+        .stat-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); text-decoration: none; color: inherit; }
+        .stat-card.clickable { cursor: pointer; }
+        .stat-icon { font-size: 1.8em; margin-bottom: 6px; opacity: 0.8; }
+        .stat-number { font-size: 1.8em; font-weight: 700; color: #488C9A; margin: 0; }
+        .stat-label { font-size: 0.85em; color: #6c757d; margin: 4px 0 0; font-weight: 500; }
 
-        .action-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(72, 140, 154, 0.4);
-        }
+        .chart-card { background: #fff; padding: 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; }
+        .chart-card h3 { margin: 0 0 10px; color: #293E4C; font-size: 0.95em; font-weight: 600; }
+        .chart-content { display: flex; align-items: center; gap: 12px; }
+        .chart-container { position: relative; width: 100px; height: 100px; flex-shrink: 0; }
+        .chart-legend { flex: 1; font-size: 0.8em; }
+        .legend-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #f1f3f4; }
+        .legend-item:last-child { border-bottom: none; }
+        .legend-label { display: flex; align-items: center; gap: 6px; color: #495057; }
+        .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .legend-value { font-weight: 600; color: #293E4C; }
+        .coverage-summary { padding: 8px; background: #f8f9fa; border-radius: 6px; font-size: 0.8em; }
+        .coverage-row { display: flex; justify-content: space-between; padding: 3px 0; }
+        .coverage-row span:first-child { color: #6c757d; }
+        .coverage-row span:last-child { font-weight: 600; color: #293E4C; }
+        .coverage-row.highlight span:last-child { color: #28a745; }
+        .coverage-row.warning span:last-child { color: #dc3545; }
 
-        /* Mobile Responsiveness */
-        @media (max-width: 768px) {
-            .dashboard-header {
-                padding: 20px 15px;
-                margin: 15px 0 20px 0;
-            }
+        .section-header-row { display: flex; justify-content: space-between; align-items: center; margin: 20px 0 15px; flex-wrap: wrap; gap: 12px; }
+        .section-header { color: #293E4C; font-size: 1.4em; font-weight: 600; margin: 0; padding-bottom: 8px; border-bottom: 3px solid #488C9A; }
+        .view-toggle { display: inline-flex; background: #f1f3f4; border-radius: 8px; padding: 3px; gap: 3px; }
+        .view-toggle button { padding: 8px 14px; border-radius: 6px; font-weight: 600; font-size: 1em; border: none; cursor: pointer; color: #6c757d; background: transparent; transition: all 0.2s; }
+        .view-toggle button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
+        .view-toggle button.active { background: #fff; color: #293E4C; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
 
-            .dashboard-header h1 {
-                font-size: 2em;
-            }
+        .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+        .project-card { background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; overflow: hidden; transition: all 0.2s; cursor: pointer; }
+        .project-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.12); }
+        .project-card-image { width: 100%; height: 120px; background: #f0f2f4; position: relative; overflow: hidden; }
+        .project-card-image img { width: 100%; height: 100%; object-fit: cover; }
+        .project-card-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(45deg, rgba(72,140,154,0.9), rgba(58,110,127,0.9)); display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s; }
+        .project-card:hover .project-card-overlay { opacity: 1; }
+        .project-card-overlay span { color: #fff; font-size: 1em; font-weight: 600; }
+        .project-card-content { padding: 14px; }
+        .project-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; gap: 8px; }
+        .project-card-title { margin: 0; font-size: 1.05em; color: #293E4C; font-weight: 600; flex: 1; line-height: 1.3; }
+        .health-badge { padding: 3px 8px; border-radius: 10px; font-size: 0.65em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; cursor: help; position: relative; }
+        .health-badge:hover .health-tooltip { opacity: 1; visibility: visible; }
+        .health-tooltip { position: absolute; bottom: calc(100% + 6px); right: 0; background: #293E4C; color: #fff; padding: 8px 10px; border-radius: 6px; font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; white-space: normal; width: 180px; text-align: left; opacity: 0; visibility: hidden; transition: all 0.2s; z-index: 100; line-height: 1.4; }
+        .health-tooltip::after { content: ''; position: absolute; top: 100%; right: 10px; border: 5px solid transparent; border-top-color: #293E4C; }
+        .health-on_track { background: #d4edda; color: #155724; }
+        .health-at_risk { background: #fff3cd; color: #856404; }
+        .health-behind { background: #f8d7da; color: #721c24; }
+        .health-completed { background: #cce7ff; color: #004085; }
+        .project-card-location { color: #6c757d; font-size: 0.75em; margin-bottom: 12px; }
 
-            .user-info {
-                flex-direction: column;
-                align-items: flex-start;
-            }
+        .progress-rings-row { display: flex; justify-content: center; gap: 24px; margin-bottom: 12px; }
+        .progress-ring-item { text-align: center; cursor: pointer; padding: 6px; border-radius: 8px; transition: background 0.2s; }
+        .progress-ring-item:hover { background: #f8f9fa; }
+        .progress-ring { width: 64px; height: 64px; position: relative; margin: 0 auto 4px; }
+        .progress-ring svg { transform: rotate(-90deg); }
+        .progress-ring-bg { fill: none; stroke: #e9ecef; stroke-width: 5; }
+        .progress-ring-fill { fill: none; stroke-width: 5; stroke-linecap: round; transition: stroke-dashoffset 0.8s; }
+        .progress-ring-fill.order { stroke: #488C9A; }
+        .progress-ring-fill.delivery { stroke: #28a745; }
+        .progress-ring-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+        .progress-ring-value { font-size: 0.95em; font-weight: 700; color: #293E4C; line-height: 1; }
+        .progress-ring-label { font-size: 0.55em; color: #6c757d; }
+        .ring-title { font-size: 0.7em; color: #495057; font-weight: 500; }
+        .ring-subtitle { font-size: 0.65em; color: #999; }
 
+        .project-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+        .info-item { padding: 6px 8px; background: #f8f9fa; border-radius: 6px; }
+        .info-label { font-size: 0.65em; color: #6c757d; }
+        .info-value { font-size: 0.85em; font-weight: 600; color: #293E4C; }
 
-            .dashboard-stats {
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 15px;
-            }
+        .timeline-mini { display: flex; align-items: center; gap: 3px; padding: 6px 8px; background: #f8f9fa; border-radius: 6px; }
+        .timeline-step { flex: 1; height: 4px; background: #e9ecef; border-radius: 2px; }
+        .timeline-step.completed { background: #488C9A; }
+        .timeline-step.current { background: linear-gradient(90deg, #488C9A 50%, #e9ecef 50%); }
+        .timeline-label { font-size: 0.7em; font-weight: 600; color: #488C9A; margin-left: 6px; white-space: nowrap; }
 
-            .project-content {
-                padding: 20px;
-            }
-        }
+        .storage-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #fff3cd; border-radius: 6px; font-size: 0.7em; color: #856404; margin-top: 8px; }
+        .storage-badge strong { color: #664d03; }
 
-        /* Section Headers */
-        .section-header {
-            color: #293E4C;
-            font-size: 1.8em;
-            font-weight: 600;
-            margin: 30px 0 20px 0;
-            padding-bottom: 10px;
-            border-bottom: 3px solid #488C9A;
-            position: relative;
-        }
+        .add-project-card { display: flex; align-items: center; justify-content: center; flex-direction: column; border: 2px dashed #d0d0d0; background: #f9f9f9; color: #6c757d; min-height: 360px; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
+        .add-project-card:hover { border-color: #488C9A; background: #f0f8fa; color: #488C9A; transform: translateY(-4px); }
+        .add-project-icon { font-size: 3em; margin-bottom: 10px; }
+        .add-project-text { font-size: 1.1em; font-weight: 600; }
 
-        .section-header::after {
-            content: '';
-            position: absolute;
-            bottom: -3px;
-            left: 0;
-            width: 60px;
-            height: 3px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            border-radius: 2px;
-        }
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.3s; }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal-content { background: #fff; border-radius: 16px; padding: 24px; max-width: 420px; width: 90%; max-height: 80vh; overflow-y: auto; transform: scale(0.9); transition: transform 0.3s; }
+        .modal-overlay.active .modal-content { transform: scale(1); }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .modal-header h3 { margin: 0; color: #293E4C; font-size: 1.1em; }
+        .modal-close { background: none; border: none; font-size: 1.5em; cursor: pointer; color: #6c757d; padding: 0; line-height: 1; }
+        .modal-close:hover { color: #293E4C; }
+        .modal-summary { display: flex; align-items: center; gap: 14px; padding: 14px; background: #f8f9fa; border-radius: 10px; margin-bottom: 16px; }
+        .modal-ring { width: 70px; height: 70px; position: relative; flex-shrink: 0; }
+        .modal-ring svg { transform: rotate(-90deg); }
+        .modal-ring-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+        .modal-ring-value { font-size: 1.2em; font-weight: 700; color: #293E4C; }
+        .modal-ring-label { font-size: 0.65em; color: #6c757d; }
+        .modal-summary-info { flex: 1; }
+        .modal-summary-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 0.85em; }
+        .modal-summary-row span:first-child { color: #6c757d; }
+        .modal-summary-row span:last-child { font-weight: 600; color: #293E4C; }
+        .modal-breakdown h4 { margin: 0 0 10px; font-size: 0.9em; color: #293E4C; }
+        .breakdown-table { width: 100%; border-collapse: collapse; }
+        .breakdown-table th { text-align: left; padding: 8px 10px; background: #f8f9fa; font-size: 0.75em; font-weight: 600; color: #6c757d; border-bottom: 2px solid #e9ecef; }
+        .breakdown-table td { padding: 8px 10px; border-bottom: 1px solid #f1f3f4; font-size: 0.85em; }
+        .breakdown-table tr:last-child td { border-bottom: none; }
 
-        /* Add Project Card Style */
-        .project-item--add {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-direction: column;
-            border: 2px dashed #d0d0d0;
-            background-color: #f9f9f9;
-            color: #6c757d;
-            min-height: 480px; /* Match height of other cards */
-            text-align: center;
-        }
-        .project-item--add:hover {
-            border-color: #488C9A;
-            background-color: #f0f8fa;
-            color: #488C9A;
-            transform: translateY(-8px);
-            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
-        }
-        .add-project-icon {
-            font-size: 4em;
-            line-height: 1;
-            margin-bottom: 15px;
-        }
-        .add-project-text {
-            font-size: 1.2em;
-            font-weight: 600;
-        }
+        .projects-table-container { background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; overflow: hidden; display: none; }
+        .projects-table-container.active { display: block; }
+        .projects-grid.active { display: grid; }
+        .projects-grid:not(.active) { display: none; }
+        .projects-table { width: 100%; border-collapse: collapse; }
+        .projects-table th { background: #f8f9fa; padding: 10px 12px; text-align: left; font-weight: 600; color: #293E4C; font-size: 0.75em; border-bottom: 2px solid #e9ecef; cursor: pointer; white-space: nowrap; }
+        .projects-table th:hover { background: #e9ecef; }
+        .projects-table th .sort-icon { margin-left: 4px; opacity: 0.5; }
+        .projects-table td { padding: 10px 12px; border-bottom: 1px solid #f1f3f4; color: #495057; font-size: 0.8em; vertical-align: middle; }
+        .projects-table tr { cursor: pointer; transition: background 0.2s; }
+        .projects-table tbody tr:hover { background: #f8f9fa; }
+        .table-project-name { font-weight: 600; color: #293E4C; }
+        .table-progress { display: flex; align-items: center; gap: 6px; }
+        .table-progress-bar { flex: 1; height: 5px; background: #e9ecef; border-radius: 3px; overflow: hidden; min-width: 50px; }
+        .table-progress-fill { height: 100%; border-radius: 3px; }
+        .table-progress-fill.order { background: linear-gradient(90deg, #488C9A, #5AA8B7); }
+        .table-progress-fill.delivery { background: linear-gradient(90deg, #28a745, #34ce57); }
+        .table-progress-text { font-weight: 600; min-width: 35px; font-size: 0.9em; }
+        .table-progress-text.order { color: #488C9A; }
+        .table-progress-text.delivery { color: #28a745; }
+        .table-wattages { display: flex; flex-direction: column; gap: 1px; }
+        .table-wattage-row { font-size: 0.9em; color: #495057; }
+        .table-wattage-row strong { color: #293E4C; }
 
-        /* View Toggle Styles */
-        .view-toggle-container {
-            display: flex;
-            justify-content: center;
-            margin-bottom: 20px;
-        }
+        .no-projects { background: #fff; padding: 40px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; text-align: center; }
+        .no-projects h2 { color: #293E4C; margin-bottom: 8px; }
+        .no-projects p { color: #6c757d; }
 
-        .view-toggle {
-            display: inline-flex;
-            background: #f1f3f4;
-            border-radius: 12px;
-            padding: 4px;
-            gap: 4px;
-        }
-
-        .view-toggle a {
-            padding: 12px 24px;
-            border-radius: 10px;
-            font-weight: 600;
-            font-size: 0.95em;
-            text-decoration: none;
-            color: #6c757d;
-            transition: all 0.3s ease;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .view-toggle a:hover {
-            color: #293E4C;
-            background: rgba(255, 255, 255, 0.5);
-        }
-
-        .view-toggle a.active {
-            background: #ffffff;
-            color: #293E4C;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-
-        .view-toggle-icon {
-            font-size: 1.1em;
-        }
+        @media (max-width: 992px) { .stats-charts-row { grid-template-columns: 1fr; } .chart-content { flex-direction: column; } .chart-container { width: 80px; height: 80px; } }
+        @media (max-width: 768px) { .dashboard-header { flex-direction: column; align-items: flex-start; } .dashboard-header h1 { font-size: 1.5em; } .stats-section { grid-template-columns: repeat(2, 1fr); } .stat-number { font-size: 1.5em; } .projects-grid { grid-template-columns: 1fr; } .projects-table-container { overflow-x: auto; } .projects-table { min-width: 900px; } }
     </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <!-- Enhanced Welcome Header -->
     <div class="dashboard-header">
-        <h1>Welcome back, <?php echo htmlspecialchars($displayName); ?>!</h1>
-        <p>Here's an overview of your projects and recent activity</p>
+        <div>
+            <h1>Welcome back, <?php echo htmlspecialchars($displayName); ?>!</h1>
+            <p>Overview of your projects and modules</p>
+        </div>
+        <div class="unit-toggle">
+            <button class="active" onclick="setUnit('modules')" id="btn-modules">Modules</button>
+            <button onclick="setUnit('mw')" id="btn-mw">MW</button>
+        </div>
     </div>
 
-    <!-- View Toggle -->
-    <div class="view-toggle-container">
+    <div class="stats-charts-row">
+        <div class="stats-section">
+            <div class="stat-card clickable" onclick="document.getElementById('projects-section').scrollIntoView({behavior:'smooth'})">
+                <div class="stat-icon">📊</div>
+                <h3 class="stat-number"><?php echo count($projects); ?></h3>
+                <p class="stat-label">Active Projects</p>
+            </div>
+            <a href="warehousing_overview.php" class="stat-card clickable">
+                <div class="stat-icon">🏭</div>
+                <h3 class="stat-number">
+                    <span class="unit-modules"><?php echo number_format($dashboard_totals['total_in_storage']); ?></span>
+                    <span class="unit-mw" style="display:none"><?php echo number_format($dashboard_totals['storage_mw'], 2); ?></span>
+                </h3>
+                <p class="stat-label">In Storage</p>
+            </a>
+            <a href="modules.php" class="stat-card clickable">
+                <div class="stat-icon">📦</div>
+                <h3 class="stat-number">
+                    <span class="unit-modules"><?php echo number_format($dashboard_totals['total_modules']); ?></span>
+                    <span class="unit-mw" style="display:none"><?php echo number_format($dashboard_totals['total_ordered_mw'], 2); ?></span>
+                </h3>
+                <p class="stat-label">Total <span class="unit-label-modules">Modules</span><span class="unit-label-mw" style="display:none">MW</span></p>
+            </a>
+            <div class="stat-card">
+                <div class="stat-icon">🚚</div>
+                <h3 class="stat-number">
+                    <span class="unit-modules"><?php echo number_format($dashboard_totals['total_delivered']); ?></span>
+                    <span class="unit-mw" style="display:none"><?php echo number_format($dashboard_totals['delivered_mw'], 2); ?></span>
+                </h3>
+                <p class="stat-label">Delivered</p>
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="chart-card">
+                <h3>Project Pipeline</h3>
+                <div class="chart-content">
+                    <div class="chart-container"><canvas id="pipelineChart"></canvas></div>
+                    <div class="chart-legend">
+                        <div class="legend-item"><span class="legend-label"><span class="legend-dot" style="background:#28a745"></span>On Track</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['on_track']; ?></span></div>
+                        <div class="legend-item"><span class="legend-label"><span class="legend-dot" style="background:#ffc107"></span>At Risk</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['at_risk']; ?></span></div>
+                        <div class="legend-item"><span class="legend-label"><span class="legend-dot" style="background:#dc3545"></span>Behind</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['behind']; ?></span></div>
+                        <div class="legend-item"><span class="legend-label"><span class="legend-dot" style="background:#488C9A"></span>Done</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['completed']; ?></span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>Module Distribution</h3>
+                <div class="chart-content">
+                    <div class="chart-container"><canvas id="coverageChart"></canvas></div>
+                    <div class="chart-legend">
+                        <div class="coverage-summary">
+                            <div class="coverage-row"><span>Project Needs</span><span><?php echo number_format($dashboard_totals['total_project_size_mw'], 1); ?> MW</span></div>
+                            <div class="coverage-row"><span>MW Ordered</span><span><?php echo number_format($dashboard_totals['total_ordered_mw'], 1); ?> MW</span></div>
+                            <div class="coverage-row <?php echo $mw_gap <= 0 ? 'highlight' : 'warning'; ?>"><span><?php echo $mw_gap <= 0 ? 'Surplus' : 'Gap'; ?></span><span><?php echo number_format(abs($mw_gap), 1); ?> MW</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <?php if (!empty($projects) || in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
+    <div class="section-header-row" id="projects-section">
+        <h2 class="section-header">Your Active Projects</h2>
         <div class="view-toggle">
-            <a href="dashboard.php" class="active">
-                <span class="view-toggle-icon">📊</span>
-                Active Projects
-            </a>
-            <a href="project_planning.php">
-                <span class="view-toggle-icon">📋</span>
-                Project Planning
-            </a>
+            <button class="active" onclick="setView('grid')" id="btn-grid" title="Grid View">▦</button>
+            <button onclick="setView('table')" id="btn-table" title="Table View">☰</button>
         </div>
     </div>
 
-    <!-- Dashboard Statistics -->
-    <div class="dashboard-stats">
-        <div class="stat-card clickable" onclick="document.getElementById('projects-section').scrollIntoView({behavior: 'smooth'});">
-            <div class="stat-icon">🏗️</div>
-            <h3 class="stat-number"><?php echo count($projects); ?></h3>
-            <p class="stat-label">Active Projects</p>
+    <div class="projects-grid active" id="projects-grid">
+        <?php
+        $target_page = ($role === 'DDPm') ? 'DDPm_overview' : 'project_overview';
+        foreach ($projects as $idx => $project):
+            $est_date_display = !empty($project['estimated_completion_date']) ? (new DateTime($project['estimated_completion_date']))->format('M j, Y') : 'N/A';
+            $circ = 2 * 3.14159 * 26;
+            $order_offset = $circ - ($project['order_progress'] / 100) * $circ;
+            $delivery_offset = $circ - ($project['delivery_progress'] / 100) * $circ;
+        ?>
+        <div class="project-card" onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">
+            <div class="project-card-image">
+                <img src="<?php echo htmlspecialchars(!empty($project['image_url']) ? $project['image_url'] : 'pictures/project_default.png'); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/project_default.png'">
+                <div class="project-card-overlay"><span>View Details</span></div>
+            </div>
+            <div class="project-card-content">
+                <div class="project-card-header">
+                    <h3 class="project-card-title"><?php echo htmlspecialchars($project['project_name']); ?></h3>
+                    <span class="health-badge health-<?php echo $project['health']; ?>" onclick="event.stopPropagation()">
+                        <?php echo $project['health_text']; ?>
+                        <span class="health-tooltip"><?php echo htmlspecialchars($project['health_reason']); ?></span>
+                    </span>
+                </div>
+                <div class="project-card-location">📍 <?php echo htmlspecialchars($project['project_address']); ?></div>
+
+                <div class="progress-rings-row">
+                    <div class="progress-ring-item" onclick="event.stopPropagation();openModal('order',<?php echo $idx; ?>)">
+                        <div class="progress-ring">
+                            <svg width="64" height="64"><circle class="progress-ring-bg" cx="32" cy="32" r="26"></circle><circle class="progress-ring-fill order" cx="32" cy="32" r="26" stroke-dasharray="<?php echo $circ; ?>" stroke-dashoffset="<?php echo $order_offset; ?>"></circle></svg>
+                            <div class="progress-ring-center"><div class="progress-ring-value"><?php echo round($project['order_progress']); ?>%</div><div class="progress-ring-label">ordered</div></div>
+                        </div>
+                        <div class="ring-title">Order Progress</div>
+                        <div class="ring-subtitle"><?php echo number_format($project['ordered_mw'], 2); ?>/<?php echo number_format($project['project_size'], 2); ?> MW</div>
+                    </div>
+                    <div class="progress-ring-item" onclick="event.stopPropagation();openModal('delivery',<?php echo $idx; ?>)">
+                        <div class="progress-ring">
+                            <svg width="64" height="64"><circle class="progress-ring-bg" cx="32" cy="32" r="26"></circle><circle class="progress-ring-fill delivery" cx="32" cy="32" r="26" stroke-dasharray="<?php echo $circ; ?>" stroke-dashoffset="<?php echo $delivery_offset; ?>"></circle></svg>
+                            <div class="progress-ring-center"><div class="progress-ring-value"><?php echo round($project['delivery_progress']); ?>%</div><div class="progress-ring-label">delivered</div></div>
+                        </div>
+                        <div class="ring-title">Delivery Progress</div>
+                        <div class="ring-subtitle"><?php echo number_format($project['delivered_mw'], 2); ?>/<?php echo number_format($project['project_size'], 2); ?> MW</div>
+                    </div>
+                </div>
+
+                <div class="project-info-grid">
+                    <div class="info-item"><div class="info-label">Project Size</div><div class="info-value"><?php echo number_format($project['project_size'], 2); ?> MW</div></div>
+                    <div class="info-item"><div class="info-label">Est. Completion</div><div class="info-value"><?php echo $est_date_display; ?></div></div>
+                </div>
+
+                <div class="timeline-mini">
+                    <?php for ($i = 1; $i <= 5; $i++): ?><div class="timeline-step <?php echo $i < $project['timeline_step'] ? 'completed' : ($i == $project['timeline_step'] ? 'current' : ''); ?>"></div><?php endfor; ?>
+                    <span class="timeline-label"><?php echo $project['timeline_label']; ?></span>
+                </div>
+
+                <?php if ($project['storage_modules'] > 0): ?>
+                <div class="storage-badge">🏭 <strong><?php echo number_format($project['storage_modules']); ?></strong> in storage</div>
+                <?php endif; ?>
+            </div>
         </div>
-        <a href="modules.php" class="stat-card clickable">
-            <div class="stat-icon">📋</div>
-            <h3 class="stat-number"><?php echo number_format($unassigned_modules_count); ?></h3>
-            <p class="stat-label">Unassigned Modules</p>
-        </a>
-        <a href="warehousing_overview.php" class="stat-card clickable">
-            <div class="stat-icon">🏭</div>
-            <h3 class="stat-number">
-                <?php 
-                $total_storage = 0;
-                foreach ($projects as $project) {
-                    $total_storage += $project['modules_in_storage'];
-                }
-                echo !empty($projects) ? round($total_storage / count($projects), 1) : 0;
-                ?>%
-            </h3>
-            <p class="stat-label">Modules in Storage</p>
-        </a>
-        <div class="stat-card">
-            <div class="stat-icon">⚡</div>
-            <h3 class="stat-number">
-                <?php 
-                $total_mw = 0;
-                foreach ($projects as $project) {
-                    $total_mw += $project['project_size'];
-                }
-                echo number_format($total_mw, 1);
-                ?>
-            </h3>
-            <p class="stat-label">Total MW</p>
-        </div>
+        <?php endforeach; ?>
+        <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
+        <div class="add-project-card" onclick="window.location.href='add_project.php'"><div class="add-project-icon">+</div><div class="add-project-text">Add New Project</div></div>
+        <?php endif; ?>
     </div>
 
-    <!-- Enhanced Projects Section -->
-    <?php if (!empty($projects) || in_array($role, ['admin', 'global_admin'])): ?>
-        <h2 class="section-header" id="projects-section">Your Active Projects</h2>
-        <div class="projects-container">
-            <?php 
-            // Use role-based page link
-            $target_page = ($role === 'DDPm') ? 'DDPm_overview' : 'project_overview';
-            
-            foreach ($projects as $project): 
-                // Format completion date
-                $estimated_completion_date_display = 'N/A';
-                if (!empty($project['estimated_completion_date'])) {
-                    $dateObj = new DateTime($project['estimated_completion_date']);
-                    $estimated_completion_date_display = $dateObj->format('F j, Y');
-                }
-
-                // Determine project status
-                $status_class = 'status-on-track';
-                $status_text = 'Active';
-                if ($total_order_quantity > 0) {
-                    if ($total_delivered > 0 && $total_delivered < $total_order_quantity) {
-                        $status_class = 'status-behind';
-                        $status_text = 'In Progress';
-                    } elseif ($total_delivered >= $total_order_quantity) {
-                        $status_class = 'status-completed';
-                        $status_text = 'Completed';
-                    }
-                }
+    <div class="projects-table-container" id="projects-table">
+        <table class="projects-table">
+            <thead><tr>
+                <th onclick="sortTable(0)">Project <span class="sort-icon">↕</span></th>
+                <th onclick="sortTable(1)">Size <span class="sort-icon">↕</span></th>
+                <th>Wattages</th>
+                <th onclick="sortTable(3)">Ordered <span class="sort-icon">↕</span></th>
+                <th onclick="sortTable(4)">Delivered <span class="sort-icon">↕</span></th>
+                <th>Stage</th>
+                <th>Health</th>
+                <th onclick="sortTable(7)">Est. Complete <span class="sort-icon">↕</span></th>
+            </tr></thead>
+            <tbody>
+            <?php foreach ($projects as $project):
+                $est_date_display = !empty($project['estimated_completion_date']) ? (new DateTime($project['estimated_completion_date']))->format('M j, Y') : 'N/A';
             ?>
-                <div class="project-item" onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">
-                    <div class="project-title">
-                        <h3>
-                            <a href="<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>">
-                                <?php echo htmlspecialchars($project['project_name']); ?>
-                            </a>
-                        </h3>
-                    </div>
-                    <div class="project-image">
-                        <?php $projectImage = !empty($project['image_url']) ? $project['image_url'] : 'pictures/project_default.png'; ?>
-                        <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/project_default.png'">
-                        <div class="project-overlay">
-                            <div class="project-overlay-text">View Project Details</div>
-                        </div>
-                    </div>
-                    <div class="project-content">
-                        
-                        <div class="project-details">
-                            <p><strong>📍 Address:</strong> <?php echo htmlspecialchars($project['project_address']); ?></p>
-                            <p><strong>⚡ Project Size:</strong> <?php echo number_format($project['project_size'], 2); ?> MW</p>
-                            <p><strong>📅 Est. Completion:</strong> <?php echo $estimated_completion_date_display; ?></p>
-                        </div>
-
-                        <!-- Delivery Progress Bar -->
-                        <div class="progress-container">
-                            <div class="progress-label">
-                                <span>Delivery Progress</span>
-                                <span><?php echo $project['module_delivery_completion']; ?>%</span>
-                            </div>
-                            <div class="progress-bar">
-                                <div class="progress-fill progress-delivery" style="width: <?php echo $project['module_delivery_completion']; ?>%"></div>
-                            </div>
-                        </div>
-
-                        <!-- Storage Progress Bar -->
-                        <div class="progress-container">
-                            <div class="progress-label">
-                                <span>Modules in Storage</span>
-                                <span><?php echo $project['modules_in_storage']; ?>%</span>
-                            </div>
-                            <div class="progress-bar">
-                                <div class="progress-fill progress-storage" style="width: <?php echo $project['modules_in_storage']; ?>%"></div>
-                            </div>
-                        </div>
-
-                        <!-- Project Status Badge -->
-                        <div class="project-status <?php echo $status_class; ?>">
-                            <?php echo $status_text; ?>
-                        </div>
-                    </div>
-                </div>
+            <tr onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">
+                <td class="table-project-name"><?php echo htmlspecialchars($project['project_name']); ?></td>
+                <td><?php echo number_format($project['project_size'], 2); ?> MW</td>
+                <td><div class="table-wattages"><?php if (!empty($project['wattage_breakdown'])): foreach ($project['wattage_breakdown'] as $wb): ?><div class="table-wattage-row"><strong><?php echo number_format($wb['quantity']); ?></strong> × <?php echo (int)$wb['wattage']; ?>W</div><?php endforeach; else: ?><span style="color:#999">—</span><?php endif; ?></div></td>
+                <td><div class="table-progress"><div class="table-progress-bar"><div class="table-progress-fill order" style="width:<?php echo min($project['order_progress'], 100); ?>%"></div></div><span class="table-progress-text order"><?php echo round($project['order_progress']); ?>%</span></div></td>
+                <td><div class="table-progress"><div class="table-progress-bar"><div class="table-progress-fill delivery" style="width:<?php echo min($project['delivery_progress'], 100); ?>%"></div></div><span class="table-progress-text delivery"><?php echo round($project['delivery_progress']); ?>%</span></div></td>
+                <td><?php echo $project['timeline_label']; ?></td>
+                <td><span class="health-badge health-<?php echo $project['health']; ?>" title="<?php echo htmlspecialchars($project['health_reason']); ?>"><?php echo $project['health_text']; ?></span></td>
+                <td><?php echo $est_date_display; ?></td>
+            </tr>
             <?php endforeach; ?>
-
-            <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
-                <div class="project-item project-item--add" onclick="window.location.href='add_project.php'">
-                    <div class="add-project-icon">＋</div>
-                    <div class="add-project-text">Add New Project</div>
-                </div>
-            <?php endif; ?>
-        </div>
+            </tbody>
+        </table>
+    </div>
     <?php else: ?>
-        <div class="quick-actions">
-            <h2>🏗️ No Active Projects</h2>
-            <p style="text-align: center; color: #6c757d; margin-bottom: 20px;">
-                You don't have any active projects yet. Contact your administrator to get started.
-            </p>
-        </div>
+    <div class="no-projects"><h2>No Active Projects</h2><p>Contact your administrator to get started.</p></div>
     <?php endif; ?>
 </main>
+
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-header"><h3 id="modal-title">Breakdown</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
+        <div class="modal-summary" id="modal-summary"></div>
+        <div class="modal-breakdown"><h4 id="breakdown-title">Wattage Breakdown</h4><table class="breakdown-table"><thead><tr><th>Wattage</th><th>Quantity</th><th>MW</th></tr></thead><tbody id="breakdown-body"></tbody></table></div>
+    </div>
+</div>
+
+<script>
+const projectsData = <?php echo json_encode(array_map(function($p) {
+    return ['name'=>$p['project_name'],'project_size'=>$p['project_size'],'ordered_mw'=>$p['ordered_mw'],'order_progress'=>$p['order_progress'],'delivered_mw'=>$p['delivered_mw'],'delivery_progress'=>$p['delivery_progress'],'total_modules'=>$p['total_modules'],'delivered_modules'=>$p['delivered_modules'],'wattage_breakdown'=>$p['wattage_breakdown'],'delivered_breakdown'=>$p['delivered_breakdown']];
+}, $projects)); ?>;
+
+function openModal(type, idx) {
+    const p = projectsData[idx], modal = document.getElementById('modal-overlay'), circ = 2 * 3.14159 * 28;
+    document.getElementById('modal-title').textContent = (type === 'order' ? 'Order Progress - ' : 'Delivery Progress - ') + p.name;
+    document.getElementById('breakdown-title').textContent = type === 'order' ? 'Ordered by Wattage' : 'Delivered by Wattage';
+    const progress = type === 'order' ? p.order_progress : p.delivery_progress;
+    const mw = type === 'order' ? p.ordered_mw : p.delivered_mw;
+    const modules = type === 'order' ? p.total_modules : p.delivered_modules;
+    const breakdown = type === 'order' ? p.wattage_breakdown : p.delivered_breakdown;
+    const colorClass = type === 'order' ? 'order' : 'delivery';
+    const dashoffset = circ - (progress / 100) * circ;
+    document.getElementById('modal-summary').innerHTML = `<div class="modal-ring"><svg width="70" height="70"><circle class="progress-ring-bg" cx="35" cy="35" r="28" style="stroke-width:6"></circle><circle class="progress-ring-fill ${colorClass}" cx="35" cy="35" r="28" style="stroke-width:6;stroke-dasharray:${circ};stroke-dashoffset:${dashoffset}"></circle></svg><div class="modal-ring-center"><div class="modal-ring-value">${Math.round(progress)}%</div><div class="modal-ring-label">${type === 'order' ? 'Ordered' : 'Delivered'}</div></div></div><div class="modal-summary-info"><div class="modal-summary-row"><span>Project Size</span><span>${p.project_size.toFixed(2)} MW</span></div><div class="modal-summary-row"><span>MW ${type === 'order' ? 'Ordered' : 'Delivered'}</span><span>${mw.toFixed(2)} MW</span></div><div class="modal-summary-row"><span>Modules</span><span>${modules.toLocaleString()}</span></div></div>`;
+    document.getElementById('breakdown-body').innerHTML = breakdown.length ? breakdown.map(w => `<tr><td><strong>${Math.round(w.wattage)}W</strong></td><td>${w.quantity.toLocaleString()}</td><td>${w.mw.toFixed(3)} MW</td></tr>`).join('') : '<tr><td colspan="3" style="text-align:center;color:#999">No data</td></tr>';
+    modal.classList.add('active');
+}
+function closeModal() { document.getElementById('modal-overlay').classList.remove('active'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+function setUnit(unit) {
+    document.querySelectorAll('.unit-modules,.unit-label-modules').forEach(el => el.style.display = unit === 'modules' ? '' : 'none');
+    document.querySelectorAll('.unit-mw,.unit-label-mw').forEach(el => el.style.display = unit === 'mw' ? '' : 'none');
+    document.getElementById('btn-modules').classList.toggle('active', unit === 'modules');
+    document.getElementById('btn-mw').classList.toggle('active', unit === 'mw');
+    localStorage.setItem('dashboardUnit', unit);
+}
+function setView(view) {
+    document.getElementById('projects-grid').classList.toggle('active', view === 'grid');
+    document.getElementById('projects-table').classList.toggle('active', view === 'table');
+    document.getElementById('btn-grid').classList.toggle('active', view === 'grid');
+    document.getElementById('btn-table').classList.toggle('active', view === 'table');
+    localStorage.setItem('dashboardView', view);
+}
+let sortDir = {};
+function sortTable(col) {
+    const tbody = document.querySelector('.projects-table tbody'), rows = Array.from(tbody.querySelectorAll('tr'));
+    sortDir[col] = !sortDir[col];
+    const dir = sortDir[col] ? 1 : -1;
+    rows.sort((a, b) => {
+        let av = a.cells[col].textContent.trim(), bv = b.cells[col].textContent.trim();
+        if ([1,3,4].includes(col)) { av = parseFloat(av.replace(/[^0-9.-]/g,''))||0; bv = parseFloat(bv.replace(/[^0-9.-]/g,''))||0; return (av-bv)*dir; }
+        return av.localeCompare(bv)*dir;
+    });
+    rows.forEach(r => tbody.appendChild(r));
+}
+
+new Chart(document.getElementById('pipelineChart'), {
+    type: 'doughnut',
+    data: { labels: ['On Track','At Risk','Behind','Completed'], datasets: [{ data: [<?php echo $dashboard_totals['health_counts']['on_track'].','.$dashboard_totals['health_counts']['at_risk'].','.$dashboard_totals['health_counts']['behind'].','.$dashboard_totals['health_counts']['completed']; ?>], backgroundColor: ['#28a745','#ffc107','#dc3545','#488C9A'], borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, cutout: '60%' }
+});
+new Chart(document.getElementById('coverageChart'), {
+    type: 'doughnut',
+    data: { labels: ['Ordered','Gap'], datasets: [{ data: [<?php echo min($dashboard_totals['total_ordered_mw'], $dashboard_totals['total_project_size_mw']).','.max(0, $dashboard_totals['total_project_size_mw'] - $dashboard_totals['total_ordered_mw']); ?>], backgroundColor: ['#488C9A','#e9ecef'], borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, cutout: '60%' }
+});
+
+document.addEventListener('DOMContentLoaded', () => { setUnit(localStorage.getItem('dashboardUnit')||'modules'); setView(localStorage.getItem('dashboardView')||'grid'); });
+</script>
 </body>
 </html>
-
