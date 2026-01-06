@@ -60,9 +60,32 @@ $dashboard_totals = [
     'health_counts' => ['on_track' => 0, 'at_risk' => 0, 'behind' => 0, 'completed' => 0]
 ];
 
+// Fetch archived projects
+$archived_projects = [];
+$archived_count = 0;
+if (count($accountIds) > 0) {
+    $placeholders_archived = implode(',', array_fill(0, count($accountIds), '?'));
+    $stmtArchived = $conn->prepare("
+        SELECT ap.*, u.username as closed_by_name, ca.name as account_name
+        FROM archived_projects ap
+        LEFT JOIN users u ON ap.closed_by = u.id
+        LEFT JOIN customer_accounts ca ON ap.account_id = ca.id
+        WHERE ap.account_id IN ($placeholders_archived)
+        ORDER BY ap.closed_at DESC
+    ");
+    $stmtArchived->bind_param(str_repeat('i', count($accountIds)), ...$accountIds);
+    $stmtArchived->execute();
+    $resultArchived = $stmtArchived->get_result();
+    while ($row = $resultArchived->fetch_assoc()) {
+        $archived_projects[] = $row;
+    }
+    $stmtArchived->close();
+    $archived_count = count($archived_projects);
+}
+
 if (count($accountIds) > 0) {
     $placeholders = implode(',', array_fill(0, count($accountIds), '?'));
-    $stmt = $conn->prepare("SELECT id, project_name, project_address, image_url, estimated_completion_date, project_size FROM projects WHERE account_id IN ($placeholders) ORDER BY id ASC");
+    $stmt = $conn->prepare("SELECT id, project_name, project_address, image_url, estimated_completion_date, project_size FROM projects WHERE account_id IN ($placeholders) AND (status IS NULL OR status = 'active') ORDER BY id ASC");
     $stmt->bind_param(str_repeat('i', count($accountIds)), ...$accountIds);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -261,10 +284,30 @@ $conn->close();
 
         .section-header-row { display: flex; justify-content: space-between; align-items: center; margin: 20px 0 15px; flex-wrap: wrap; gap: 12px; }
         .section-header { color: #293E4C; font-size: 1.4em; font-weight: 600; margin: 0; padding-bottom: 8px; border-bottom: 3px solid #488C9A; }
+        .section-controls { display: flex; align-items: center; gap: 12px; }
+        .project-filter { display: inline-flex; background: #f1f3f4; border-radius: 8px; padding: 3px; gap: 3px; }
+        .project-filter button { padding: 8px 14px; border-radius: 6px; font-weight: 500; font-size: 0.85em; border: none; cursor: pointer; color: #6c757d; background: transparent; transition: all 0.2s; }
+        .project-filter button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
+        .project-filter button.active { background: #fff; color: #293E4C; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+        .project-filter .filter-count { font-size: 0.75em; background: #e9ecef; padding: 2px 6px; border-radius: 10px; margin-left: 4px; }
+        .project-filter button.active .filter-count { background: #488C9A; color: #fff; }
         .view-toggle { display: inline-flex; background: #f1f3f4; border-radius: 8px; padding: 3px; gap: 3px; }
         .view-toggle button { padding: 8px 14px; border-radius: 6px; font-weight: 600; font-size: 1em; border: none; cursor: pointer; color: #6c757d; background: transparent; transition: all 0.2s; }
         .view-toggle button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
         .view-toggle button.active { background: #fff; color: #293E4C; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+        .archived-project-card { background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; padding: 20px; transition: all 0.2s; border-left: 4px solid #6c757d; }
+        .archived-project-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
+        .archived-project-card h3 { margin: 0 0 8px; font-size: 1.1em; color: #293E4C; }
+        .archived-project-card .archived-badge { display: inline-block; padding: 3px 8px; border-radius: 10px; font-size: 0.7em; font-weight: 600; background: #e9ecef; color: #6c757d; margin-bottom: 10px; }
+        .archived-project-card .archived-meta { display: flex; gap: 16px; font-size: 0.85em; color: #6c757d; margin-bottom: 12px; flex-wrap: wrap; }
+        .archived-project-card .archived-progress { height: 6px; background: #e9ecef; border-radius: 999px; margin-bottom: 12px; overflow: hidden; }
+        .archived-project-card .archived-progress-fill { height: 100%; background: #6c757d; border-radius: 999px; }
+        .archived-project-card .archived-actions { display: flex; gap: 10px; align-items: center; }
+        .archived-project-card .btn-download { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; background: #488C9A; color: #fff; font-size: 0.85em; font-weight: 600; text-decoration: none; transition: all 0.2s; }
+        .archived-project-card .btn-download:hover { background: #3A6E7F; transform: translateY(-1px); }
+        .archived-project-card .file-size { font-size: 0.8em; color: #6c757d; }
+        #archived-projects-grid { display: none; }
+        #archived-projects-grid.active { display: grid; }
 
         .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 320px)); gap: 20px; justify-content: start; }
         .project-card { background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; overflow: hidden; transition: all 0.2s; cursor: pointer; }
@@ -446,12 +489,18 @@ $conn->close();
         </div>
     </div>
 
-    <?php if (!empty($projects) || in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
+    <?php if (!empty($projects) || !empty($archived_projects) || in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
     <div class="section-header-row" id="projects-section">
-        <h2 class="section-header">Your Active Projects</h2>
-        <div class="view-toggle">
-            <button class="active" onclick="setView('grid')" id="btn-grid" title="Grid View">▦</button>
-            <button onclick="setView('table')" id="btn-table" title="Table View">☰</button>
+        <h2 class="section-header" id="projects-section-title">Your Active Projects</h2>
+        <div class="section-controls">
+            <div class="project-filter">
+                <button class="active" onclick="setProjectFilter('active')" id="filter-active">Active <span class="filter-count"><?php echo count($projects); ?></span></button>
+                <button onclick="setProjectFilter('archived')" id="filter-archived">Archived <span class="filter-count"><?php echo $archived_count; ?></span></button>
+            </div>
+            <div class="view-toggle" id="view-toggle-active">
+                <button class="active" onclick="setView('grid')" id="btn-grid" title="Grid View">▦</button>
+                <button onclick="setView('table')" id="btn-table" title="Table View">☰</button>
+            </div>
         </div>
     </div>
 
@@ -543,6 +592,50 @@ $conn->close();
             <?php endforeach; ?>
             </tbody>
         </table>
+    </div>
+
+    <!-- Archived Projects Grid -->
+    <div class="projects-grid" id="archived-projects-grid">
+        <?php foreach ($archived_projects as $archive): ?>
+        <div class="archived-project-card">
+            <span class="archived-badge">Archived</span>
+            <h3><?php echo htmlspecialchars($archive['project_name']); ?></h3>
+            <div class="archived-meta">
+                <span>Closed <?php echo date('M j, Y', strtotime($archive['closed_at'])); ?></span>
+                <span>by <?php echo htmlspecialchars($archive['closed_by_name'] ?? 'Unknown'); ?></span>
+            </div>
+            <div class="archived-progress">
+                <div class="archived-progress-fill" style="width: <?php echo min(100, $archive['delivery_percent']); ?>%;"></div>
+            </div>
+            <div style="font-size: 0.8em; color: #6c757d; margin-bottom: 12px;">
+                <?php echo number_format($archive['delivery_percent'], 1); ?>% delivered (<?php echo number_format($archive['delivered_modules']); ?> / <?php echo number_format($archive['total_modules']); ?> modules)
+            </div>
+            <div class="archived-actions">
+                <a href="archived_projects.php?download=<?php echo (int)$archive['id']; ?>" class="btn-download" onclick="event.stopPropagation()">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12l-4-4h2.5V3h3v5H12L8 12z"/><path d="M14 14H2v-2h12v2z"/></svg>
+                    Download
+                </a>
+                <span class="file-size">
+                    <?php
+                    $size = $archive['file_size_bytes'] ?? 0;
+                    if ($size >= 1048576) {
+                        echo number_format($size / 1048576, 1) . ' MB';
+                    } elseif ($size >= 1024) {
+                        echo number_format($size / 1024, 0) . ' KB';
+                    } else {
+                        echo $size . ' B';
+                    }
+                    ?>
+                </span>
+            </div>
+        </div>
+        <?php endforeach; ?>
+        <?php if (empty($archived_projects)): ?>
+        <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: #6c757d;">
+            <p>No archived projects yet.</p>
+            <p style="font-size: 0.9em;">When projects are closed out, they will appear here.</p>
+        </div>
+        <?php endif; ?>
     </div>
     <?php else: ?>
     <div class="no-projects"><h2>No Active Projects</h2><p>Contact your administrator to get started.</p></div>
@@ -667,6 +760,38 @@ function setView(view) {
     document.getElementById('btn-table').classList.toggle('active', view === 'table');
     localStorage.setItem('dashboardView', view);
 }
+
+function setProjectFilter(filter) {
+    const activeGrid = document.getElementById('projects-grid');
+    const activeTable = document.getElementById('projects-table');
+    const archivedGrid = document.getElementById('archived-projects-grid');
+    const viewToggle = document.getElementById('view-toggle-active');
+    const sectionTitle = document.getElementById('projects-section-title');
+    const filterActive = document.getElementById('filter-active');
+    const filterArchived = document.getElementById('filter-archived');
+
+    // Update filter button states
+    filterActive.classList.toggle('active', filter === 'active');
+    filterArchived.classList.toggle('active', filter === 'archived');
+
+    if (filter === 'active') {
+        // Show active projects
+        const currentView = localStorage.getItem('dashboardView') || 'grid';
+        activeGrid.classList.toggle('active', currentView === 'grid');
+        activeTable.classList.toggle('active', currentView === 'table');
+        archivedGrid.classList.remove('active');
+        viewToggle.style.display = '';
+        sectionTitle.textContent = 'Your Active Projects';
+    } else {
+        // Show archived projects
+        activeGrid.classList.remove('active');
+        activeTable.classList.remove('active');
+        archivedGrid.classList.add('active');
+        viewToggle.style.display = 'none';
+        sectionTitle.textContent = 'Archived Projects';
+    }
+    localStorage.setItem('dashboardProjectFilter', filter);
+}
 let sortDir = {};
 function sortTable(col) {
     const tbody = document.querySelector('.projects-table tbody'), rows = Array.from(tbody.querySelectorAll('tr'));
@@ -691,7 +816,12 @@ new Chart(document.getElementById('coverageChart'), {
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, cutout: '60%' }
 });
 
-document.addEventListener('DOMContentLoaded', () => { setUnit(localStorage.getItem('dashboardUnit')||'modules'); setView(localStorage.getItem('dashboardView')||'grid'); });
+document.addEventListener('DOMContentLoaded', () => {
+    setUnit(localStorage.getItem('dashboardUnit')||'modules');
+    setView(localStorage.getItem('dashboardView')||'grid');
+    // Always default to active filter on page load
+    setProjectFilter('active');
+});
 </script>
 </body>
 </html>
