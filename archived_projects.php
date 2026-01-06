@@ -109,26 +109,47 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         .archive-header {
-            background: #fff;
-            padding: 20px;
-            margin: 0 20px 20px;
-            border-radius: 12px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
-            border: 1px solid #e9ecef;
-            border-left: 5px solid #488C9A;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .archive-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
         }
         .archive-header h1 {
-            margin: 0;
-            font-size: 1.6em;
-            font-weight: 600;
-            color: #293E4C;
+            font-size: 2.2em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
         }
         .archive-header p {
-            margin: 6px 0 0;
             color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+        @media (max-width: 768px) {
+            .archive-header { padding: 24px; border-radius: 16px; }
+            .archive-header h1 { font-size: 1.8em; }
+            .archive-header p { font-size: 1em; }
         }
         .archive-content {
-            padding: 0 20px;
+            padding: 0;
         }
         .archive-grid {
             display: grid;
@@ -237,7 +258,7 @@ $conn->close();
             color: #155724;
             padding: 14px 20px;
             border-radius: 10px;
-            margin: 0 20px 20px;
+            margin: 0 0 20px;
             border: 1px solid #c3e6cb;
         }
         .error-message {
@@ -245,7 +266,7 @@ $conn->close();
             color: #721c24;
             padding: 14px 20px;
             border-radius: 10px;
-            margin: 0 20px 20px;
+            margin: 0 0 20px;
             border: 1px solid #f5c6cb;
         }
         .empty-state {
