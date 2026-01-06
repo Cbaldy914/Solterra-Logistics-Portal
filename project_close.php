@@ -2,11 +2,15 @@
 session_name("logistics_session");
 session_start();
 
-// Admin-only page
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin'])) {
+// Allow access for all roles - export is available to everyone
+// Close-out functionality will be restricted to admin roles within the page
+if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin', 'user'])) {
     header('Location: unauthorized');
     exit();
 }
+
+// Determine if user can close out projects (admin roles only)
+$canCloseProject = in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']);
 
 require_once '../config.php';
 require_once 'document_helpers.php';
@@ -74,46 +78,29 @@ function saveStoredSummaryText($project_id, $text) {
 
 function buildDefaultSummaryText($project_row, $totals, $conn = null, $project_id = null) {
     [$total_order, $delivered, $percent] = $totals;
-    $percentDisplay = number_format($percent, 2);
+    $percentDisplay = number_format($percent, 0);
     $deliveredDisplay = number_format($delivered);
-    $totalDisplay = number_format($total_order);
 
-    $lines = [];
-    $lines[] = 'PROJECT SUMMARY';
-    $lines[] = str_repeat('=', 50);
-    $lines[] = '';
-    $lines[] = 'Project: ' . ($project_row['project_name'] ?? 'N/A');
-    $lines[] = 'Account: ' . ($project_row['account_name'] ?? 'N/A');
-    $lines[] = 'Location: ' . trim(($project_row['city'] ?? '') . ', ' . ($project_row['state'] ?? ''), ', ');
-    $lines[] = '';
+    $projectName = $project_row['project_name'] ?? 'N/A';
+    $accountName = $project_row['account_name'] ?? 'N/A';
+    $address = trim(($project_row['street_address'] ?? $project_row['project_address'] ?? '') . ', ' .
+               ($project_row['city'] ?? '') . ', ' . ($project_row['state'] ?? '') . ' ' . ($project_row['zip_code'] ?? ''), ', ');
 
-    // Delivery Progress
-    $lines[] = 'DELIVERY PROGRESS';
-    $lines[] = str_repeat('-', 30);
-    if ($total_order > 0) {
-        $lines[] = 'Completion: ' . $percentDisplay . '%';
-        $lines[] = 'Delivered: ' . $deliveredDisplay . ' of ' . $totalDisplay . ' modules';
-        if ($percent >= 100) {
-            $lines[] = 'Status: Project fully delivered';
-        } elseif ($percent >= 75) {
-            $lines[] = 'Status: Nearing completion';
-        } elseif ($percent >= 50) {
-            $lines[] = 'Status: Over halfway complete';
-        } else {
-            $lines[] = 'Status: In progress';
-        }
-    } else {
-        $lines[] = 'No wattage orders recorded for this project.';
-    }
-    $lines[] = '';
+    // Initialize additional stats
+    $deliveryCount = 0;
+    $palletCount = 0;
+    $warehouseCount = 0;
+    $totalMiles = 0;
+    $fuelConsumption = 0;
+    $emissions = 0;
+    $exceptionCount = 0;
+    $wattageInfo = '';
+    $mwDelivered = 0;
 
-    // Fetch additional data using lightweight queries (avoid heavy fetchPalletCosts)
     if ($conn && $project_id) {
-        // Lightweight Financial Summary from deliveries table
+        // Get delivery and mileage stats
         $stmtCost = $conn->prepare('SELECT
             COUNT(DISTINCT id) as delivery_count,
-            COALESCE(SUM(freight_cost), 0) as total_freight,
-            COALESCE(SUM(accessorial_costs), 0) as total_accessorial,
             COALESCE(SUM(miles), 0) as total_miles
             FROM deliveries WHERE project_id = ?');
         $stmtCost->bind_param('i', $project_id);
@@ -121,85 +108,115 @@ function buildDefaultSummaryText($project_row, $totals, $conn = null, $project_i
         $costStats = $stmtCost->get_result()->fetch_assoc();
         $stmtCost->close();
 
-        if ($costStats) {
-            $totalFreight = floatval($costStats['total_freight'] ?? 0);
-            $totalAccessorial = floatval($costStats['total_accessorial'] ?? 0);
-            $grandTotal = $totalFreight + $totalAccessorial;
+        $deliveryCount = intval($costStats['delivery_count'] ?? 0);
+        $totalMiles = floatval($costStats['total_miles'] ?? 0);
+        $fuelConsumption = $totalMiles * 0.1667;
+        $emissions = $fuelConsumption * 10.21;
 
-            if ($grandTotal > 0) {
-                $lines[] = 'FINANCIAL SUMMARY';
-                $lines[] = str_repeat('-', 30);
-                $lines[] = 'Total Freight Cost: $' . number_format($totalFreight, 2);
-                $lines[] = 'Total Accessorial Costs: $' . number_format($totalAccessorial, 2);
-                $lines[] = 'Grand Total (Freight + Accessorial): $' . number_format($grandTotal, 2);
-                $lines[] = '';
-            }
+        // Get pallet count
+        $stmtPallets = $conn->prepare('SELECT COUNT(DISTINCT ip.id) as pallet_count
+            FROM inventory_pallets ip
+            JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            JOIN modules m ON umi.unassigned_module_id = m.id
+            WHERE m.project_id = ?');
+        $stmtPallets->bind_param('i', $project_id);
+        $stmtPallets->execute();
+        $palletStats = $stmtPallets->get_result()->fetch_assoc();
+        $stmtPallets->close();
+        $palletCount = intval($palletStats['pallet_count'] ?? 0);
 
-            // Sustainability Metrics (calculated from deliveries)
-            $totalMiles = floatval($costStats['total_miles'] ?? 0);
-            if ($totalMiles > 0) {
-                $fuelConsumption = $totalMiles * 0.1667;
-                $emissions = $fuelConsumption * 10.21;
-
-                $lines[] = 'SUSTAINABILITY METRICS';
-                $lines[] = str_repeat('-', 30);
-                $lines[] = 'Total Miles Driven: ' . number_format($totalMiles, 1) . ' mi';
-                $lines[] = 'Est. Fuel Consumption: ' . number_format($fuelConsumption, 1) . ' gallons';
-                $lines[] = 'Est. CO2 Emissions: ' . number_format($emissions, 1) . ' kg';
-                $lines[] = '';
-            }
-
-            // Delivery Stats
-            $deliveryCount = intval($costStats['delivery_count'] ?? 0);
-            if ($deliveryCount > 0) {
-                $stmtDel = $conn->prepare('SELECT SUM(CASE WHEN status_of_delivery = "Delivered to Project" THEN 1 ELSE 0 END) as delivered_count FROM deliveries WHERE project_id = ?');
-                $stmtDel->bind_param('i', $project_id);
-                $stmtDel->execute();
-                $delStats = $stmtDel->get_result()->fetch_assoc();
-                $stmtDel->close();
-
-                $lines[] = 'DELIVERY STATISTICS';
-                $lines[] = str_repeat('-', 30);
-                $lines[] = 'Total Deliveries: ' . number_format($deliveryCount);
-                $lines[] = 'Completed Deliveries: ' . number_format($delStats['delivered_count'] ?? 0);
-                $lines[] = '';
-            }
-        }
-
-        // Warehouse Activity
+        // Get warehouse count
         $stmtWh = $conn->prepare('SELECT COUNT(DISTINCT warehouse_id) as wh_count FROM deliveries WHERE project_id = ? AND warehouse_id IS NOT NULL');
         $stmtWh->bind_param('i', $project_id);
         $stmtWh->execute();
         $whStats = $stmtWh->get_result()->fetch_assoc();
         $stmtWh->close();
+        $warehouseCount = intval($whStats['wh_count'] ?? 0);
 
-        if ($whStats && ($whStats['wh_count'] ?? 0) > 0) {
-            $lines[] = 'WAREHOUSING';
-            $lines[] = str_repeat('-', 30);
-            $lines[] = 'Warehouses Used: ' . number_format($whStats['wh_count']);
-            $lines[] = '';
+        // Get exception/warranty count
+        $stmtExc = $conn->prepare('SELECT COUNT(*) as exc_count FROM warranty_claims wc
+            LEFT JOIN site_scheduling ss ON wc.scheduling_id = ss.id
+            WHERE ss.project_id = ?');
+        $stmtExc->bind_param('i', $project_id);
+        $stmtExc->execute();
+        $excStats = $stmtExc->get_result()->fetch_assoc();
+        $stmtExc->close();
+        $exceptionCount = intval($excStats['exc_count'] ?? 0);
+
+        // Get wattage breakdown
+        $stmtWattage = $conn->prepare('SELECT ip.wattage, SUM(ip.quantity) as qty
+            FROM inventory_pallets ip
+            JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            JOIN modules m ON umi.unassigned_module_id = m.id
+            WHERE m.project_id = ? AND ip.status = "Delivered to Project"
+            GROUP BY ip.wattage ORDER BY qty DESC LIMIT 1');
+        $stmtWattage->bind_param('i', $project_id);
+        $stmtWattage->execute();
+        $wattageStats = $stmtWattage->get_result()->fetch_assoc();
+        $stmtWattage->close();
+        if ($wattageStats) {
+            $wattageInfo = $wattageStats['wattage'] . ' W';
+            $mwDelivered = ($wattageStats['wattage'] * $wattageStats['qty']) / 1000000;
         }
     }
 
-    // Notes Section (for user to fill in)
-    $lines[] = 'PROJECT NOTES';
-    $lines[] = str_repeat('-', 30);
-    $lines[] = 'Key Highlights:';
-    $lines[] = '- ';
-    $lines[] = '';
-    $lines[] = 'Challenges & Resolutions:';
-    $lines[] = '- ';
-    $lines[] = '';
-    $lines[] = 'Outstanding Items:';
-    $lines[] = '- ';
-    $lines[] = '';
-    $lines[] = 'Safety / Quality Notes:';
-    $lines[] = '- ';
-    $lines[] = '';
-    $lines[] = 'Customer Follow-ups:';
-    $lines[] = '- ';
+    $lines = [];
 
-    return implode("\n", $lines);
+    // Opening paragraph
+    $lines[] = "Solterra Solutions has completed logistics support for the {$projectName} project (Project ID {$project_id}) for {$accountName}. ";
+    if ($percent >= 100) {
+        $lines[] = "All module deliveries associated with this project have been received, reconciled, and closed out. ";
+    } else {
+        $lines[] = "Module deliveries for this project are currently at {$percentDisplay}% completion. ";
+    }
+
+    if ($delivered > 0) {
+        $lines[] = "A total of " . number_format($delivered) . " modules";
+        if ($wattageInfo) {
+            $lines[] = " ({$wattageInfo} each, ~" . number_format($mwDelivered, 2) . " MWdc)";
+        }
+        $lines[] = " were delivered to the project site at {$address}, achieving {$percentDisplay}% delivery against the ordered quantity.";
+    }
+    $lines[] = "\n\n";
+
+    // Project logistics overview
+    $lines[] = "Over the course of the project, Solterra coordinated inbound shipments from the manufacturer";
+    if ($warehouseCount > 0) {
+        $lines[] = ", managed intermediate warehousing at {$warehouseCount} " . ($warehouseCount == 1 ? 'facility' : 'facilities');
+    }
+    $lines[] = ", and scheduled final deliveries into the site. ";
+
+    $lines[] = "The final logistics profile for {$projectName} includes {$deliveryCount} " . ($deliveryCount == 1 ? 'delivery' : 'deliveries');
+    if ($palletCount > 0) {
+        $lines[] = " and " . number_format($palletCount) . " pallets delivered to the project";
+    }
+    $lines[] = ". All deliveries have been matched to bills of lading and proof-of-delivery documents";
+    if ($percent >= 100) {
+        $lines[] = ", with no outstanding shortages at the time of closeout";
+    }
+    $lines[] = ".\n\n";
+
+    // Exception paragraph
+    if ($exceptionCount > 0) {
+        $lines[] = number_format($exceptionCount) . " damage/exception " . ($exceptionCount == 1 ? 'event was' : 'events were') . " recorded during the project. ";
+        $lines[] = ($exceptionCount == 1 ? 'This issue was' : 'These issues were') . " handled through our warranty/exception process, with the manufacturer providing replacement material and supporting documentation. ";
+        $lines[] = "Details are included in the warranty and exception log.\n\n";
+    } else {
+        $lines[] = "No damage or exception events were recorded during this project.\n\n";
+    }
+
+    // Package contents
+    $lines[] = "As part of this data export package, we are providing:\n\n";
+    $lines[] = "Delivery & Scheduling Records - Final delivery schedule, appointment log, and BOL/POD documentation.\n\n";
+    $lines[] = "Inventory & Warehousing Records - Pallet and module inventory history, including movements through any staging warehouses.\n\n";
+    $lines[] = "Financial Summary - Logistics cost summary and pallet-level cost allocation for your internal reconciliation.\n\n";
+    $lines[] = "Sustainability Summary - An estimate of truckloads, miles driven (" . number_format($totalMiles, 0) . " mi), fuel usage (" . number_format($fuelConsumption, 0) . " gal), and associated CO2 emissions (" . number_format($emissions, 0) . " kg) for module transport supporting this project.\n\n";
+    $lines[] = "Warranty & Exception Log - Details of any recorded damage claims, including photos and proof of completion.\n\n";
+
+    // Closing paragraph
+    $lines[] = "With this package, {$projectName} data export is complete in our system. Please retain these files for your construction, finance, and asset-management records. If you have any questions about the data provided or need additional documentation, reach out to your Solterra Solutions account team and we'll be happy to help.";
+
+    return implode('', $lines);
 }
 
 function buildSummaryHtml($project_row, $summary_text, $user_row, $totals) {
@@ -689,13 +706,25 @@ function fetchProjectsForUser($conn, $user_id, $role) {
         $res = $conn->query($sql);
         return $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
     }
-    $sql = "
-        SELECT p.id, p.project_name
-        FROM projects p
-        JOIN customer_account_users cau ON p.account_id = cau.account_id
-        WHERE cau.user_id = ? AND cau.role = 'admin'
-        ORDER BY p.project_name ASC
-    ";
+    // For admin and customer_admin, show projects where they have admin access
+    if (in_array($role, ['admin', 'customer_admin'])) {
+        $sql = "
+            SELECT p.id, p.project_name
+            FROM projects p
+            JOIN customer_account_users cau ON p.account_id = cau.account_id
+            WHERE cau.user_id = ? AND cau.role = 'admin'
+            ORDER BY p.project_name ASC
+        ";
+    } else {
+        // For regular users, show projects they have access to (any role in customer_account_users)
+        $sql = "
+            SELECT DISTINCT p.id, p.project_name
+            FROM projects p
+            JOIN customer_account_users cau ON p.account_id = cau.account_id
+            WHERE cau.user_id = ?
+            ORDER BY p.project_name ASC
+        ";
+    }
     $stmt = $conn->prepare($sql);
     $stmt->bind_param('i', $user_id);
     $stmt->execute();
@@ -1291,24 +1320,25 @@ if ($posted_summary_text !== null) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Project Closure</title>
+    <title>Project Data Export<?php echo $project_row ? ' - ' . htmlspecialchars($project_row['project_name']) : ''; ?></title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
-    <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { background: linear-gradient(135deg, #f7f9fb 0%, #eef3f7 100%); }
-        .page-wrap { max-width: 1200px; margin: 30px auto; padding: 0 20px; }
+        .export-content { max-width: 1200px; margin: 0 auto; padding: 0 20px 30px; }
         .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); padding: 24px; margin-bottom: 18px; border: 1px solid #e9ecef; }
         .card h2 { margin-top: 0; color: #1f3b4d; font-weight: 700; }
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
         .pill { display: inline-flex; align-items: center; padding: 10px 14px; border-radius: 12px; background: #f1f6f9; color: #1f3b4d; font-weight: 600; font-size: 14px; }
         .pill strong { margin-right: 8px; color: #488C9A; }
-        .cta { display: inline-flex; align-items: center; gap: 10px; padding: 14px 18px; border: none; border-radius: 12px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color: #fff; font-weight: 700; cursor: pointer; box-shadow: 0 10px 20px rgba(72,140,154,0.25); transition: transform 0.1s ease, box-shadow 0.2s ease; }
+        .cta { display: inline-flex; align-items: center; gap: 10px; padding: 14px 18px; border: none; border-radius: 12px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color: #fff; font-weight: 700; cursor: pointer; box-shadow: 0 10px 20px rgba(72,140,154,0.25); transition: transform 0.1s ease, box-shadow 0.2s ease; text-decoration: none; }
         .cta:disabled { opacity: 0.55; cursor: not-allowed; box-shadow: none; }
         .cta:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 12px 26px rgba(72,140,154,0.28); }
+        .cta-secondary { background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%); box-shadow: 0 10px 20px rgba(108,117,125,0.25); }
+        .cta-secondary:not(:disabled):hover { box-shadow: 0 12px 26px rgba(108,117,125,0.28); }
         .warning { color: #c0392b; font-weight: 600; }
         .select-group { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-        select { padding: 10px 12px; border-radius: 10px; border: 1px solid #d9e2ec; min-width: 260px; }
+        select { padding: 10px 12px; border-radius: 10px; border: 1px solid #d9e2ec; min-width: 260px; font-family: inherit; font-size: 14px; }
         .badge { display: inline-block; padding: 6px 10px; border-radius: 10px; background: #e8f4f7; color: #2c6070; font-weight: 600; }
         .hero { position: relative; background: #fff; border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); border:1px solid #e9ecef; overflow:hidden; }
         .hero::before { content:''; position:absolute; top:0; left:0; right:0; height:5px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); }
@@ -1327,21 +1357,29 @@ if ($posted_summary_text !== null) {
 </head>
 <body>
 <?php include 'header.php'; ?>
-<main class="page-wrap">
+<main>
+    <?php
+    require_once 'components/breadcrumbs.php';
+    echo slp_render_breadcrumbs([
+        'project_id' => $project_id,
+        'current_label' => 'Export Data',
+    ]);
+    ?>
+    <div class="export-content">
     <div class="hero card">
         <div class="header-top">
             <div>
-                <div class="badge">Project Closure</div>
-                <h1>Deliver the final package</h1>
-                <p style="margin:6px 0 0;color:#4a5b6a;max-width:720px;">Generate a full, customer-ready archive of project documents, deliveries, sustainability reporting, and costs. Add your written summary and export everything in one click.</p>
+                <div class="badge">Project Data Export</div>
+                <h1>Export Project Data</h1>
+                <p style="margin:6px 0 0;color:#4a5b6a;max-width:720px;">Generate a comprehensive archive of project documents, deliveries, sustainability reporting, and costs. Add your written summary and export everything in one click.</p>
             </div>
             <div class="header-actions">
                 <?php if ($project_id): ?>
                     <button type="submit" class="cta" form="projectSummaryForm" name="action" value="preview_summary" formtarget="_blank">
-                        👁️ Preview Summary PDF
+                        Preview Summary PDF
                     </button>
                     <button type="submit" class="cta" form="projectSummaryForm" name="action" value="export">
-                        📦 Save Summary & Export
+                        Export All Data
                     </button>
                 <?php endif; ?>
             </div>
@@ -1404,11 +1442,11 @@ if ($posted_summary_text !== null) {
         <input type="hidden" name="project_id" value="<?php echo (int)$project_id; ?>">
         <div class="card">
             <h2>Project Summary PDF</h2>
-            <p style="margin:6px 0 12px;color:#4a5b6a;">This summary is pre-filled with project info and will be saved as a PDF for the closure package. Tweak the copy below, preview it, then export.</p>
-            <textarea name="summary_text" rows="10" style="width:100%;padding:12px;border-radius:12px;border:1px solid #d9e2ec;" required><?php echo htmlspecialchars($summary_text ?? ''); ?></textarea>
+            <p style="margin:6px 0 12px;color:#4a5b6a;">This summary is pre-filled with project data and will be saved as a PDF in the export package. Edit the text below to customize, then preview or export.</p>
+            <textarea name="summary_text" rows="16" style="width:100%;padding:12px;border-radius:12px;border:1px solid #d9e2ec;font-family:inherit;font-size:14px;line-height:1.5;" required><?php echo htmlspecialchars($summary_text ?? ''); ?></textarea>
             <div class="select-group" style="margin-top:12px;gap:10px;flex-wrap:wrap;">
-                <button type="submit" class="cta" name="action" value="preview_summary" formtarget="_blank">👁️ Preview Summary PDF</button>
-                <button type="submit" class="cta" name="action" value="export">📦 Save Summary & Export</button>
+                <button type="submit" class="cta cta-secondary" name="action" value="preview_summary" formtarget="_blank">Preview Summary PDF</button>
+                <button type="submit" class="cta" name="action" value="export">Save Summary & Export All</button>
             </div>
             <p style="margin-top:8px;color:#5f6f7d;font-size:13px;">Includes project info, delivery stats, and your notes.</p>
         </div>
@@ -1428,7 +1466,29 @@ if ($posted_summary_text !== null) {
             <div class="pill"><strong>10</strong> Photos & ordering</div>
         </div>
     </div>
+
+    <?php if ($canCloseProject): ?>
+    <div class="card" style="border: 2px solid #ffc107; background: linear-gradient(135deg, #fffef5 0%, #fff9e6 100%);">
+        <h2 style="color: #856404;">Project Close-Out (Admin Only)</h2>
+        <p style="margin:6px 0 12px;color:#856404;">
+            As an administrator, you can formally close out this project. This action indicates that all logistics work is complete and the project is finalized in the system.
+        </p>
+        <div style="background: #fff3cd; padding: 14px; border-radius: 10px; margin-bottom: 14px; border: 1px solid #ffc107;">
+            <strong style="color: #856404;">Before closing out:</strong>
+            <ul style="margin: 8px 0 0 20px; color: #664d03;">
+                <li>Ensure all deliveries are marked as complete</li>
+                <li>Verify all warranty/exception claims are resolved</li>
+                <li>Confirm all documents have been uploaded</li>
+                <li>Export and save all project data for your records</li>
+            </ul>
+        </div>
+        <p style="color:#5f6f7d;font-size:13px;margin-top:12px;">
+            <em>Note: Closing out a project does not delete any data. All historical records remain accessible.</em>
+        </p>
+    </div>
     <?php endif; ?>
+    <?php endif; ?>
+    </div><!-- /.export-content -->
 </main>
 </body>
 </html>

@@ -218,6 +218,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <a href="project_cost_details?project_id=<?php echo $project_id; ?>">Cost Report</a>
                     <a href="project_sustainability_details?project_id=<?php echo $project_id; ?>">Sustainability Report</a>
                     <a href="warranty.php?project_id=<?php echo $project_id; ?>">Exceptions</a>
+                    <a href="project_close.php?project_id=<?php echo $project_id; ?>">Export Data</a>
                 </div>
             </div>
 
