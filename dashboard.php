@@ -231,27 +231,29 @@ $conn->close();
         .unit-toggle button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
         .unit-toggle button.active { background: #fff; color: #293E4C; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
 
-        .stats-charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
-        .stats-section { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-        .stat-card { background: #fff; padding: 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; text-align: center; transition: transform 0.2s, box-shadow 0.2s; text-decoration: none; color: inherit; display: block; }
+        .stats-charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; align-items: stretch; }
+        .stats-section { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+        .stat-card { background: #fff; padding: 12px; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; text-align: center; transition: transform 0.2s, box-shadow 0.2s; text-decoration: none; color: inherit; display: block; }
         .stat-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); text-decoration: none; color: inherit; }
         .stat-card.clickable { cursor: pointer; }
-        .stat-icon { font-size: 1.8em; margin-bottom: 6px; opacity: 0.8; }
-        .stat-number { font-size: 1.8em; font-weight: 700; color: #488C9A; margin: 0; }
-        .stat-label { font-size: 0.85em; color: #6c757d; margin: 4px 0 0; font-weight: 500; }
+        .stat-icon { font-size: 1.5em; margin-bottom: 4px; opacity: 0.8; }
+        .stat-number { font-size: 1.5em; font-weight: 700; color: #488C9A; margin: 0; }
+        .stat-label { font-size: 0.8em; color: #6c757d; margin: 2px 0 0; font-weight: 500; }
 
-        .chart-card { background: #fff; padding: 16px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; }
-        .chart-card h3 { margin: 0 0 10px; color: #293E4C; font-size: 0.95em; font-weight: 600; }
-        .chart-content { display: flex; align-items: center; gap: 12px; }
-        .chart-container { position: relative; width: 100px; height: 100px; flex-shrink: 0; }
-        .chart-legend { flex: 1; font-size: 0.8em; }
-        .legend-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #f1f3f4; }
+        .charts-section { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .chart-card { background: #fff; padding: 14px; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        .chart-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
+        .chart-card h3 { margin: 0 0 8px; color: #293E4C; font-size: 0.85em; font-weight: 600; }
+        .chart-content { display: flex; align-items: center; gap: 10px; }
+        .chart-container { position: relative; width: 90px; height: 90px; flex-shrink: 0; }
+        .chart-legend { flex: 1; font-size: 0.75em; }
+        .legend-item { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-bottom: 1px solid #f1f3f4; }
         .legend-item:last-child { border-bottom: none; }
-        .legend-label { display: flex; align-items: center; gap: 6px; color: #495057; }
-        .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .legend-label { display: flex; align-items: center; gap: 5px; color: #495057; }
+        .legend-dot { width: 7px; height: 7px; border-radius: 50%; }
         .legend-value { font-weight: 600; color: #293E4C; }
-        .coverage-summary { padding: 8px; background: #f8f9fa; border-radius: 6px; font-size: 0.8em; }
-        .coverage-row { display: flex; justify-content: space-between; padding: 3px 0; }
+        .coverage-summary { padding: 6px; background: #f8f9fa; border-radius: 6px; font-size: 0.75em; }
+        .coverage-row { display: flex; justify-content: space-between; padding: 2px 0; }
         .coverage-row span:first-child { color: #6c757d; }
         .coverage-row span:last-child { font-weight: 600; color: #293E4C; }
         .coverage-row.highlight span:last-child { color: #28a745; }
@@ -264,10 +266,10 @@ $conn->close();
         .view-toggle button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
         .view-toggle button.active { background: #fff; color: #293E4C; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
 
-        .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+        .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 320px)); gap: 20px; justify-content: start; }
         .project-card { background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; overflow: hidden; transition: all 0.2s; cursor: pointer; }
         .project-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.12); }
-        .project-card-image { width: 100%; height: 120px; background: #f0f2f4; position: relative; overflow: hidden; }
+        .project-card-image { width: 100%; height: 160px; background: #f0f2f4; position: relative; overflow: hidden; }
         .project-card-image img { width: 100%; height: 100%; object-fit: cover; }
         .project-card-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(45deg, rgba(72,140,154,0.9), rgba(58,110,127,0.9)); display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s; }
         .project-card:hover .project-card-overlay { opacity: 1; }
@@ -304,12 +306,6 @@ $conn->close();
         .info-item { padding: 6px 8px; background: #f8f9fa; border-radius: 6px; }
         .info-label { font-size: 0.65em; color: #6c757d; }
         .info-value { font-size: 0.85em; font-weight: 600; color: #293E4C; }
-
-        .timeline-mini { display: flex; align-items: center; gap: 3px; padding: 6px 8px; background: #f8f9fa; border-radius: 6px; }
-        .timeline-step { flex: 1; height: 4px; background: #e9ecef; border-radius: 2px; }
-        .timeline-step.completed { background: #488C9A; }
-        .timeline-step.current { background: linear-gradient(90deg, #488C9A 50%, #e9ecef 50%); }
-        .timeline-label { font-size: 0.7em; font-weight: 600; color: #488C9A; margin-left: 6px; white-space: nowrap; }
 
         .storage-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #fff3cd; border-radius: 6px; font-size: 0.7em; color: #856404; margin-top: 8px; }
         .storage-badge strong { color: #664d03; }
@@ -371,8 +367,8 @@ $conn->close();
         .no-projects h2 { color: #293E4C; margin-bottom: 8px; }
         .no-projects p { color: #6c757d; }
 
-        @media (max-width: 992px) { .stats-charts-row { grid-template-columns: 1fr; } .chart-content { flex-direction: column; } .chart-container { width: 80px; height: 80px; } }
-        @media (max-width: 768px) { .dashboard-header { flex-direction: column; align-items: flex-start; } .dashboard-header h1 { font-size: 1.5em; } .stats-section { grid-template-columns: repeat(2, 1fr); } .stat-number { font-size: 1.5em; } .projects-grid { grid-template-columns: 1fr; } .projects-table-container { overflow-x: auto; } .projects-table { min-width: 900px; } }
+        @media (max-width: 992px) { .stats-charts-row { grid-template-columns: 1fr; } .charts-section { grid-template-columns: 1fr 1fr; } .chart-content { flex-direction: row; } .chart-container { width: 80px; height: 80px; } }
+        @media (max-width: 768px) { .dashboard-header { flex-direction: column; align-items: flex-start; } .dashboard-header h1 { font-size: 1.5em; } .stats-section { grid-template-columns: repeat(2, 1fr); } .stat-number { font-size: 1.3em; } .charts-section { grid-template-columns: 1fr; } .projects-grid { grid-template-columns: 1fr; } .projects-table-container { overflow-x: auto; } .projects-table { min-width: 900px; } }
     </style>
 </head>
 <body>
@@ -421,8 +417,8 @@ $conn->close();
                 <p class="stat-label">Delivered</p>
             </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div class="chart-card">
+        <div class="charts-section">
+            <div class="chart-card" onclick="openChartModal('pipeline')">
                 <h3>Project Pipeline</h3>
                 <div class="chart-content">
                     <div class="chart-container"><canvas id="pipelineChart"></canvas></div>
@@ -434,7 +430,7 @@ $conn->close();
                     </div>
                 </div>
             </div>
-            <div class="chart-card">
+            <div class="chart-card" onclick="openChartModal('distribution')">
                 <h3>Module Distribution</h3>
                 <div class="chart-content">
                     <div class="chart-container"><canvas id="coverageChart"></canvas></div>
@@ -507,11 +503,6 @@ $conn->close();
                     <div class="info-item"><div class="info-label">Est. Completion</div><div class="info-value"><?php echo $est_date_display; ?></div></div>
                 </div>
 
-                <div class="timeline-mini">
-                    <?php for ($i = 1; $i <= 5; $i++): ?><div class="timeline-step <?php echo $i < $project['timeline_step'] ? 'completed' : ($i == $project['timeline_step'] ? 'current' : ''); ?>"></div><?php endfor; ?>
-                    <span class="timeline-label"><?php echo $project['timeline_label']; ?></span>
-                </div>
-
                 <?php if ($project['storage_modules'] > 0): ?>
                 <div class="storage-badge">🏭 <strong><?php echo number_format($project['storage_modules']); ?></strong> in storage</div>
                 <?php endif; ?>
@@ -566,6 +557,13 @@ $conn->close();
     </div>
 </div>
 
+<div class="modal-overlay" id="chart-modal-overlay" onclick="closeChartModal()">
+    <div class="modal-content" onclick="event.stopPropagation()" style="max-width:500px">
+        <div class="modal-header"><h3 id="chart-modal-title">Chart Details</h3><button class="modal-close" onclick="closeChartModal()">&times;</button></div>
+        <div id="chart-modal-body"></div>
+    </div>
+</div>
+
 <script>
 const projectsData = <?php echo json_encode(array_map(function($p) {
     return ['name'=>$p['project_name'],'project_size'=>$p['project_size'],'ordered_mw'=>$p['ordered_mw'],'order_progress'=>$p['order_progress'],'delivered_mw'=>$p['delivered_mw'],'delivery_progress'=>$p['delivery_progress'],'total_modules'=>$p['total_modules'],'delivered_modules'=>$p['delivered_modules'],'wattage_breakdown'=>$p['wattage_breakdown'],'delivered_breakdown'=>$p['delivered_breakdown']];
@@ -586,7 +584,74 @@ function openModal(type, idx) {
     modal.classList.add('active');
 }
 function closeModal() { document.getElementById('modal-overlay').classList.remove('active'); }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+function openChartModal(type) {
+    const modal = document.getElementById('chart-modal-overlay');
+    const title = document.getElementById('chart-modal-title');
+    const body = document.getElementById('chart-modal-body');
+
+    if (type === 'pipeline') {
+        title.textContent = 'Project Pipeline - Health Status Guide';
+        body.innerHTML = `
+            <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #28a745">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span style="width:12px;height:12px;border-radius:50%;background:#28a745"></span>
+                    <strong style="color:#155724">On Track</strong>
+                </div>
+                <p style="margin:0;font-size:0.85em;color:#495057">Project is progressing normally. Delivery progress is on schedule relative to the estimated completion date.</p>
+            </div>
+            <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #ffc107">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span style="width:12px;height:12px;border-radius:50%;background:#ffc107"></span>
+                    <strong style="color:#856404">At Risk</strong>
+                </div>
+                <p style="margin:0;font-size:0.85em;color:#495057">Project has less than 30 days until the deadline AND delivery progress is below 80%. Immediate attention recommended.</p>
+            </div>
+            <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #dc3545">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span style="width:12px;height:12px;border-radius:50%;background:#dc3545"></span>
+                    <strong style="color:#721c24">Behind</strong>
+                </div>
+                <p style="margin:0;font-size:0.85em;color:#495057">Project has passed its estimated completion date and delivery is not yet 100% complete. Requires urgent action.</p>
+            </div>
+            <div style="padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #488C9A">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span style="width:12px;height:12px;border-radius:50%;background:#488C9A"></span>
+                    <strong style="color:#004085">Completed</strong>
+                </div>
+                <p style="margin:0;font-size:0.85em;color:#495057">All modules have been delivered to the project site (100% delivery progress).</p>
+            </div>
+        `;
+    } else if (type === 'distribution') {
+        title.textContent = 'Module Distribution - Coverage Guide';
+        body.innerHTML = `
+            <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px">
+                <h4 style="margin:0 0 8px;color:#293E4C;font-size:0.95em">What This Chart Shows</h4>
+                <p style="margin:0;font-size:0.85em;color:#495057">This chart compares your total ordered MW against your total project needs (combined project sizes) across all active projects.</p>
+            </div>
+            <div style="margin-bottom:16px;padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #488C9A">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span style="width:12px;height:12px;border-radius:50%;background:#488C9A"></span>
+                    <strong style="color:#293E4C">Ordered (MW)</strong>
+                </div>
+                <p style="margin:0;font-size:0.85em;color:#495057">Total megawatts of modules that have been ordered across all projects, calculated from module quantities and their wattages.</p>
+            </div>
+            <div style="padding:14px;background:#f8f9fa;border-radius:10px;border-left:4px solid #e9ecef">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span style="width:12px;height:12px;border-radius:50%;background:#e9ecef;border:1px solid #dee2e6"></span>
+                    <strong style="color:#293E4C">Gap / Surplus</strong>
+                </div>
+                <p style="margin:0;font-size:0.85em;color:#495057"><strong style="color:#dc3545">Gap:</strong> You need to order more modules to meet project requirements.<br><strong style="color:#28a745">Surplus:</strong> You have ordered more than your current project needs.</p>
+            </div>
+        `;
+    }
+
+    modal.classList.add('active');
+}
+
+function closeChartModal() { document.getElementById('chart-modal-overlay').classList.remove('active'); }
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeChartModal(); } });
 
 function setUnit(unit) {
     document.querySelectorAll('.unit-modules,.unit-label-modules').forEach(el => el.style.display = unit === 'modules' ? '' : 'none');
