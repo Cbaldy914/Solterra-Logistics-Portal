@@ -9,8 +9,11 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
     exit();
 }
 
-// Determine if user can close out projects (admin roles only)
-$canCloseProject = in_array($_SESSION['role'], ['admin', 'global_admin', 'customer_admin']);
+// Determine if user can close out projects (admin/global_admin only)
+$canCloseProject = in_array($_SESSION['role'], ['admin', 'global_admin']);
+
+// Determine if user can create/edit project summaries (admin/global_admin only)
+$canEditSummary = in_array($_SESSION['role'], ['admin', 'global_admin']);
 
 require_once '../config.php';
 require_once 'document_helpers.php';
@@ -798,26 +801,22 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     $rootPath = $tempBase . DIRECTORY_SEPARATOR . $rootName;
     ensureDir($rootPath);
 
-    // 00 Project Summary (PDF + metadata)
-    $summaryDir = $rootPath . '/00_Project_Summary';
-    ensureDir($summaryDir);
+    // 00 Project Summary (PDF + metadata) - only if summary PDF was generated
     if ($summaryPdfPath && is_file($summaryPdfPath)) {
+        $summaryDir = $rootPath . '/00_Project_Summary';
+        ensureDir($summaryDir);
         @copy($summaryPdfPath, $summaryDir . '/project_summary.pdf');
-    }
-    $summaryMeta = [
-        'project_id' => $project_id,
-        'project_name' => $project_row['project_name'] ?? '',
-        'account_name' => $project_row['account_name'] ?? '',
-        'generated_at' => date('c'),
-        'generated_by' => $user_row['email'] ?? ($user_row['username'] ?? ''),
-        'delivered_modules' => $delivered,
-        'total_ordered_modules' => $total_order,
-        'delivered_percent' => $percent,
-    ];
-    file_put_contents($summaryDir . '/summary_meta.json', json_encode($summaryMeta, JSON_PRETTY_PRINT));
-    $storedSummaryText = loadStoredSummaryText($project_id);
-    if ($storedSummaryText !== '') {
-        // Keep server-side draft for future edits; PDF is the exported artifact.
+        $summaryMeta = [
+            'project_id' => $project_id,
+            'project_name' => $project_row['project_name'] ?? '',
+            'account_name' => $project_row['account_name'] ?? '',
+            'generated_at' => date('c'),
+            'generated_by' => $user_row['email'] ?? ($user_row['username'] ?? ''),
+            'delivered_modules' => $delivered,
+            'total_ordered_modules' => $total_order,
+            'delivered_percent' => $percent,
+        ];
+        file_put_contents($summaryDir . '/summary_meta.json', json_encode($summaryMeta, JSON_PRETTY_PRINT));
     }
 
     // 02 Documents
@@ -1167,7 +1166,7 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
     $stmtPhoto->close();
 
     // README
-    $readme = "Project Closure Package
+    $readme = "Project Data Export Package
 " .
         "Project: " . ($project_row['project_name'] ?? '') . " (ID: {$project_id})
 " .
@@ -1180,10 +1179,12 @@ function collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row,
         "Delivered %: {$percent}%
 " .
         "Structure:
-" .
-        "00_Project_Summary – project_summary.pdf, summary_meta.json
-" .
-        "02_Documents – all project documents grouped by type/sub-type
+";
+    if ($summaryPdfPath && is_file($summaryPdfPath)) {
+        $readme .= "00_Project_Summary – project_summary.pdf, summary_meta.json
+";
+    }
+    $readme .= "02_Documents – all project documents grouped by type/sub-type
 " .
         "03_Modules – batches.csv, pallets.csv, pallet_movements.csv
 " .
@@ -1299,6 +1300,114 @@ if ($action === 'export' && $project_id > 0) {
     }
 }
 
+// Export data only (no summary PDF) - for non-admin users
+if ($action === 'export_data_only' && $project_id > 0) {
+    try {
+        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
+        $sustainabilityReport = fetchSustainabilityReport($conn, $project_id);
+        // Pass null for summaryPdfPath to skip summary in archive
+        [$tmpDir, $zipPath] = collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, null, $sustainabilityReport);
+
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . basename($zipPath) . '"');
+        header('Content-Length: ' . filesize($zipPath));
+
+        $handle = fopen($zipPath, 'rb');
+        if ($handle) {
+            while (!feof($handle)) {
+                echo fread($handle, 8192);
+                flush();
+            }
+            fclose($handle);
+        }
+
+        // Cleanup
+        @unlink($zipPath);
+        $it = new RecursiveDirectoryIterator($tmpDir, FilesystemIterator::SKIP_DOTS);
+        $files = new RecursiveIteratorIterator($it, RecursiveIteratorIterator::CHILD_FIRST);
+        foreach ($files as $file) {
+            $file->isDir() ? @rmdir($file->getRealPath()) : @unlink($file->getRealPath());
+        }
+        @rmdir($tmpDir);
+        exit();
+    } catch (Exception $e) {
+        $_SESSION['project_close_error'] = 'Export failed: ' . $e->getMessage();
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+}
+
+// Close-out project (admin only) - archives and marks as closed
+if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
+    $summary_text = trim($posted_summary_text ?? '');
+    if ($summary_text === '') {
+        $_SESSION['project_close_error'] = 'Please provide a project summary before closing out.';
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+    try {
+        $user_row = fetchUserRow($conn, $user_id) ?? ['username' => ''];
+        $_SESSION['project_close_summary'][$project_id] = $summary_text;
+
+        // Generate summary PDF
+        [$summaryPdfPath, ] = generateSummaryPdf($project_id, $project_row, $summary_text, $user_row, $totals);
+        $sustainabilityReport = fetchSustainabilityReport($conn, $project_id);
+
+        // Build the archive
+        [$tmpDir, $zipPath] = collectDataAndBuildArchive($conn, $project_id, $user_row, $project_row, $totals, $summaryPdfPath, $sustainabilityReport);
+
+        // Create permanent archive directory
+        $archiveDir = __DIR__ . '/uploads/archived_projects/' . $project_id;
+        if (!is_dir($archiveDir)) {
+            mkdir($archiveDir, 0755, true);
+        }
+
+        // Move zip to permanent location
+        $archiveFilename = 'Project_' . sanitizeFileName($project_row['project_name'] ?? 'project') . '_' . date('Y-m-d_His') . '.zip';
+        $permanentPath = $archiveDir . '/' . $archiveFilename;
+        copy($zipPath, $permanentPath);
+        $fileSize = filesize($permanentPath);
+
+        // Insert archive record
+        $stmtArchive = $conn->prepare('INSERT INTO archived_projects
+            (project_id, account_id, project_name, archive_path, archive_filename, file_size_bytes, closed_by, summary_text, delivery_percent, total_modules, delivered_modules)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        $archivePath = 'uploads/archived_projects/' . $project_id . '/' . $archiveFilename;
+        $accountId = $project_row['account_id'] ?? null;
+        $projectName = $project_row['project_name'] ?? '';
+        [$totalModules, $deliveredModules, $deliveryPercent] = $totals;
+        $stmtArchive->bind_param('iisssiisdii',
+            $project_id, $accountId, $projectName, $archivePath, $archiveFilename,
+            $fileSize, $user_id, $summary_text, $deliveryPercent, $totalModules, $deliveredModules);
+        $stmtArchive->execute();
+        $stmtArchive->close();
+
+        // Mark project as closed
+        $stmtClose = $conn->prepare('UPDATE projects SET status = "closed" WHERE id = ?');
+        $stmtClose->bind_param('i', $project_id);
+        $stmtClose->execute();
+        $stmtClose->close();
+
+        // Cleanup temp files
+        @unlink($zipPath);
+        $it = new RecursiveDirectoryIterator($tmpDir, FilesystemIterator::SKIP_DOTS);
+        $files = new RecursiveIteratorIterator($it, RecursiveIteratorIterator::CHILD_FIRST);
+        foreach ($files as $file) {
+            $file->isDir() ? @rmdir($file->getRealPath()) : @unlink($file->getRealPath());
+        }
+        @rmdir($tmpDir);
+
+        // Redirect to archived projects page with success message
+        $_SESSION['archive_success'] = 'Project "' . htmlspecialchars($projectName) . '" has been successfully closed out and archived.';
+        header('Location: archived_projects.php');
+        exit();
+    } catch (Exception $e) {
+        $_SESSION['project_close_error'] = 'Close-out failed: ' . $e->getMessage();
+        header('Location: project_close.php?project_id=' . $project_id);
+        exit();
+    }
+}
+
 $flash_error = $_SESSION['project_close_error'] ?? '';
 unset($_SESSION['project_close_error']);
 
@@ -1325,7 +1434,6 @@ if ($posted_summary_text !== null) {
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        .export-content { max-width: 1200px; margin: 0 auto; padding: 0 20px 30px; }
         .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); padding: 24px; margin-bottom: 18px; border: 1px solid #e9ecef; }
         .card h2 { margin-top: 0; color: #1f3b4d; font-weight: 700; }
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
@@ -1335,12 +1443,11 @@ if ($posted_summary_text !== null) {
         .cta:disabled { opacity: 0.55; cursor: not-allowed; box-shadow: none; }
         .cta:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 12px 26px rgba(72,140,154,0.28); }
         .cta-secondary { background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%); box-shadow: 0 10px 20px rgba(108,117,125,0.25); }
-        .cta-secondary:not(:disabled):hover { box-shadow: 0 12px 26px rgba(108,117,125,0.28); }
+        .cta-secondary:not(:disabled):hover { box-shadow: 0 12x 26px rgba(108,117,125,0.28); }
         .warning { color: #c0392b; font-weight: 600; }
         .select-group { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         select { padding: 10px 12px; border-radius: 10px; border: 1px solid #d9e2ec; min-width: 260px; font-family: inherit; font-size: 14px; }
-        .badge { display: inline-block; padding: 6px 10px; border-radius: 10px; background: #e8f4f7; color: #2c6070; font-weight: 600; }
-        .hero { position: relative; background: #fff; border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); border:1px solid #e9ecef; overflow:hidden; }
+        .hero { position: relative; background: #fff; border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); border:1px solid #e9ecef; overflow:hidden; margin: 0 20px 18px; }
         .hero::before { content:''; position:absolute; top:0; left:0; right:0; height:5px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); }
         .hero h1 { margin: 0; font-size: 26px; color: #1a2c38; }
         .hero .header-top { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; }
@@ -1353,6 +1460,7 @@ if ($posted_summary_text !== null) {
         .stat .value { font-size: 22px; font-weight: 700; color: #1f3b4d; }
         .flash { padding: 12px 14px; border-radius: 10px; background: #ffecec; color: #c0392b; border: 1px solid #f5c2c7; margin-bottom: 12px; }
         .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+        .export-cards { padding: 0 20px; }
     </style>
 </head>
 <body>
@@ -1365,26 +1473,33 @@ if ($posted_summary_text !== null) {
         'current_label' => 'Export Data',
     ]);
     ?>
-    <div class="export-content">
     <div class="hero card">
         <div class="header-top">
             <div>
-                <div class="badge">Project Data Export</div>
                 <h1>Export Project Data</h1>
-                <p style="margin:6px 0 0;color:#4a5b6a;max-width:720px;">Generate a comprehensive archive of project documents, deliveries, sustainability reporting, and costs. Add your written summary and export everything in one click.</p>
+                <p style="margin:6px 0 0;color:#4a5b6a;max-width:720px;">Generate a comprehensive archive of project documents, deliveries, sustainability reporting, and costs.</p>
             </div>
             <div class="header-actions">
                 <?php if ($project_id): ?>
-                    <button type="submit" class="cta" form="projectSummaryForm" name="action" value="preview_summary" formtarget="_blank">
+                    <?php if ($canEditSummary): ?>
+                    <button type="submit" class="cta cta-secondary" form="projectSummaryForm" name="action" value="preview_summary" formtarget="_blank">
                         Preview Summary PDF
                     </button>
                     <button type="submit" class="cta" form="projectSummaryForm" name="action" value="export">
                         Export All Data
                     </button>
+                    <?php else: ?>
+                    <form method="post" style="margin:0;">
+                        <input type="hidden" name="project_id" value="<?php echo (int)$project_id; ?>">
+                        <input type="hidden" name="action" value="export_data_only">
+                        <button type="submit" class="cta">Export Data</button>
+                    </form>
+                    <?php endif; ?>
                 <?php endif; ?>
             </div>
         </div>
     </div>
+    <div class="export-cards">
 
     <?php if (!empty($flash_error)): ?>
         <div class="flash"><?php echo htmlspecialchars($flash_error); ?></div>
@@ -1438,6 +1553,7 @@ if ($posted_summary_text !== null) {
         </div>
     </div>
 
+    <?php if ($canEditSummary): ?>
     <form id="projectSummaryForm" method="post" style="margin:0;">
         <input type="hidden" name="project_id" value="<?php echo (int)$project_id; ?>">
         <div class="card">
@@ -1451,11 +1567,14 @@ if ($posted_summary_text !== null) {
             <p style="margin-top:8px;color:#5f6f7d;font-size:13px;">Includes project info, delivery stats, and your notes.</p>
         </div>
     </form>
+    <?php endif; ?>
 
     <div class="card">
         <h2>Included in Export</h2>
         <div class="two-col">
+            <?php if ($canEditSummary): ?>
             <div class="pill"><strong>00</strong> Project Summary (PDF + meta)</div>
+            <?php endif; ?>
             <div class="pill"><strong>02</strong> Documents grouped by type</div>
             <div class="pill"><strong>03</strong> Module batches, pallets, movements</div>
             <div class="pill"><strong>05</strong> Deliveries, appointments, anticipated schedule</div>
@@ -1471,7 +1590,7 @@ if ($posted_summary_text !== null) {
     <div class="card" style="border: 2px solid #ffc107; background: linear-gradient(135deg, #fffef5 0%, #fff9e6 100%);">
         <h2 style="color: #856404;">Project Close-Out (Admin Only)</h2>
         <p style="margin:6px 0 12px;color:#856404;">
-            As an administrator, you can formally close out this project. This action indicates that all logistics work is complete and the project is finalized in the system.
+            As an administrator, you can formally close out this project. This will archive all project data and mark the project as closed.
         </p>
         <div style="background: #fff3cd; padding: 14px; border-radius: 10px; margin-bottom: 14px; border: 1px solid #ffc107;">
             <strong style="color: #856404;">Before closing out:</strong>
@@ -1479,16 +1598,166 @@ if ($posted_summary_text !== null) {
                 <li>Ensure all deliveries are marked as complete</li>
                 <li>Verify all warranty/exception claims are resolved</li>
                 <li>Confirm all documents have been uploaded</li>
-                <li>Export and save all project data for your records</li>
+                <li>Review and finalize the project summary above</li>
             </ul>
         </div>
+        <button type="button" class="cta" style="background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%); color: #664d03;" onclick="showCloseoutConfirm()">
+            Close Out Project
+        </button>
         <p style="color:#5f6f7d;font-size:13px;margin-top:12px;">
-            <em>Note: Closing out a project does not delete any data. All historical records remain accessible.</em>
+            <em>Note: Closing out archives all data and hides the project from active views. The archive will be available for download.</em>
         </p>
     </div>
     <?php endif; ?>
     <?php endif; ?>
-    </div><!-- /.export-content -->
+    </div><!-- /.export-cards -->
 </main>
+
+<!-- Loading Modal -->
+<div id="loadingModal" class="modal-overlay" style="display:none;">
+    <div class="modal-content" style="text-align:center; padding: 40px;">
+        <div class="spinner"></div>
+        <h3 style="margin: 20px 0 10px; color: #1f3b4d;">Processing Export...</h3>
+        <p style="color: #5f6f7d; margin: 0;">Please wait while we gather and package your project data.</p>
+    </div>
+</div>
+
+<!-- Close-out Confirmation Modal -->
+<?php if ($canCloseProject && $project_id): ?>
+<div id="closeoutModal" class="modal-overlay" style="display:none;">
+    <div class="modal-content" style="max-width: 500px;">
+        <h3 style="margin: 0 0 15px; color: #856404;">Confirm Project Close-Out</h3>
+        <p style="color: #664d03; margin-bottom: 15px;">
+            You are about to close out <strong><?php echo htmlspecialchars($project_row['project_name'] ?? ''); ?></strong>.
+        </p>
+        <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #ffc107;">
+            <p style="margin: 0; color: #664d03; font-size: 14px;">
+                <strong>This action will:</strong>
+            </p>
+            <ul style="margin: 8px 0 0 20px; color: #664d03; font-size: 14px;">
+                <li>Generate a complete archive of all project data</li>
+                <li>Mark the project as closed in the system</li>
+                <li>Hide the project from active project views</li>
+            </ul>
+        </div>
+        <p style="color: #5f6f7d; font-size: 13px; margin-bottom: 20px;">
+            The archived data will remain accessible from the Archived Projects page.
+        </p>
+        <div style="display: flex; gap: 12px; justify-content: flex-end;">
+            <button type="button" class="cta cta-secondary" onclick="hideCloseoutConfirm()">Cancel</button>
+            <form method="post" id="closeoutForm" style="margin: 0;">
+                <input type="hidden" name="project_id" value="<?php echo (int)$project_id; ?>">
+                <input type="hidden" name="action" value="close_project">
+                <input type="hidden" name="summary_text" value="">
+                <button type="submit" class="cta" style="background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%); color: #664d03;">
+                    Close Out Project
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
+<style>
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+    }
+    .modal-content {
+        background: #fff;
+        padding: 24px;
+        border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        max-width: 90%;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+    .spinner {
+        width: 50px;
+        height: 50px;
+        border: 4px solid #e9ecef;
+        border-top-color: #488C9A;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto;
+    }
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+
+<script>
+// Show loading modal on export
+document.addEventListener('DOMContentLoaded', function() {
+    // For admin export form
+    const summaryForm = document.getElementById('projectSummaryForm');
+    if (summaryForm) {
+        summaryForm.addEventListener('submit', function(e) {
+            const action = e.submitter ? e.submitter.value : '';
+            if (action === 'export') {
+                showLoadingModal();
+            }
+        });
+    }
+
+    // For non-admin export form (simple export button)
+    const exportForms = document.querySelectorAll('form[method="post"]');
+    exportForms.forEach(form => {
+        const actionInput = form.querySelector('input[name="action"]');
+        if (actionInput && actionInput.value === 'export_data_only') {
+            form.addEventListener('submit', function() {
+                showLoadingModal();
+            });
+        }
+    });
+});
+
+function showLoadingModal() {
+    document.getElementById('loadingModal').style.display = 'flex';
+    // Auto-hide after download starts (browser will handle the file)
+    setTimeout(function() {
+        document.getElementById('loadingModal').style.display = 'none';
+    }, 30000); // 30 second timeout
+}
+
+function showCloseoutConfirm() {
+    // Copy summary text to the closeout form
+    const summaryTextarea = document.querySelector('textarea[name="summary_text"]');
+    const closeoutForm = document.getElementById('closeoutForm');
+    if (summaryTextarea && closeoutForm) {
+        closeoutForm.querySelector('input[name="summary_text"]').value = summaryTextarea.value;
+    }
+    document.getElementById('closeoutModal').style.display = 'flex';
+}
+
+function hideCloseoutConfirm() {
+    document.getElementById('closeoutModal').style.display = 'none';
+}
+
+// Close modals on escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const closeoutModal = document.getElementById('closeoutModal');
+        if (closeoutModal) closeoutModal.style.display = 'none';
+    }
+});
+
+// Close modal on backdrop click
+document.querySelectorAll('.modal-overlay').forEach(modal => {
+    modal.addEventListener('click', function(e) {
+        if (e.target === this && this.id !== 'loadingModal') {
+            this.style.display = 'none';
+        }
+    });
+});
+</script>
 </body>
 </html>
