@@ -240,20 +240,20 @@ $conn->close();
         .stat-number { font-size: 1.5em; font-weight: 700; color: #488C9A; margin: 0; }
         .stat-label { font-size: 0.8em; color: #6c757d; margin: 2px 0 0; font-weight: 500; }
 
-        .charts-section { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .chart-card { background: #fff; padding: 14px; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        .charts-section { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .chart-card { background: #fff; padding: 16px; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; display: flex; flex-direction: column; }
         .chart-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
-        .chart-card h3 { margin: 0 0 8px; color: #293E4C; font-size: 0.85em; font-weight: 600; }
-        .chart-content { display: flex; align-items: center; gap: 10px; }
-        .chart-container { position: relative; width: 90px; height: 90px; flex-shrink: 0; }
-        .chart-legend { flex: 1; font-size: 0.75em; }
-        .legend-item { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-bottom: 1px solid #f1f3f4; }
+        .chart-card h3 { margin: 0 0 12px; color: #293E4C; font-size: 1em; font-weight: 600; }
+        .chart-content { display: flex; align-items: center; gap: 16px; flex: 1; }
+        .chart-container { position: relative; width: 110px; height: 110px; flex-shrink: 0; }
+        .chart-legend { flex: 1; font-size: 0.9em; }
+        .legend-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f1f3f4; }
         .legend-item:last-child { border-bottom: none; }
-        .legend-label { display: flex; align-items: center; gap: 5px; color: #495057; }
-        .legend-dot { width: 7px; height: 7px; border-radius: 50%; }
+        .legend-label { display: flex; align-items: center; gap: 8px; color: #495057; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
         .legend-value { font-weight: 600; color: #293E4C; }
-        .coverage-summary { padding: 6px; background: #f8f9fa; border-radius: 6px; font-size: 0.75em; }
-        .coverage-row { display: flex; justify-content: space-between; padding: 2px 0; }
+        .coverage-summary { padding: 10px; background: #f8f9fa; border-radius: 6px; font-size: 0.9em; }
+        .coverage-row { display: flex; justify-content: space-between; padding: 5px 0; }
         .coverage-row span:first-child { color: #6c757d; }
         .coverage-row span:last-child { font-weight: 600; color: #293E4C; }
         .coverage-row.highlight span:last-child { color: #28a745; }
@@ -367,8 +367,8 @@ $conn->close();
         .no-projects h2 { color: #293E4C; margin-bottom: 8px; }
         .no-projects p { color: #6c757d; }
 
-        @media (max-width: 992px) { .stats-charts-row { grid-template-columns: 1fr; } .charts-section { grid-template-columns: 1fr 1fr; } .chart-content { flex-direction: row; } .chart-container { width: 80px; height: 80px; } }
-        @media (max-width: 768px) { .dashboard-header { flex-direction: column; align-items: flex-start; } .dashboard-header h1 { font-size: 1.5em; } .stats-section { grid-template-columns: repeat(2, 1fr); } .stat-number { font-size: 1.3em; } .charts-section { grid-template-columns: 1fr; } .projects-grid { grid-template-columns: 1fr; } .projects-table-container { overflow-x: auto; } .projects-table { min-width: 900px; } }
+        @media (max-width: 992px) { .stats-charts-row { grid-template-columns: 1fr; } .charts-section { grid-template-columns: 1fr 1fr; } .chart-content { flex-direction: row; } .chart-container { width: 100px; height: 100px; } }
+        @media (max-width: 768px) { .dashboard-header { flex-direction: column; align-items: flex-start; } .dashboard-header h1 { font-size: 1.5em; } .stats-section { grid-template-columns: repeat(2, 1fr); } .stat-number { font-size: 1.3em; } .charts-section { grid-template-columns: 1fr; } .chart-container { width: 110px; height: 110px; } .projects-grid { grid-template-columns: 1fr; } .projects-table-container { overflow-x: auto; } .projects-table { min-width: 900px; } }
     </style>
 </head>
 <body>
