@@ -377,7 +377,7 @@ $conn->close();
     <div class="dashboard-header">
         <div>
             <h1>Welcome back, <?php echo htmlspecialchars($displayName); ?>!</h1>
-            <p>Overview of your projects and modules</p>
+            <p>Here's an overview of your projects and modules</p>
         </div>
         <div class="unit-toggle">
             <button class="active" onclick="setUnit('modules')" id="btn-modules">Modules</button>
