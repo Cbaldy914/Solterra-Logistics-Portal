@@ -278,6 +278,144 @@ $conn->close();
             color: #293E4C;
             margin-bottom: 10px;
         }
+
+        /* View Toggle */
+        .section-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .section-header {
+            color: #293E4C;
+            font-size: 1.2em;
+            font-weight: 600;
+            margin: 0;
+        }
+        .view-toggle {
+            display: inline-flex;
+            background: #f1f3f4;
+            border-radius: 8px;
+            padding: 3px;
+            gap: 3px;
+        }
+        .view-toggle button {
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 1em;
+            border: none;
+            cursor: pointer;
+            color: #6c757d;
+            background: transparent;
+            transition: all 0.2s;
+        }
+        .view-toggle button:hover {
+            color: #293E4C;
+            background: rgba(255,255,255,0.5);
+        }
+        .view-toggle button.active {
+            background: #fff;
+            color: #293E4C;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+
+        /* Grid/Table Toggle */
+        .archive-grid { display: none; }
+        .archive-grid.active { display: grid; }
+
+        /* Table View */
+        .archive-table-container {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            border: 1px solid #e9ecef;
+            overflow: hidden;
+            display: none;
+        }
+        .archive-table-container.active { display: block; }
+        .archive-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .archive-table th {
+            background: #f8f9fa;
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 0.8em;
+            border-bottom: 2px solid #e9ecef;
+            white-space: nowrap;
+        }
+        .archive-table td {
+            padding: 14px 16px;
+            border-bottom: 1px solid #f1f3f4;
+            color: #495057;
+            font-size: 0.9em;
+            vertical-align: middle;
+        }
+        .archive-table tbody tr {
+            transition: background 0.2s;
+        }
+        .archive-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+        .archive-table .project-name {
+            font-weight: 600;
+            color: #293E4C;
+        }
+        .archive-table .progress-cell {
+            min-width: 150px;
+        }
+        .archive-table .progress-bar-mini {
+            height: 6px;
+            background: #e9ecef;
+            border-radius: 999px;
+            overflow: hidden;
+            margin-bottom: 4px;
+        }
+        .archive-table .progress-fill-mini {
+            height: 100%;
+            background: linear-gradient(90deg, #4db6ac, #2c98a0);
+            border-radius: 999px;
+        }
+        .archive-table .progress-text-mini {
+            font-size: 0.8em;
+            color: #6c757d;
+        }
+        .archive-table .btn-download-sm {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.8em;
+            text-decoration: none;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.2s;
+            white-space: nowrap;
+        }
+        .archive-table .btn-download-sm:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(72,140,154,0.3);
+        }
+        .archive-table .file-size-sm {
+            font-size: 0.75em;
+            color: #6c757d;
+            margin-left: 8px;
+        }
+
+        @media (max-width: 768px) {
+            .archive-table-container { overflow-x: auto; }
+            .archive-table { min-width: 800px; }
+        }
     </style>
 </head>
 <body>
@@ -308,7 +446,15 @@ $conn->close();
             <p>When projects are closed out, their archives will appear here.</p>
         </div>
         <?php else: ?>
-        <div class="archive-grid">
+        <div class="section-header-row">
+            <h2 class="section-header"><?php echo count($archives); ?> Archived Project<?php echo count($archives) !== 1 ? 's' : ''; ?></h2>
+            <div class="view-toggle">
+                <button class="active" onclick="setView('grid')" id="btn-grid" title="Grid View">▦</button>
+                <button onclick="setView('table')" id="btn-table" title="Table View">☰</button>
+            </div>
+        </div>
+
+        <div class="archive-grid active" id="archive-grid">
             <?php foreach ($archives as $archive): ?>
             <div class="archive-card">
                 <div class="archive-card-header">
@@ -371,8 +517,81 @@ $conn->close();
             </div>
             <?php endforeach; ?>
         </div>
+
+        <div class="archive-table-container" id="archive-table">
+            <table class="archive-table">
+                <thead>
+                    <tr>
+                        <th>Project Name</th>
+                        <th>Account</th>
+                        <th>Closed By</th>
+                        <th>Closed On</th>
+                        <th>Delivery Progress</th>
+                        <th>Download</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($archives as $archive): ?>
+                    <tr>
+                        <td class="project-name"><?php echo htmlspecialchars($archive['project_name']); ?></td>
+                        <td><?php echo htmlspecialchars($archive['account_name'] ?? 'N/A'); ?></td>
+                        <td><?php echo htmlspecialchars($archive['closed_by_name'] ?? 'Unknown'); ?></td>
+                        <td><?php echo date('M j, Y', strtotime($archive['closed_at'])); ?></td>
+                        <td class="progress-cell">
+                            <div class="progress-bar-mini">
+                                <div class="progress-fill-mini" style="width: <?php echo min(100, $archive['delivery_percent']); ?>%;"></div>
+                            </div>
+                            <div class="progress-text-mini">
+                                <?php echo number_format($archive['delivery_percent'], 1); ?>%
+                                (<?php echo number_format($archive['delivered_modules']); ?>/<?php echo number_format($archive['total_modules']); ?>)
+                            </div>
+                        </td>
+                        <td>
+                            <a href="?download=<?php echo (int)$archive['id']; ?>" class="btn-download-sm">
+                                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M8 12l-4-4h2.5V3h3v5H12L8 12z"/>
+                                    <path d="M14 14H2v-2h12v2z"/>
+                                </svg>
+                                Download
+                            </a>
+                            <span class="file-size-sm">
+                                <?php
+                                $size = $archive['file_size_bytes'] ?? 0;
+                                if ($size >= 1073741824) {
+                                    echo number_format($size / 1073741824, 2) . ' GB';
+                                } elseif ($size >= 1048576) {
+                                    echo number_format($size / 1048576, 1) . ' MB';
+                                } elseif ($size >= 1024) {
+                                    echo number_format($size / 1024, 0) . ' KB';
+                                } else {
+                                    echo $size . ' B';
+                                }
+                                ?>
+                            </span>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
         <?php endif; ?>
     </div>
 </main>
+
+<script>
+function setView(view) {
+    document.getElementById('archive-grid').classList.toggle('active', view === 'grid');
+    document.getElementById('archive-table').classList.toggle('active', view === 'table');
+    document.getElementById('btn-grid').classList.toggle('active', view === 'grid');
+    document.getElementById('btn-table').classList.toggle('active', view === 'table');
+    localStorage.setItem('archivedProjectsView', view);
+}
+
+// Restore saved view preference
+document.addEventListener('DOMContentLoaded', function() {
+    const savedView = localStorage.getItem('archivedProjectsView') || 'grid';
+    setView(savedView);
+});
+</script>
 </body>
 </html>
