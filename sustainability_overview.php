@@ -121,7 +121,6 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         .page-header {
-            background: linear-gradient(135deg, #f8f9fa 0%, #e8f4f7 100%);
             border-radius: 24px;
             padding: 32px;
             margin-bottom: 32px;
