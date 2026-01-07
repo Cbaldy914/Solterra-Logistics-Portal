@@ -222,21 +222,38 @@ $conn->close();
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         .dashboard-header {
-            background: #fff;
-            padding: 20px;
-            border-radius: 12px;
-            margin: 15px 0;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
-            border: 1px solid #e9ecef;
-            border-left: 5px solid #488C9A;
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
-            gap: 15px;
+            gap: 20px;
         }
-        .dashboard-header h1 { margin: 0; font-size: 1.8em; font-weight: 600; color: #293E4C; }
-        .dashboard-header p { margin: 4px 0 0; font-size: 0.95em; color: #6c757d; }
+        .dashboard-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+        .dashboard-header h1 {
+            margin: 0;
+            font-size: 2.2em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .dashboard-header p { margin: 8px 0 0; font-size: 1.1em; color: #6c757d; }
         .unit-toggle { display: inline-flex; background: #f1f3f4; border-radius: 8px; padding: 3px; gap: 3px; }
         .unit-toggle button { padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 0.85em; border: none; cursor: pointer; color: #6c757d; background: transparent; transition: all 0.2s; }
         .unit-toggle button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
@@ -270,8 +287,8 @@ $conn->close();
         .coverage-row.highlight span:last-child { color: #28a745; }
         .coverage-row.warning span:last-child { color: #dc3545; }
 
-        .section-header-row { display: flex; justify-content: space-between; align-items: center; margin: 20px 0 15px; flex-wrap: wrap; gap: 12px; }
-        .section-header { color: #293E4C; font-size: 1.4em; font-weight: 600; margin: 0; padding-bottom: 8px; border-bottom: 3px solid #488C9A; }
+        .section-header-row { display: flex; justify-content: space-between; align-items: center; margin: 20px 0 15px; flex-wrap: wrap; gap: 12px; padding: 20px 24px; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 16px; border: 1px solid #e9ecef; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+        .section-header { font-size: 1.4em; font-weight: 700; background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0; letter-spacing: -0.3px; }
         .section-controls { display: flex; align-items: center; gap: 12px; }
         .section-title-row { display: flex; align-items: center; gap: 12px; }
         .view-archived-link { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 20px; color: #6c757d; font-size: 0.8em; font-weight: 500; text-decoration: none; transition: all 0.2s; }
@@ -361,8 +378,8 @@ $conn->close();
         .projects-grid.active { display: grid; }
         .projects-grid:not(.active) { display: none; }
         .projects-table { width: 100%; border-collapse: collapse; }
-        .projects-table th { background: #f8f9fa; padding: 10px 12px; text-align: left; font-weight: 600; color: #293E4C; font-size: 0.75em; border-bottom: 2px solid #e9ecef; cursor: pointer; white-space: nowrap; }
-        .projects-table th:hover { background: #e9ecef; }
+        .projects-table th { background: #488C9A; padding: 10px 12px; text-align: left; font-weight: 600; color: #fff; font-size: 0.75em; border-bottom: none; cursor: pointer; white-space: nowrap; }
+        .projects-table th:hover { background: #3A6E7F; }
         .projects-table th .sort-icon { margin-left: 4px; opacity: 0.5; }
         .projects-table td { padding: 10px 12px; border-bottom: 1px solid #f1f3f4; color: #495057; font-size: 0.8em; vertical-align: middle; }
         .projects-table tr { cursor: pointer; transition: background 0.2s; }

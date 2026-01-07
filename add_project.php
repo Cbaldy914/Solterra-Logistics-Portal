@@ -1053,58 +1053,79 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             border: 1px solid #f5c6cb;
         }
 
-        /* Module Options Cards */
-        .module-options {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
+        /* Module Setup Toggle */
+        .module-setup-toggle {
+            display: inline-flex;
+            background: #f1f3f4;
+            border-radius: 12px;
+            padding: 4px;
+            gap: 4px;
             margin-bottom: 24px;
         }
-        .module-option-card {
-            padding: 24px;
-            border-radius: 12px;
-            border: 2px solid #e9ecef;
+        .module-setup-toggle button {
+            padding: 12px 24px;
+            border-radius: 10px;
+            border: none;
+            background: transparent;
+            color: #6c757d;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
             transition: all 0.2s ease;
         }
-        .module-option-card.primary {
-            border-color: #488C9A;
-            background: rgba(72, 140, 154, 0.05);
-        }
-        .module-option-card h4 {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin: 0 0 12px 0;
+        .module-setup-toggle button:hover {
+            background: rgba(255,255,255,0.5);
             color: #293E4C;
         }
-        .module-option-card h4 .option-number {
-            width: 28px;
-            height: 28px;
-            border-radius: 50%;
+        .module-setup-toggle button.active {
+            background: #fff;
+            color: #293E4C;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .module-mode-content {
+            display: none;
+        }
+        .module-mode-content.active {
+            display: block;
+        }
+        .import-later-card {
+            padding: 32px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 16px;
+            border: 2px solid #e9ecef;
+            text-align: center;
+        }
+        .import-later-card .icon {
+            font-size: 3rem;
+            margin-bottom: 16px;
+        }
+        .import-later-card h4 {
+            color: #293E4C;
+            margin: 0 0 12px 0;
+            font-size: 1.2rem;
+        }
+        .import-later-card p {
+            color: #6c757d;
+            margin: 0 0 8px 0;
+            font-size: 0.95rem;
+        }
+        .import-later-card .features {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        .import-later-card .feature {
             display: flex;
             align-items: center;
-            justify-content: center;
-            font-size: 0.85rem;
-            font-weight: 600;
-        }
-        .module-option-card.primary h4 .option-number {
-            background: #488C9A;
-            color: #fff;
-        }
-        .module-option-card:not(.primary) h4 .option-number {
-            background: #6c757d;
-            color: #fff;
-        }
-        .module-option-card p {
-            color: #555;
+            gap: 8px;
+            color: #488C9A;
             font-size: 0.9rem;
-            margin-bottom: 12px;
+            font-weight: 500;
         }
-        .module-option-card ul {
-            color: #666;
-            font-size: 0.85rem;
-            margin: 0;
-            padding-left: 20px;
+        .import-later-card .feature .check {
+            color: #28a745;
         }
 
         @media (max-width: 768px) {
@@ -1362,105 +1383,109 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
             <div class="accordion-content">
                 <div class="section-description">
-                    Set up your module orders now, or skip and add them later from the Project Overview page.
+                    Choose how you want to set up modules for this project.
                 </div>
 
-                <div class="module-options">
-                    <div class="module-option-card primary">
-                        <h4><span class="option-number">1</span> Manual Setup</h4>
-                        <p>Enter wattage orders below. Pallets can be created manually later.</p>
-                        <ul>
-                            <li>Best for: Planning ahead before manufacturer data is available</li>
-                            <li>You control: Pallet creation, status updates, delivery scheduling</li>
-                        </ul>
-                    </div>
-                    <div class="module-option-card">
-                        <h4><span class="option-number">2</span> Import Schedule Later</h4>
-                        <p>After creating the project, import the manufacturer's shipping schedule.</p>
-                        <ul>
-                            <li>Best for: When you have the manufacturer's BOL/pallet data</li>
-                            <li>Auto-creates: Pallets, deliveries, links by BOL number</li>
-                        </ul>
-                    </div>
+                <div class="module-setup-toggle">
+                    <button type="button" class="active" onclick="setModuleMode('import')" id="btn-import-mode">Import Schedule Later</button>
+                    <button type="button" onclick="setModuleMode('manual')" id="btn-manual-mode">Manual Setup</button>
                 </div>
 
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Manufacturer<span class="optional-tag">(optional)</span></label>
-                        <select name="manufacturer_id" id="manufacturer_id" onchange="handleManufacturerChange(this)">
-                            <option value="">Select Manufacturer</option>
-                            <?php foreach ($manufacturers as $mfg): ?>
-                                <option value="<?php echo $mfg['id']; ?>">
-                                    <?php echo htmlspecialchars($mfg['name']); ?>
-                                    <?php if (!empty($mfg['short_name'])): ?>(<?php echo htmlspecialchars($mfg['short_name']); ?>)<?php endif; ?>
-                                </option>
-                            <?php endforeach; ?>
-                            <option value="add_new" style="font-style: italic;">+ Add New Manufacturer</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Location<span class="optional-tag">(optional)</span></label>
-                        <select name="location_id" id="location_id" disabled onchange="checkModuleFieldsVisibility()">
-                            <option value="">Select a manufacturer first</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div id="module-fields-container" style="display: none;">
-                    <div class="form-group">
-                        <label>Wattage Orders<span class="optional-tag">(optional)</span></label>
-                        <div id="wattage-container" class="wattage-container">
-                            <!-- Wattage entries added by JS -->
+                <!-- Import Later Mode (Default) -->
+                <div class="module-mode-content active" id="mode-import">
+                    <div class="import-later-card">
+                        <div class="icon">&#128230;</div>
+                        <h4>You're All Set!</h4>
+                        <p>Create your project now and import the manufacturer's shipping schedule later.</p>
+                        <p style="font-size: 0.85rem;">You can add modules anytime from the Project Overview page.</p>
+                        <div class="features">
+                            <span class="feature"><span class="check">&#10003;</span> Auto-creates pallets from BOL data</span>
+                            <span class="feature"><span class="check">&#10003;</span> Links deliveries automatically</span>
+                            <span class="feature"><span class="check">&#10003;</span> Tracks serial numbers</span>
                         </div>
-                        <button type="button" class="btn-add-wattage" onclick="addWattageField()">
-                            <span>+</span> Add Wattage Order
-                        </button>
+                    </div>
+                </div>
+
+                <!-- Manual Setup Mode -->
+                <div class="module-mode-content" id="mode-manual">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Manufacturer<span class="required-star">*</span></label>
+                            <select name="manufacturer_id" id="manufacturer_id" onchange="handleManufacturerChange(this)">
+                                <option value="">Select Manufacturer</option>
+                                <?php foreach ($manufacturers as $mfg): ?>
+                                    <option value="<?php echo $mfg['id']; ?>">
+                                        <?php echo htmlspecialchars($mfg['name']); ?>
+                                        <?php if (!empty($mfg['short_name'])): ?>(<?php echo htmlspecialchars($mfg['short_name']); ?>)<?php endif; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                                <option value="add_new" style="font-style: italic;">+ Add New Manufacturer</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Location<span class="required-star">*</span></label>
+                            <select name="location_id" id="location_id" disabled onchange="checkModuleFieldsVisibility()">
+                                <option value="">Select a manufacturer first</option>
+                            </select>
+                        </div>
                     </div>
 
-                    <details style="margin-top: 24px;">
-                        <summary style="cursor: pointer; font-weight: 500; color: #488C9A; padding: 12px 0;">
-                            Advanced: Pallet & Logistics Specifications
-                        </summary>
-                        <div style="padding: 20px; background: #f8f9fa; border-radius: 12px; margin-top: 12px;">
-                            <div class="specs-grid">
-                                <div class="form-group">
-                                    <label>Modules/Pallet</label>
-                                    <input type="number" name="modules_per_pallet" min="1" placeholder="e.g. 30">
-                                </div>
-                                <div class="form-group">
-                                    <label>Pallets/Truck</label>
-                                    <input type="number" name="pallets_per_truck" min="1" placeholder="e.g. 22">
-                                </div>
-                                <div class="form-group">
-                                    <label>Length (mm)</label>
-                                    <input type="number" name="pallet_length_mm" min="1" placeholder="e.g. 2384">
-                                </div>
-                                <div class="form-group">
-                                    <label>Depth (mm)</label>
-                                    <input type="number" name="pallet_depth_mm" min="1" placeholder="e.g. 1303">
-                                </div>
-                                <div class="form-group">
-                                    <label>Stack Height (mm)</label>
-                                    <input type="number" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g. 2200">
-                                </div>
-                                <div class="form-group">
-                                    <label>Weight (kg)</label>
-                                    <input type="number" name="pallet_total_weight_kg" min="1" placeholder="e.g. 1200">
+                    <div id="module-fields-container" style="display: none;">
+                        <div class="form-group">
+                            <label>Wattage Orders<span class="required-star">*</span></label>
+                            <div id="wattage-container" class="wattage-container">
+                                <!-- Wattage entries added by JS -->
+                            </div>
+                            <button type="button" class="btn-add-wattage" onclick="addWattageField()">
+                                <span>+</span> Add Wattage Order
+                            </button>
+                        </div>
+
+                        <details style="margin-top: 24px;">
+                            <summary style="cursor: pointer; font-weight: 500; color: #488C9A; padding: 12px 0;">
+                                Advanced: Pallet & Logistics Specifications
+                            </summary>
+                            <div style="padding: 20px; background: #f8f9fa; border-radius: 12px; margin-top: 12px;">
+                                <div class="specs-grid">
+                                    <div class="form-group">
+                                        <label>Modules/Pallet</label>
+                                        <input type="number" name="modules_per_pallet" min="1" placeholder="e.g. 30">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Pallets/Truck</label>
+                                        <input type="number" name="pallets_per_truck" min="1" placeholder="e.g. 22">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Length (mm)</label>
+                                        <input type="number" name="pallet_length_mm" min="1" placeholder="e.g. 2384">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Depth (mm)</label>
+                                        <input type="number" name="pallet_depth_mm" min="1" placeholder="e.g. 1303">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Stack Height (mm)</label>
+                                        <input type="number" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g. 2200">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Weight (kg)</label>
+                                        <input type="number" name="pallet_total_weight_kg" min="1" placeholder="e.g. 1200">
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    </details>
-                </div>
+                        </details>
+                    </div>
 
-                <div id="module-fields-notice" class="module-selection-notice" style="padding: 20px; background: #f0f4f5; border-radius: 12px; text-align: center; color: #666;">
-                    <p style="margin: 0;">Please select a manufacturer and location above to add wattage orders.</p>
+                    <div id="module-fields-notice" class="module-selection-notice" style="padding: 20px; background: #f0f4f5; border-radius: 12px; text-align: center; color: #666;">
+                        <p style="margin: 0;">Please select a manufacturer and location above to add wattage orders.</p>
+                    </div>
                 </div>
 
                 <div class="section-actions">
                     <button type="button" class="btn-back-step" onclick="goToStep(2)">
                         <span>&larr;</span> Back
                     </button>
-                    <button type="submit" class="btn-submit">
+                    <button type="submit" class="btn-submit" id="btn-create-project">
                         Create Project <span>&#10003;</span>
                     </button>
                 </div>
@@ -1625,6 +1650,28 @@ function checkModuleFieldsVisibility() {
     } else {
         moduleFieldsContainer.style.display = 'none';
         moduleFieldsNotice.style.display = 'block';
+    }
+}
+
+let currentModuleMode = 'import';
+
+function setModuleMode(mode) {
+    currentModuleMode = mode;
+
+    // Update toggle buttons
+    document.getElementById('btn-import-mode').classList.toggle('active', mode === 'import');
+    document.getElementById('btn-manual-mode').classList.toggle('active', mode === 'manual');
+
+    // Show/hide content
+    document.getElementById('mode-import').classList.toggle('active', mode === 'import');
+    document.getElementById('mode-manual').classList.toggle('active', mode === 'manual');
+
+    // If switching to manual mode, auto-add first wattage field if none exist
+    if (mode === 'manual') {
+        const container = document.getElementById('wattage-container');
+        if (container && container.children.length === 0) {
+            addWattageField();
+        }
     }
 }
 
