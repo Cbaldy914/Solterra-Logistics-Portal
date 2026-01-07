@@ -1970,10 +1970,6 @@ $conn->close();
                     <p class="stat-number">$<?php echo number_format($total_warehousing_cost, 2); ?></p>
                     <p class="stat-label">Warehousing</p>
                 </div>
-                <div class="stat-item stat-item-solterra">
-                    <p class="stat-number">$<?php echo number_format($total_solterra_fee, 2); ?></p>
-                    <p class="stat-label">Solterra Fee</p>
-                </div>
             </div>
         </div>
     </div>
