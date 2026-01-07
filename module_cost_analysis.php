@@ -2,108 +2,63 @@
 session_name("logistics_session");
 session_start();
 
-// Check if the user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: login");
     exit();
 }
 
-// Database connection
 require_once '../config.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
 }
 
-// Current user info
 $user_id = $_SESSION['user_id'];
-$role    = $_SESSION['role'] ?? 'user';
+$role = $_SESSION['role'] ?? 'user';
 
 /**
  * Calculate warehousing cost for a project (TOTAL).
  */
 function calculateProjectWarehousingCost($conn, $project_id) {
-    // Fetch warehouse info
-    $stmt = $conn->prepare("
-        SELECT w.id
-        FROM warehouses w
-        JOIN projects p ON p.warehouse_id=w.id
-        WHERE p.id=?
-    ");
+    $stmt = $conn->prepare("SELECT w.id FROM warehouses w JOIN projects p ON p.warehouse_id=w.id WHERE p.id=?");
     $stmt->bind_param("i", $project_id);
     $stmt->execute();
     $resWarehouse = $stmt->get_result();
     $stmt->close();
 
-    if ($resWarehouse->num_rows < 1) {
-        return 0;
-    }
-    $warehouse_basic = $resWarehouse->fetch_assoc();
-    $warehouse_id = $warehouse_basic['id'];
-    
-    // Fetch cost items for this warehouse
-    $cost_stmt = $conn->prepare("
-        SELECT trigger_event, amount 
-        FROM warehouse_cost_items 
-        WHERE warehouse_id = ? AND is_active = 1
-    ");
+    if ($resWarehouse->num_rows < 1) return 0;
+    $warehouse_id = $resWarehouse->fetch_assoc()['id'];
+
+    $cost_stmt = $conn->prepare("SELECT trigger_event, amount FROM warehouse_cost_items WHERE warehouse_id = ? AND is_active = 1");
     $cost_stmt->bind_param("i", $warehouse_id);
     $cost_stmt->execute();
     $cost_result = $cost_stmt->get_result();
-    
-    $warehouse = ['id' => $warehouse_id, 'in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
+
+    $warehouse = ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
     while ($cost = $cost_result->fetch_assoc()) {
         switch ($cost['trigger_event']) {
-            case 'entry':
-                $warehouse['in_fee'] = $cost['amount'];
-                break;
-            case 'exit':
-                $warehouse['out_fee'] = $cost['amount'];
-                break;
-            case 'monthly':
-                $warehouse['monthly_storage_fee'] = $cost['amount'];
-                break;
+            case 'entry': $warehouse['in_fee'] = $cost['amount']; break;
+            case 'exit': $warehouse['out_fee'] = $cost['amount']; break;
+            case 'monthly': $warehouse['monthly_storage_fee'] = $cost['amount']; break;
         }
     }
     $cost_stmt->close();
 
-    // Count inbound deliveries
-    $stmt2 = $conn->prepare("
-        SELECT COUNT(*) AS total_in
-        FROM deliveries
-        WHERE project_id=?
-          AND warehouse_arrival_date IS NOT NULL
-    ");
+    $stmt2 = $conn->prepare("SELECT COUNT(*) FROM deliveries WHERE project_id=? AND warehouse_arrival_date IS NOT NULL");
     $stmt2->bind_param("i", $project_id);
     $stmt2->execute();
     $stmt2->bind_result($total_in);
     $stmt2->fetch();
     $stmt2->close();
 
-    // Count outbound deliveries
-    $stmt3 = $conn->prepare("
-        SELECT COUNT(*) AS total_out
-        FROM deliveries
-        WHERE project_id=?
-          AND warehouse_arrival_date IS NOT NULL
-          AND left_warehouse_date IS NOT NULL
-    ");
+    $stmt3 = $conn->prepare("SELECT COUNT(*) FROM deliveries WHERE project_id=? AND warehouse_arrival_date IS NOT NULL AND left_warehouse_date IS NOT NULL");
     $stmt3->bind_param("i", $project_id);
     $stmt3->execute();
     $stmt3->bind_result($total_out);
     $stmt3->fetch();
     $stmt3->close();
 
-    $in_fee_cost  = $warehouse['in_fee']  * $total_in;
-    $out_fee_cost = $warehouse['out_fee'] * $total_out;
-
-    // Storage cost for every delivery that arrived
-    $stmt4 = $conn->prepare("
-        SELECT warehouse_arrival_date, left_warehouse_date
-        FROM deliveries
-        WHERE project_id=?
-          AND warehouse_arrival_date IS NOT NULL
-    ");
+    $stmt4 = $conn->prepare("SELECT warehouse_arrival_date, left_warehouse_date FROM deliveries WHERE project_id=? AND warehouse_arrival_date IS NOT NULL");
     $stmt4->bind_param("i", $project_id);
     $stmt4->execute();
     $res4 = $stmt4->get_result();
@@ -111,244 +66,144 @@ function calculateProjectWarehousingCost($conn, $project_id) {
 
     $storage_cost_total = 0;
     while ($d = $res4->fetch_assoc()) {
-        $sd = $d['warehouse_arrival_date'];
-        if (empty($sd)) {
-            continue;
-        }
-        $ed = (!empty($d['left_warehouse_date']))
-                ? $d['left_warehouse_date']
-                : date('Y-m-d');
-
-        $start = new DateTime($sd);
-        $end   = new DateTime($ed);
-
-        $diff = $start->diff($end);
-        $days = $diff->days + 1;
-
-        $daily_storage_fee = ($warehouse['monthly_storage_fee'] / 30.0);
-        $delivery_storage  = $days * $daily_storage_fee;
-
-        $storage_cost_total += $delivery_storage;
+        if (empty($d['warehouse_arrival_date'])) continue;
+        $start = new DateTime($d['warehouse_arrival_date']);
+        $end = new DateTime(!empty($d['left_warehouse_date']) ? $d['left_warehouse_date'] : date('Y-m-d'));
+        $days = $start->diff($end)->days + 1;
+        $storage_cost_total += $days * ($warehouse['monthly_storage_fee'] / 30.0);
     }
 
-    return $in_fee_cost + $out_fee_cost + $storage_cost_total;
+    return ($warehouse['in_fee'] * $total_in) + ($warehouse['out_fee'] * $total_out) + $storage_cost_total;
 }
 
 /**
- * Calculate YTD warehousing cost for a project (this year).
+ * Calculate YTD warehousing cost for a project.
  */
 function calculateProjectYTDWarehousingCost($conn, $project_id, $current_year) {
-    // Same approach, but restricted to year-based logic
-    $stmt = $conn->prepare("
-        SELECT w.id
-        FROM warehouses w
-        JOIN projects p ON p.warehouse_id=w.id
-        WHERE p.id=?
-    ");
+    $stmt = $conn->prepare("SELECT w.id FROM warehouses w JOIN projects p ON p.warehouse_id=w.id WHERE p.id=?");
     $stmt->bind_param("i", $project_id);
     $stmt->execute();
     $warehouse_res = $stmt->get_result();
     $stmt->close();
 
-    if ($warehouse_res->num_rows<1) {
-        return 0;
-    }
-    $warehouse_basic = $warehouse_res->fetch_assoc();
-    $warehouse_id = $warehouse_basic['id'];
-    
-    // Fetch cost items for this warehouse
-    $cost_stmt = $conn->prepare("
-        SELECT trigger_event, amount 
-        FROM warehouse_cost_items 
-        WHERE warehouse_id = ? AND is_active = 1
-    ");
+    if ($warehouse_res->num_rows < 1) return 0;
+    $warehouse_id = $warehouse_res->fetch_assoc()['id'];
+
+    $cost_stmt = $conn->prepare("SELECT trigger_event, amount FROM warehouse_cost_items WHERE warehouse_id = ? AND is_active = 1");
     $cost_stmt->bind_param("i", $warehouse_id);
     $cost_stmt->execute();
     $cost_result = $cost_stmt->get_result();
-    
-    $warehouse = ['id' => $warehouse_id, 'in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
+
+    $warehouse = ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
     while ($cost = $cost_result->fetch_assoc()) {
         switch ($cost['trigger_event']) {
-            case 'entry':
-                $warehouse['in_fee'] = $cost['amount'];
-                break;
-            case 'exit':
-                $warehouse['out_fee'] = $cost['amount'];
-                break;
-            case 'monthly':
-                $warehouse['monthly_storage_fee'] = $cost['amount'];
-                break;
+            case 'entry': $warehouse['in_fee'] = $cost['amount']; break;
+            case 'exit': $warehouse['out_fee'] = $cost['amount']; break;
+            case 'monthly': $warehouse['monthly_storage_fee'] = $cost['amount']; break;
         }
     }
     $cost_stmt->close();
 
-    // Count inbound deliveries (arrived this year)
-    $stmt2 = $conn->prepare("
-        SELECT COUNT(*) 
-        FROM deliveries
-        WHERE project_id=?
-          AND warehouse_arrival_date IS NOT NULL
-          AND YEAR(warehouse_arrival_date)=?
-    ");
+    $stmt2 = $conn->prepare("SELECT COUNT(*) FROM deliveries WHERE project_id=? AND warehouse_arrival_date IS NOT NULL AND YEAR(warehouse_arrival_date)=?");
     $stmt2->bind_param("ii", $project_id, $current_year);
     $stmt2->execute();
     $stmt2->bind_result($total_in);
     $stmt2->fetch();
     $stmt2->close();
 
-    // Count outbound deliveries (left this year)
-    $stmt3 = $conn->prepare("
-        SELECT COUNT(*)
-        FROM deliveries
-        WHERE project_id=?
-          AND warehouse_arrival_date IS NOT NULL
-          AND left_warehouse_date IS NOT NULL
-          AND YEAR(left_warehouse_date)=?
-    ");
+    $stmt3 = $conn->prepare("SELECT COUNT(*) FROM deliveries WHERE project_id=? AND warehouse_arrival_date IS NOT NULL AND left_warehouse_date IS NOT NULL AND YEAR(left_warehouse_date)=?");
     $stmt3->bind_param("ii", $project_id, $current_year);
     $stmt3->execute();
     $stmt3->bind_result($total_out);
     $stmt3->fetch();
     $stmt3->close();
 
-    $in_fee_cost  = $warehouse['in_fee']  * $total_in;
-    $out_fee_cost = $warehouse['out_fee'] * $total_out;
-
-    // Partial-year storage cost
-    $stmt4 = $conn->prepare("
-        SELECT warehouse_arrival_date, left_warehouse_date
-        FROM deliveries
-        WHERE project_id=?
-          AND warehouse_arrival_date IS NOT NULL
-    ");
+    $stmt4 = $conn->prepare("SELECT warehouse_arrival_date, left_warehouse_date FROM deliveries WHERE project_id=? AND warehouse_arrival_date IS NOT NULL");
     $stmt4->bind_param("i", $project_id);
     $stmt4->execute();
     $res4 = $stmt4->get_result();
     $stmt4->close();
 
     $yr_start = new DateTime("$current_year-01-01");
-    $yr_end   = new DateTime("$current_year-12-31");
-    $storage_cost_total=0;
+    $yr_end = new DateTime("$current_year-12-31");
+    $storage_cost_total = 0;
 
-    while($d=$res4->fetch_assoc()){
-        $sd = $d['warehouse_arrival_date'];
-        if (empty($sd)) continue;
-        $ed = (!empty($d['left_warehouse_date']))
-                ? $d['left_warehouse_date']
-                : date('Y-m-d');
+    while ($d = $res4->fetch_assoc()) {
+        if (empty($d['warehouse_arrival_date'])) continue;
+        $start = new DateTime($d['warehouse_arrival_date']);
+        $end = new DateTime(!empty($d['left_warehouse_date']) ? $d['left_warehouse_date'] : date('Y-m-d'));
 
-        $start = new DateTime($sd);
-        $end   = new DateTime($ed);
+        if ($start > $yr_end || $end < $yr_start) continue;
+        if ($start < $yr_start) $start = clone $yr_start;
+        if ($end > $yr_end) $end = clone $yr_end;
 
-        // If no overlap with the year, skip
-        if ($start>$yr_end || $end<$yr_start) {
-            continue;
-        }
-        if ($start<$yr_start) $start=clone $yr_start;
-        if ($end>$yr_end)     $end=clone $yr_end;
-
-        $diff = $start->diff($end);
-        $days = $diff->days+1;
-        $daily_storage_fee = ($warehouse['monthly_storage_fee']/30.0);
-        $storage_cost_total += ($days*$daily_storage_fee);
+        $days = $start->diff($end)->days + 1;
+        $storage_cost_total += $days * ($warehouse['monthly_storage_fee'] / 30.0);
     }
 
-    return $in_fee_cost + $out_fee_cost + $storage_cost_total;
+    return ($warehouse['in_fee'] * $total_in) + ($warehouse['out_fee'] * $total_out) + $storage_cost_total;
 }
 
 /**
- * Calculate total (or YTD) freight + accessorial + warehousing + Solterra fee for a project.
+ * Calculate total logistics cost and watts for a project.
  */
 function calculateProjectTotalLogisticsCost($conn, $project_id, $filter) {
-    // 1) fetch the project's solterra_fee
-    $stmt = $conn->prepare("SELECT solterra_fee FROM projects WHERE id=?");
-    $stmt->bind_param("i", $project_id);
-    $stmt->execute();
-    $stmt->bind_result($solterra_fee_db);
-    $stmt->fetch();
-    $stmt->close();
-
-    $solterra_fee = floatval($solterra_fee_db ?? 0);
     $current_year = date('Y');
 
-    // 2) gather freight & accessorial
-    $sql_deliv = "SELECT freight_cost, accessorial_costs, wattage, quantity, actual_delivery_date 
-                  FROM deliveries
-                  WHERE project_id=?";
-    if ($filter==='ytd') {
-        $sql_deliv .= " AND YEAR(created_at)=?";
-    }
+    $sql_deliv = "SELECT freight_cost, accessorial_costs, wattage, quantity FROM deliveries WHERE project_id=?";
+    if ($filter === 'ytd') $sql_deliv .= " AND YEAR(created_at)=?";
 
-    $stmt2 = $conn->prepare($sql_deliv);
-    if ($filter==='ytd') {
-        $stmt2->bind_param("ii", $project_id, $current_year);
+    $stmt = $conn->prepare($sql_deliv);
+    if ($filter === 'ytd') {
+        $stmt->bind_param("ii", $project_id, $current_year);
     } else {
-        $stmt2->bind_param("i", $project_id);
+        $stmt->bind_param("i", $project_id);
     }
-    $stmt2->execute();
-    $res2 = $stmt2->get_result();
-    $stmt2->close();
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
 
-    $proj_freight_cost      = 0;
-    $proj_accessorial_costs = 0;
-    $proj_solterra_fee      = 0;
+    $freight_cost = 0;
+    $accessorial_costs = 0;
+    $total_watts = 0;
 
-    while($r=$res2->fetch_assoc()){
-        $proj_freight_cost      += (float)$r['freight_cost'];
-        $proj_accessorial_costs += (float)$r['accessorial_costs'];
-
-        if (!empty($r['actual_delivery_date'])) {
-            $wattage  = (float)$r['wattage'];
-            $quantity = (float)$r['quantity'];
-            $proj_solterra_fee += ($solterra_fee * ($wattage*$quantity));
-        }
+    while ($r = $res->fetch_assoc()) {
+        $freight_cost += (float)$r['freight_cost'];
+        $accessorial_costs += (float)$r['accessorial_costs'];
+        $total_watts += (float)$r['wattage'] * (float)$r['quantity'];
     }
 
-    // 3) gather warehousing
-    if ($filter==='ytd') {
-        $proj_warehousing = calculateProjectYTDWarehousingCost($conn, $project_id, $current_year);
-    } else {
-        $proj_warehousing = calculateProjectWarehousingCost($conn, $project_id);
-    }
-
-    // 4) total
-    $proj_total = $proj_freight_cost + $proj_accessorial_costs + $proj_warehousing + $proj_solterra_fee;
+    $warehousing_cost = ($filter === 'ytd')
+        ? calculateProjectYTDWarehousingCost($conn, $project_id, $current_year)
+        : calculateProjectWarehousingCost($conn, $project_id);
 
     return [
-        'freight_cost'      => $proj_freight_cost,
-        'accessorial_costs' => $proj_accessorial_costs,
-        'warehousing_cost'  => $proj_warehousing,
-        'solterra_fee'      => $proj_solterra_fee,
-        'total_logistics_cost' => $proj_total
+        'freight_cost' => $freight_cost,
+        'accessorial_costs' => $accessorial_costs,
+        'warehousing_cost' => $warehousing_cost,
+        'total_logistics_cost' => $freight_cost + $accessorial_costs + $warehousing_cost,
+        'total_watts' => $total_watts
     ];
 }
 
-// Chosen filter
-$filter = $_GET['filter'] ?? 'total';
+$filter = isset($_GET['filter']) ? $_GET['filter'] : 'total';
+$view_mode = isset($_GET['view_mode']) ? $_GET['view_mode'] : 'dollars';
+$current_year = date('Y');
 
-// We'll sum over all relevant projects
-$total_freight           = 0;
-$total_accessorial       = 0;
-$total_warehousing       = 0;
-$total_solterra_fee      = 0;
-$total_logistics_cost    = 0;
+$total_freight = 0;
+$total_accessorial = 0;
+$total_warehousing = 0;
+$total_logistics_cost = 0;
+$total_watts = 0;
 
-// Step: fetch user's projects differently if global_admin or normal/admin user
 if ($role === 'global_admin') {
-    // Global admin can see all projects
-    $sql_proj = "SELECT p.id, p.project_name, p.image_url FROM projects p";
+    $sql_proj = "SELECT p.id, p.project_name, p.image_url, p.project_address FROM projects p WHERE status IS NULL OR status = 'active'";
     $paramTypes = "";
-    $params     = [];
+    $params = [];
 } else {
-    // Admins and regular users: only projects from their account(s)
-    $sql_proj = "
-        SELECT p.id, p.project_name, p.image_url
-        FROM projects p
-        JOIN customer_account_users cau ON p.account_id = cau.account_id
-        WHERE cau.user_id=?
-    ";
+    $sql_proj = "SELECT p.id, p.project_name, p.image_url, p.project_address FROM projects p JOIN customer_account_users cau ON p.account_id = cau.account_id WHERE cau.user_id=? AND (p.status IS NULL OR p.status = 'active')";
     $paramTypes = "i";
-    $params     = [$user_id];
+    $params = [$user_id];
 }
 
 $stmtProj = $conn->prepare($sql_proj);
@@ -361,39 +216,41 @@ $stmtProj->close();
 
 $projects = [];
 while ($p = $projects_res->fetch_assoc()) {
-    $pid = $p['id'];
-    $calc = calculateProjectTotalLogisticsCost($conn, $pid, $filter);
+    $calc = calculateProjectTotalLogisticsCost($conn, $p['id'], $filter);
 
-    $total_freight      += $calc['freight_cost'];
-    $total_accessorial  += $calc['accessorial_costs'];
-    $total_warehousing  += $calc['warehousing_cost'];
-    $total_solterra_fee += $calc['solterra_fee'];
+    $total_freight += $calc['freight_cost'];
+    $total_accessorial += $calc['accessorial_costs'];
+    $total_warehousing += $calc['warehousing_cost'];
     $total_logistics_cost += $calc['total_logistics_cost'];
+    $total_watts += $calc['total_watts'];
 
-    $p['freight_cost']      = $calc['freight_cost'];
+    $p['freight_cost'] = $calc['freight_cost'];
     $p['accessorial_costs'] = $calc['accessorial_costs'];
-    $p['warehousing_cost']  = $calc['warehousing_cost'];
-    $p['solterra_fee']      = $calc['solterra_fee'];
+    $p['warehousing_cost'] = $calc['warehousing_cost'];
     $p['total_logistics_cost'] = $calc['total_logistics_cost'];
+    $p['total_watts'] = $calc['total_watts'];
+    $p['cost_per_watt'] = $calc['total_watts'] > 0 ? $calc['total_logistics_cost'] / $calc['total_watts'] : 0;
 
     $projects[] = $p;
 }
 
 $project_count = count($projects);
 
-if ($filter==='per_project' && $project_count>0) {
-    $disp_freight      = $total_freight/$project_count;
-    $disp_accessorial  = $total_accessorial/$project_count;
-    $disp_warehousing  = $total_warehousing/$project_count;
-    $disp_solterra_fee = $total_solterra_fee/$project_count;
-    $disp_total_log    = $total_logistics_cost/$project_count;
+if ($filter === 'per_project' && $project_count > 0) {
+    $disp_freight = $total_freight / $project_count;
+    $disp_accessorial = $total_accessorial / $project_count;
+    $disp_warehousing = $total_warehousing / $project_count;
+    $disp_total = $total_logistics_cost / $project_count;
+    $disp_watts = $total_watts / $project_count;
 } else {
-    $disp_freight      = $total_freight;
-    $disp_accessorial  = $total_accessorial;
-    $disp_warehousing  = $total_warehousing;
-    $disp_solterra_fee = $total_solterra_fee;
-    $disp_total_log    = $total_logistics_cost;
+    $disp_freight = $total_freight;
+    $disp_accessorial = $total_accessorial;
+    $disp_warehousing = $total_warehousing;
+    $disp_total = $total_logistics_cost;
+    $disp_watts = $total_watts;
 }
+
+$disp_cost_per_watt = $disp_watts > 0 ? $disp_total / $disp_watts : 0;
 
 $conn->close();
 ?>
@@ -401,398 +258,267 @@ $conn->close();
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Module Cost Analysis</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cost Overview</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
     <style>
-        /* Header Section - Matching Manage Projects Style */
-        .cost-analysis-header {
+        .page-header {
             background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
             border-radius: 24px;
             padding: 32px;
-            margin-bottom: 40px;
+            margin-bottom: 32px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
             border: 1px solid rgba(72, 140, 154, 0.08);
             position: relative;
             overflow: hidden;
         }
-
-        .cost-analysis-header::before {
+        .page-header::before {
             content: '';
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
+            top: 0; left: 0; right: 0;
             height: 4px;
             background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
         }
-
-        .header-content {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 24px;
-        }
-
-        .header-left {
-            display: flex;
-            align-items: center;
-            gap: 24px;
-        }
-
-        .header-info h1 {
-            font-size: 2.5em;
+        .page-header h1 {
+            font-size: 2.2em;
             font-weight: 700;
             background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
             margin: 0 0 8px 0;
-            line-height: 1.2;
         }
+        .page-header p { color: #6c757d; font-size: 1.1em; margin: 0; }
 
-        .header-subtitle {
-            color: #6c757d;
-            font-size: 1.1em;
-            font-weight: 500;
-            margin: 0;
-        }
-
-        /* Remove header stats - they're redundant */
-        
-        h2 {
-            margin-top: 50px;
-            margin-bottom: 20px;
-            color: #293E4C;
-            font-size: 1.8em;
-            font-weight: 600;
-            padding-bottom: 10px;
-            border-bottom: 3px solid #488C9A;
-            position: relative;
-        }
-        h2::after {
-            content: '';
-            position: absolute;
-            bottom: -3px;
-            left: 0;
-            width: 60px;
-            height: 3px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            border-radius: 2px;
-        }
-        .cost-overview {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            width: 100%;
-            margin-bottom: 50px;
-        }
-        .cost-row {
-            display: flex;
-            width: 100%;
-            justify-content: center;
-            flex-wrap: wrap;
-            margin-bottom: 20px;
-        }
-        .cost-metric {
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            padding: 20px;
-            margin: 8px;
-            border-radius: 12px;
-            text-align: center;
-            min-width: 200px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-            border: 1px solid #dee2e6;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-        .cost-metric:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(0,0,0,0.15);
-        }
-        .cost-metric h3 {
-            margin: 0 0 10px 0;
-            font-weight: 600;
-            color: #293E4C;
-            font-size: 1rem;
-        }
-        .cost-metric p {
-            margin: 0;
-            font-size: 1.4rem;
-            font-weight: bold;
-            color: #488C9A;
-        }
-        .cost-metric--total {
-            max-width: 400px;
-            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
-            color: white;
-        }
-        .cost-metric--total h3,
-        .cost-metric--total p {
-            color: white;
-        }
-        .filter-form {
-            margin: 15px 0 25px 0;
-            padding: 15px;
-            background: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            border: 1px solid #dee2e6;
-            width: auto !important;
-            max-width: fit-content;
-            display: inline-block;
-        }
-        .filter-form label {
-            margin-right: 15px;
-            font-weight: 500;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 10px;
-            border-radius: 6px;
-            transition: background-color 0.2s ease;
-            font-size: 0.9em;
-        }
-        .filter-form label:hover {
-            background-color: #f8f9fa;
-        }
-        .filter-form input[type="radio"] {
-            margin: 0;
-        }
-        /* Remove old project styles - replaced with cost-project-* classes */
-        /* New beautiful project cards - no portal.css conflicts */
-        .cost-projects-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-            gap: 25px;
-            padding: 0;
-            margin-top: 30px;
-        }
-        
-        .cost-project-card {
-            background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-            border: 1px solid #e9ecef;
-            overflow: hidden;
-            transition: all 0.3s ease;
-            cursor: pointer;
-        }
-        
-        .cost-project-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
-        }
-        .cost-project-header {
-            padding: 25px 25px 20px 25px;
-            background: #ffffff;
-            border-bottom: 1px solid #f1f3f4;
-            text-align: center;
-        }
-        
-        .cost-project-title {
-            margin: 0;
-            font-size: 1.4em;
-            color: #293E4C;
-            font-weight: 600;
-        }
-        
-        .cost-project-title a {
-            text-decoration: none;
-            color: inherit;
-            transition: color 0.3s ease;
-        }
-        
-        .cost-project-title a:hover {
-            color: #488C9A;
-        }
-        
-        .cost-project-image {
-            width: 100%;
-            height: 200px;
-            overflow: hidden;
-            position: relative;
-        }
-        
-        .cost-project-image img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transition: transform 0.3s ease;
-        }
-        
-        .cost-project-card:hover .cost-project-image img {
-            transform: scale(1.05);
-        }
-        
-        .cost-project-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(45deg, rgba(72, 140, 154, 0.9), rgba(58, 110, 127, 0.9));
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            opacity: 0;
-            transition: opacity 0.3s ease;
-            z-index: 3;
-        }
-        
-        .cost-project-card:hover .cost-project-overlay {
-            opacity: 1;
-        }
-        
-        .cost-project-overlay-text {
-            color: white;
-            font-size: 1.2em;
-            font-weight: 600;
-            text-align: center;
-        }
-        
-        .cost-project-body {
-            padding: 25px;
-            background: #fafbfc;
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .cost-metrics-container {
-            background: #ffffff;
-            border-radius: 12px;
-            padding: 25px;
-            border: 1px solid #f1f3f4;
-            margin-bottom: 20px;
-            flex: 1;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-        }
-        
-        .cost-metric-row {
+        .controls-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid #f8f9fa;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-bottom: 28px;
         }
-        
-        .cost-metric-row:last-child {
-            border-bottom: none;
-            padding-bottom: 0;
-        }
-        
-        .cost-metric-row:first-child {
-            padding-top: 0;
-        }
-        
-        .cost-metric-label {
-            color: #293E4C;
-            font-weight: 600;
-            font-size: 0.95em;
-        }
-        
-        .cost-metric-value {
-            font-weight: 700;
-            color: #488C9A;
-            font-size: 1.1em;
-        }
-        
-        .cost-project-footer {
-            margin-top: auto;
-            padding-top: 15px;
-            border-top: 1px solid #f1f3f4;
-            text-align: center;
-        }
-        
-        .view-details-btn {
+        .filter-pills {
             display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            color: white;
-            padding: 12px 24px;
+            background: #f1f3f4;
+            border-radius: 10px;
+            padding: 4px;
+            gap: 4px;
+        }
+        .filter-pill {
+            padding: 10px 20px;
             border-radius: 8px;
-            text-decoration: none;
+            border: none;
+            background: transparent;
+            color: #6c757d;
             font-weight: 600;
-            font-size: 0.9rem;
-            transition: all 0.3s ease;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .filter-pill:hover { background: rgba(255,255,255,0.5); color: #293E4C; }
+        .filter-pill.active { background: #fff; color: #293E4C; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+
+        .view-mode-toggle {
+            display: inline-flex;
+            background: #f1f3f4;
+            border-radius: 10px;
+            padding: 4px;
+            gap: 4px;
+        }
+        .view-mode-btn {
+            padding: 10px 16px;
+            border-radius: 8px;
+            border: none;
+            background: transparent;
+            color: #6c757d;
+            font-weight: 600;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .view-mode-btn:hover { background: rgba(255,255,255,0.5); color: #293E4C; }
+        .view-mode-btn.active { background: #fff; color: #488C9A; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+        .stat-card {
+            background: #fff;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            border: 1px solid #e9ecef;
+            text-align: center;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .stat-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
+        .stat-card.primary { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); border: none; }
+        .stat-card.primary .stat-label, .stat-card.primary .stat-value { color: #fff; }
+        .stat-icon {
+            width: 48px; height: 48px;
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 16px;
+            font-size: 1.5em;
+            background: linear-gradient(135deg, #e8f4f7 0%, #d4eef3 100%);
+        }
+        .stat-card.primary .stat-icon { background: rgba(255,255,255,0.2); }
+        .stat-value { font-size: 1.8em; font-weight: 700; color: #293E4C; margin-bottom: 4px; }
+        .stat-label { color: #6c757d; font-size: 0.85em; font-weight: 500; }
+
+        .section-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding: 20px 24px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 16px;
+            border: 1px solid #e9ecef;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+        .section-title-group { display: flex; align-items: center; gap: 16px; }
+        .section-icon {
+            width: 44px; height: 44px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.3em;
+        }
+        .section-title { font-size: 1.2em; font-weight: 600; color: #293E4C; margin: 0; }
+        .section-subtitle { font-size: 0.85em; color: #6c757d; margin: 4px 0 0; }
+        .view-toggle {
+            display: inline-flex;
+            background: #f1f3f4;
+            border-radius: 8px;
+            padding: 3px;
+            gap: 3px;
+        }
+        .view-toggle button {
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 1em;
             border: none;
             cursor: pointer;
-        }
-        
-        .view-details-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
-        }
-        /* Removed old project-details styles - using new cost-metric-* classes */
-        .cost-efficiency-badge {
-            display: inline-block;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 0.8em;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-top: 10px;
-        }
-        .efficiency-excellent {
-            background: #d4edda;
-            color: #155724;
-        }
-        .efficiency-good {
-            background: #fff3cd;
-            color: #856404;
-        }
-        .efficiency-average {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        .breadcrumb {
-            display: flex;
-            margin-bottom: 20px;
-            margin-top: 10px;
-        }
-        .breadcrumb a {
-            color: #488C9A;
-            text-decoration: none;
-        }
-        .breadcrumb .separator {
-            margin: 0 8px;
             color: #6c757d;
+            background: transparent;
+            transition: all 0.2s;
         }
-        /* Responsive Header */
+        .view-toggle button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
+        .view-toggle button.active { background: #fff; color: #293E4C; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+
+        .projects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 24px;
+            max-width: 1400px;
+        }
+        .projects-grid:not(.active) { display: none; }
+        @media (min-width: 1400px) { .projects-grid { grid-template-columns: repeat(4, 1fr); } }
+
+        .project-card {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            border: 1px solid #e9ecef;
+            overflow: hidden;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .project-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.12); }
+        .project-card-image {
+            width: 100%; height: 120px;
+            background: linear-gradient(135deg, #e8f4f7 0%, #d4eef3 100%);
+            position: relative;
+            overflow: hidden;
+        }
+        .project-card-image img { width: 100%; height: 100%; object-fit: cover; }
+        .project-card-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(45deg, rgba(72,140,154,0.9), rgba(58,110,127,0.9));
+            display: flex; align-items: center; justify-content: center;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .project-card:hover .project-card-overlay { opacity: 1; }
+        .project-card-overlay span { color: #fff; font-size: 0.95em; font-weight: 600; }
+        .project-card-content { padding: 16px; }
+        .project-card-title { margin: 0 0 16px; font-size: 1em; color: #293E4C; font-weight: 600; line-height: 1.3; }
+        .project-card-stats { display: flex; flex-direction: column; gap: 8px; }
+        .project-stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .project-stat-row .label { font-size: 0.8em; color: #6c757d; }
+        .project-stat-row .value { font-size: 0.9em; font-weight: 700; color: #488C9A; }
+        .project-card-total {
+            margin-top: 12px;
+            padding: 14px;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 10px;
+            text-align: center;
+        }
+        .project-card-total .value { font-size: 1.2em; font-weight: 700; color: #fff; }
+        .project-card-total .label { font-size: 0.75em; color: rgba(255,255,255,0.85); margin-top: 2px; }
+
+        .table-container {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            border: 1px solid #e9ecef;
+            overflow: hidden;
+            display: none;
+        }
+        .table-container.active { display: block; }
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table th {
+            background: #f8f9fa;
+            padding: 14px 16px;
+            text-align: left;
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 0.8em;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .data-table td { padding: 14px 16px; border-bottom: 1px solid #f1f3f4; font-size: 0.9em; }
+        .data-table tbody tr { cursor: pointer; transition: background 0.2s; }
+        .data-table tbody tr:hover { background: #f8f9fa; }
+        .data-table .project-name { font-weight: 600; color: #293E4C; }
+        .data-table .cost-cell { font-weight: 600; color: #488C9A; }
+        .data-table .total-cell {
+            font-weight: 700;
+            color: #fff;
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 6px;
+            padding: 6px 12px;
+            display: inline-block;
+        }
+
+        .empty-state { text-align: center; padding: 60px 20px; color: #6c757d; }
+        .empty-state h3 { color: #293E4C; margin-bottom: 8px; }
+
+        @media (max-width: 992px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 768px) {
-            .header-content {
-                flex-direction: column;
-                text-align: center;
-                gap: 20px;
-            }
-            
-            /* Removed header stats styles */
-            
-            .header-info h1 {
-                font-size: 2rem;
-            }
-            
-            .header-subtitle {
-                font-size: 1rem;
-            }
-            
-            .cost-projects-grid {
-                grid-template-columns: 1fr;
-                gap: 20px;
-            }
-            .cost-row {
-                flex-direction: column;
-                align-items: center;
-            }
-            .cost-metric {
-                min-width: 250px;
-                margin: 5px 0;
-            }
+            .page-header { padding: 24px; }
+            .page-header h1 { font-size: 1.8em; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .projects-grid { grid-template-columns: 1fr; }
+            .table-container { overflow-x: auto; }
+            .data-table { min-width: 700px; }
+            .controls-row { flex-direction: column; align-items: stretch; }
+            .filter-pills, .view-mode-toggle { justify-content: center; }
         }
     </style>
 </head>
@@ -800,173 +526,216 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Cost Overview']); ?>
-    
-    <div class="cost-analysis-header">
-        <div class="header-content">
-            <div class="header-left">
-                <div class="header-info">
-                    <h1>Cost Overview</h1>
-                    <p class="header-subtitle">Comprehensive logistics cost analysis and project comparison</p>
+
+    <div class="page-header">
+        <h1>Cost Overview</h1>
+        <p>Comprehensive logistics cost analysis across all your projects</p>
+    </div>
+
+    <div class="controls-row">
+        <div class="filter-pills">
+            <button type="button" class="filter-pill <?php echo $filter === 'total' ? 'active' : ''; ?>" data-filter="total">All Time</button>
+            <button type="button" class="filter-pill <?php echo $filter === 'ytd' ? 'active' : ''; ?>" data-filter="ytd">Year to Date</button>
+            <button type="button" class="filter-pill <?php echo $filter === 'per_project' ? 'active' : ''; ?>" data-filter="per_project">Avg per Project</button>
+        </div>
+        <div class="view-mode-toggle">
+            <button type="button" class="view-mode-btn <?php echo $view_mode === 'dollars' ? 'active' : ''; ?>" data-mode="dollars">$ Dollars</button>
+            <button type="button" class="view-mode-btn <?php echo $view_mode === 'per_watt' ? 'active' : ''; ?>" data-mode="per_watt">$/Watt</button>
+        </div>
+    </div>
+
+    <?php if ($view_mode === 'dollars'): ?>
+    <div class="stats-grid">
+        <div class="stat-card primary">
+            <div class="stat-icon">$</div>
+            <div class="stat-value">$<?php echo number_format($disp_total, 0); ?></div>
+            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Total Cost' : ($filter === 'ytd' ? 'Total Cost (YTD)' : 'Total Logistics Cost'); ?></div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🚛</div>
+            <div class="stat-value">$<?php echo number_format($disp_freight, 0); ?></div>
+            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Freight' : 'Freight Cost'; ?></div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">📋</div>
+            <div class="stat-value">$<?php echo number_format($disp_accessorial, 0); ?></div>
+            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Accessorial' : 'Accessorial Cost'; ?></div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🏢</div>
+            <div class="stat-value">$<?php echo number_format($disp_warehousing, 0); ?></div>
+            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Warehousing' : 'Warehousing Cost'; ?></div>
+        </div>
+    </div>
+    <?php else: ?>
+    <div class="stats-grid">
+        <div class="stat-card primary">
+            <div class="stat-icon">⚡</div>
+            <div class="stat-value">$<?php echo number_format($disp_cost_per_watt, 4); ?></div>
+            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Cost per Watt' : 'Cost per Watt'; ?></div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">$</div>
+            <div class="stat-value">$<?php echo number_format($disp_total, 0); ?></div>
+            <div class="stat-label">Total Cost</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🔋</div>
+            <div class="stat-value"><?php echo number_format($disp_watts / 1000000, 2); ?> MW</div>
+            <div class="stat-label">Total Watts</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-value"><?php echo $project_count; ?></div>
+            <div class="stat-label">Projects</div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <?php if (!empty($projects)): ?>
+    <div class="section-header-row">
+        <div class="section-title-group">
+            <div class="section-icon">💼</div>
+            <div>
+                <h2 class="section-title">Project Cost Breakdown</h2>
+                <p class="section-subtitle"><?php echo $project_count; ?> active project<?php echo $project_count !== 1 ? 's' : ''; ?> with logistics data</p>
+            </div>
+        </div>
+        <div class="view-toggle">
+            <button type="button" class="active" id="btn-grid" title="Grid View">▦</button>
+            <button type="button" id="btn-table" title="Table View">☰</button>
+        </div>
+    </div>
+
+    <div class="projects-grid active" id="projects-grid">
+        <?php foreach ($projects as $proj): ?>
+        <div class="project-card" data-href="project_cost_details?project_id=<?php echo $proj['id']; ?>">
+            <div class="project-card-image">
+                <?php if (!empty($proj['image_url'])): ?>
+                <img src="<?php echo htmlspecialchars($proj['image_url']); ?>" alt="<?php echo htmlspecialchars($proj['project_name']); ?>">
+                <?php endif; ?>
+                <div class="project-card-overlay"><span>View Details</span></div>
+            </div>
+            <div class="project-card-content">
+                <h3 class="project-card-title"><?php echo htmlspecialchars($proj['project_name']); ?></h3>
+                <div class="project-card-stats">
+                    <div class="project-stat-row">
+                        <span class="label">Freight</span>
+                        <span class="value">$<?php echo number_format($proj['freight_cost'], 0); ?></span>
+                    </div>
+                    <div class="project-stat-row">
+                        <span class="label">Accessorial</span>
+                        <span class="value">$<?php echo number_format($proj['accessorial_costs'], 0); ?></span>
+                    </div>
+                    <div class="project-stat-row">
+                        <span class="label">Warehousing</span>
+                        <span class="value">$<?php echo number_format($proj['warehousing_cost'], 0); ?></span>
+                    </div>
+                </div>
+                <div class="project-card-total">
+                    <?php if ($view_mode === 'per_watt'): ?>
+                    <div class="value">$<?php echo number_format($proj['cost_per_watt'], 4); ?>/W</div>
+                    <div class="label">Cost per Watt</div>
+                    <?php else: ?>
+                    <div class="value">$<?php echo number_format($proj['total_logistics_cost'], 2); ?></div>
+                    <div class="label">Total Logistics Cost</div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
-    </div>
-    <form method="GET" id="filter-form" class="filter-form">
-        <label>
-            <input type="radio" name="filter" value="total" onchange="this.form.submit();"
-                   <?php if ($filter==='total') echo 'checked'; ?>>
-            📊 Total Amounts
-        </label>
-        <label>
-            <input type="radio" name="filter" value="ytd" onchange="this.form.submit();"
-                   <?php if ($filter==='ytd') echo 'checked'; ?>>
-            📅 Year-to-Date Amounts
-        </label>
-        <label>
-            <input type="radio" name="filter" value="per_project" onchange="this.form.submit();"
-                   <?php if ($filter==='per_project') echo 'checked'; ?>>
-            📈 Average per Project
-        </label>
-    </form>
-
-    <!-- Enhanced cost-overview -->
-    <div class="cost-overview">
-        <?php if ($filter==='per_project'): ?>
-            <!-- Row 1: single average total cost per project -->
-            <div class="cost-row">
-                <div class="cost-metric cost-metric--total">
-                    <h3>📊 Average Logistics Cost per Project</h3>
-                    <p>$<?php echo number_format($disp_total_log,2); ?></p>
-                </div>
-            </div>
-            <div class="cost-row">
-                <div class="cost-metric">
-                    <h3>🚛 Average Freight Cost</h3>
-                    <p>$<?php echo number_format($disp_freight,2); ?></p>
-                </div>
-                <div class="cost-metric">
-                    <h3>📋 Average Accessorial Cost</h3>
-                    <p>$<?php echo number_format($disp_accessorial,2); ?></p>
-                </div>
-                <div class="cost-metric">
-                    <h3>🏢 Average Warehousing Cost</h3>
-                    <p>$<?php echo number_format($disp_warehousing,2); ?></p>
-                </div>
-                <div class="cost-metric">
-                    <h3>⚡ Average Solterra Fee</h3>
-                    <p>$<?php echo number_format($disp_solterra_fee,2); ?></p>
-                </div>
-            </div>
-        <?php else: ?>
-            <!-- Row 1: single total cost -->
-            <div class="cost-row">
-                <div class="cost-metric cost-metric--total">
-                    <h3><?php echo ($filter==='ytd') 
-                            ? '💸 Total Logistics Cost (YTD)'
-                            : '💸 Total Logistics Cost'; ?></h3>
-                    <p>$<?php echo number_format($disp_total_log,2); ?></p>
-                </div>
-            </div>
-            <!-- Row 2 -->
-            <div class="cost-row">
-                <div class="cost-metric">
-                    <h3><?php echo ($filter==='ytd')
-                            ? '🚛 Freight Cost (YTD)'
-                            : '🚛 Freight Cost'; ?></h3>
-                    <p>$<?php echo number_format($disp_freight,2); ?></p>
-                </div>
-                <div class="cost-metric">
-                    <h3><?php echo ($filter==='ytd')
-                            ? '📋 Accessorial Cost (YTD)'
-                            : '📋 Accessorial Cost'; ?></h3>
-                    <p>$<?php echo number_format($disp_accessorial,2); ?></p>
-                </div>
-                <div class="cost-metric">
-                    <h3><?php echo ($filter==='ytd')
-                            ? '🏢 Warehousing Cost (YTD)'
-                            : '🏢 Warehousing Cost'; ?></h3>
-                    <p>$<?php echo number_format($disp_warehousing,2); ?></p>
-                </div>
-                <div class="cost-metric">
-                    <h3><?php echo ($filter==='ytd')
-                            ? '⚡ Solterra Fee (YTD)'
-                            : '⚡ Solterra Fee'; ?></h3>
-                    <p>$<?php echo number_format($disp_solterra_fee,2); ?></p>
-                </div>
-            </div>
-        <?php endif; ?>
+        <?php endforeach; ?>
     </div>
 
-    <h2>💼 Logistics Costs per Project</h2>
-    <div class="cost-projects-grid">
-        <?php if (!empty($projects)): ?>
-            <?php foreach ($projects as $proj): 
-                // Calculate cost efficiency indicator
-                $avg_cost_per_project = $total_logistics_cost / count($projects);
-                $efficiency_class = 'efficiency-excellent';
-                $efficiency_text = 'Cost Efficient';
-                
-                if ($proj['total_logistics_cost'] > $avg_cost_per_project * 1.2) {
-                    $efficiency_class = 'efficiency-average';
-                    $efficiency_text = 'Above Average';
-                } elseif ($proj['total_logistics_cost'] > $avg_cost_per_project * 0.8) {
-                    $efficiency_class = 'efficiency-good';
-                    $efficiency_text = 'Good Value';
-                }
-            ?>
-                <div class="cost-project-card" onclick="window.location.href='project_cost_details?project_id=<?php echo $proj['id']; ?>'">
-                    <div class="cost-project-header">
-                        <h3 class="cost-project-title">
-                            <a href="project_cost_details?project_id=<?php echo $proj['id']; ?>">
-                                <?php echo htmlspecialchars($proj['project_name']); ?>
-                            </a>
-                        </h3>
-                    </div>
-                    <div class="cost-project-image">
-                        <img src="<?php echo htmlspecialchars($proj['image_url']); ?>" alt="<?php echo htmlspecialchars($proj['project_name']); ?>">
-                        <div class="cost-project-overlay">
-                            <div class="cost-project-overlay-text">View Cost Details</div>
-                        </div>
-                    </div>
-                    <div class="cost-project-body">
-                        <div class="cost-metrics-container">
-                            <div class="cost-metric-row">
-                                <span class="cost-metric-label">💸 <?php echo ($filter==='ytd') ? 'Total Cost (YTD)' : 'Total Logistics Cost'; ?></span>
-                                <span class="cost-metric-value">$<?php echo number_format($proj['total_logistics_cost'],2); ?></span>
-                            </div>
-                            <div class="cost-metric-row">
-                                <span class="cost-metric-label">🚛 <?php echo ($filter==='ytd') ? 'Freight (YTD)' : 'Freight Cost'; ?></span>
-                                <span class="cost-metric-value">$<?php echo number_format($proj['freight_cost'],2); ?></span>
-                            </div>
-                            <div class="cost-metric-row">
-                                <span class="cost-metric-label">📋 <?php echo ($filter==='ytd') ? 'Accessorial (YTD)' : 'Accessorial Cost'; ?></span>
-                                <span class="cost-metric-value">$<?php echo number_format($proj['accessorial_costs'],2); ?></span>
-                            </div>
-                            <div class="cost-metric-row">
-                                <span class="cost-metric-label">🏢 <?php echo ($filter==='ytd') ? 'Warehousing (YTD)' : 'Warehousing Cost'; ?></span>
-                                <span class="cost-metric-value">$<?php echo number_format($proj['warehousing_cost'],2); ?></span>
-                            </div>
-                            <div class="cost-metric-row">
-                                <span class="cost-metric-label">⚡ <?php echo ($filter==='ytd') ? 'Solterra Fee (YTD)' : 'Solterra Fee'; ?></span>
-                                <span class="cost-metric-value">$<?php echo number_format($proj['solterra_fee'],2); ?></span>
-                            </div>
-                        </div>
-                        <div class="cost-project-footer">
-                            <div class="view-details-btn">
-                                <span>📊</span>
-                                <span>View Cost Details</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            <?php endforeach; ?>
-        <?php else: ?>
-            <div style="text-align: center; padding: 40px; color: #6c757d; grid-column: 1/-1;">
-                <h3>📊 No Projects Found</h3>
-                <p>No projects with logistics data are available for the selected filter.</p>
-            </div>
-        <?php endif; ?>
+    <div class="table-container" id="projects-table">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Project</th>
+                    <th>Freight</th>
+                    <th>Accessorial</th>
+                    <th>Warehousing</th>
+                    <?php if ($view_mode === 'per_watt'): ?>
+                    <th>Cost/Watt</th>
+                    <?php else: ?>
+                    <th>Total Cost</th>
+                    <?php endif; ?>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($projects as $proj): ?>
+                <tr data-href="project_cost_details?project_id=<?php echo $proj['id']; ?>">
+                    <td class="project-name"><?php echo htmlspecialchars($proj['project_name']); ?></td>
+                    <td class="cost-cell">$<?php echo number_format($proj['freight_cost'], 2); ?></td>
+                    <td class="cost-cell">$<?php echo number_format($proj['accessorial_costs'], 2); ?></td>
+                    <td class="cost-cell">$<?php echo number_format($proj['warehousing_cost'], 2); ?></td>
+                    <?php if ($view_mode === 'per_watt'): ?>
+                    <td><span class="total-cell">$<?php echo number_format($proj['cost_per_watt'], 4); ?>/W</span></td>
+                    <?php else: ?>
+                    <td><span class="total-cell">$<?php echo number_format($proj['total_logistics_cost'], 2); ?></span></td>
+                    <?php endif; ?>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
     </div>
+    <?php else: ?>
+    <div class="empty-state">
+        <h3>No Projects Found</h3>
+        <p>No projects with logistics data are available.</p>
+    </div>
+    <?php endif; ?>
 </main>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Filter pills
+    document.querySelectorAll('.filter-pill').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var filter = this.getAttribute('data-filter');
+            var url = new URL(window.location.href);
+            url.searchParams.set('filter', filter);
+            window.location.href = url.toString();
+        });
+    });
+
+    // View mode toggle
+    document.querySelectorAll('.view-mode-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var mode = this.getAttribute('data-mode');
+            var url = new URL(window.location.href);
+            url.searchParams.set('view_mode', mode);
+            window.location.href = url.toString();
+        });
+    });
+
+    // Grid/Table view toggle
+    var btnGrid = document.getElementById('btn-grid');
+    var btnTable = document.getElementById('btn-table');
+    var gridView = document.getElementById('projects-grid');
+    var tableView = document.getElementById('projects-table');
+
+    function setView(view) {
+        if (gridView) gridView.classList.toggle('active', view === 'grid');
+        if (tableView) tableView.classList.toggle('active', view === 'table');
+        if (btnGrid) btnGrid.classList.toggle('active', view === 'grid');
+        if (btnTable) btnTable.classList.toggle('active', view === 'table');
+        localStorage.setItem('costOverviewView', view);
+    }
+
+    if (btnGrid) btnGrid.addEventListener('click', function() { setView('grid'); });
+    if (btnTable) btnTable.addEventListener('click', function() { setView('table'); });
+
+    // Restore saved view
+    var savedView = localStorage.getItem('costOverviewView') || 'grid';
+    setView(savedView);
+
+    // Card and row clicks
+    document.querySelectorAll('[data-href]').forEach(function(el) {
+        el.addEventListener('click', function() {
+            window.location.href = this.getAttribute('data-href');
+        });
+    });
+});
+</script>
 </body>
 </html>
