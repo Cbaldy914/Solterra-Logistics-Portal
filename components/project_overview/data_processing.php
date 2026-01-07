@@ -994,9 +994,19 @@ $cost_data = [];
 $combined_total_costs = 0;
 $combined_qty = 0;
 
+// First pass: get total quantity for proportional warehousing distribution
+$total_qty_for_warehousing = 0;
+foreach ($keys_list_fin as $k) {
+    $total_qty_for_warehousing += $quantity_by_key[$k];
+}
+
 foreach ($keys_list_fin as $k) {
     $tc = $costs_by_key[$k];
     $qt = $quantity_by_key[$k];
+
+    // Add proportional share of warehousing cost based on quantity
+    $warehousing_share = ($total_qty_for_warehousing > 0) ? ($total_warehousing_cost * ($qt / $total_qty_for_warehousing)) : 0;
+    $tc += $warehousing_share;
 
     $lbl = ($k==='canceled') ? 'Canceled' : ($k.'W');
 
