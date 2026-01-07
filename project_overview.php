@@ -319,9 +319,16 @@ function switchSubTab(mainTab, subTabId) {
 
 function toggleDropdown(dropdownId) {
     const dropdown = document.getElementById(dropdownId);
+    if (!dropdown) return;
     const isOpen = dropdown.classList.contains('show');
-    document.querySelectorAll('.dropdown-content').forEach(d => d.classList.remove('show'));
-    if (!isOpen && dropdown) dropdown.classList.add('show');
+    document.querySelectorAll('.dropdown-content').forEach(d => {
+        d.classList.remove('show');
+        d.style.display = ''; // Clear inline style so CSS class takes precedence
+    });
+    if (!isOpen) {
+        dropdown.classList.add('show');
+        dropdown.style.display = ''; // Clear any inline display:none
+    }
 }
 
 document.addEventListener('click', function(e) {
@@ -2634,8 +2641,10 @@ window.onclick = function(event) {
             projectDropdown.style.display = 'none';
         }
     }
-    if (!event.target.closest('.module-actions-dropdown')) {
-        document.getElementById('moduleActionsDropdown').style.display = 'none';
+    const moduleDropdown = document.getElementById('moduleActionsDropdown');
+    if (moduleDropdown && !event.target.closest('.dropdown')) {
+        moduleDropdown.classList.remove('show');
+        moduleDropdown.style.display = '';
     }
     if (!event.target.closest('.batch-actions-dropdown')) {
         document.querySelectorAll('.batch-actions-content').forEach(function(content) {
