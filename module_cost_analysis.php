@@ -265,7 +265,7 @@ $conn->close();
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         .page-header {
-            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            background: linear-gradient(135deg, #f8f9fa 0%, #e8f4f7 100%);
             border-radius: 24px;
             padding: 32px;
             margin-bottom: 32px;
@@ -384,14 +384,16 @@ $conn->close();
             box-shadow: 0 2px 8px rgba(0,0,0,0.04);
         }
         .section-title-group { display: flex; align-items: center; gap: 16px; }
-        .section-icon {
-            width: 44px; height: 44px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            border-radius: 12px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.3em;
+        .section-title {
+            font-size: 1.4em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0;
+            letter-spacing: -0.3px;
         }
-        .section-title { font-size: 1.2em; font-weight: 600; color: #293E4C; margin: 0; }
         .section-subtitle { font-size: 0.85em; color: #6c757d; margin: 4px 0 0; }
         .view-toggle {
             display: inline-flex;
@@ -484,13 +486,13 @@ $conn->close();
         .table-container.active { display: block; }
         .data-table { width: 100%; border-collapse: collapse; }
         .data-table th {
-            background: #f8f9fa;
+            background: #488C9A;
             padding: 14px 16px;
             text-align: left;
             font-weight: 600;
-            color: #293E4C;
+            color: #fff;
             font-size: 0.8em;
-            border-bottom: 2px solid #e9ecef;
+            border-bottom: none;
         }
         .data-table td { padding: 14px 16px; border-bottom: 1px solid #f1f3f4; font-size: 0.9em; }
         .data-table tbody tr { cursor: pointer; transition: background 0.2s; }
@@ -595,7 +597,6 @@ $conn->close();
     <?php if (!empty($projects)): ?>
     <div class="section-header-row">
         <div class="section-title-group">
-            <div class="section-icon">💼</div>
             <div>
                 <h2 class="section-title">Project Cost Breakdown</h2>
                 <p class="section-subtitle"><?php echo $project_count; ?> active project<?php echo $project_count !== 1 ? 's' : ''; ?> with logistics data</p>
