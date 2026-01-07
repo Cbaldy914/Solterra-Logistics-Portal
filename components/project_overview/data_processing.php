@@ -782,71 +782,173 @@ $costs_by_key    = [];
 $quantity_by_key = [];
 $keys_list_fin   = [];
 
-function calcWarehousingCost($dv, $warehouse) {
-    if (!$warehouse) return 0;
-    $res = 0;
-    if (!empty($dv['warehouse_arrival_date'])) {
-        $in_fee  = $warehouse['in_fee'];
-        $out_fee = (!empty($dv['left_warehouse_date'])) ? $warehouse['out_fee'] : 0;
-        $sd=new DateTime($dv['warehouse_arrival_date']);
-        $ed=(!empty($dv['left_warehouse_date']))?new DateTime($dv['left_warehouse_date']):new DateTime();
-        $diff=$sd->diff($ed);
-        $days=$diff->days+1;
-        $daily= $warehouse['monthly_storage_fee']/30;
-        $store=$days*$daily;
-        $res=$in_fee + $store + $out_fee;
+// Calculate warehousing cost for a single pallet by looking at its delivery history
+function calculatePalletWarehousingCostFallback($pallet_id, $conn) {
+    if (!$conn || !$pallet_id) {
+        return 0.0;
     }
-    return $res;
-}
 
-// fetch warehouse if any
-$stmt = $conn->prepare("
-    SELECT w.id
-    FROM warehouses w
-    INNER JOIN projects p ON p.warehouse_id = w.id
-    WHERE p.id=?
-");
-$stmt->bind_param("i",$project_id);
-$stmt->execute();
-$whres = $stmt->get_result();
-$stmt->close();
-$warehouse = null;
-if ($whres->num_rows > 0) {
-    $warehouse_basic = $whres->fetch_assoc();
-    $warehouse_id = $warehouse_basic['id'];
-    
-    // Fetch cost items for this warehouse
-    $cost_stmt = $conn->prepare("
-        SELECT trigger_event, amount 
-        FROM warehouse_cost_items 
-        WHERE warehouse_id = ? AND is_active = 1
-    ");
-    $cost_stmt->bind_param("i", $warehouse_id);
-    $cost_stmt->execute();
-    $cost_result = $cost_stmt->get_result();
-    
-    $warehouse = ['id' => $warehouse_id];
-    $warehouse['in_fee'] = 0;
-    $warehouse['out_fee'] = 0;
-    $warehouse['monthly_storage_fee'] = 0;
-    
-    while ($cost = $cost_result->fetch_assoc()) {
-        switch ($cost['trigger_event']) {
-            case 'entry':
-                $warehouse['in_fee'] = $cost['amount'];
-                break;
-            case 'exit':
-                $warehouse['out_fee'] = $cost['amount'];
-                break;
-            case 'monthly':
-                $warehouse['monthly_storage_fee'] = $cost['amount'];
-                break;
+    $sql = "SELECT DISTINCT
+                w.id AS warehouse_id,
+                (SELECT MIN(d_arr.warehouse_arrival_date)
+                 FROM deliveries d_arr
+                 JOIN delivery_pallets dp_arr ON d_arr.id = dp_arr.delivery_id
+                 WHERE dp_arr.inventory_pallet_id = ?
+                   AND d_arr.warehouse_id = w.id
+                   AND d_arr.warehouse_arrival_date IS NOT NULL) AS arrival_date,
+                (SELECT MIN(d_dep.left_warehouse_date)
+                 FROM deliveries d_dep
+                 JOIN delivery_pallets dp_dep ON d_dep.id = dp_dep.delivery_id
+                 WHERE dp_dep.inventory_pallet_id = ?
+                   AND d_dep.origin_type = 'warehouse'
+                   AND d_dep.origin_id = w.id
+                   AND d_dep.left_warehouse_date IS NOT NULL) AS departure_date,
+                (SELECT COUNT(DISTINCT d_in.id)
+                 FROM deliveries d_in
+                 JOIN delivery_pallets dp_in ON d_in.id = dp_in.delivery_id
+                 WHERE dp_in.inventory_pallet_id = ?
+                   AND d_in.warehouse_id = w.id
+                   AND d_in.warehouse_arrival_date IS NOT NULL) AS inbound_deliveries,
+                (SELECT COUNT(DISTINCT d_out.id)
+                 FROM deliveries d_out
+                 JOIN delivery_pallets dp_out ON d_out.id = dp_out.delivery_id
+                 WHERE dp_out.inventory_pallet_id = ?
+                   AND d_out.origin_type = 'warehouse'
+                   AND d_out.origin_id = w.id
+                   AND d_out.left_warehouse_date IS NOT NULL) AS outbound_deliveries
+            FROM warehouses w
+            WHERE w.id IN (
+                SELECT DISTINCT COALESCE(d.warehouse_id, d.origin_id)
+                FROM deliveries d
+                JOIN delivery_pallets dp ON d.id = dp.delivery_id
+                WHERE dp.inventory_pallet_id = ?
+                  AND (d.warehouse_id IS NOT NULL OR (d.origin_type = 'warehouse' AND d.origin_id IS NOT NULL))
+            )
+            ORDER BY arrival_date ASC";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return 0.0;
+    }
+
+    $stmt->bind_param("iiiii", $pallet_id, $pallet_id, $pallet_id, $pallet_id, $pallet_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    if (!$result || $result->num_rows === 0) {
+        $stmt->close();
+        return 0.0;
+    }
+
+    $warehouse_rows = [];
+    $warehouse_ids = [];
+    while ($row = $result->fetch_assoc()) {
+        $warehouse_rows[] = $row;
+        $warehouse_ids[] = (int)$row['warehouse_id'];
+    }
+    $stmt->close();
+
+    $warehouse_costs = [];
+    if (!empty($warehouse_ids)) {
+        $warehouse_ids_str = implode(',', array_map('intval', $warehouse_ids));
+        $cost_sql = "SELECT warehouse_id, trigger_event, amount
+                     FROM warehouse_cost_items
+                     WHERE warehouse_id IN ({$warehouse_ids_str}) AND is_active = 1";
+        $cost_result = $conn->query($cost_sql);
+        if ($cost_result) {
+            while ($cost = $cost_result->fetch_assoc()) {
+                $wid = (int)$cost['warehouse_id'];
+                if (!isset($warehouse_costs[$wid])) {
+                    $warehouse_costs[$wid] = ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
+                }
+                switch ($cost['trigger_event']) {
+                    case 'entry': $warehouse_costs[$wid]['in_fee'] = (float)$cost['amount']; break;
+                    case 'exit': $warehouse_costs[$wid]['out_fee'] = (float)$cost['amount']; break;
+                    case 'monthly': $warehouse_costs[$wid]['monthly_storage_fee'] = (float)$cost['amount']; break;
+                }
+            }
         }
     }
-    $cost_stmt->close();
+
+    $total_warehouse_cost = 0.0;
+    foreach ($warehouse_rows as $row) {
+        $wid = (int)$row['warehouse_id'];
+        $costs = $warehouse_costs[$wid] ?? ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
+
+        $in_fee_cost = $costs['in_fee'] * (int)($row['inbound_deliveries'] ?? 0);
+        $out_fee_cost = $costs['out_fee'] * (int)($row['outbound_deliveries'] ?? 0);
+
+        $storage_cost = 0.0;
+        if (!empty($row['arrival_date'])) {
+            $arrival = new DateTime($row['arrival_date']);
+            $departure = !empty($row['departure_date']) ? new DateTime($row['departure_date']) : new DateTime();
+            $days = max(0, $arrival->diff($departure)->days);
+            $daily_fee = ($costs['monthly_storage_fee'] ?? 0) / 30;
+            $storage_cost = $days * $daily_fee;
+        }
+
+        $total_warehouse_cost += $in_fee_cost + $out_fee_cost + $storage_cost;
+    }
+
+    return $total_warehouse_cost;
 }
 
-// Build actual total cost from deliveries
+// Calculate warehousing cost using pallet-level data (matches project_cost_details.php approach)
+function calculateProjectWarehousingCostFromPallets($conn, $project_id) {
+    $total_cost = 0;
+
+    // Get all pallets for this project
+    $stmt = $conn->prepare("
+        SELECT ip.id, ip.warehouse_cost, ip.current_warehouse_id, ip.arrival_date, ip.status
+        FROM inventory_pallets ip
+        WHERE ip.assigned_project_id = ?
+    ");
+    $stmt->bind_param("i", $project_id);
+    $stmt->execute();
+    $pallets_result = $stmt->get_result();
+    $stmt->close();
+
+    while ($pallet = $pallets_result->fetch_assoc()) {
+        $pallet_cost = 0.0;
+
+        // First use recorded warehouse_cost if available
+        if (!empty($pallet['warehouse_cost']) && $pallet['warehouse_cost'] > 0) {
+            $pallet_cost = (float)$pallet['warehouse_cost'];
+
+            // For pallets still in warehouse, add pending storage cost
+            if ($pallet['status'] === 'In Warehouse' && !empty($pallet['current_warehouse_id']) && !empty($pallet['arrival_date'])) {
+                $wh_stmt = $conn->prepare("SELECT amount FROM warehouse_cost_items WHERE warehouse_id = ? AND trigger_event = 'monthly' AND is_active = 1");
+                if ($wh_stmt) {
+                    $wh_stmt->bind_param("i", $pallet['current_warehouse_id']);
+                    $wh_stmt->execute();
+                    $wh_stmt->bind_result($monthly_fee);
+                    if ($wh_stmt->fetch() && $monthly_fee > 0) {
+                        $arrival = new DateTime($pallet['arrival_date']);
+                        $now = new DateTime();
+                        $days = max(0, $arrival->diff($now)->days);
+                        $estimated_storage = $days * ($monthly_fee / 30);
+                        if ($estimated_storage > $pallet_cost) {
+                            $pallet_cost = $estimated_storage;
+                        }
+                    }
+                    $wh_stmt->close();
+                }
+            }
+        } else {
+            // No recorded cost - calculate from delivery history
+            $pallet_cost = calculatePalletWarehousingCostFallback((int)$pallet['id'], $conn);
+        }
+
+        $total_cost += $pallet_cost;
+    }
+
+    return $total_cost;
+}
+
+// Calculate warehousing cost from pallets (replaces old delivery-based calculation)
+$total_warehousing_cost = calculateProjectWarehousingCostFromPallets($conn, $project_id);
+
+// Build actual total cost from deliveries (warehousing already calculated from pallets above)
 while ($dv = $dres->fetch_assoc()) {
     $stat = $dv['status_of_delivery'];
     $watt= (float)$dv['wattage'];
@@ -854,21 +956,17 @@ while ($dv = $dres->fetch_assoc()) {
     $a   = (float)$dv['accessorial_costs'];
     $q   = (int)$dv['quantity'];
 
-    $wcost = calcWarehousingCost($dv, $warehouse);
-
     if (!empty($dv['actual_delivery_date'])) {
         $soltFeeForThisDelivery = $solterra_fee * ($watt * $q);
     } else {
         $soltFeeForThisDelivery = 0;
     }
 
-    $tc = $fc + $a + $wcost + $soltFeeForThisDelivery;
+    $tc = $fc + $a + $soltFeeForThisDelivery;
 
     $total_freight_cost      += $fc;
     $total_accessorial_costs += $a;
-    $total_warehousing_cost  += $wcost;
     $total_solterra_fee      += $soltFeeForThisDelivery;
-    $total_logistics_cost    += $tc;
 
     if ($stat==='Canceled') {
         $thisKey = 'canceled';
@@ -887,6 +985,9 @@ while ($dv = $dres->fetch_assoc()) {
     $costs_by_key[$thisKey]    += $tc;
     $quantity_by_key[$thisKey] += $q;
 }
+
+// Calculate total logistics cost (includes warehousing from pallets)
+$total_logistics_cost = $total_freight_cost + $total_accessorial_costs + $total_warehousing_cost + $total_solterra_fee;
 
 // Build cost_data
 $cost_data = [];
@@ -1038,11 +1139,11 @@ while($dv = $allDel->fetch_assoc()) {
     }
     if(!empty($adate)){
         $weekKey = getWeekEndingSunday($adate);
-        $wh   = calcWarehousingCost($dv, $warehouse);
+        // Warehousing is now calculated from pallets at project level, not per-delivery
         $cc   = (float)$dv['customer_cost'];
         $ac   = (float)$dv['accessorial_costs'];
         $fee  = $solterra_fee*($watt*$qty);
-        $actual_tc = $cc + $ac + $wh + $fee;
+        $actual_tc = $cc + $ac + $fee;
         if(!isset($deliveries_by_date_actual_cost[$weekKey])) {
             $deliveries_by_date_actual_cost[$weekKey] = 0;
         }
