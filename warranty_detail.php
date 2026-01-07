@@ -105,6 +105,38 @@ $prs = $ps->get_result();
 while ($row = $prs->fetch_assoc()) { $choices[] = $row; }
 $ps->close();
 
+// Parse pallet details from notes and fetch BOL numbers
+$palletDetails = [];
+$palletBolMap = [];
+$decodedNotes = json_decode((string)($claim['notes'] ?? ''), true);
+if (is_array($decodedNotes) && isset($decodedNotes['pallets']) && is_array($decodedNotes['pallets'])) {
+    $palletDetails = $decodedNotes['pallets'];
+
+    // Get BOL numbers for each pallet
+    $palletIds = array_map(function($pd) { return (int)($pd['pallet_id'] ?? 0); }, $palletDetails);
+    $palletIds = array_filter($palletIds);
+
+    if (!empty($palletIds)) {
+        $placeholders = implode(',', array_fill(0, count($palletIds), '?'));
+        $types = str_repeat('i', count($palletIds));
+        $bolStmt = $conn->prepare("
+            SELECT dp.inventory_pallet_id, d.bol_number
+            FROM delivery_pallets dp
+            JOIN deliveries d ON dp.delivery_id = d.id
+            WHERE dp.inventory_pallet_id IN ($placeholders)
+        ");
+        if ($bolStmt) {
+            $bolStmt->bind_param($types, ...$palletIds);
+            $bolStmt->execute();
+            $bolResult = $bolStmt->get_result();
+            while ($row = $bolResult->fetch_assoc()) {
+                $palletBolMap[(int)$row['inventory_pallet_id']] = $row['bol_number'] ?? '';
+            }
+            $bolStmt->close();
+        }
+    }
+}
+
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -1185,34 +1217,30 @@ async function irUpload(){
             <?php endif; ?>
         </div>
         <div id="tab-pallets" class="tab-pane">
-            <?php 
-                $palletDetails = [];
-                $decodedNotes = json_decode((string)($claim['notes'] ?? ''), true);
-                if (is_array($decodedNotes) && isset($decodedNotes['pallets']) && is_array($decodedNotes['pallets'])) {
-                    $palletDetails = $decodedNotes['pallets'];
-                }
-            ?>
             <?php if (!empty($palletDetails)): ?>
                 <div class="table-responsive">
-                    <table class="table" style="width:100%; border-collapse:collapse;">
+                    <table class="styled-table">
                         <thead>
                             <tr>
-                                <th style="text-align:left;">Pallet</th>
-                                <th style="text-align:right;">Expected</th>
-                                <th style="text-align:right;">Actual</th>
-                                <th style="text-align:right;">Damaged</th>
-                                <th style="text-align:right;">Accepted</th>
-                                <th style="text-align:left;">Notes</th>
+                                <th>Pallet</th>
+                                <th>BOL Number</th>
+                                <th>Expected</th>
+                                <th>Actual</th>
+                                <th>Damaged</th>
+                                <th>Notes</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($palletDetails as $pd): ?>
+                            <?php foreach ($palletDetails as $pd):
+                                $palletId = (int)($pd['pallet_id'] ?? 0);
+                                $bolNumber = $palletBolMap[$palletId] ?? '';
+                            ?>
                                 <tr>
-                                    <td><?php echo htmlspecialchars('ID ' . (int)($pd['pallet_id'] ?? 0)); ?></td>
-                                    <td style="text-align:right;">&times;<?php echo (int)($pd['expected'] ?? 0); ?></td>
-                                    <td style="text-align:right;">&times;<?php echo (int)($pd['actual'] ?? 0); ?></td>
-                                    <td style="text-align:right;">&times;<?php echo (int)($pd['damaged'] ?? 0); ?></td>
-                                    <td style="text-align:right;">&times;<?php echo (int)($pd['accepted'] ?? 0); ?></td>
+                                    <td><?php echo htmlspecialchars('ID ' . $palletId); ?></td>
+                                    <td><?php echo htmlspecialchars($bolNumber); ?></td>
+                                    <td style="text-align:center;"><?php echo (int)($pd['expected'] ?? 0); ?></td>
+                                    <td style="text-align:center;"><?php echo (int)($pd['actual'] ?? 0); ?></td>
+                                    <td style="text-align:center;"><?php echo (int)($pd['damaged'] ?? 0); ?></td>
                                     <td><?php echo htmlspecialchars((string)($pd['notes'] ?? '')); ?></td>
                                 </tr>
                             <?php endforeach; ?>
