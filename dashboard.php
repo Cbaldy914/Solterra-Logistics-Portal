@@ -277,6 +277,7 @@ $conn->close();
         .chart-legend { flex: 1; font-size: 0.9em; }
         .legend-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #f1f3f4; }
         .legend-item:last-child { border-bottom: none; }
+        .legend-item.clickable-filter:hover { background: #f0f8fa !important; }
         .legend-label { display: flex; align-items: center; gap: 8px; color: #495057; }
         .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
         .legend-value { font-weight: 600; color: #293E4C; }
@@ -294,6 +295,12 @@ $conn->close();
         .view-archived-link { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 20px; color: #6c757d; font-size: 0.8em; font-weight: 500; text-decoration: none; transition: all 0.2s; }
         .view-archived-link:hover { background: #e8f4f7; border-color: #488C9A; color: #488C9A; }
         .view-archived-link .archived-count { background: #488C9A; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 0.9em; font-weight: 600; }
+        .active-filter-banner { display: none; align-items: center; gap: 12px; padding: 12px 16px; background: linear-gradient(135deg, #fff3cd 0%, #fff9e6 100%); border: 1px solid #ffc107; border-radius: 10px; margin-bottom: 16px; }
+        .active-filter-banner.visible { display: flex; }
+        .active-filter-banner .filter-text { flex: 1; font-size: 0.9em; color: #856404; font-weight: 500; }
+        .active-filter-banner .filter-status { font-weight: 700; }
+        .active-filter-banner .clear-filter-btn { padding: 6px 12px; background: #fff; border: 1px solid #ffc107; border-radius: 6px; color: #856404; font-size: 0.8em; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .active-filter-banner .clear-filter-btn:hover { background: #ffc107; color: #fff; }
         .view-toggle { display: inline-flex; background: #f1f3f4; border-radius: 8px; padding: 3px; gap: 3px; }
         .view-toggle button { padding: 8px 14px; border-radius: 6px; font-weight: 600; font-size: 1em; border: none; cursor: pointer; color: #6c757d; background: transparent; transition: all 0.2s; }
         .view-toggle button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
@@ -452,15 +459,15 @@ $conn->close();
             </div>
         </div>
         <div class="charts-section">
-            <div class="chart-card" onclick="openChartModal('pipeline')">
-                <h3>Project Pipeline</h3>
+            <div class="chart-card" style="cursor:default">
+                <h3>Project Pipeline <span style="font-size:0.7em;font-weight:400;color:#6c757d">(click to filter)</span></h3>
                 <div class="chart-content">
                     <div class="chart-container"><canvas id="pipelineChart"></canvas></div>
                     <div class="chart-legend">
-                        <div class="legend-item"><span class="legend-label"><span class="legend-dot" style="background:#28a745"></span>On Track</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['on_track']; ?></span></div>
-                        <div class="legend-item"><span class="legend-label"><span class="legend-dot" style="background:#ffc107"></span>At Risk</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['at_risk']; ?></span></div>
-                        <div class="legend-item"><span class="legend-label"><span class="legend-dot" style="background:#dc3545"></span>Behind</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['behind']; ?></span></div>
-                        <div class="legend-item"><span class="legend-label"><span class="legend-dot" style="background:#488C9A"></span>Done</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['completed']; ?></span></div>
+                        <div class="legend-item clickable-filter" data-health="on_track" onclick="filterByHealth('on_track')" style="cursor:pointer;border-radius:6px;padding:6px 8px;margin:-2px -4px;transition:background 0.2s"><span class="legend-label"><span class="legend-dot" style="background:#28a745"></span>On Track</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['on_track']; ?></span></div>
+                        <div class="legend-item clickable-filter" data-health="at_risk" onclick="filterByHealth('at_risk')" style="cursor:pointer;border-radius:6px;padding:6px 8px;margin:-2px -4px;transition:background 0.2s"><span class="legend-label"><span class="legend-dot" style="background:#ffc107"></span>At Risk</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['at_risk']; ?></span></div>
+                        <div class="legend-item clickable-filter" data-health="behind" onclick="filterByHealth('behind')" style="cursor:pointer;border-radius:6px;padding:6px 8px;margin:-2px -4px;transition:background 0.2s"><span class="legend-label"><span class="legend-dot" style="background:#dc3545"></span>Behind</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['behind']; ?></span></div>
+                        <div class="legend-item clickable-filter" data-health="completed" onclick="filterByHealth('completed')" style="cursor:pointer;border-radius:6px;padding:6px 8px;margin:-2px -4px;transition:background 0.2s"><span class="legend-label"><span class="legend-dot" style="background:#488C9A"></span>Done</span><span class="legend-value"><?php echo $dashboard_totals['health_counts']['completed']; ?></span></div>
                     </div>
                 </div>
             </div>
@@ -497,6 +504,11 @@ $conn->close();
         </div>
     </div>
 
+    <div class="active-filter-banner" id="filter-banner">
+        <span class="filter-text">Showing <span class="filter-status" id="filter-status-text"></span> projects</span>
+        <button class="clear-filter-btn" onclick="clearHealthFilter()">Show All Projects</button>
+    </div>
+
     <div class="projects-grid active" id="projects-grid">
         <?php
         $target_page = ($role === 'DDPm') ? 'DDPm_overview' : 'project_overview';
@@ -506,7 +518,7 @@ $conn->close();
             $order_offset = $circ - ($project['order_progress'] / 100) * $circ;
             $delivery_offset = $circ - ($project['delivery_progress'] / 100) * $circ;
         ?>
-        <div class="project-card" onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">
+        <div class="project-card" data-health="<?php echo $project['health']; ?>" onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">
             <div class="project-card-image">
                 <img src="<?php echo htmlspecialchars(!empty($project['image_url']) ? $project['image_url'] : 'pictures/project_default.png'); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/project_default.png'">
                 <div class="project-card-overlay"><span>View Details</span></div>
@@ -572,7 +584,7 @@ $conn->close();
             <?php foreach ($projects as $project):
                 $est_date_display = !empty($project['estimated_completion_date']) ? (new DateTime($project['estimated_completion_date']))->format('M j, Y') : 'N/A';
             ?>
-            <tr onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">
+            <tr data-health="<?php echo $project['health']; ?>" onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">
                 <td class="table-project-name"><?php echo htmlspecialchars($project['project_name']); ?></td>
                 <td><?php echo number_format($project['project_size'], 2); ?> MW</td>
                 <td><div class="table-wattages"><?php if (!empty($project['wattage_breakdown'])): foreach ($project['wattage_breakdown'] as $wb): ?><div class="table-wattage-row"><strong><?php echo number_format($wb['quantity']); ?></strong> × <?php echo (int)$wb['wattage']; ?>W</div><?php endforeach; else: ?><span style="color:#999">—</span><?php endif; ?></div></td>
@@ -711,6 +723,57 @@ function setView(view) {
     localStorage.setItem('dashboardView', view);
 }
 
+let currentHealthFilter = null;
+const healthLabels = { on_track: 'On Track', at_risk: 'At Risk', behind: 'Behind', completed: 'Completed' };
+
+function filterByHealth(health) {
+    currentHealthFilter = health;
+
+    // Update filter banner
+    document.getElementById('filter-banner').classList.add('visible');
+    document.getElementById('filter-status-text').textContent = healthLabels[health];
+
+    // Filter project cards
+    document.querySelectorAll('.project-card[data-health]').forEach(card => {
+        card.style.display = card.dataset.health === health ? '' : 'none';
+    });
+
+    // Filter table rows
+    document.querySelectorAll('.projects-table tbody tr[data-health]').forEach(row => {
+        row.style.display = row.dataset.health === health ? '' : 'none';
+    });
+
+    // Highlight active filter in legend
+    document.querySelectorAll('.clickable-filter').forEach(item => {
+        item.style.background = item.dataset.health === health ? '#e8f4f7' : '';
+    });
+
+    // Scroll to projects section
+    document.getElementById('projects-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+function clearHealthFilter() {
+    currentHealthFilter = null;
+
+    // Hide filter banner
+    document.getElementById('filter-banner').classList.remove('visible');
+
+    // Show all project cards
+    document.querySelectorAll('.project-card[data-health]').forEach(card => {
+        card.style.display = '';
+    });
+
+    // Show all table rows
+    document.querySelectorAll('.projects-table tbody tr[data-health]').forEach(row => {
+        row.style.display = '';
+    });
+
+    // Remove highlight from legend
+    document.querySelectorAll('.clickable-filter').forEach(item => {
+        item.style.background = '';
+    });
+}
+
 let sortDir = {};
 function sortTable(col) {
     const tbody = document.querySelector('.projects-table tbody'), rows = Array.from(tbody.querySelectorAll('tr'));
@@ -724,11 +787,23 @@ function sortTable(col) {
     rows.forEach(r => tbody.appendChild(r));
 }
 
-new Chart(document.getElementById('pipelineChart'), {
+const pipelineChart = new Chart(document.getElementById('pipelineChart'), {
     type: 'doughnut',
     data: { labels: ['On Track','At Risk','Behind','Completed'], datasets: [{ data: [<?php echo $dashboard_totals['health_counts']['on_track'].','.$dashboard_totals['health_counts']['at_risk'].','.$dashboard_totals['health_counts']['behind'].','.$dashboard_totals['health_counts']['completed']; ?>], backgroundColor: ['#28a745','#ffc107','#dc3545','#488C9A'], borderWidth: 0 }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, cutout: '60%' }
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        cutout: '60%',
+        onClick: (evt, elements) => {
+            if (elements.length > 0) {
+                const healthMap = ['on_track', 'at_risk', 'behind', 'completed'];
+                filterByHealth(healthMap[elements[0].index]);
+            }
+        }
+    }
 });
+document.getElementById('pipelineChart').style.cursor = 'pointer';
 new Chart(document.getElementById('coverageChart'), {
     type: 'doughnut',
     data: { labels: ['Ordered','Gap'], datasets: [{ data: [<?php echo min($dashboard_totals['total_ordered_mw'], $dashboard_totals['total_project_size_mw']).','.max(0, $dashboard_totals['total_project_size_mw'] - $dashboard_totals['total_ordered_mw']); ?>], backgroundColor: ['#488C9A','#e9ecef'], borderWidth: 0 }] },
