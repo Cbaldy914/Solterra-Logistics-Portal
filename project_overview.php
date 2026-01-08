@@ -63,10 +63,20 @@ document.addEventListener('DOMContentLoaded', function() {
 <main>
     <?php
     require_once 'components/breadcrumbs.php';
-    echo slp_render_breadcrumbs([
-        'project_id'  => (int)$project_id,
-        'omit_current'=> true,
-    ]);
+    $from_page = isset($_GET['from']) ? $_GET['from'] : '';
+
+    if ($from_page === 'module_movements') {
+        // Show breadcrumb back to Module Movements
+        echo slp_render_breadcrumbs([
+            'current_label' => $project['project_name'],
+            'extra' => [ ['label' => 'Module Movements', 'url' => 'module_movements.php?project_id=' . (int)$project_id] ]
+        ]);
+    } else {
+        echo slp_render_breadcrumbs([
+            'project_id'  => (int)$project_id,
+            'omit_current'=> true,
+        ]);
+    }
 
     // Calculate values for the header
     $remaining_mw = $project_size_mw - $ordered_mw;
