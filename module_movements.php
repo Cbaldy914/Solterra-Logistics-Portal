@@ -860,6 +860,10 @@ $conn->close();
                         <div class="legend-marker project-marker"></div>
                         <span>Project Site (Final Destination)</span>
                     </div>
+                    <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #eee; font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2"><path d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5"/></svg>
+                        <span>Click locations or routes for details</span>
+                    </div>
                 </div>
 
                 <!-- Pallet Status Breakdown -->
@@ -1357,8 +1361,8 @@ function createMarker(location) {
 
     const infoContent = `
         <div class="map-popup-content" style="font-family: 'Poppins', Arial, sans-serif; padding: 0;">
-            <!-- Colored Header Bar with Title -->
-            <div class="map-popup-header" style="background: ${gradientColors[location.type]}; padding: 12px 14px; display: flex; align-items: center; gap: 10px;">
+            <!-- Colored Header Bar with Title and right padding for X button -->
+            <div class="map-popup-header" style="background: ${gradientColors[location.type]}; padding: 12px 36px 12px 14px; display: flex; align-items: center; gap: 10px;">
                 <div style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: rgba(255,255,255,0.2); border-radius: 8px; flex-shrink: 0;">
                     ${typeIcon.replace(/stroke="[^"]*"/g, 'stroke="white"')}
                 </div>
@@ -1413,6 +1417,7 @@ function createMarker(location) {
         content: infoContent
     });
 
+    // Open popup on click only
     marker.addListener('click', () => {
         infoWindow.open(map, marker);
     });
@@ -1681,7 +1686,7 @@ function createRouteLines(locations) {
             }
             
             console.log(`Creating route from ${fromLocation.name} to ${toLocation.name}: ${route.modules} modules (${Math.round(volumePercentage * 100)}% of total), thickness: ${strokeWeight}px`);
-            
+
             const polylineOptions = {
                 path: [fromLocation.position, toLocation.position],
                 geodesic: true,
@@ -1689,15 +1694,31 @@ function createRouteLines(locations) {
                 strokeOpacity: 0.8,
                 strokeWeight: strokeWeight, // Variable thickness based on volume
                 map: map,
-                zIndex: 10
+                zIndex: 5 // Lower than markers (which are zIndex: 20)
             };
-            
+
             const polyline = new google.maps.Polyline(polylineOptions);
             
-            // Add hover info window for routes
+            // Add info window for routes (click only)
             const routeInfoWindow = new google.maps.InfoWindow();
-            
-            polyline.addListener('mouseover', (event) => {
+
+            // Click to open route info - but ignore clicks near markers
+            polyline.addListener('click', (event) => {
+                // Check if click is near the start or end marker (within ~0.05 degrees ≈ 5km)
+                const clickLat = event.latLng.lat();
+                const clickLng = event.latLng.lng();
+                const threshold = 0.08; // Degrees threshold for "near marker"
+
+                const nearFromMarker = Math.abs(clickLat - fromLocation.position.lat()) < threshold &&
+                                       Math.abs(clickLng - fromLocation.position.lng()) < threshold;
+                const nearToMarker = Math.abs(clickLat - toLocation.position.lat()) < threshold &&
+                                     Math.abs(clickLng - toLocation.position.lng()) < threshold;
+
+                // If click is near a marker, don't show route popup (let marker handle it)
+                if (nearFromMarker || nearToMarker) {
+                    return;
+                }
+
                 const routeTypeLabel = route.type === 'manufacturer_to_warehouse' ? 'Manufacturer → Warehouse' :
                                      route.type === 'warehouse_to_project' ? 'Warehouse → Project' :
                                      'Manufacturer → Project (Direct)';
@@ -1716,8 +1737,8 @@ function createRouteLines(locations) {
 
                 const routeInfo = `
                     <div style="font-family: 'Poppins', Arial, sans-serif; padding: 0;">
-                        <!-- Colored Header Bar -->
-                        <div style="background: ${routeGradient}; padding: 10px 12px; display: flex; align-items: center; gap: 8px;">
+                        <!-- Colored Header Bar with right padding for X button -->
+                        <div style="background: ${routeGradient}; padding: 10px 36px 10px 12px; display: flex; align-items: center; gap: 8px;">
                             <div style="display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: rgba(255,255,255,0.2); border-radius: 6px; flex-shrink: 0;">
                                 ${routeIcon}
                             </div>
@@ -1757,10 +1778,6 @@ function createRouteLines(locations) {
                 routeInfoWindow.setContent(routeInfo);
                 routeInfoWindow.setPosition(event.latLng);
                 routeInfoWindow.open(map);
-            });
-            
-            polyline.addListener('mouseout', () => {
-                routeInfoWindow.close();
             });
             
             // Store route reference for debugging
