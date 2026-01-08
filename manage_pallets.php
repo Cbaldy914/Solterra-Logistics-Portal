@@ -1024,7 +1024,11 @@ echo slp_render_breadcrumbs(['current_label' => 'Manage Pallets', 'extra' => $br
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <?php $pdUrl = 'pallet_details.php?pallet_id=' . (int)$pallet['pallet_id'] . ($project_id_from_url > 0 ? ('&project_id='.(int)$project_id_from_url) : ''); ?>
+                                    <?php
+                                        $pdUrl = 'pallet_details.php?pallet_id=' . (int)$pallet['pallet_id'];
+                                        if ($project_id_from_url > 0) $pdUrl .= '&project_id=' . (int)$project_id_from_url;
+                                        if ($from_page === 'module_movements') $pdUrl .= '&from=module_movements';
+                                    ?>
                                     <a href="<?php echo $pdUrl; ?>" class="action-button">Pallet Details</a>
                                     <?php if (!$is_user): ?>
                                     <button type="button" class="action-button" onclick="window.location.href='edit_pallet.php?pallet_id=<?php echo $pallet['pallet_id']; ?>'" style="background-color:#f0ad4e;">Edit Pallet</button>

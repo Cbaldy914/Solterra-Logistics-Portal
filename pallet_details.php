@@ -26,6 +26,7 @@ $errorMessage = '';
 $breadcrumbProjectId = isset($_GET['project_id']) ? (int)$_GET['project_id'] : 0;
 $fromWarehouseInfo = (($_GET['from'] ?? '') === 'warehouse_info');
 $fromCostDetails   = (($_GET['from'] ?? '') === 'cost_details');
+$fromModuleMovements = (($_GET['from'] ?? '') === 'module_movements');
 $breadcrumbWarehouseId = isset($_GET['warehouse_id']) ? (int)$_GET['warehouse_id'] : 0;
 $breadcrumbWarehouseName = '';
 $originBatchId = isset($_GET['origin_batch_id']) ? (int)$_GET['origin_batch_id'] : 0;
@@ -495,6 +496,25 @@ $conn->close();
             $extraCrumbs[] = [
                 'label' => 'Cost Details',
                 'url' => $costUrl
+            ];
+        } elseif ($fromModuleMovements) {
+            // Build module movements URL
+            $mmUrl = 'module_movements.php';
+            if ($breadcrumbProjectId > 0) {
+                $mmUrl .= '?project_id=' . (int)$breadcrumbProjectId;
+            }
+            $extraCrumbs[] = [
+                'label' => 'Module Movements',
+                'url' => $mmUrl
+            ];
+            // Also add Manage Pallets in the chain
+            $mpUrl = 'manage_pallets.php?from=module_movements';
+            if ($breadcrumbProjectId > 0) {
+                $mpUrl .= '&project_id=' . (int)$breadcrumbProjectId;
+            }
+            $extraCrumbs[] = [
+                'label' => 'Manage Pallets',
+                'url' => $mpUrl
             ];
         } else {
             $mpUrl = '';
