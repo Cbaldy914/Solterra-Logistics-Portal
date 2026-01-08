@@ -175,9 +175,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     Modules <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                 </button>
                 <div class="nav-dropdown-content" id="modulesDropdown">
+                    <a href="module_movements.php?project_id=<?php echo $project_id; ?>">Module Movements</a>
                     <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Module Overview</a>
                     <a href="<?php echo $isAdmin ? 'create_shipment.php' : 'manage_pallets.php'; ?>?project_id=<?php echo $project_id; ?>"><?php echo $isAdmin ? 'Manage Pallets' : 'View Pallets'; ?></a>
-                    <a href="module_movements.php?project_id=<?php echo $project_id; ?>">Module Movements</a>
                 </div>
             </div>
 

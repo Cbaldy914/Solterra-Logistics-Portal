@@ -307,7 +307,7 @@ $conn->close();
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
             border: 1px solid rgba(72, 140, 154, 0.08);
             position: relative;
-            overflow: hidden;
+            overflow: visible;
         }
 
         .sustainability-tracker-header::before {
@@ -337,6 +337,69 @@ $conn->close();
             background-clip: text;
             margin: 0 0 8px 0;
             line-height: 1.2;
+        }
+
+        .header-title-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .info-tooltip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            background: #488C9A;
+            color: white;
+            border-radius: 50%;
+            font-weight: bold;
+            cursor: pointer;
+            position: relative;
+            font-size: 0.7em;
+            flex-shrink: 0;
+            margin-top: 8px;
+        }
+
+        .info-tooltip:hover {
+            background: #3A6E7F;
+        }
+
+        .info-tooltip .tooltip-text {
+            display: none;
+            width: 320px;
+            background: #fff;
+            color: #333;
+            text-align: left;
+            border-radius: 8px;
+            padding: 16px;
+            position: absolute;
+            z-index: 1000;
+            top: 30px;
+            left: -150px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            font-weight: normal;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+
+        .info-tooltip .tooltip-text p {
+            margin: 0 0 8px;
+            font-weight: 600;
+        }
+
+        .info-tooltip .tooltip-text ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        .info-tooltip .tooltip-text li {
+            margin-bottom: 4px;
+        }
+
+        .info-tooltip:hover .tooltip-text {
+            display: block;
         }
 
         .header-subtitle {
@@ -1169,7 +1232,19 @@ $conn->close();
     <div class="sustainability-tracker-header">
         <div class="header-content">
             <div class="header-info">
-                <h1>Sustainability Details: <?php echo htmlspecialchars($project_name); ?></h1>
+                <div class="header-title-row">
+                    <h1>Sustainability Details: <?php echo htmlspecialchars($project_name); ?></h1>
+                    <span class="info-tooltip">?
+                        <span class="tooltip-text">
+                            <p>Calculations:</p>
+                            <ul>
+                                <li>6 miles per gallon for heavy-duty freight trucks (US DOE)</li>
+                                <li>Fuel consumption: ~0.1667 gallons/mile</li>
+                                <li>Diesel emissions: ~10.21 kg CO2/gallon (EPA)</li>
+                            </ul>
+                        </span>
+                    </span>
+                </div>
                 <p class="header-subtitle">Environmental impact analysis and carbon footprint tracking</p>
             </div>
             <div class="header-stats">
