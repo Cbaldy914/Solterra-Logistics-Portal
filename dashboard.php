@@ -208,6 +208,37 @@ if (count($accountIds) > 0) {
 }
 
 $mw_gap = $dashboard_totals['total_project_size_mw'] - $dashboard_totals['total_ordered_mw'];
+
+// Get open warranty claims count per project
+$warranty_counts = [];
+$total_open_claims = 0;
+if (count($accountIds) > 0) {
+    $project_ids = array_column($projects, 'id');
+    if (!empty($project_ids)) {
+        $placeholders_warranty = implode(',', array_fill(0, count($project_ids), '?'));
+        $sqlWarranty = "SELECT ss.project_id, COUNT(*) as open_claims
+                        FROM warranty_claims w
+                        JOIN site_scheduling ss ON ss.id = w.scheduling_id
+                        WHERE ss.project_id IN ($placeholders_warranty) AND w.status <> 'Closed'
+                        GROUP BY ss.project_id";
+        $stmtWarranty = $conn->prepare($sqlWarranty);
+        $stmtWarranty->bind_param(str_repeat('i', count($project_ids)), ...$project_ids);
+        $stmtWarranty->execute();
+        $resultWarranty = $stmtWarranty->get_result();
+        while ($row = $resultWarranty->fetch_assoc()) {
+            $warranty_counts[(int)$row['project_id']] = (int)$row['open_claims'];
+            $total_open_claims += (int)$row['open_claims'];
+        }
+        $stmtWarranty->close();
+    }
+}
+
+// Add warranty counts to projects array
+foreach ($projects as &$project) {
+    $project['open_claims'] = $warranty_counts[$project['id']] ?? 0;
+}
+unset($project);
+
 $conn->close();
 ?>
 <!DOCTYPE html>
@@ -350,6 +381,9 @@ $conn->close();
 
         .storage-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #fff3cd; border-radius: 6px; font-size: 0.7em; color: #856404; margin-top: 8px; }
         .storage-badge strong { color: #664d03; }
+        .warranty-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #f8d7da; border-radius: 6px; font-size: 0.7em; color: #721c24; margin-top: 8px; margin-left: 6px; }
+        .warranty-badge strong { color: #491217; }
+        .project-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 0; }
 
         .add-project-card { display: flex; align-items: center; justify-content: center; flex-direction: column; border: 2px dashed #d0d0d0; background: #f9f9f9; color: #6c757d; min-height: 360px; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
         .add-project-card:hover { border-color: #488C9A; background: #f0f8fa; color: #488C9A; transform: translateY(-4px); }
@@ -409,7 +443,7 @@ $conn->close();
         .no-projects p { color: #6c757d; }
 
         @media (max-width: 992px) { .stats-charts-row { grid-template-columns: 1fr; } .charts-section { grid-template-columns: 1fr 1fr; } .chart-content { flex-direction: row; } .chart-container { width: 100px; height: 100px; } }
-        @media (max-width: 768px) { .dashboard-header { flex-direction: column; align-items: flex-start; } .dashboard-header h1 { font-size: 1.5em; } .stats-section { grid-template-columns: repeat(2, 1fr); } .stat-number { font-size: 1.3em; } .charts-section { grid-template-columns: 1fr; } .chart-container { width: 110px; height: 110px; } .projects-grid { grid-template-columns: 1fr; } .projects-table-container { overflow-x: auto; } .projects-table { min-width: 900px; } }
+        @media (max-width: 768px) { .dashboard-header { flex-direction: column; align-items: flex-start; } .dashboard-header h1 { font-size: 1.5em; } .stats-section { grid-template-columns: repeat(2, 1fr); } .stat-number { font-size: 1.3em; } .charts-section { grid-template-columns: 1fr; } .chart-container { width: 110px; height: 110px; } .projects-grid { grid-template-columns: 1fr; } .projects-table-container { overflow-x: auto; } .projects-table { min-width: 980px; } }
     </style>
 </head>
 <body>
@@ -557,8 +591,15 @@ $conn->close();
                     <div class="info-item"><div class="info-label">Est. Completion</div><div class="info-value"><?php echo $est_date_display; ?></div></div>
                 </div>
 
-                <?php if ($project['storage_modules'] > 0): ?>
-                <div class="storage-badge">🏭 <strong><?php echo number_format($project['storage_modules']); ?></strong> in storage</div>
+                <?php if ($project['storage_modules'] > 0 || $project['open_claims'] > 0): ?>
+                <div class="project-badges">
+                    <?php if ($project['storage_modules'] > 0): ?>
+                    <div class="storage-badge">🏭 <strong><?php echo number_format($project['storage_modules']); ?></strong> in storage</div>
+                    <?php endif; ?>
+                    <?php if ($project['open_claims'] > 0): ?>
+                    <div class="warranty-badge">⚠️ <strong><?php echo $project['open_claims']; ?></strong> open claim<?php echo $project['open_claims'] > 1 ? 's' : ''; ?></div>
+                    <?php endif; ?>
+                </div>
                 <?php endif; ?>
             </div>
         </div>
@@ -578,7 +619,8 @@ $conn->close();
                 <th onclick="sortTable(4)">Delivered <span class="sort-icon">↕</span></th>
                 <th>Stage</th>
                 <th>Health</th>
-                <th onclick="sortTable(7)">Est. Complete <span class="sort-icon">↕</span></th>
+                <th onclick="sortTable(7)">Claims <span class="sort-icon">↕</span></th>
+                <th onclick="sortTable(8)">Est. Complete <span class="sort-icon">↕</span></th>
             </tr></thead>
             <tbody>
             <?php foreach ($projects as $project):
@@ -592,6 +634,7 @@ $conn->close();
                 <td><div class="table-progress"><div class="table-progress-bar"><div class="table-progress-fill delivery" style="width:<?php echo min($project['delivery_progress'], 100); ?>%"></div></div><span class="table-progress-text delivery"><?php echo round($project['delivery_progress']); ?>%</span></div></td>
                 <td><?php echo $project['timeline_label']; ?></td>
                 <td><span class="health-badge health-<?php echo $project['health']; ?>" title="<?php echo htmlspecialchars($project['health_reason']); ?>"><?php echo $project['health_text']; ?></span></td>
+                <td><?php if ($project['open_claims'] > 0): ?><span style="color:#dc3545;font-weight:600"><?php echo $project['open_claims']; ?></span><?php else: ?><span style="color:#999">—</span><?php endif; ?></td>
                 <td><?php echo $est_date_display; ?></td>
             </tr>
             <?php endforeach; ?>
