@@ -728,6 +728,50 @@ $conn->close();
             color: #666;
             font-style: italic;
         }
+
+        /* Google Maps InfoWindow Styling Overrides */
+        .gm-style-iw-c {
+            padding: 0 !important;
+            border-radius: 12px !important;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15) !important;
+        }
+        .gm-style-iw-d {
+            overflow: visible !important;
+        }
+        .gm-style-iw-tc::after {
+            background: white !important;
+        }
+        /* Hide the default close button container and reposition */
+        .gm-style-iw-chr {
+            position: absolute !important;
+            top: 8px !important;
+            right: 8px !important;
+            height: auto !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            z-index: 10 !important;
+        }
+        .gm-style-iw-chr button {
+            width: 24px !important;
+            height: 24px !important;
+            background: rgba(255,255,255,0.25) !important;
+            border-radius: 6px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            opacity: 1 !important;
+        }
+        .gm-style-iw-chr button:hover {
+            background: rgba(255,255,255,0.4) !important;
+        }
+        .gm-style-iw-chr button span {
+            background-color: white !important;
+            margin: 0 !important;
+        }
+        /* Remove padding from main wrapper */
+        .gm-style-iw-c > div:first-child {
+            padding: 0 !important;
+        }
     </style>
 </head>
 <body>
@@ -1301,15 +1345,25 @@ function createMarker(location) {
         'project': 'linear-gradient(135deg, #27ae60 0%, #1e8449 100%)'
     };
 
+    // Build the clickable name based on location type
+    let clickableName;
+    if (location.type === 'warehouse' && location.id) {
+        clickableName = `<a href="warehouse_info.php?warehouse_id=${location.id}&project_id=${selectedProjectId}&from=module_movements" style="color: white; text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${location.name}</a>`;
+    } else if (location.type === 'project' && location.id) {
+        clickableName = `<a href="project_overview.php?project_id=${location.id}&from=module_movements" style="color: white; text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${location.name}</a>`;
+    } else {
+        clickableName = location.name;
+    }
+
     const infoContent = `
-        <div style="max-width: 300px; font-family: 'Poppins', Arial, sans-serif; padding: 0; margin: -8px -8px -8px -8px;">
+        <div class="map-popup-content" style="font-family: 'Poppins', Arial, sans-serif; padding: 0;">
             <!-- Colored Header Bar with Title -->
-            <div style="background: ${gradientColors[location.type]}; padding: 12px 14px; border-radius: 0; display: flex; align-items: center; gap: 10px;">
-                <div style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: rgba(255,255,255,0.2); border-radius: 8px;">
+            <div class="map-popup-header" style="background: ${gradientColors[location.type]}; padding: 12px 14px; display: flex; align-items: center; gap: 10px;">
+                <div style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: rgba(255,255,255,0.2); border-radius: 8px; flex-shrink: 0;">
                     ${typeIcon.replace(/stroke="[^"]*"/g, 'stroke="white"')}
                 </div>
-                <div style="flex: 1;">
-                    <div style="font-size: 15px; font-weight: 600; color: white; line-height: 1.2;">${location.name}</div>
+                <div style="flex: 1; min-width: 0;">
+                    <div style="font-size: 15px; font-weight: 600; color: white; line-height: 1.2;">${clickableName}</div>
                     <div style="font-size: 11px; color: rgba(255,255,255,0.8); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px;">${location.type}</div>
                 </div>
             </div>
@@ -1346,25 +1400,11 @@ function createMarker(location) {
                     ` : ''}
                 </div>
 
-                <!-- Action Buttons -->
-                <div style="display: flex; gap: 8px;">
-                    ${location.type === 'warehouse' && location.id ? `
-                    <a href="warehouse_info.php?warehouse_id=${location.id}&project_id=${selectedProjectId}&from=module_movements" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 10px; background: #f8f9fa; color: ${typeColor}; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 500; border: 1px solid ${typeColor}30;" onmouseover="this.style.background='${typeBgColor}'" onmouseout="this.style.background='#f8f9fa'">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-                        Details
-                    </a>
-                    ` : ''}
-                    ${location.type === 'project' && location.id ? `
-                    <a href="project_overview.php?project_id=${location.id}&from=module_movements" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 10px; background: #f8f9fa; color: ${typeColor}; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 500; border: 1px solid ${typeColor}30;" onmouseover="this.style.background='${typeBgColor}'" onmouseout="this.style.background='#f8f9fa'">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-                        Details
-                    </a>
-                    ` : ''}
-                    <a href="${viewPalletsUrl}" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 10px; background: ${gradientColors[location.type]}; color: white; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 500;">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                        View Pallets
-                    </a>
-                </div>
+                <!-- View Pallets Button -->
+                <a href="${viewPalletsUrl}" style="display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 14px; background: ${gradientColors[location.type]}; color: white; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 500;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    View Pallets
+                </a>
             </div>
         </div>
     `;
@@ -1675,13 +1715,13 @@ function createRouteLines(locations) {
                     : 'linear-gradient(135deg, #e74c3c 0%, #c0392b 100%)';
 
                 const routeInfo = `
-                    <div style="max-width: 260px; font-family: 'Poppins', Arial, sans-serif; padding: 0; margin: -8px -8px -8px -8px;">
+                    <div style="font-family: 'Poppins', Arial, sans-serif; padding: 0;">
                         <!-- Colored Header Bar -->
                         <div style="background: ${routeGradient}; padding: 10px 12px; display: flex; align-items: center; gap: 8px;">
-                            <div style="display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: rgba(255,255,255,0.2); border-radius: 6px;">
+                            <div style="display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: rgba(255,255,255,0.2); border-radius: 6px; flex-shrink: 0;">
                                 ${routeIcon}
                             </div>
-                            <div style="flex: 1;">
+                            <div style="flex: 1; white-space: nowrap;">
                                 <div style="font-size: 13px; font-weight: 600; color: white; line-height: 1.2;">${routeTypeLabel}</div>
                                 <div style="font-size: 10px; color: rgba(255,255,255,0.8);">Shipment Route</div>
                             </div>
@@ -1689,11 +1729,11 @@ function createRouteLines(locations) {
                         <!-- Content -->
                         <div style="padding: 10px 12px;">
                             <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px;">
-                                <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
+                                <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap;">
                                     <span style="color: #888; width: 40px;">From:</span>
                                     <span style="color: #333; font-weight: 500;">${fromLocation.name}</span>
                                 </div>
-                                <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
+                                <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap;">
                                     <span style="color: #888; width: 40px;">To:</span>
                                     <span style="color: #333; font-weight: 500;">${toLocation.name}</span>
                                 </div>
