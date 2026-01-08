@@ -494,7 +494,7 @@ $conn->close();
         </div>
         <div class="charts-section">
             <div class="chart-card" style="cursor:default">
-                <h3>Project Pipeline <span style="font-size:0.7em;font-weight:400;color:#6c757d">(click to filter)</span></h3>
+                <h3>Project Pipeline <span style="font-size:0.7em;font-weight:400;color:#6c757d">(click to filter)</span> <span onclick="event.stopPropagation();openChartModal('pipeline')" style="cursor:pointer;font-size:0.8em;color:#6c757d;margin-left:4px" title="What do these statuses mean?">ⓘ</span></h3>
                 <div class="chart-content">
                     <div class="chart-container"><canvas id="pipelineChart"></canvas></div>
                     <div class="chart-legend">
@@ -560,9 +560,17 @@ $conn->close();
             <div class="project-card-content">
                 <div class="project-card-header">
                     <h3 class="project-card-title"><?php echo htmlspecialchars($project['project_name']); ?></h3>
+                    <?php
+                    $health_definitions = [
+                        'on_track' => 'On schedule relative to completion date.',
+                        'at_risk' => 'Less than 30 days to deadline with <80% delivered.',
+                        'behind' => 'Past completion date, not fully delivered.',
+                        'completed' => 'All modules delivered to site.'
+                    ];
+                    ?>
                     <span class="health-badge health-<?php echo $project['health']; ?>" onclick="event.stopPropagation()">
                         <?php echo $project['health_text']; ?>
-                        <span class="health-tooltip"><?php echo htmlspecialchars($project['health_reason']); ?></span>
+                        <span class="health-tooltip"><strong><?php echo $health_definitions[$project['health']]; ?></strong><br><br><?php echo htmlspecialchars($project['health_reason']); ?></span>
                     </span>
                 </div>
                 <div class="project-card-location">📍 <?php echo htmlspecialchars($project['project_address']); ?></div>
@@ -623,7 +631,14 @@ $conn->close();
                 <th onclick="sortTable(8)">Est. Complete <span class="sort-icon">↕</span></th>
             </tr></thead>
             <tbody>
-            <?php foreach ($projects as $project):
+            <?php
+            $health_definitions = [
+                'on_track' => 'On schedule relative to completion date.',
+                'at_risk' => 'Less than 30 days to deadline with <80% delivered.',
+                'behind' => 'Past completion date, not fully delivered.',
+                'completed' => 'All modules delivered to site.'
+            ];
+            foreach ($projects as $project):
                 $est_date_display = !empty($project['estimated_completion_date']) ? (new DateTime($project['estimated_completion_date']))->format('M j, Y') : 'N/A';
             ?>
             <tr data-health="<?php echo $project['health']; ?>" onclick="window.location.href='<?php echo $target_page; ?>.php?project_id=<?php echo $project['id']; ?>'">
@@ -633,7 +648,7 @@ $conn->close();
                 <td><div class="table-progress"><div class="table-progress-bar"><div class="table-progress-fill order" style="width:<?php echo min($project['order_progress'], 100); ?>%"></div></div><span class="table-progress-text order"><?php echo round($project['order_progress']); ?>%</span></div></td>
                 <td><div class="table-progress"><div class="table-progress-bar"><div class="table-progress-fill delivery" style="width:<?php echo min($project['delivery_progress'], 100); ?>%"></div></div><span class="table-progress-text delivery"><?php echo round($project['delivery_progress']); ?>%</span></div></td>
                 <td><?php echo $project['timeline_label']; ?></td>
-                <td><span class="health-badge health-<?php echo $project['health']; ?>" title="<?php echo htmlspecialchars($project['health_reason']); ?>"><?php echo $project['health_text']; ?></span></td>
+                <td><span class="health-badge health-<?php echo $project['health']; ?>" title="<?php echo $health_definitions[$project['health']] . ' — ' . htmlspecialchars($project['health_reason']); ?>"><?php echo $project['health_text']; ?></span></td>
                 <td><?php if ($project['open_claims'] > 0): ?><span style="color:#dc3545;font-weight:600"><?php echo $project['open_claims']; ?></span><?php else: ?><span style="color:#999">—</span><?php endif; ?></td>
                 <td><?php echo $est_date_display; ?></td>
             </tr>
