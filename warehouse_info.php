@@ -1289,17 +1289,25 @@ if ($conn) {
          $back_link = "manage_warehouses.php";
      }
      ?>
-    <?php 
+    <?php
         require_once 'components/breadcrumbs.php';
         $from = $_GET['from'] ?? '';
         $backToManagePallets = ($from === 'manage_pallets');
+        $backToModuleMovements = ($from === 'module_movements');
         $managePalletsUrl = 'manage_pallets.php' . ($project_id ? ('?project_id='.(int)$project_id) : '');
+        $moduleMovementsUrl = 'module_movements.php' . ($project_id ? ('?project_id='.(int)$project_id) : '');
 
         if ($backToManagePallets) {
             // Always show a single back breadcrumb to Manage Pallets
             echo slp_render_breadcrumbs([
                 'current_label' => ($warehouse_id ? ($warehouse_data['name'] ?? 'Warehouse Details') : 'Warehouse Locations'),
                 'extra' => [ ['label' => 'Manage Pallets', 'url' => $managePalletsUrl] ]
+            ]);
+        } else if ($backToModuleMovements) {
+            // Show a single back breadcrumb to Module Movements
+            echo slp_render_breadcrumbs([
+                'current_label' => ($warehouse_id ? ($warehouse_data['name'] ?? 'Warehouse Details') : 'Warehouse Locations'),
+                'extra' => [ ['label' => 'Module Movements', 'url' => $moduleMovementsUrl] ]
             ]);
         } else {
             if ($project_id && !$warehouse_id && !$module_batch_id) {

@@ -354,13 +354,13 @@ try {
                 }
                 $stmtBatchItems->close();
             }
-            
+
             // Fetch pallets for this batch (similar to module_overview.php approach)
             if (!empty($batch_item_ids)) {
                 $placeholders = implode(',', array_fill(0, count($batch_item_ids), '?'));
                 $types = str_repeat('i', count($batch_item_ids));
-                
-                $sqlPalletBreakdown = "SELECT ip.id, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.current_project_id, w.name as warehouse_name, p.project_name 
+
+                $sqlPalletBreakdown = "SELECT ip.id, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.current_project_id, w.name as warehouse_name, p.project_name
                                        FROM inventory_pallets ip
                                        LEFT JOIN warehouses w ON ip.current_warehouse_id = w.id
                                        LEFT JOIN projects p ON ip.current_project_id = p.id
@@ -371,39 +371,58 @@ try {
                     $stmtPalletBreakdown->bind_param($types, ...$batch_item_ids);
                     $stmtPalletBreakdown->execute();
                     $resultPalletBreakdown = $stmtPalletBreakdown->get_result();
-                    
+
                     while ($pallet = $resultPalletBreakdown->fetch_assoc()) {
                         $status = $pallet['status'];
                         $wattage = $pallet['wattage'];
                         $quantity = $pallet['quantity'];
-                        
+
                         // Create location-specific key for breakdown
                         $breakdown_key = '';
+                        $warehouse_id = null;
+                        $warehouse_name = null;
+                        $project_id_for_breakdown = null;
+                        $project_name_for_breakdown = null;
+
                         if ($status === 'In Warehouse' && $pallet['warehouse_name']) {
                             $breakdown_key = 'In Warehouse - ' . $pallet['warehouse_name'];
+                            $warehouse_id = $pallet['current_warehouse_id'];
+                            $warehouse_name = $pallet['warehouse_name'];
                         } elseif ($status === 'Delivered to Project' && $pallet['project_name']) {
                             $breakdown_key = 'Delivered to Project - ' . $pallet['project_name'];
+                            $project_id_for_breakdown = $pallet['current_project_id'];
+                            $project_name_for_breakdown = $pallet['project_name'];
                         } elseif ($status === 'In Transit to Project' && $pallet['project_name']) {
                             $breakdown_key = 'In Transit to Project - ' . $pallet['project_name'];
+                            $project_id_for_breakdown = $pallet['current_project_id'];
+                            $project_name_for_breakdown = $pallet['project_name'];
                         } elseif ($status === 'In Transit to Warehouse' && $pallet['warehouse_name']) {
                             $breakdown_key = 'In Transit to Warehouse - ' . $pallet['warehouse_name'];
+                            $warehouse_id = $pallet['current_warehouse_id'];
+                            $warehouse_name = $pallet['warehouse_name'];
                         } else {
                             $breakdown_key = $status;
                         }
-                        
+
                         // Initialize if not exists
                         if (!isset($detailed_breakdown[$breakdown_key])) {
                             $detailed_breakdown[$breakdown_key] = [
                                 'pallet_count' => 0,
                                 'total_modules' => 0,
-                                'wattage_breakdown' => []
+                                'wattage_breakdown' => [],
+                                'warehouse_id' => $warehouse_id,
+                                'warehouse_name' => $warehouse_name,
+                                'project_id' => $project_id_for_breakdown,
+                                'project_name' => $project_name_for_breakdown,
+                                'pallet_ids' => []
                             ];
                         }
-                        
+
                         // Update counts
                         $detailed_breakdown[$breakdown_key]['pallet_count']++;
                         $detailed_breakdown[$breakdown_key]['total_modules'] += $quantity;
-                        
+                        $detailed_breakdown[$breakdown_key]['pallet_ids'][] = $pallet['id'];
+
                         // Track wattage breakdown
                         if (!isset($detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage])) {
                             $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage] = [
@@ -411,7 +430,7 @@ try {
                                 'modules' => 0
                             ];
                         }
-                        
+
                         $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['pallets']++;
                         $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $quantity;
                     }
@@ -426,34 +445,51 @@ try {
                 $wattage = $movement['wattage'];
                 $pallet_count = $movement['pallet_count'];
                 $total_quantity = $movement['total_quantity'];
-                
+
                 // Create location-specific key for breakdown
                 $breakdown_key = '';
+                $warehouse_id = null;
+                $warehouse_name = null;
+                $project_id_for_breakdown = null;
+                $project_name_for_breakdown = null;
+
                 if ($status === 'In Warehouse' && $movement['current_warehouse_name']) {
                     $breakdown_key = 'In Warehouse - ' . $movement['current_warehouse_name'];
+                    $warehouse_id = $movement['current_warehouse_id_info'];
+                    $warehouse_name = $movement['current_warehouse_name'];
                 } elseif ($status === 'Delivered to Project' && $movement['project_name']) {
                     $breakdown_key = 'Delivered to Project - ' . $movement['project_name'];
+                    $project_id_for_breakdown = $selected_project_id;
+                    $project_name_for_breakdown = $movement['project_name'];
                 } elseif ($status === 'In Transit to Project' && $movement['project_name']) {
                     $breakdown_key = 'In Transit to Project - ' . $movement['project_name'];
+                    $project_id_for_breakdown = $selected_project_id;
+                    $project_name_for_breakdown = $movement['project_name'];
                 } elseif ($status === 'In Transit to Warehouse' && $movement['delivery_warehouse_name']) {
                     $breakdown_key = 'In Transit to Warehouse - ' . $movement['delivery_warehouse_name'];
+                    $warehouse_id = $movement['delivery_warehouse_id'];
+                    $warehouse_name = $movement['delivery_warehouse_name'];
                 } else {
                     $breakdown_key = $status;
                 }
-                
+
                 // Initialize if not exists
                 if (!isset($detailed_breakdown[$breakdown_key])) {
                     $detailed_breakdown[$breakdown_key] = [
                         'pallet_count' => 0,
                         'total_modules' => 0,
-                        'wattage_breakdown' => []
+                        'wattage_breakdown' => [],
+                        'warehouse_id' => $warehouse_id,
+                        'warehouse_name' => $warehouse_name,
+                        'project_id' => $project_id_for_breakdown,
+                        'project_name' => $project_name_for_breakdown
                     ];
                 }
-                
+
                 // Update counts with aggregated data
                 $detailed_breakdown[$breakdown_key]['pallet_count'] += $pallet_count;
                 $detailed_breakdown[$breakdown_key]['total_modules'] += $total_quantity;
-                
+
                 // Track wattage breakdown
                 if (!isset($detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage])) {
                     $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage] = [
@@ -461,7 +497,7 @@ try {
                         'modules' => 0
                     ];
                 }
-                
+
                 $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['pallets'] += $pallet_count;
                 $detailed_breakdown[$breakdown_key]['wattage_breakdown'][$wattage]['modules'] += $total_quantity;
             }
@@ -918,6 +954,7 @@ $conn->close();
 const movementData = <?php echo json_encode($movement_data ?? []); ?>;
 const projectData = <?php echo json_encode($project_data ?? null); ?>;
 const detailedBreakdown = <?php echo json_encode($detailed_breakdown ?? []); ?>;
+const selectedProjectId = <?php echo json_encode($selected_project_id); ?>;
 
 let map;
 let directionsService;
@@ -1007,6 +1044,7 @@ function processMovementData() {
             if (!locations.has(whKey)) {
                 locations.set(whKey, {
                     type: 'warehouse',
+                    id: movement.current_warehouse_id_info,
                     name: movement.current_warehouse_name,
                     address: buildAddress(movement.current_wh_street, movement.current_wh_city, movement.current_wh_state, movement.current_wh_zip),
                     pallets: [],
@@ -1027,6 +1065,7 @@ function processMovementData() {
             if (!locations.has(whOrigKey)) {
                 locations.set(whOrigKey, {
                     type: 'warehouse',
+                    id: movement.origin_warehouse_id,
                     name: movement.origin_warehouse_name,
                     address: buildAddress(movement.origin_wh_street, movement.origin_wh_city, movement.origin_wh_state, movement.origin_wh_zip),
                     pallets: [],
@@ -1043,6 +1082,7 @@ function processMovementData() {
             if (!locations.has(projectKey)) {
                 locations.set(projectKey, {
                     type: 'project',
+                    id: projectData.id,
                     name: projectData.project_name,
                     address: buildAddress(projectData.street_address, projectData.city, projectData.state, projectData.zip_code),
                     pallets: [],
@@ -1063,9 +1103,12 @@ function processMovementData() {
     if (!locations.has(projectKey)) {
         locations.set(projectKey, {
             type: 'project',
+            id: projectData.id,
             name: projectData.project_name,
             address: buildAddress(projectData.street_address, projectData.city, projectData.state, projectData.zip_code),
             pallets: [],
+            total_pallets: 0,
+            total_modules: 0,
             marker: null
         });
     }
@@ -1199,19 +1242,20 @@ function createMarker(location) {
     });
 
     // Create enhanced info window with current quantities and wattages from aggregated data
-    const totalPallets = location.total_pallets || location.pallets.length;
-    const totalModules = location.total_modules || location.pallets.reduce((sum, group) => sum + parseInt(group.total_quantity || group.quantity || 0), 0);
-    const wattages = [...new Set(location.pallets.map(p => p.wattage))].sort();
+    const totalPallets = parseInt(location.total_pallets) || location.pallets.length;
+    // Recalculate total modules from pallets to avoid string concatenation issues
+    let totalModules = 0;
     const wattageBreakdown = {};
-    
+
     // Calculate quantities by wattage from aggregated data
     location.pallets.forEach(group => {
         const wattage = group.wattage;
-        const modules = group.total_quantity || group.quantity || 0;
+        const modules = parseInt(group.total_quantity || group.quantity || 0);
+        totalModules += modules;
         if (!wattageBreakdown[wattage]) {
             wattageBreakdown[wattage] = 0;
         }
-        wattageBreakdown[wattage] += parseInt(modules);
+        wattageBreakdown[wattage] += modules;
     });
 
     const wattageDetails = Object.keys(wattageBreakdown)
@@ -1219,17 +1263,108 @@ function createMarker(location) {
         .map(w => `${w}W: ${wattageBreakdown[w].toLocaleString()} modules`)
         .join('<br>');
 
+    // Determine colors and icons based on type
+    let typeColor, typeIcon, typeBgColor, viewPalletsUrl, nameLink;
+
+    switch (location.type) {
+        case 'manufacturer':
+            typeColor = '#1565c0';
+            typeBgColor = '#e3f2fd';
+            typeIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1565c0" stroke-width="2"><path d="M2 20h20M5 20V8.8l7-4.2 7 4.2V20M9 20v-5h6v5"/></svg>';
+            viewPalletsUrl = `manage_pallets.php?project_id=${selectedProjectId}&status=At%20Manufacturer&from=module_movements`;
+            nameLink = location.name;
+            break;
+        case 'warehouse':
+            typeColor = '#e65100';
+            typeBgColor = '#fff3e0';
+            typeIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e65100" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>';
+            viewPalletsUrl = `manage_pallets.php?project_id=${selectedProjectId}&status=In%20Warehouse&from=module_movements`;
+            nameLink = location.id
+                ? `<a href="warehouse_info.php?warehouse_id=${location.id}&project_id=${selectedProjectId}&from=module_movements" style="color: ${typeColor}; text-decoration: none; font-weight: 600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${location.name}</a>`
+                : location.name;
+            break;
+        case 'project':
+            typeColor = '#1b5e20';
+            typeBgColor = '#e8f5e9';
+            typeIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1b5e20" stroke-width="2"><circle cx="12" cy="10" r="3"/><path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 1 0-16 0c0 3 2.7 7 8 11.7z"/></svg>';
+            viewPalletsUrl = `manage_pallets.php?project_id=${location.id || selectedProjectId}&status=Delivered%20to%20Project&from=module_movements`;
+            nameLink = location.id
+                ? `<a href="project_overview.php?project_id=${location.id}&from=module_movements" style="color: ${typeColor}; text-decoration: none; font-weight: 600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${location.name}</a>`
+                : location.name;
+            break;
+    }
+
+    // Build gradient color for button
+    const gradientColors = {
+        'manufacturer': 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)',
+        'warehouse': 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)',
+        'project': 'linear-gradient(135deg, #27ae60 0%, #1e8449 100%)'
+    };
+
     const infoContent = `
-        <div style="max-width: 300px; font-family: 'Poppins', Arial, sans-serif;">
-            <h3 style="margin-top: 0; color: #293E4C; font-size: 18px;">${location.name}</h3>
-            <p style="margin: 8px 0; color: #666;"><strong>Type:</strong> ${location.type.charAt(0).toUpperCase() + location.type.slice(1)}</p>
-            <p style="margin: 8px 0; color: #666; font-size: 14px;"><strong>Address:</strong> ${location.address}</p>
-            <hr style="margin: 15px 0; border: none; border-top: 1px solid #eee;">
-            <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin: 10px 0;">
-                <p style="margin: 0 0 8px 0; font-weight: 600; color: #293E4C;">Current Inventory:</p>
-                <p style="margin: 4px 0; color: #333;"><strong>Pallets:</strong> ${totalPallets.toLocaleString()}</p>
-                <p style="margin: 4px 0; color: #333;"><strong>Total Modules:</strong> ${totalModules.toLocaleString()}</p>
-                ${wattageDetails ? `<p style="margin: 8px 0 0 0; color: #666; font-size: 13px;"><strong>Breakdown:</strong><br>${wattageDetails}</p>` : ''}
+        <div style="max-width: 300px; font-family: 'Poppins', Arial, sans-serif; padding: 0; margin: -8px -8px -8px -8px;">
+            <!-- Colored Header Bar with Title -->
+            <div style="background: ${gradientColors[location.type]}; padding: 12px 14px; border-radius: 0; display: flex; align-items: center; gap: 10px;">
+                <div style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: rgba(255,255,255,0.2); border-radius: 8px;">
+                    ${typeIcon.replace(/stroke="[^"]*"/g, 'stroke="white"')}
+                </div>
+                <div style="flex: 1;">
+                    <div style="font-size: 15px; font-weight: 600; color: white; line-height: 1.2;">${location.name}</div>
+                    <div style="font-size: 11px; color: rgba(255,255,255,0.8); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px;">${location.type}</div>
+                </div>
+            </div>
+
+            <!-- Content Area -->
+            <div style="padding: 12px 14px;">
+                <!-- Address -->
+                <div style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; padding: 8px 10px; background: #f8f9fa; border-radius: 6px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                    <span style="font-size: 12px; color: #555; line-height: 1.4;">${location.address || 'Address not available'}</span>
+                </div>
+
+                <!-- Inventory Stats -->
+                <div style="background: ${typeBgColor}; padding: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid ${typeColor}20;">
+                    <div style="font-weight: 600; color: ${typeColor}; margin-bottom: 8px; font-size: 12px; display: flex; align-items: center; gap: 5px;">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                        Current Inventory
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <div style="text-align: center; padding: 6px; background: white; border-radius: 5px;">
+                            <div style="font-size: 18px; font-weight: 700; color: #293E4C;">${totalPallets.toLocaleString()}</div>
+                            <div style="font-size: 10px; color: #666; text-transform: uppercase;">Pallets</div>
+                        </div>
+                        <div style="text-align: center; padding: 6px; background: white; border-radius: 5px;">
+                            <div style="font-size: 18px; font-weight: 700; color: #293E4C;">${totalModules.toLocaleString()}</div>
+                            <div style="font-size: 10px; color: #666; text-transform: uppercase;">Modules</div>
+                        </div>
+                    </div>
+                    ${wattageDetails ? `
+                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid ${typeColor}30;">
+                        <div style="font-size: 11px; color: #666; margin-bottom: 3px;">Wattage Breakdown:</div>
+                        <div style="font-size: 11px; color: #333; line-height: 1.5;">${wattageDetails}</div>
+                    </div>
+                    ` : ''}
+                </div>
+
+                <!-- Action Buttons -->
+                <div style="display: flex; gap: 8px;">
+                    ${location.type === 'warehouse' && location.id ? `
+                    <a href="warehouse_info.php?warehouse_id=${location.id}&project_id=${selectedProjectId}&from=module_movements" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 10px; background: #f8f9fa; color: ${typeColor}; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 500; border: 1px solid ${typeColor}30;" onmouseover="this.style.background='${typeBgColor}'" onmouseout="this.style.background='#f8f9fa'">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                        Details
+                    </a>
+                    ` : ''}
+                    ${location.type === 'project' && location.id ? `
+                    <a href="project_overview.php?project_id=${location.id}&from=module_movements" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 10px; background: #f8f9fa; color: ${typeColor}; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 500; border: 1px solid ${typeColor}30;" onmouseover="this.style.background='${typeBgColor}'" onmouseout="this.style.background='#f8f9fa'">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                        Details
+                    </a>
+                    ` : ''}
+                    <a href="${viewPalletsUrl}" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 10px; background: ${gradientColors[location.type]}; color: white; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 500;">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        View Pallets
+                    </a>
+                </div>
             </div>
         </div>
     `;
@@ -1526,15 +1661,57 @@ function createRouteLines(locations) {
                 const routeTypeLabel = route.type === 'manufacturer_to_warehouse' ? 'Manufacturer → Warehouse' :
                                      route.type === 'warehouse_to_project' ? 'Warehouse → Project' :
                                      'Manufacturer → Project (Direct)';
-                
+
+                const routeIcon = route.type === 'manufacturer_to_warehouse'
+                    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>'
+                    : route.type === 'warehouse_to_project'
+                    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>'
+                    : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>';
+
+                const routeGradient = route.type === 'manufacturer_to_warehouse'
+                    ? 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)'
+                    : route.type === 'warehouse_to_project'
+                    ? 'linear-gradient(135deg, #27ae60 0%, #1e8449 100%)'
+                    : 'linear-gradient(135deg, #e74c3c 0%, #c0392b 100%)';
+
                 const routeInfo = `
-                    <div style="padding: 10px; min-width: 200px;">
-                        <strong style="color: ${route.color};">${routeTypeLabel}</strong><br>
-                        <strong>From:</strong> ${fromLocation.name}<br>
-                        <strong>To:</strong> ${toLocation.name}<br>
-                        <strong>Pallets Moved:</strong> ${(route.pallet_count || route.pallets.length).toLocaleString()}<br>
-                        <strong>Modules Moved:</strong> ${route.modules.toLocaleString()}<br>
-                        <em>Line thickness represents volume</em>
+                    <div style="max-width: 260px; font-family: 'Poppins', Arial, sans-serif; padding: 0; margin: -8px -8px -8px -8px;">
+                        <!-- Colored Header Bar -->
+                        <div style="background: ${routeGradient}; padding: 10px 12px; display: flex; align-items: center; gap: 8px;">
+                            <div style="display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: rgba(255,255,255,0.2); border-radius: 6px;">
+                                ${routeIcon}
+                            </div>
+                            <div style="flex: 1;">
+                                <div style="font-size: 13px; font-weight: 600; color: white; line-height: 1.2;">${routeTypeLabel}</div>
+                                <div style="font-size: 10px; color: rgba(255,255,255,0.8);">Shipment Route</div>
+                            </div>
+                        </div>
+                        <!-- Content -->
+                        <div style="padding: 10px 12px;">
+                            <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px;">
+                                <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
+                                    <span style="color: #888; width: 40px;">From:</span>
+                                    <span style="color: #333; font-weight: 500;">${fromLocation.name}</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
+                                    <span style="color: #888; width: 40px;">To:</span>
+                                    <span style="color: #333; font-weight: 500;">${toLocation.name}</span>
+                                </div>
+                            </div>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #f8f9fa; padding: 10px; border-radius: 6px;">
+                                <div style="text-align: center;">
+                                    <div style="font-size: 16px; font-weight: 700; color: #293E4C;">${(route.pallet_count || route.pallets.length).toLocaleString()}</div>
+                                    <div style="font-size: 10px; color: #666; text-transform: uppercase;">Pallets</div>
+                                </div>
+                                <div style="text-align: center;">
+                                    <div style="font-size: 16px; font-weight: 700; color: #293E4C;">${route.modules.toLocaleString()}</div>
+                                    <div style="font-size: 10px; color: #666; text-transform: uppercase;">Modules</div>
+                                </div>
+                            </div>
+                            <div style="margin-top: 8px; font-size: 10px; color: #888; text-align: center; font-style: italic;">
+                                Line thickness represents volume
+                            </div>
+                        </div>
                     </div>
                 `;
                 routeInfoWindow.setContent(routeInfo);
@@ -1589,33 +1766,49 @@ function closeDetailModal() {
 function generateManufacturerBreakdown() {
     let html = '<div style="max-height: 400px; overflow-y: auto;">';
     let hasData = false;
-    
+
     Object.keys(detailedBreakdown).forEach(status => {
         if (status.includes('At Manufacturer')) {
             hasData = true;
             const data = detailedBreakdown[status];
+            const manufacturerName = status.replace('At Manufacturer', '').replace(' - ', '').trim() || 'Manufacturer';
+
+            // Create View Pallets link with status filter
+            const viewPalletsUrl = `manage_pallets.php?project_id=${selectedProjectId}&status=At%20Manufacturer&from=module_movements`;
+
             html += `
                 <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #3498db;">
-                    <h4 style="margin-top: 0; color: #1565c0;">${status}</h4>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                        <h4 style="margin: 0; color: #1565c0;">${status}</h4>
+                    </div>
                     <p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>
             `;
-            
+
             if (data.wattage_breakdown && Object.keys(data.wattage_breakdown).length > 0) {
-                html += '<p><strong>Wattage Breakdown:</strong></p><ul>';
+                html += '<p><strong>Wattage Breakdown:</strong></p><ul style="margin-bottom: 15px;">';
                 Object.keys(data.wattage_breakdown).forEach(wattage => {
                     const wattData = data.wattage_breakdown[wattage];
                     html += `<li>${wattage}W: ${wattData.pallets} pallets (${wattData.modules.toLocaleString()} modules)</li>`;
                 });
                 html += '</ul>';
             }
-            html += '</div>';
+
+            html += `
+                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee;">
+                        <a href="${viewPalletsUrl}" class="view-pallets-link" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); color: white; text-decoration: none; border-radius: 6px; font-size: 0.9em; font-weight: 500; transition: all 0.2s ease;" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(52,152,219,0.3)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                            View Pallets
+                        </a>
+                    </div>
+                </div>
+            `;
         }
     });
-    
+
     if (!hasData) {
         html += '<p style="text-align: center; color: #666; font-style: italic;">No modules currently at manufacturer.</p>';
     }
-    
+
     html += '</div>';
     return html;
 }
@@ -1623,33 +1816,57 @@ function generateManufacturerBreakdown() {
 function generateWarehouseBreakdown() {
     let html = '<div style="max-height: 400px; overflow-y: auto;">';
     let hasData = false;
-    
+
     Object.keys(detailedBreakdown).forEach(status => {
         if (status.includes('In Warehouse')) {
             hasData = true;
             const data = detailedBreakdown[status];
+            const warehouseId = data.warehouse_id;
+            const warehouseName = data.warehouse_name || status.replace('In Warehouse - ', '');
+
+            // Create clickable warehouse link with referrer
+            const warehouseLink = warehouseId
+                ? `<a href="warehouse_info.php?warehouse_id=${warehouseId}&project_id=${selectedProjectId}&from=module_movements" style="color: #e65100; text-decoration: none; font-weight: 600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${warehouseName}</a>`
+                : warehouseName;
+
+            // Create View Pallets link with status filter
+            const viewPalletsUrl = `manage_pallets.php?project_id=${selectedProjectId}&status=In%20Warehouse&from=module_movements`;
+
             html += `
                 <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #f39c12;">
-                    <h4 style="margin-top: 0; color: #e65100;">${status}</h4>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                        <h4 style="margin: 0; color: #e65100;">
+                            <span style="color: #666; font-weight: normal;">In Warehouse - </span>${warehouseLink}
+                        </h4>
+                    </div>
                     <p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>
             `;
-            
+
             if (data.wattage_breakdown && Object.keys(data.wattage_breakdown).length > 0) {
-                html += '<p><strong>Wattage Breakdown:</strong></p><ul>';
+                html += '<p><strong>Wattage Breakdown:</strong></p><ul style="margin-bottom: 15px;">';
                 Object.keys(data.wattage_breakdown).forEach(wattage => {
                     const wattData = data.wattage_breakdown[wattage];
                     html += `<li>${wattage}W: ${wattData.pallets} pallets (${wattData.modules.toLocaleString()} modules)</li>`;
                 });
                 html += '</ul>';
             }
-            html += '</div>';
+
+            html += `
+                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee;">
+                        <a href="${viewPalletsUrl}" class="view-pallets-link" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%); color: white; text-decoration: none; border-radius: 6px; font-size: 0.9em; font-weight: 500; transition: all 0.2s ease;" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(243,156,18,0.3)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                            View Pallets
+                        </a>
+                    </div>
+                </div>
+            `;
         }
     });
-    
+
     if (!hasData) {
         html += '<p style="text-align: center; color: #666; font-style: italic;">No modules currently in warehouse.</p>';
     }
-    
+
     html += '</div>';
     return html;
 }
@@ -1657,33 +1874,57 @@ function generateWarehouseBreakdown() {
 function generateProjectBreakdown() {
     let html = '<div style="max-height: 400px; overflow-y: auto;">';
     let hasData = false;
-    
+
     Object.keys(detailedBreakdown).forEach(status => {
         if (status.includes('Delivered to Project')) {
             hasData = true;
             const data = detailedBreakdown[status];
+            const projectId = data.project_id || selectedProjectId;
+            const projectName = data.project_name || (projectData ? projectData.project_name : status.replace('Delivered to Project - ', ''));
+
+            // Create clickable project link with referrer
+            const projectLink = projectId
+                ? `<a href="project_overview.php?project_id=${projectId}&from=module_movements" style="color: #1b5e20; text-decoration: none; font-weight: 600;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${projectName}</a>`
+                : projectName;
+
+            // Create View Pallets link with status filter
+            const viewPalletsUrl = `manage_pallets.php?project_id=${projectId || selectedProjectId}&status=Delivered%20to%20Project&from=module_movements`;
+
             html += `
                 <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #27ae60;">
-                    <h4 style="margin-top: 0; color: #1b5e20;">${status}</h4>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                        <h4 style="margin: 0; color: #1b5e20;">
+                            <span style="color: #666; font-weight: normal;">Delivered to Project - </span>${projectLink}
+                        </h4>
+                    </div>
                     <p><strong>Total:</strong> ${data.pallet_count} pallets, ${data.total_modules.toLocaleString()} modules</p>
             `;
-            
+
             if (data.wattage_breakdown && Object.keys(data.wattage_breakdown).length > 0) {
-                html += '<p><strong>Wattage Breakdown:</strong></p><ul>';
+                html += '<p><strong>Wattage Breakdown:</strong></p><ul style="margin-bottom: 15px;">';
                 Object.keys(data.wattage_breakdown).forEach(wattage => {
                     const wattData = data.wattage_breakdown[wattage];
                     html += `<li>${wattage}W: ${wattData.pallets} pallets (${wattData.modules.toLocaleString()} modules)</li>`;
                 });
                 html += '</ul>';
             }
-            html += '</div>';
+
+            html += `
+                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee;">
+                        <a href="${viewPalletsUrl}" class="view-pallets-link" style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: linear-gradient(135deg, #27ae60 0%, #1e8449 100%); color: white; text-decoration: none; border-radius: 6px; font-size: 0.9em; font-weight: 500; transition: all 0.2s ease;" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(39,174,96,0.3)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                            View Pallets
+                        </a>
+                    </div>
+                </div>
+            `;
         }
     });
-    
+
     if (!hasData) {
         html += '<p style="text-align: center; color: #666; font-style: italic;">No modules have been delivered to project yet.</p>';
     }
-    
+
     html += '</div>';
     return html;
 }
