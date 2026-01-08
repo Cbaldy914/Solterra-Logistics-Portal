@@ -114,6 +114,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $additional_notes          = trim($_POST['additional_notes'] ?? '');
         $driver_handout_url        = null; // Legacy column (now stored in project_documents)
 
+        // Site contact fields
+        $site_contact_name         = trim($_POST['site_contact_name'] ?? '');
+        $site_contact_email        = trim($_POST['site_contact_email'] ?? '');
+        $site_contact_phone        = trim($_POST['site_contact_phone'] ?? '');
+
+        // Appointment window (in minutes)
+        $appointment_duration      = isset($_POST['appointment_duration']) && $_POST['appointment_duration'] !== '' ? (int)$_POST['appointment_duration'] : 30;
+
         // Module information fields (optional) - use 0 as default for integer fields to avoid NULL binding issues
         $modules_per_pallet        = isset($_POST['modules_per_pallet']) && $_POST['modules_per_pallet'] !== '' ? (int)$_POST['modules_per_pallet'] : 0;
         $pallets_per_truck         = isset($_POST['pallets_per_truck']) && $_POST['pallets_per_truck'] !== '' ? (int)$_POST['pallets_per_truck'] : 0;
@@ -173,14 +181,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 reference_numbers,
                 instructions,
                 additional_notes,
-                driver_handout_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                driver_handout_url,
+                site_contact_name,
+                site_contact_email,
+                site_contact_phone,
+                appointment_duration
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         if (!$stmt) {
             throw new Exception("Error preparing project insert: " . $conn->error);
         }
         $stmt->bind_param(
-            "isdssssssdsssssss",
+            "isdssssssdssssssssssi",
             $account_id,
             $project_name,
             $project_size,
@@ -197,7 +209,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $reference_numbers,
             $instructions,
             $additional_notes,
-            $driver_handout_url
+            $driver_handout_url,
+            $site_contact_name,
+            $site_contact_email,
+            $site_contact_phone,
+            $appointment_duration
         );
         if (!$stmt->execute()) {
             throw new Exception("Error inserting project: " . $stmt->error);
@@ -268,30 +284,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Non-fatal; continue
         }
 
-        // Save Driver Handout to project_documents as Shipments -> Delivery SOP (new format)
-        if (isset($_FILES['driver_handout']) && $_FILES['driver_handout']['error'] !== UPLOAD_ERR_NO_FILE) {
-            if ($_FILES['driver_handout']['error'] === UPLOAD_ERR_OK) {
-                // Build document data and save via helper
-                $doc_data = [
-                    'project_id' => $project_id,
-                    'document_type' => 'shipments',
-                    'document_sub_type' => 'Delivery SOP',
-                    'original_name' => $_FILES['driver_handout']['name'],
-                    'file_size' => $_FILES['driver_handout']['size'],
-                    'mime_type' => mime_content_type($_FILES['driver_handout']['tmp_name']),
-                    'uploaded_by' => $user_id,
-                    'tmp_name' => $_FILES['driver_handout']['tmp_name'],
-                    'description' => 'Driver Handout'
-                ];
-                // Validate extension and size similar to global uploads
-                $allowed_ext = ['pdf','doc','docx','jpg','jpeg','png'];
-                $ext = strtolower(pathinfo($doc_data['original_name'], PATHINFO_EXTENSION));
-                if (!in_array($ext, $allowed_ext)) {
-                    throw new Exception('Invalid driver handout file type.');
+        // Save Site Documents to project_documents with selected type/sub-type
+        if (isset($_FILES['site_documents'])) {
+            $site_doc_type = trim($_POST['site_doc_type'] ?? 'other');
+            $site_doc_sub_type = trim($_POST['site_doc_sub_type'] ?? 'General');
+
+            // Normalize to arrays for iteration
+            $names = (array)$_FILES['site_documents']['name'];
+            $types = (array)$_FILES['site_documents']['type'];
+            $tmps  = (array)$_FILES['site_documents']['tmp_name'];
+            $errs  = (array)$_FILES['site_documents']['error'];
+            $sizes = (array)$_FILES['site_documents']['size'];
+
+            $allowed_ext = ['pdf','doc','docx','jpg','jpeg','png','xls','xlsx'];
+
+            foreach ($names as $i => $orig) {
+                if (!isset($errs[$i]) || $errs[$i] === UPLOAD_ERR_NO_FILE) continue;
+                if ($errs[$i] !== UPLOAD_ERR_OK) {
+                    throw new Exception('Site document upload error for file: ' . $orig);
                 }
-                saveDocumentToProjectDocuments($conn, $doc_data);
-            } else {
-                throw new Exception('Driver handout upload error code: ' . $_FILES['driver_handout']['error']);
+
+                $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
+                if (!in_array($ext, $allowed_ext)) {
+                    throw new Exception('Invalid file type for: ' . $orig);
+                }
+
+                $tmpName = $tmps[$i];
+                $mime    = mime_content_type($tmpName);
+                $doc = [
+                    'project_id' => $project_id,
+                    'document_type' => $site_doc_type ?: 'other',
+                    'document_sub_type' => $site_doc_sub_type ?: 'General',
+                    'original_name' => $orig,
+                    'file_size' => $sizes[$i],
+                    'mime_type' => $mime,
+                    'uploaded_by' => $user_id,
+                    'tmp_name' => $tmpName,
+                    'description' => 'Site Document'
+                ];
+                saveDocumentToProjectDocuments($conn, $doc);
             }
         }
 
@@ -840,6 +871,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             margin-top: 6px;
         }
 
+        /* Form Subsection Titles */
+        .form-subsection-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 24px 0 12px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .form-subsection-title:first-of-type {
+            margin-top: 0;
+        }
+
         /* Address Grid */
         .address-grid {
             display: grid;
@@ -1053,34 +1097,194 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             border: 1px solid #f5c6cb;
         }
 
-        /* Module Setup Toggle */
-        .module-setup-toggle {
+        /* Site Documents Upload Button & Modal */
+        .site-docs-upload-area {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .btn-upload-docs {
             display: inline-flex;
-            background: #f1f3f4;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 24px;
+            background: linear-gradient(135deg, #488C9A 0%, #3d7a87 100%);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: fit-content;
+        }
+        .btn-upload-docs:hover {
+            background: linear-gradient(135deg, #3d7a87 0%, #326a75 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+        .btn-upload-docs .upload-icon { font-size: 1.2rem; }
+        .uploaded-docs-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .uploaded-doc-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #e8f4f7;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            color: #293E4C;
+        }
+        .uploaded-doc-item .remove-doc {
+            cursor: pointer;
+            color: #dc3545;
+            font-weight: bold;
+        }
+
+        /* Site Docs Modal */
+        .site-docs-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+        }
+        .site-docs-modal.open { display: flex; }
+        .site-docs-modal-content {
+            background: #fff;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .site-docs-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid #e9ecef;
+            background: #f8f9fa;
+        }
+        .site-docs-modal-header h3 { margin: 0; color: #293E4C; font-size: 1.1rem; }
+        .modal-close-btn {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            color: #6c757d;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .modal-close-btn:hover { color: #293E4C; }
+        .site-docs-modal-body { padding: 24px; }
+        .site-docs-modal-body .form-group { margin-bottom: 20px; }
+        .site-docs-modal-body .form-group:last-child { margin-bottom: 0; }
+        .file-drop-zone {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 32px;
+            border: 2px dashed #488C9A;
             border-radius: 12px;
-            padding: 4px;
-            gap: 4px;
+            background: #f8fbfc;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .file-drop-zone:hover {
+            background: #e8f4f7;
+            border-color: #3d7a87;
+        }
+        .file-drop-zone .drop-icon { font-size: 2rem; margin-bottom: 8px; }
+        .file-drop-zone .drop-text { font-weight: 600; color: #293E4C; }
+        .file-drop-zone .drop-hint { font-size: 0.8rem; color: #6c757d; margin-top: 4px; }
+        .selected-files-list { margin-top: 12px; }
+        .selected-file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+        }
+        .selected-file-item .file-name { color: #293E4C; }
+        .selected-file-item .file-size { color: #6c757d; font-size: 0.8rem; }
+        .selected-file-item .remove-file {
+            color: #dc3545;
+            cursor: pointer;
+            font-weight: bold;
+            padding: 2px 6px;
+        }
+        .site-docs-modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            padding: 16px 24px;
+            border-top: 1px solid #e9ecef;
+            background: #f8f9fa;
+        }
+        .btn-modal-cancel {
+            padding: 10px 20px;
+            background: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            color: #6c757d;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .btn-modal-cancel:hover { background: #f8f9fa; }
+        .btn-modal-confirm {
+            padding: 10px 20px;
+            background: #488C9A;
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .btn-modal-confirm:hover { background: #3d7a87; }
+
+        /* Module Setup Toggle - Enhanced */
+        .module-setup-toggle {
+            display: flex;
+            background: #e9ecef;
+            border-radius: 14px;
+            padding: 6px;
+            gap: 6px;
             margin-bottom: 24px;
         }
         .module-setup-toggle button {
-            padding: 12px 24px;
+            flex: 1;
+            padding: 16px 28px;
             border-radius: 10px;
             border: none;
             background: transparent;
             color: #6c757d;
-            font-weight: 600;
-            font-size: 0.95rem;
+            font-weight: 700;
+            font-size: 1rem;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: all 0.25s ease;
         }
         .module-setup-toggle button:hover {
-            background: rgba(255,255,255,0.5);
+            background: rgba(255,255,255,0.6);
             color: #293E4C;
         }
         .module-setup-toggle button.active {
             background: #fff;
-            color: #293E4C;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            color: #488C9A;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         }
         .module-mode-content {
             display: none;
@@ -1304,15 +1508,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     Add contact details and receiving hours for the project site. You can skip this step and add it later.
                 </div>
 
+                <h4 class="form-subsection-title">Site Contact</h4>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Primary Phone<span class="optional-tag">(optional)</span></label>
-                        <input type="tel" name="phone1" placeholder="e.g. 555-555-5555">
+                        <label>Contact Name<span class="optional-tag">(optional)</span></label>
+                        <input type="text" name="site_contact_name" placeholder="e.g. John Smith">
                     </div>
                     <div class="form-group">
-                        <label>Secondary Phone<span class="optional-tag">(optional)</span></label>
-                        <input type="tel" name="phone2" placeholder="e.g. 555-555-5555">
+                        <label>Contact Email<span class="optional-tag">(optional)</span></label>
+                        <input type="email" name="site_contact_email" placeholder="e.g. john@example.com">
                     </div>
+                    <div class="form-group">
+                        <label>Contact Phone<span class="optional-tag">(optional)</span></label>
+                        <input type="tel" name="site_contact_phone" placeholder="e.g. 555-555-5555">
+                    </div>
+                </div>
+
+                <h4 class="form-subsection-title">Receiving Schedule</h4>
+                <div class="form-row">
                     <div class="form-group">
                         <label>Timezone</label>
                         <select name="timezone">
@@ -1323,9 +1536,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <option value="UTC">UTC</option>
                         </select>
                     </div>
-                </div>
-
-                <div class="form-row">
                     <div class="form-group">
                         <label>Site Receiving Hours</label>
                         <div class="hours-grid">
@@ -1340,8 +1550,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                         <span class="help-text">Hours will be set for Monday-Friday</span>
                     </div>
+                    <div class="form-group">
+                        <label>Appointment Window<span class="optional-tag">(optional)</span></label>
+                        <select name="appointment_duration">
+                            <option value="15">15 minutes</option>
+                            <option value="30" selected>30 minutes</option>
+                            <option value="45">45 minutes</option>
+                            <option value="60">1 hour</option>
+                            <option value="90">1.5 hours</option>
+                            <option value="120">2 hours</option>
+                        </select>
+                        <span class="help-text">Duration of each delivery appointment slot</span>
+                    </div>
                 </div>
 
+                <h4 class="form-subsection-title">Instructions</h4>
                 <div class="form-row single">
                     <div class="form-group">
                         <label>Special Instructions<span class="optional-tag">(optional)</span></label>
@@ -1356,13 +1579,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 </div>
 
-                <div class="form-row single">
-                    <div class="form-group">
-                        <label>Driver Handout<span class="optional-tag">(optional)</span></label>
-                        <input type="file" name="driver_handout" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
-                        <span class="help-text">Upload driver instructions, site maps, or other handout materials (PDF, DOC, JPG, PNG - max 5MB)</span>
-                    </div>
+                <h4 class="form-subsection-title">Site Documents</h4>
+                <div class="site-docs-upload-area">
+                    <button type="button" class="btn-upload-docs" onclick="openSiteDocsModal()">
+                        <span class="upload-icon">📄</span>
+                        <span class="upload-text">Upload Documents</span>
+                    </button>
+                    <div id="site-docs-list" class="uploaded-docs-list"></div>
+                    <span class="help-text">Upload driver handouts, site maps, SOPs, and other site documents</span>
                 </div>
+                <!-- Hidden inputs for form submission -->
+                <input type="hidden" name="site_doc_type" id="site_doc_type_hidden">
+                <input type="hidden" name="site_doc_sub_type" id="site_doc_sub_type_hidden">
 
                 <div class="section-actions">
                     <button type="button" class="btn-back-step" onclick="goToStep(1)">
@@ -1491,11 +1719,201 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             </div>
         </div>
+
+        <!-- Site Documents Upload Modal -->
+        <div id="siteDocsModal" class="site-docs-modal">
+            <div class="site-docs-modal-content">
+                <div class="site-docs-modal-header">
+                    <h3>Upload Site Documents</h3>
+                    <button type="button" class="modal-close-btn" onclick="closeSiteDocsModal()">&times;</button>
+                </div>
+                <div class="site-docs-modal-body">
+                    <div class="form-group">
+                        <label>Document Type <span class="required-star">*</span></label>
+                        <select id="site_doc_type" onchange="updateSiteDocSubTypes()">
+                            <option value="">Select document type...</option>
+                            <option value="shipments">Shipments</option>
+                            <option value="warehousing">Warehousing</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Sub-Type <span class="required-star">*</span></label>
+                        <select id="site_doc_sub_type" disabled>
+                            <option value="">Select type first...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Select Files</label>
+                        <div class="file-drop-zone" onclick="document.getElementById('site_documents').click()">
+                            <span class="drop-icon">📁</span>
+                            <span class="drop-text">Click to select files or drag & drop</span>
+                            <span class="drop-hint">PDF, DOC, JPG, PNG, XLS (max 10MB each)</span>
+                        </div>
+                        <input type="file" name="site_documents[]" id="site_documents" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xls,.xlsx" style="display:none" onchange="handleSiteDocsSelection(event)">
+                        <div id="selected-files-list" class="selected-files-list"></div>
+                    </div>
+                </div>
+                <div class="site-docs-modal-footer">
+                    <button type="button" class="btn-modal-cancel" onclick="closeSiteDocsModal()">Cancel</button>
+                    <button type="button" class="btn-modal-confirm" onclick="confirmSiteDocs()">Add Documents</button>
+                </div>
+            </div>
+        </div>
     </form>
 </main>
 
 <script>
 let currentStep = 1;
+
+// Site document type sub-types mapping
+const siteDocSubTypes = {
+    'shipments': [
+        { value: 'Delivery SOP', label: 'Delivery SOP / Driver Handout' },
+        { value: 'Arrival Notice', label: 'Arrival Notice' },
+        { value: 'Site Map', label: 'Site Map' }
+    ],
+    'warehousing': [
+        { value: 'Inventory Report', label: 'Inventory Report' },
+        { value: 'Quote', label: 'Quote' }
+    ],
+    'other': [
+        { value: 'General', label: 'General' },
+        { value: 'Safety Document', label: 'Safety Document' },
+        { value: 'Permit', label: 'Permit' }
+    ]
+};
+
+let selectedSiteFiles = [];
+
+function openSiteDocsModal() {
+    document.getElementById('siteDocsModal').classList.add('open');
+    document.getElementById('site_doc_type').value = '';
+    document.getElementById('site_doc_sub_type').innerHTML = '<option value="">Select type first...</option>';
+    document.getElementById('site_doc_sub_type').disabled = true;
+    document.getElementById('selected-files-list').innerHTML = '';
+    selectedSiteFiles = [];
+}
+
+function closeSiteDocsModal() {
+    document.getElementById('siteDocsModal').classList.remove('open');
+}
+
+function updateSiteDocSubTypes() {
+    const typeSelect = document.getElementById('site_doc_type');
+    const subTypeSelect = document.getElementById('site_doc_sub_type');
+    const selectedType = typeSelect.value;
+
+    subTypeSelect.innerHTML = '<option value="">Select sub-type...</option>';
+
+    if (selectedType && siteDocSubTypes[selectedType]) {
+        subTypeSelect.disabled = false;
+        siteDocSubTypes[selectedType].forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.value;
+            option.textContent = item.label;
+            subTypeSelect.appendChild(option);
+        });
+    } else {
+        subTypeSelect.disabled = true;
+    }
+}
+
+function handleSiteDocsSelection(event) {
+    const files = Array.from(event.target.files);
+    selectedSiteFiles = files;
+    renderSelectedFiles();
+}
+
+function renderSelectedFiles() {
+    const container = document.getElementById('selected-files-list');
+    container.innerHTML = '';
+
+    selectedSiteFiles.forEach((file, index) => {
+        const size = (file.size / 1024).toFixed(1) + ' KB';
+        const div = document.createElement('div');
+        div.className = 'selected-file-item';
+        div.innerHTML = `
+            <span class="file-name">${file.name}</span>
+            <span class="file-size">${size}</span>
+            <span class="remove-file" onclick="removeSiteFile(${index})">&times;</span>
+        `;
+        container.appendChild(div);
+    });
+}
+
+function removeSiteFile(index) {
+    selectedSiteFiles.splice(index, 1);
+    renderSelectedFiles();
+    // Update the file input
+    const dt = new DataTransfer();
+    selectedSiteFiles.forEach(f => dt.items.add(f));
+    document.getElementById('site_documents').files = dt.files;
+}
+
+function confirmSiteDocs() {
+    const docType = document.getElementById('site_doc_type').value;
+    const subType = document.getElementById('site_doc_sub_type').value;
+
+    if (!docType || !subType) {
+        alert('Please select both Document Type and Sub-Type');
+        return;
+    }
+
+    if (selectedSiteFiles.length === 0) {
+        alert('Please select at least one file');
+        return;
+    }
+
+    // Store type and sub-type in hidden fields
+    document.getElementById('site_doc_type_hidden').value = docType;
+    document.getElementById('site_doc_sub_type_hidden').value = subType;
+
+    // Update the file input with selected files
+    const dt = new DataTransfer();
+    selectedSiteFiles.forEach(f => dt.items.add(f));
+    document.getElementById('site_documents').files = dt.files;
+
+    // Update the visible list
+    const listContainer = document.getElementById('site-docs-list');
+    listContainer.innerHTML = '';
+    selectedSiteFiles.forEach((file, index) => {
+        const div = document.createElement('div');
+        div.className = 'uploaded-doc-item';
+        div.innerHTML = `
+            <span>${file.name}</span>
+            <span class="remove-doc" onclick="removeUploadedDoc(${index})">&times;</span>
+        `;
+        listContainer.appendChild(div);
+    });
+
+    closeSiteDocsModal();
+}
+
+function removeUploadedDoc(index) {
+    selectedSiteFiles.splice(index, 1);
+    const dt = new DataTransfer();
+    selectedSiteFiles.forEach(f => dt.items.add(f));
+    document.getElementById('site_documents').files = dt.files;
+
+    // Re-render the list
+    const listContainer = document.getElementById('site-docs-list');
+    listContainer.innerHTML = '';
+    selectedSiteFiles.forEach((file, i) => {
+        const div = document.createElement('div');
+        div.className = 'uploaded-doc-item';
+        div.innerHTML = `
+            <span>${file.name}</span>
+            <span class="remove-doc" onclick="removeUploadedDoc(${i})">&times;</span>
+        `;
+        listContainer.appendChild(div);
+    });
+
+    if (selectedSiteFiles.length === 0) {
+        document.getElementById('site_doc_type_hidden').value = '';
+        document.getElementById('site_doc_sub_type_hidden').value = '';
+    }
+}
 
 function goToStep(step) {
     // Validate current step before moving forward
@@ -1620,7 +2038,9 @@ function handleManufacturerChange(select) {
                 locationSelect.innerHTML = '<option value="">Select Location</option>';
                 if (data.locations && data.locations.length > 0) {
                     data.locations.forEach(loc => {
-                        locationSelect.innerHTML += `<option value="${loc.id}">${loc.location_name || loc.city}</option>`;
+                        const name = loc.location_name || loc.city || 'Location';
+                        const address = loc.formatted_address ? ` - ${loc.formatted_address}` : '';
+                        locationSelect.innerHTML += `<option value="${loc.id}">${name}${address}</option>`;
                     });
                 } else {
                     locationSelect.innerHTML = '<option value="">No locations found</option>';

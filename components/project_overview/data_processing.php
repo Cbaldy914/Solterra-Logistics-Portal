@@ -1428,6 +1428,42 @@ if ($project_size_mw > 0) {
     $ordered_vs_target_percentage = max(0, min(100, (int)round(($ordered_mw / $project_size_mw) * 100)));
 }
 
+// Calculate project health status (for at-risk indicator)
+$project_health = 'on_track';
+$project_health_text = 'On Track';
+$project_health_reason = '';
+$days_remaining = null;
+$est_completion_date_formatted = null;
+
+if ($project_completion_percentage >= 100) {
+    $project_health = 'completed';
+    $project_health_text = 'Completed';
+    $project_health_reason = 'All modules have been delivered to the project site';
+} elseif (!empty($project['estimated_completion_date'])) {
+    $today = new DateTime();
+    $est_date = new DateTime($project['estimated_completion_date']);
+    $est_completion_date_formatted = $est_date->format('M j, Y');
+    $diff = $today->diff($est_date);
+    $days_remaining = $diff->days;
+    $is_past = $est_date < $today;
+
+    if ($is_past) {
+        $days_remaining = -$days_remaining; // Negative to indicate overdue
+    }
+
+    if ($is_past && $project_completion_percentage < 100) {
+        $project_health = 'behind';
+        $project_health_text = 'Behind Schedule';
+        $project_health_reason = 'Project is ' . abs($days_remaining) . ' days past the target completion date (' . $est_completion_date_formatted . ') with ' . $project_completion_percentage . '% delivered';
+    } elseif (!$is_past && $days_remaining <= 30 && $project_completion_percentage < 80) {
+        $project_health = 'at_risk';
+        $project_health_text = 'At Risk';
+        $project_health_reason = 'Only ' . $days_remaining . ' days until target date (' . $est_completion_date_formatted . ') with ' . $project_completion_percentage . '% delivered';
+    } else {
+        $project_health_reason = $days_remaining . ' days until target completion (' . $est_completion_date_formatted . ')';
+    }
+}
+
 // Fetch module batches for this project with wattage information
 $module_batches = [];
 $stmt_modules = $conn->prepare("
@@ -1628,6 +1664,22 @@ while ($manufacturer = $manufacturers_result->fetch_assoc()) {
     $manufacturers[] = $manufacturer;
 }
 $stmt_manufacturers->close();
+
+// Fetch site operating hours for this project
+$site_operating_hours = [];
+$stmt_hours = $conn->prepare("SELECT day_of_week, start_time, end_time FROM site_operating_hours WHERE project_id = ? ORDER BY day_of_week");
+if ($stmt_hours) {
+    $stmt_hours->bind_param("i", $project_id);
+    $stmt_hours->execute();
+    $hours_result = $stmt_hours->get_result();
+    while ($row = $hours_result->fetch_assoc()) {
+        $site_operating_hours[$row['day_of_week']] = [
+            'start' => $row['start_time'],
+            'end' => $row['end_time']
+        ];
+    }
+    $stmt_hours->close();
+}
 
 // Close database connection
 $conn->close();
