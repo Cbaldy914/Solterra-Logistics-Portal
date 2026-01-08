@@ -3830,3 +3830,91 @@
         font-size: 0.75rem;
     }
 }
+
+/* ==================== TIMELINE HEALTH INDICATOR ==================== */
+.timeline-health-indicator {
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 12px;
+    max-width: 280px;
+}
+
+.timeline-health-indicator.health-on_track {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border: 1px solid #dee2e6;
+}
+
+.timeline-health-indicator.health-at_risk {
+    background: linear-gradient(135deg, #fff8e6 0%, #fff3cd 100%);
+    border: 1px solid #ffc107;
+    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.2);
+}
+
+.timeline-health-indicator.health-behind {
+    background: linear-gradient(135deg, #fff0f0 0%, #f8d7da 100%);
+    border: 1px solid #dc3545;
+    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.2);
+}
+
+.timeline-health-indicator .health-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.timeline-health-indicator .health-badge.at-risk {
+    background: #ffc107;
+    color: #664d03;
+}
+
+.timeline-health-indicator .health-badge.behind {
+    background: #dc3545;
+    color: #fff;
+}
+
+.timeline-health-indicator .health-icon {
+    font-size: 12px;
+}
+
+.timeline-health-indicator .health-detail {
+    margin-top: 8px;
+    color: #495057;
+    line-height: 1.4;
+    font-size: 11px;
+}
+
+.timeline-health-indicator .health-target {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #495057;
+}
+
+.timeline-health-indicator .target-icon {
+    font-size: 14px;
+}
+
+.timeline-health-indicator .target-text {
+    font-weight: 500;
+    color: #293E4C;
+}
+
+.timeline-health-indicator .days-remaining {
+    color: #6c757d;
+    font-size: 11px;
+}
+
+@media (max-width: 768px) {
+    .timeline-health-indicator {
+        max-width: 100%;
+        margin-top: 10px;
+        padding: 8px 12px;
+    }
+}

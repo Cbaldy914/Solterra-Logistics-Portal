@@ -52,6 +52,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $instructions             = trim($_POST['instructions'] ?? '');
         $additional_notes         = trim($_POST['additional_notes'] ?? '');
 
+        // Site contact fields
+        $site_contact_name        = trim($_POST['site_contact_name'] ?? '');
+        $site_contact_email       = trim($_POST['site_contact_email'] ?? '');
+        $site_contact_phone       = trim($_POST['site_contact_phone'] ?? '');
+
+        // Appointment window (in minutes)
+        $appointment_duration     = isset($_POST['appointment_duration']) && $_POST['appointment_duration'] !== '' ? (int)$_POST['appointment_duration'] : 30;
+
         // Validate required fields
         if ($project_name === '') {
             throw new Exception("Project Name is required.");
@@ -80,30 +88,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $image_url = $existing_image_url;
         $driver_handout_url = $existing_handout_url;
 
-        // Handle driver handout upload
-        if (isset($_FILES['driver_handout']) && $_FILES['driver_handout']['error'] !== UPLOAD_ERR_NO_FILE) {
-            if ($_FILES['driver_handout']['error'] === UPLOAD_ERR_OK) {
-                // Build document data and save via helper
-                $doc_data = [
-                    'project_id' => $project_id,
-                    'document_type' => 'shipments',
-                    'document_sub_type' => 'Delivery SOP',
-                    'original_name' => $_FILES['driver_handout']['name'],
-                    'file_size' => $_FILES['driver_handout']['size'],
-                    'mime_type' => mime_content_type($_FILES['driver_handout']['tmp_name']),
-                    'uploaded_by' => $user_id,
-                    'tmp_name' => $_FILES['driver_handout']['tmp_name'],
-                    'description' => 'Driver Handout'
-                ];
-                // Validate extension
-                $allowed_ext = ['pdf','doc','docx','jpg','jpeg','png'];
-                $ext = strtolower(pathinfo($doc_data['original_name'], PATHINFO_EXTENSION));
-                if (!in_array($ext, $allowed_ext)) {
-                    throw new Exception('Invalid driver handout file type.');
+        // Handle site documents upload
+        if (isset($_FILES['site_documents'])) {
+            $site_doc_type = trim($_POST['site_doc_type'] ?? 'other');
+            $site_doc_sub_type = trim($_POST['site_doc_sub_type'] ?? 'General');
+
+            $names = (array)$_FILES['site_documents']['name'];
+            $tmps  = (array)$_FILES['site_documents']['tmp_name'];
+            $errs  = (array)$_FILES['site_documents']['error'];
+            $sizes = (array)$_FILES['site_documents']['size'];
+
+            $allowed_ext = ['pdf','doc','docx','jpg','jpeg','png','xls','xlsx'];
+
+            foreach ($names as $i => $orig) {
+                if (!isset($errs[$i]) || $errs[$i] === UPLOAD_ERR_NO_FILE) continue;
+                if ($errs[$i] !== UPLOAD_ERR_OK) {
+                    throw new Exception('Site document upload error for file: ' . $orig);
                 }
-                saveDocumentToProjectDocuments($conn, $doc_data);
-            } else {
-                throw new Exception('Driver handout upload error code: ' . $_FILES['driver_handout']['error']);
+
+                $ext = strtolower(pathinfo($orig, PATHINFO_EXTENSION));
+                if (!in_array($ext, $allowed_ext)) {
+                    throw new Exception('Invalid file type for: ' . $orig);
+                }
+
+                $tmpName = $tmps[$i];
+                $mime    = mime_content_type($tmpName);
+                $doc = [
+                    'project_id' => $project_id,
+                    'document_type' => $site_doc_type ?: 'other',
+                    'document_sub_type' => $site_doc_sub_type ?: 'General',
+                    'original_name' => $orig,
+                    'file_size' => $sizes[$i],
+                    'mime_type' => $mime,
+                    'uploaded_by' => $user_id,
+                    'tmp_name' => $tmpName,
+                    'description' => 'Site Document'
+                ];
+                saveDocumentToProjectDocuments($conn, $doc);
             }
         }
 
@@ -122,11 +143,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 phone2 = ?,
                 timezone = ?,
                 instructions = ?,
-                additional_notes = ?
+                additional_notes = ?,
+                site_contact_name = ?,
+                site_contact_email = ?,
+                site_contact_phone = ?,
+                appointment_duration = ?
             WHERE id = ?
         ");
         $stmtUpdate->bind_param(
-            "sdsssssdsssssi",
+            "sdsssssdsssssssssii",
             $project_name,
             $project_size,
             $street_address,
@@ -140,6 +165,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $timezone,
             $instructions,
             $additional_notes,
+            $site_contact_name,
+            $site_contact_email,
+            $site_contact_phone,
+            $appointment_duration,
             $project_id
         );
 
@@ -516,6 +545,19 @@ $stmtBatches->close();
             margin-top: 6px;
         }
 
+        /* Form Subsection Titles */
+        .form-subsection-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 24px 0 12px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .form-subsection-title:first-of-type {
+            margin-top: 0;
+        }
+
         /* Address Grid */
         .address-grid {
             display: grid;
@@ -862,15 +904,24 @@ $stmtBatches->close();
                     Update contact details and receiving hours for the project site.
                 </div>
 
+                <h4 class="form-subsection-title">Site Contact</h4>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Primary Phone<span class="optional-tag">(optional)</span></label>
-                        <input type="tel" name="phone1" value="<?php echo htmlspecialchars($project['phone1'] ?? ''); ?>" placeholder="e.g. 555-555-5555">
+                        <label>Contact Name<span class="optional-tag">(optional)</span></label>
+                        <input type="text" name="site_contact_name" value="<?php echo htmlspecialchars($project['site_contact_name'] ?? ''); ?>" placeholder="e.g. John Smith">
                     </div>
                     <div class="form-group">
-                        <label>Secondary Phone<span class="optional-tag">(optional)</span></label>
-                        <input type="tel" name="phone2" value="<?php echo htmlspecialchars($project['phone2'] ?? ''); ?>" placeholder="e.g. 555-555-5555">
+                        <label>Contact Email<span class="optional-tag">(optional)</span></label>
+                        <input type="email" name="site_contact_email" value="<?php echo htmlspecialchars($project['site_contact_email'] ?? ''); ?>" placeholder="e.g. john@example.com">
                     </div>
+                    <div class="form-group">
+                        <label>Contact Phone<span class="optional-tag">(optional)</span></label>
+                        <input type="tel" name="site_contact_phone" value="<?php echo htmlspecialchars($project['site_contact_phone'] ?? ''); ?>" placeholder="e.g. 555-555-5555">
+                    </div>
+                </div>
+
+                <h4 class="form-subsection-title">Receiving Schedule</h4>
+                <div class="form-row">
                     <div class="form-group">
                         <label>Timezone</label>
                         <select name="timezone">
@@ -890,9 +941,6 @@ $stmtBatches->close();
                             ?>
                         </select>
                     </div>
-                </div>
-
-                <div class="form-row">
                     <div class="form-group">
                         <label>Site Receiving Hours</label>
                         <div class="hours-grid">
@@ -907,8 +955,22 @@ $stmtBatches->close();
                         </div>
                         <span class="help-text">Hours will be set for Monday-Friday</span>
                     </div>
+                    <div class="form-group">
+                        <label>Appointment Window<span class="optional-tag">(optional)</span></label>
+                        <?php $current_appt = $project['appointment_duration'] ?? 30; ?>
+                        <select name="appointment_duration">
+                            <option value="15" <?php echo $current_appt == 15 ? 'selected' : ''; ?>>15 minutes</option>
+                            <option value="30" <?php echo $current_appt == 30 ? 'selected' : ''; ?>>30 minutes</option>
+                            <option value="45" <?php echo $current_appt == 45 ? 'selected' : ''; ?>>45 minutes</option>
+                            <option value="60" <?php echo $current_appt == 60 ? 'selected' : ''; ?>>1 hour</option>
+                            <option value="90" <?php echo $current_appt == 90 ? 'selected' : ''; ?>>1.5 hours</option>
+                            <option value="120" <?php echo $current_appt == 120 ? 'selected' : ''; ?>>2 hours</option>
+                        </select>
+                        <span class="help-text">Duration of each delivery appointment slot</span>
+                    </div>
                 </div>
 
+                <h4 class="form-subsection-title">Instructions</h4>
                 <div class="form-row single">
                     <div class="form-group">
                         <label>Special Instructions<span class="optional-tag">(optional)</span></label>
@@ -923,11 +985,29 @@ $stmtBatches->close();
                     </div>
                 </div>
 
+                <h4 class="form-subsection-title">Site Documents</h4>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Document Type<span class="optional-tag">(optional)</span></label>
+                        <select name="site_doc_type" id="site_doc_type" onchange="updateSiteDocSubTypes()">
+                            <option value="">Select document type...</option>
+                            <option value="shipments">Shipments</option>
+                            <option value="warehousing">Warehousing</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Sub-Type<span class="optional-tag">(optional)</span></label>
+                        <select name="site_doc_sub_type" id="site_doc_sub_type" disabled>
+                            <option value="">Select type first...</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="form-row single">
                     <div class="form-group">
-                        <label>Driver Handout<span class="optional-tag">(optional)</span></label>
-                        <input type="file" name="driver_handout" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
-                        <span class="help-text">Upload driver instructions, site maps, or other handout materials (PDF, DOC, JPG, PNG - max 5MB)</span>
+                        <label>Upload Documents<span class="optional-tag">(optional)</span></label>
+                        <input type="file" name="site_documents[]" id="site_documents" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xls,.xlsx">
+                        <span class="help-text">Upload site documents like driver handouts, site maps, SOPs, etc. (PDF, DOC, JPG, PNG, XLS - max 10MB each)</span>
                     </div>
                 </div>
 
@@ -1009,6 +1089,44 @@ $stmtBatches->close();
 
 <script>
 let currentStep = 1;
+
+// Site document type sub-types mapping
+const siteDocSubTypes = {
+    'shipments': [
+        { value: 'Delivery SOP', label: 'Delivery SOP / Driver Handout' },
+        { value: 'Arrival Notice', label: 'Arrival Notice' },
+        { value: 'Site Map', label: 'Site Map' }
+    ],
+    'warehousing': [
+        { value: 'Inventory Report', label: 'Inventory Report' },
+        { value: 'Quote', label: 'Quote' }
+    ],
+    'other': [
+        { value: 'General', label: 'General' },
+        { value: 'Safety Document', label: 'Safety Document' },
+        { value: 'Permit', label: 'Permit' }
+    ]
+};
+
+function updateSiteDocSubTypes() {
+    const typeSelect = document.getElementById('site_doc_type');
+    const subTypeSelect = document.getElementById('site_doc_sub_type');
+    const selectedType = typeSelect.value;
+
+    subTypeSelect.innerHTML = '<option value="">Select sub-type...</option>';
+
+    if (selectedType && siteDocSubTypes[selectedType]) {
+        subTypeSelect.disabled = false;
+        siteDocSubTypes[selectedType].forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.value;
+            option.textContent = item.label;
+            subTypeSelect.appendChild(option);
+        });
+    } else {
+        subTypeSelect.disabled = true;
+    }
+}
 
 function goToStep(step) {
     // Close current accordion
