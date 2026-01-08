@@ -279,6 +279,32 @@
                         }
                         ?>
                     </div>
+
+                    <?php if (!$step5_completed && !empty($est_completion_date_formatted)): ?>
+                    <div class="timeline-health-indicator health-<?php echo $project_health; ?>">
+                        <?php if ($project_health === 'at_risk'): ?>
+                            <div class="health-badge at-risk">
+                                <span class="health-icon">⚠️</span>
+                                <span class="health-label">At Risk</span>
+                            </div>
+                            <div class="health-detail"><?php echo htmlspecialchars($project_health_reason); ?></div>
+                        <?php elseif ($project_health === 'behind'): ?>
+                            <div class="health-badge behind">
+                                <span class="health-icon">🚨</span>
+                                <span class="health-label">Behind Schedule</span>
+                            </div>
+                            <div class="health-detail"><?php echo htmlspecialchars($project_health_reason); ?></div>
+                        <?php else: ?>
+                            <div class="health-target">
+                                <span class="target-icon">📅</span>
+                                <span class="target-text">Target: <?php echo $est_completion_date_formatted; ?></span>
+                                <?php if ($days_remaining !== null && $days_remaining > 0): ?>
+                                <span class="days-remaining">(<?php echo $days_remaining; ?> days)</span>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                    <?php endif; ?>
                 </li>
             </ul>
         </div>
@@ -310,23 +336,113 @@
                         <label>Project Size:</label>
                         <span><?php echo number_format($project_size_mw, 2); ?> MW</span>
                     </div>
+                    <div class="info-item">
+                        <label>Target Completion:</label>
+                        <span><?php echo !empty($project['estimated_completion_date']) ? (new DateTime($project['estimated_completion_date']))->format('M j, Y') : 'Not specified'; ?></span>
+                    </div>
                 </div>
                 <div class="info-section">
-                    <h3>Contact Information</h3>
+                    <h3>Site Contact</h3>
                     <div class="info-item">
-                        <label>Site Contact:</label>
+                        <label>Contact Name:</label>
                         <span><?php echo htmlspecialchars($project['site_contact_name'] ?? 'Not specified'); ?></span>
                     </div>
                     <div class="info-item">
                         <label>Contact Email:</label>
-                        <span><?php echo htmlspecialchars($project['site_contact_email'] ?? 'Not specified'); ?></span>
+                        <span><?php echo !empty($project['site_contact_email']) ? '<a href="mailto:'.htmlspecialchars($project['site_contact_email']).'">'.htmlspecialchars($project['site_contact_email']).'</a>' : 'Not specified'; ?></span>
                     </div>
                     <div class="info-item">
                         <label>Contact Phone:</label>
-                        <span><?php echo htmlspecialchars($project['site_contact_phone'] ?? 'Not specified'); ?></span>
+                        <span><?php echo !empty($project['site_contact_phone']) ? '<a href="tel:'.htmlspecialchars($project['site_contact_phone']).'">'.htmlspecialchars($project['site_contact_phone']).'</a>' : 'Not specified'; ?></span>
+                    </div>
+                </div>
+                <div class="info-section">
+                    <h3>Receiving Schedule</h3>
+                    <div class="info-item">
+                        <label>Timezone:</label>
+                        <?php
+                        $timezone_labels = [
+                            'America/New_York' => 'Eastern',
+                            'America/Chicago' => 'Central',
+                            'America/Denver' => 'Mountain',
+                            'America/Los_Angeles' => 'Pacific',
+                            'UTC' => 'UTC'
+                        ];
+                        $tz = $project['timezone'] ?? 'America/New_York';
+                        ?>
+                        <span><?php echo $timezone_labels[$tz] ?? $tz; ?></span>
+                    </div>
+                    <div class="info-item">
+                        <label>Operating Hours:</label>
+                        <?php
+                        $day_names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                        if (!empty($site_operating_hours)):
+                            // Check if all weekdays have the same hours
+                            $weekday_hours = [];
+                            for ($d = 1; $d <= 5; $d++) {
+                                if (isset($site_operating_hours[$d])) {
+                                    $weekday_hours[] = $site_operating_hours[$d]['start'] . '-' . $site_operating_hours[$d]['end'];
+                                }
+                            }
+                            $all_same = count(array_unique($weekday_hours)) === 1 && count($weekday_hours) === 5;
+
+                            if ($all_same):
+                                $start = date('g:i A', strtotime($site_operating_hours[1]['start']));
+                                $end = date('g:i A', strtotime($site_operating_hours[1]['end']));
+                        ?>
+                        <span>Mon-Fri: <?php echo $start; ?> - <?php echo $end; ?></span>
+                        <?php else: ?>
+                        <span style="font-size: 0.9em;">
+                            <?php
+                            $hours_display = [];
+                            foreach ($site_operating_hours as $day => $times) {
+                                $start = date('g:i A', strtotime($times['start']));
+                                $end = date('g:i A', strtotime($times['end']));
+                                $hours_display[] = $day_names[$day] . ': ' . $start . ' - ' . $end;
+                            }
+                            echo implode('<br>', $hours_display);
+                            ?>
+                        </span>
+                        <?php endif; ?>
+                        <?php else: ?>
+                        <span>Not specified</span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="info-item">
+                        <label>Appointment Window:</label>
+                        <?php
+                        $appt_mins = $project['appointment_duration'] ?? 30;
+                        if ($appt_mins >= 60) {
+                            $appt_display = ($appt_mins / 60) . ' hour' . ($appt_mins > 60 ? 's' : '');
+                        } else {
+                            $appt_display = $appt_mins . ' minutes';
+                        }
+                        ?>
+                        <span><?php echo $appt_display; ?></span>
                     </div>
                 </div>
             </div>
+
+            <?php if (!empty($project['instructions']) || !empty($project['additional_notes'])): ?>
+            <div class="info-grid" style="margin-top: 20px;">
+                <?php if (!empty($project['instructions'])): ?>
+                <div class="info-section">
+                    <h3>Special Instructions</h3>
+                    <div class="info-item" style="flex-direction: column; align-items: flex-start;">
+                        <span style="white-space: pre-wrap;"><?php echo htmlspecialchars($project['instructions']); ?></span>
+                    </div>
+                </div>
+                <?php endif; ?>
+                <?php if (!empty($project['additional_notes'])): ?>
+                <div class="info-section">
+                    <h3>Additional Notes</h3>
+                    <div class="info-item" style="flex-direction: column; align-items: flex-start;">
+                        <span style="white-space: pre-wrap;"><?php echo htmlspecialchars($project['additional_notes']); ?></span>
+                    </div>
+                </div>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
         </div>
     </div>
 
