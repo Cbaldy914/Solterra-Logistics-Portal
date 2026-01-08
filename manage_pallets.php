@@ -28,6 +28,10 @@ $is_user = ($_SESSION['role'] === 'user');
 // Optional project context from deep-link (e.g. Project Overview "View Pallets")
 $project_id_from_url = isset($_GET['project_id']) ? intval($_GET['project_id']) : 0;
 
+// Optional referrer and status filter from module_movements page
+$from_page = isset($_GET['from']) ? htmlspecialchars($_GET['from']) : '';
+$status_filter_from_url = isset($_GET['status']) ? htmlspecialchars($_GET['status']) : '';
+
 if (!$is_global_admin) {
     // For admins and users, get their account_id
     $conn_account = getDBConnection();
@@ -681,7 +685,14 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
 <body>
 <?php include 'header.php'; ?>
 <main>
-<?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Manage Pallets']); ?>
+<?php
+require_once 'components/breadcrumbs.php';
+$breadcrumb_extra = [];
+if ($from_page === 'module_movements' && $project_id_from_url > 0) {
+    $breadcrumb_extra[] = ['label' => 'Module Movements', 'url' => 'module_movements.php?project_id=' . $project_id_from_url];
+}
+echo slp_render_breadcrumbs(['current_label' => 'Manage Pallets', 'extra' => $breadcrumb_extra]);
+?>
     <style>
         .delivery-tracker-header { background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 24px; padding: 32px; margin: 16px 0 20px 0; box-shadow: 0 8px 32px rgba(0,0,0,0.06); border: 1px solid rgba(72,140,154,0.08); position: relative; overflow: hidden; }
         .delivery-tracker-header::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
@@ -760,7 +771,7 @@ if ($conn && $conn->ping()) { // Close connection if it was opened and is still 
                 <label class="filter-label" for="mp_status">Status</label>
                 <select id="mp_status" class="filter-select" onchange="filterTable()">
                     <option value="">All Statuses</option>
-                    <?php $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets)); sort($statuses); foreach ($statuses as $s) { echo '<option value="' . htmlspecialchars($s) . '">' . htmlspecialchars($s) . '</option>'; } ?>
+                    <?php $statuses = array_unique(array_map(function($p) { return $p['status']; }, $pallets)); sort($statuses); foreach ($statuses as $s) { echo '<option value="' . htmlspecialchars($s) . '"' . ($status_filter_from_url === $s ? ' selected' : '') . '>' . htmlspecialchars($s) . '</option>'; } ?>
                 </select>
             </div>
         </div>
