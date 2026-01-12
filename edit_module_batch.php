@@ -245,6 +245,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stacking_in_warehouse = trim($_POST['stacking_in_warehouse'] ?? '');
     $stacking_during_transport = trim($_POST['stacking_during_transport'] ?? '');
     $module_notes = trim($_POST['module_notes'] ?? '');
+    $cost_per_watt = isset($_POST['cost_per_watt']) && $_POST['cost_per_watt'] !== '' ? floatval($_POST['cost_per_watt']) : null;
 
     $posted_watts = $_POST['wattages'] ?? [];
     $posted_qtys = $_POST['quantities'] ?? [];
@@ -297,13 +298,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // Update modules
-            $stmtU = $conn->prepare('UPDATE modules SET vendor_name=?, initial_location=?, modules_per_pallet=?, pallets_per_truck=?, modules_per_truck=?, pallet_length_mm=?, pallet_depth_mm=?, pallet_double_stacked_height_mm=?, pallet_total_weight_kg=?, stacking_in_warehouse=?, stacking_during_transport=?, forklift_truck_long_side_mm=?, forklift_truck_short_side_mm=?, pallet_jack_long_side_mm=?, pallet_jack_short_side_mm=?, module_notes=?, last_updated_at=NOW() WHERE id=?');
-            $stmtU->bind_param('ssiiiiiiiissiiisi',
+            $stmtU = $conn->prepare('UPDATE modules SET vendor_name=?, initial_location=?, modules_per_pallet=?, pallets_per_truck=?, modules_per_truck=?, pallet_length_mm=?, pallet_depth_mm=?, pallet_double_stacked_height_mm=?, pallet_total_weight_kg=?, stacking_in_warehouse=?, stacking_during_transport=?, forklift_truck_long_side_mm=?, forklift_truck_short_side_mm=?, pallet_jack_long_side_mm=?, pallet_jack_short_side_mm=?, module_notes=?, cost_per_watt=?, last_updated_at=NOW() WHERE id=?');
+            $stmtU->bind_param('ssiiiiiiiissiiisdi',
                 $vendor_name, $initial_location, $modules_per_pallet, $pallets_per_truck, $modules_per_truck,
                 $pallet_length_mm, $pallet_depth_mm, $pallet_double_stacked_height_mm, $pallet_total_weight_kg,
                 $stacking_in_warehouse, $stacking_during_transport,
                 $forklift_truck_long_side_mm, $forklift_truck_short_side_mm, $pallet_jack_long_side_mm, $pallet_jack_short_side_mm,
-                $module_notes, $batch_id
+                $module_notes, $cost_per_watt, $batch_id
             );
             if (!$stmtU->execute()) { throw new Exception('Failed updating module: '.$stmtU->error); }
             $stmtU->close();

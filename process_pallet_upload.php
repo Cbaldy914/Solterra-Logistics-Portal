@@ -660,7 +660,8 @@ function handleImport($conn, $user_id) {
         'pallet_jack_short_side_mm' => !empty($_POST['pallet_jack_short_side_mm']) ? intval($_POST['pallet_jack_short_side_mm']) : null,
         'stacking_in_warehouse' => $_POST['stacking_in_warehouse'] ?? null,
         'stacking_during_transport' => $_POST['stacking_during_transport'] ?? null,
-        'module_notes' => $_POST['module_notes'] ?? null
+        'module_notes' => $_POST['module_notes'] ?? null,
+        'cost_per_watt' => !empty($_POST['cost_per_watt']) ? floatval($_POST['cost_per_watt']) : null
     ];
 
     // Start transaction
@@ -921,6 +922,12 @@ function findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_
                     $updateTypes .= 's';
                 }
             }
+            // Handle cost_per_watt as decimal
+            if (isset($logistics['cost_per_watt']) && $logistics['cost_per_watt'] !== null) {
+                $updateFields[] = "cost_per_watt = ?";
+                $updateParams[] = $logistics['cost_per_watt'];
+                $updateTypes .= 'd';
+            }
 
             if (!empty($updateFields)) {
                 $updateParams[] = $existing['id'];
@@ -943,17 +950,18 @@ function findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_
             pallet_length_mm, pallet_depth_mm, pallet_double_stacked_height_mm, pallet_total_weight_kg,
             forklift_truck_long_side_mm, forklift_truck_short_side_mm,
             pallet_jack_long_side_mm, pallet_jack_short_side_mm,
-            stacking_in_warehouse, stacking_during_transport, module_notes
-        ) VALUES (?, ?, ?, ?, 'pallet_import', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            stacking_in_warehouse, stacking_during_transport, module_notes, cost_per_watt
+        ) VALUES (?, ?, ?, ?, 'pallet_import', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
-    $stmt->bind_param("iissiiiiiiiiiiisss",
+    $stmt->bind_param("iissiiiiiiiiiiisssd",
         $account_id, $project_id, $manufacturerName, $initial_location,
         $logistics['modules_per_pallet'], $logistics['pallets_per_truck'], $logistics['modules_per_truck'],
         $logistics['pallet_length_mm'], $logistics['pallet_depth_mm'],
         $logistics['pallet_double_stacked_height_mm'], $logistics['pallet_total_weight_kg'],
         $logistics['forklift_truck_long_side_mm'], $logistics['forklift_truck_short_side_mm'],
         $logistics['pallet_jack_long_side_mm'], $logistics['pallet_jack_short_side_mm'],
-        $logistics['stacking_in_warehouse'], $logistics['stacking_during_transport'], $logistics['module_notes']
+        $logistics['stacking_in_warehouse'], $logistics['stacking_during_transport'], $logistics['module_notes'],
+        $logistics['cost_per_watt']
     );
     $stmt->execute();
     $batchId = $conn->insert_id;
