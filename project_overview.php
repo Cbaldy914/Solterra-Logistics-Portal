@@ -94,7 +94,25 @@ document.addEventListener('DOMContentLoaded', function() {
                     <img src="<?php echo htmlspecialchars($projectImage); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/project_default.png'">
                 </div>
                 <div class="project-header-info">
-                    <h1><?php echo htmlspecialchars($project['project_name']); ?></h1>
+                    <div class="project-title-row">
+                        <h1><?php echo htmlspecialchars($project['project_name']); ?></h1>
+                        <?php if ($project_health !== 'on_track' || $is_manual_health): ?>
+                        <div class="health-indicator health-<?php echo $project_health; ?><?php echo $is_manual_health ? ' is-manual' : ''; ?><?php echo $can_add_modules ? ' clickable' : ''; ?>"
+                             <?php if ($can_add_modules): ?>onclick="openHealthModal()"<?php endif; ?>
+                             data-tooltip="<?php echo htmlspecialchars($project_health_reason); ?>">
+                            <span class="health-dot"></span>
+                            <span class="health-text"><?php echo $project_health_text; ?></span>
+                            <?php if ($is_manual_health): ?>
+                            <span class="health-manual-badge" title="Manually set<?php echo $manual_health_set_by_name ? ' by ' . htmlspecialchars($manual_health_set_by_name) : ''; ?><?php echo $manual_health_set_at_formatted ? ' on ' . htmlspecialchars($manual_health_set_at_formatted) : ''; ?>">Manual</span>
+                            <?php endif; ?>
+                        </div>
+                        <?php elseif ($can_add_modules): ?>
+                        <div class="health-indicator health-on_track clickable" onclick="openHealthModal()" data-tooltip="<?php echo htmlspecialchars($project_health_reason ?: 'Project is on track'); ?>">
+                            <span class="health-dot"></span>
+                            <span class="health-text"><?php echo $project_health_text; ?></span>
+                        </div>
+                        <?php endif; ?>
+                    </div>
                     <p class="project-header-subtitle"><?php echo htmlspecialchars($project['project_address']); ?></p>
                 </div>
             </div>
@@ -246,6 +264,84 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
 
     <?php include 'components/project_overview/views_unified.php'; ?>
+
+    <?php if ($can_add_modules): ?>
+    <!-- Health Status Modal -->
+    <div class="health-modal-overlay" id="healthModal">
+        <div class="health-modal">
+            <div class="health-modal-header">
+                <h3>Update Project Health Status</h3>
+                <button type="button" class="health-modal-close" onclick="closeHealthModal()">&times;</button>
+            </div>
+            <form method="POST" action="project_overview.php?project_id=<?php echo $project_id; ?>" id="healthForm">
+                <input type="hidden" name="action" value="update_project_health">
+                <div class="health-modal-body">
+                    <p style="color: #6c757d; font-size: 0.9rem; margin-bottom: 16px;">
+                        <?php if ($is_manual_health): ?>
+                        Current status is <strong>manually set</strong>. You can change the status or revert to auto-calculated.
+                        <?php else: ?>
+                        Current status is <strong>auto-calculated</strong> based on project timeline and delivery progress.
+                        <?php endif; ?>
+                    </p>
+
+                    <label class="health-option<?php echo (!$is_manual_health) ? ' selected' : ''; ?>" onclick="selectHealthOption('auto')">
+                        <input type="radio" name="health_status" value="auto" <?php echo (!$is_manual_health) ? 'checked' : ''; ?>>
+                        <div class="health-option-content">
+                            <div class="health-option-label">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                                Auto-Calculate
+                            </div>
+                            <div class="health-option-desc">Let the system determine status based on delivery progress and timeline</div>
+                        </div>
+                    </label>
+
+                    <label class="health-option<?php echo ($is_manual_health && $project_health === 'on_track') ? ' selected' : ''; ?>" onclick="selectHealthOption('on_track')">
+                        <input type="radio" name="health_status" value="on_track" <?php echo ($is_manual_health && $project_health === 'on_track') ? 'checked' : ''; ?>>
+                        <div class="health-option-content">
+                            <div class="health-option-label">
+                                <span class="health-dot" style="background: #28a745;"></span>
+                                On Track
+                            </div>
+                            <div class="health-option-desc">Project is progressing as expected</div>
+                        </div>
+                    </label>
+
+                    <label class="health-option<?php echo ($is_manual_health && $project_health === 'at_risk') ? ' selected' : ''; ?>" onclick="selectHealthOption('at_risk')">
+                        <input type="radio" name="health_status" value="at_risk" <?php echo ($is_manual_health && $project_health === 'at_risk') ? 'checked' : ''; ?>>
+                        <div class="health-option-content">
+                            <div class="health-option-label">
+                                <span class="health-dot" style="background: #ffc107;"></span>
+                                At Risk
+                            </div>
+                            <div class="health-option-desc">Project may encounter delays or issues</div>
+                        </div>
+                    </label>
+
+                    <label class="health-option<?php echo ($is_manual_health && $project_health === 'behind') ? ' selected' : ''; ?>" onclick="selectHealthOption('behind')">
+                        <input type="radio" name="health_status" value="behind" <?php echo ($is_manual_health && $project_health === 'behind') ? 'checked' : ''; ?>>
+                        <div class="health-option-content">
+                            <div class="health-option-label">
+                                <span class="health-dot" style="background: #dc3545;"></span>
+                                Behind Schedule
+                            </div>
+                            <div class="health-option-desc">Project is behind target timeline</div>
+                        </div>
+                    </label>
+
+                    <div class="health-reason-container" id="healthReasonContainer">
+                        <label for="healthReason">Reason for status change <span style="color: #dc3545;">*</span></label>
+                        <textarea name="health_reason" id="healthReason" placeholder="Please explain why you're setting this status..." maxlength="500"><?php echo $is_manual_health ? htmlspecialchars($project_health_reason) : ''; ?></textarea>
+                        <div class="char-count"><span id="charCount">0</span>/500</div>
+                    </div>
+                </div>
+                <div class="health-modal-footer">
+                    <button type="button" class="health-modal-btn cancel" onclick="closeHealthModal()">Cancel</button>
+                    <button type="submit" class="health-modal-btn save" id="healthSaveBtn">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <?php endif; ?>
 </main>
 
 <script>
@@ -2696,6 +2792,115 @@ function toggleProjectActions() {
     document.querySelectorAll('.project-settings-dropdown').forEach(d => d.classList.remove('show'));
     dropdown.classList.toggle('show', !isOpen);
 }
+
+// ==================== HEALTH MODAL FUNCTIONS ====================
+function openHealthModal() {
+    const modal = document.getElementById('healthModal');
+    if (modal) {
+        modal.classList.add('show');
+        document.body.style.overflow = 'hidden';
+        // Update character count
+        updateHealthCharCount();
+        // Check if reason should be shown
+        const selected = document.querySelector('input[name="health_status"]:checked');
+        if (selected) {
+            toggleHealthReason(selected.value);
+        }
+    }
+}
+
+function closeHealthModal() {
+    const modal = document.getElementById('healthModal');
+    if (modal) {
+        modal.classList.remove('show');
+        document.body.style.overflow = '';
+    }
+}
+
+function selectHealthOption(value) {
+    // Update visual selection
+    document.querySelectorAll('.health-option').forEach(opt => opt.classList.remove('selected'));
+    const radio = document.querySelector(`input[name="health_status"][value="${value}"]`);
+    if (radio) {
+        radio.checked = true;
+        radio.closest('.health-option').classList.add('selected');
+    }
+    toggleHealthReason(value);
+}
+
+function toggleHealthReason(value) {
+    const container = document.getElementById('healthReasonContainer');
+    const textarea = document.getElementById('healthReason');
+    const saveBtn = document.getElementById('healthSaveBtn');
+
+    if (value === 'at_risk' || value === 'behind') {
+        container.classList.add('show');
+        textarea.required = true;
+        // Validate save button state
+        validateHealthForm();
+    } else {
+        container.classList.remove('show');
+        textarea.required = false;
+        if (saveBtn) saveBtn.disabled = false;
+    }
+}
+
+function validateHealthForm() {
+    const selected = document.querySelector('input[name="health_status"]:checked');
+    const textarea = document.getElementById('healthReason');
+    const saveBtn = document.getElementById('healthSaveBtn');
+
+    if (!selected || !saveBtn) return;
+
+    if ((selected.value === 'at_risk' || selected.value === 'behind') && textarea.value.trim().length === 0) {
+        saveBtn.disabled = true;
+    } else {
+        saveBtn.disabled = false;
+    }
+}
+
+function updateHealthCharCount() {
+    const textarea = document.getElementById('healthReason');
+    const charCount = document.getElementById('charCount');
+    if (textarea && charCount) {
+        charCount.textContent = textarea.value.length;
+    }
+}
+
+// Health modal event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    const textarea = document.getElementById('healthReason');
+    if (textarea) {
+        textarea.addEventListener('input', function() {
+            updateHealthCharCount();
+            validateHealthForm();
+        });
+    }
+
+    // Close modal on backdrop click
+    const modal = document.getElementById('healthModal');
+    if (modal) {
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeHealthModal();
+            }
+        });
+    }
+
+    // Close modal on Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeHealthModal();
+        }
+    });
+
+    // Health option radio change handler
+    document.querySelectorAll('input[name="health_status"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            selectHealthOption(this.value);
+        });
+    });
+});
 
 // Module Actions Functions
 function toggleModuleActions() {
