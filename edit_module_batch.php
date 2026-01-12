@@ -12,11 +12,28 @@ require_once '../config.php';
 $conn = getDBConnection();
 if (!$conn) { die('Database connection failed.'); }
 
+$isAjax = strtolower($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'xmlhttprequest';
+
 $user_id = (int)$_SESSION['user_id'];
 $role = $_SESSION['role'];
 
 $batch_id = isset($_GET['batch_id']) ? (int)$_GET['batch_id'] : 0;
-if ($batch_id <= 0) { header('Location: modules.php?error=missing_batch'); exit(); }
+if ($batch_id <= 0 && isset($_POST['batch_id'])) {
+    $batch_id = (int)$_POST['batch_id'];
+}
+if ($batch_id <= 0) {
+    if ($isAjax) {
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => false,
+            'message' => 'Missing module batch id',
+        ]);
+        $conn->close();
+        exit();
+    }
+    header('Location: modules.php?error=missing_batch');
+    exit();
+}
 
 // Project capacity tracking variables
 $project_size_mw = 0;
@@ -115,9 +132,6 @@ if ($stmtW = $conn->prepare('SELECT id, wattage, quantity FROM unassigned_module
 $errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Detect AJAX request
-    $isAjax = !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
-
     // Handle delete action
     if (isset($_POST['action']) && $_POST['action'] === 'delete') {
         try {
@@ -457,6 +471,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = $error_message;
         }
     }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isAjax) {
+    $message = !empty($errors) ? implode(' ', array_map('strval', $errors)) : 'An unexpected error occurred. Please try again.';
+
+    header('Content-Type: application/json');
+    echo json_encode([
+        'success' => empty($errors),
+        'message' => $message,
+        'errors' => $errors,
+        'redirect_url' => ($project_id > 0) ? 'project_overview.php?project_id=' . $project_id : 'modules.php'
+    ]);
+    $conn->close();
+    exit();
 }
 
 // Preselects for component
@@ -885,8 +913,10 @@ foreach ($current_wattages as $w) {
                 </ul></div>
             <?php endif; ?>
 
-            <form method="POST" id="editBatchForm">
+            <?php $formAction = 'edit_module_batch.php?batch_id='.(int)$batch_id; ?>
+            <form method="POST" id="editBatchForm" action="<?php echo $formAction; ?>">
                 <input type="hidden" name="confirm_delete_pallets" id="confirmDeletePallets" value="no">
+                <input type="hidden" name="batch_id" value="<?php echo (int)$batch_id; ?>">
                 <?php include __DIR__ . '/components/module_batch_section.php'; ?>
 
                 <div class="button-group">
@@ -903,8 +933,9 @@ foreach ($current_wattages as $w) {
             </form>
 
             <!-- Delete Batch Form (hidden) -->
-            <form id="deleteBatchForm" method="POST" style="display: none;">
+            <form id="deleteBatchForm" method="POST" action="<?php echo $formAction; ?>" style="display: none;">
                 <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="batch_id" value="<?php echo (int)$batch_id; ?>">
             </form>
 
             <!-- Delete Batch Confirmation Modal -->
@@ -1257,6 +1288,8 @@ foreach ($current_wattages as $w) {
         const goBackBtn = document.getElementById('resultGoBackBtn');
         const closeBtn = document.getElementById('resultCloseBtn');
 
+        const redirectTarget = data.redirect_url || (data.project_id ? `project_overview.php?project_id=${data.project_id}` : 'modules.php');
+
         if (success) {
             icon.innerHTML = '&#10004;';
             icon.style.color = '#28a745';
@@ -1279,14 +1312,15 @@ foreach ($current_wattages as $w) {
             }
 
             // Update go back button
-            if (data.project_id) {
-                goBackBtn.href = 'project_overview.php?project_id=' + data.project_id;
-                goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Project Overview';
-            } else {
-                goBackBtn.href = 'modules.php';
-                goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Modules';
+            if (redirectTarget) {
+                goBackBtn.href = redirectTarget;
+                if (data.project_id) {
+                    goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Project Overview';
+                } else {
+                    goBackBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Go to Modules';
+                }
+                goBackBtn.style.display = 'inline-flex';
             }
-            goBackBtn.style.display = 'inline-flex';
             closeBtn.style.display = 'none';
         } else {
             icon.innerHTML = '&#10006;';
@@ -1313,25 +1347,54 @@ foreach ($current_wattages as $w) {
     }
 
     // ========== AJAX Form Submission ==========
+    function parseJsonResponse(response) {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            return response.json();
+        }
+        return response.text().then(text => {
+            const error = new Error('Non-JSON response');
+            error.rawText = text;
+            throw error;
+        });
+    }
+
+    function buildFriendlyErrorMessage(error) {
+        if (error && error.rawText) {
+            const temp = document.createElement('div');
+            temp.innerHTML = error.rawText;
+            const plain = (temp.textContent || temp.innerText || '').trim();
+            if (plain) {
+                return plain.substring(0, 500);
+            }
+        }
+        if (error && error.message) {
+            return error.message;
+        }
+        return 'An unexpected error occurred. Please try again.';
+    }
+
     function submitFormViaAjax(form) {
         showLoadingModal('Saving Changes...', 'Please wait while we update your module batch.');
 
         const formData = new FormData(form);
+        const actionUrl = form.getAttribute('action') || window.location.href;
 
-        fetch(form.action || window.location.href, {
+        fetch(actionUrl, {
             method: 'POST',
             body: formData,
+            credentials: 'same-origin',
             headers: {
                 'X-Requested-With': 'XMLHttpRequest'
             }
         })
-        .then(response => response.json())
+        .then(parseJsonResponse)
         .then(data => {
             showResultModal(data.success, data);
         })
         .catch(error => {
             console.error('Error:', error);
-            showResultModal(false, { message: 'An unexpected error occurred. Please try again.' });
+            showResultModal(false, { message: buildFriendlyErrorMessage(error) });
         });
     }
 
@@ -1339,21 +1402,23 @@ foreach ($current_wattages as $w) {
         showLoadingModal('Deleting Module Batch...', 'Please wait while we remove the batch and associated pallets.');
 
         const formData = new FormData(form);
+        const actionUrl = form.getAttribute('action') || window.location.href;
 
-        fetch(form.action || window.location.href, {
+        fetch(actionUrl, {
             method: 'POST',
             body: formData,
+            credentials: 'same-origin',
             headers: {
                 'X-Requested-With': 'XMLHttpRequest'
             }
         })
-        .then(response => response.json())
+        .then(parseJsonResponse)
         .then(data => {
             showResultModal(data.success, data);
         })
         .catch(error => {
             console.error('Error:', error);
-            showResultModal(false, { message: 'An unexpected error occurred. Please try again.' });
+            showResultModal(false, { message: buildFriendlyErrorMessage(error) });
         });
     }
 
