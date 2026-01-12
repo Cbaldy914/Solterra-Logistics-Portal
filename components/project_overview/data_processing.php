@@ -74,6 +74,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
+// Manual project health override (admin/global_admin/customer_admin only)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_project_health' && in_array($role, ['admin','global_admin','customer_admin'])) {
+    $health_status = $_POST['health_status'] ?? '';
+    $health_reason = trim($_POST['health_reason'] ?? '');
+    $user_id = $_SESSION['user_id'];
+
+    if ($health_status === 'auto') {
+        // Clear manual override - revert to auto-calculated
+        $stmt_health = $conn->prepare("UPDATE projects SET manual_health_status = NULL, manual_health_reason = NULL, manual_health_set_by = NULL, manual_health_set_at = NULL WHERE id = ?");
+        $stmt_health->bind_param("i", $project_id);
+        $stmt_health->execute();
+        $stmt_health->close();
+        $_SESSION['project_overview_message'] = 'Project health reverted to auto-calculated status.';
+    } elseif (in_array($health_status, ['on_track', 'at_risk', 'behind'])) {
+        // Validate that reason is provided for at_risk or behind status
+        if (($health_status === 'at_risk' || $health_status === 'behind') && empty($health_reason)) {
+            $_SESSION['project_overview_error'] = 'Please provide a reason when setting the project to At Risk or Behind Schedule.';
+        } else {
+            $stmt_health = $conn->prepare("UPDATE projects SET manual_health_status = ?, manual_health_reason = ?, manual_health_set_by = ?, manual_health_set_at = NOW() WHERE id = ?");
+            $stmt_health->bind_param("ssii", $health_status, $health_reason, $user_id, $project_id);
+            $stmt_health->execute();
+            $stmt_health->close();
+            $_SESSION['project_overview_message'] = 'Project health status updated successfully.';
+        }
+    }
+    header('Location: project_overview.php?project_id=' . $project_id);
+    exit();
+}
+
 $view_mode = isset($_GET['view_mode']) ? $_GET['view_mode'] : 'mw';
 
 /**
@@ -1434,12 +1463,59 @@ $project_health_text = 'On Track';
 $project_health_reason = '';
 $days_remaining = null;
 $est_completion_date_formatted = null;
+$is_manual_health = false;
+$manual_health_set_by_name = null;
+$manual_health_set_at_formatted = null;
 
-if ($project_completion_percentage >= 100) {
+// Check for manual health override first
+if (!empty($project['manual_health_status'])) {
+    $is_manual_health = true;
+    $project_health = $project['manual_health_status'];
+    $project_health_reason = $project['manual_health_reason'] ?? '';
+
+    // Format the manual health text
+    switch ($project_health) {
+        case 'at_risk':
+            $project_health_text = 'At Risk';
+            break;
+        case 'behind':
+            $project_health_text = 'Behind Schedule';
+            break;
+        case 'on_track':
+        default:
+            $project_health_text = 'On Track';
+            break;
+    }
+
+    // Get the name of who set the manual health
+    if (!empty($project['manual_health_set_by'])) {
+        $conn_temp = getDBConnection();
+        $stmt_user = $conn_temp->prepare("SELECT first_name, last_name, username FROM users WHERE id = ?");
+        $stmt_user->bind_param("i", $project['manual_health_set_by']);
+        $stmt_user->execute();
+        $user_result = $stmt_user->get_result();
+        if ($user_row = $user_result->fetch_assoc()) {
+            $manual_health_set_by_name = trim($user_row['first_name'] . ' ' . $user_row['last_name']);
+            if (empty($manual_health_set_by_name)) {
+                $manual_health_set_by_name = $user_row['username'];
+            }
+        }
+        $stmt_user->close();
+        $conn_temp->close();
+    }
+
+    // Format when it was set
+    if (!empty($project['manual_health_set_at'])) {
+        $set_at = new DateTime($project['manual_health_set_at']);
+        $manual_health_set_at_formatted = $set_at->format('M j, Y g:i A');
+    }
+} elseif ($project_completion_percentage >= 100) {
+    // Auto-calculated: Completed
     $project_health = 'completed';
     $project_health_text = 'Completed';
     $project_health_reason = 'All modules have been delivered to the project site';
 } elseif (!empty($project['estimated_completion_date'])) {
+    // Auto-calculated based on estimated completion date
     $today = new DateTime();
     $est_date = new DateTime($project['estimated_completion_date']);
     $est_completion_date_formatted = $est_date->format('M j, Y');

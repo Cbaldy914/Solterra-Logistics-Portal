@@ -546,7 +546,11 @@ CREATE TABLE `projects` (
   `driver_handout_url` text DEFAULT NULL,
   `standard_operating_hours` text DEFAULT NULL,
   `additional_notes` text DEFAULT NULL,
-  `appointment_duration` int(11) NOT NULL DEFAULT 30
+  `appointment_duration` int(11) NOT NULL DEFAULT 30,
+  `manual_health_status` enum('on_track','at_risk','behind') DEFAULT NULL COMMENT 'Manual override for project health status (NULL = auto-calculated)',
+  `manual_health_reason` text DEFAULT NULL COMMENT 'Required explanation when admin sets manual health status',
+  `manual_health_set_by` int(11) DEFAULT NULL COMMENT 'User ID who set the manual health status',
+  `manual_health_set_at` datetime DEFAULT NULL COMMENT 'When the manual health status was set'
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
 --
@@ -1780,7 +1784,8 @@ ALTER TABLE `password_reset_tokens`
 -- Constraints for table `projects`
 --
 ALTER TABLE `projects`
-  ADD CONSTRAINT `fk_admin` FOREIGN KEY (`admin_id`) REFERENCES `users` (`id`) ON DELETE SET NULL;
+  ADD CONSTRAINT `fk_admin` FOREIGN KEY (`admin_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_manual_health_set_by` FOREIGN KEY (`manual_health_set_by`) REFERENCES `users` (`id`) ON DELETE SET NULL;
 
 --
 -- Constraints for table `project_documents`
