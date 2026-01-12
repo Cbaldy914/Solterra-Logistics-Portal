@@ -222,112 +222,294 @@ if (!$warehouse && empty($successMessage)) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Edit Warehouse</title>
+    <title>Edit Warehouse - <?php echo htmlspecialchars($warehouse['name'] ?? ''); ?></title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
-        .form-container {
-            max-width: 800px;
+        /* Modern Page Header */
+        .edit-warehouse-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
         }
-        .form-group {
-            margin-bottom: 20px;
+        .edit-warehouse-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
         }
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: #333;
+        .edit-warehouse-header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
         }
-        .form-group input,
-        .form-group select {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-            transition: border-color 0.3s ease;
-            box-sizing: border-box;
+        .edit-warehouse-header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
         }
-        .form-group input:focus,
-        .form-group select:focus {
-            outline: none;
-            border-color: #488C9A;
-            box-shadow: 0 0 0 2px rgba(72, 140, 154, 0.1);
+        .edit-warehouse-header .subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
         }
-        .required {
-            color: red;
+        .header-actions {
+            display: flex;
+            gap: 12px;
         }
-        .address-grid {
-            display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
-            gap: 15px;
-            margin-bottom: 20px;
+        .btn-back {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: #fff;
+            color: #488C9A;
+            border: 2px solid #488C9A;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
         }
-        .fee-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 15px;
-            margin-bottom: 20px;
+        .btn-back:hover {
+            background: #488C9A;
+            color: #fff;
         }
 
-        .btn {
-            padding: 12px 25px;
-            border: none;
-            border-radius: 4px;
-            font-size: 14px;
-            font-weight: 600;
+        /* Accordion Sections */
+        .accordion-section {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            margin-bottom: 20px;
+            overflow: hidden;
+            border: 1px solid #e9ecef;
+        }
+        .accordion-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
             cursor: pointer;
-            text-decoration: none;
-            text-align: center;
             transition: all 0.3s ease;
+            border-bottom: 1px solid transparent;
         }
-        .btn-primary {
-            background-color: #488C9A;
-            color: white;
+        .accordion-header:hover {
+            background: #f8f9fa;
         }
-        .btn-primary:hover {
-            background-color: #293E4C;
+        .accordion-header.active {
+            border-bottom: 1px solid #e9ecef;
         }
-        .btn-secondary {
-            background-color: #6c757d;
-            color: white;
+        .accordion-header h2 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #293E4C;
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
-        .btn-secondary:hover {
-            background-color: #545b62;
+        .accordion-header h2 .step-badge {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: #fff;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+        }
+        .accordion-toggle {
+            font-size: 1.5rem;
+            color: #6c757d;
+            transition: transform 0.3s ease;
+        }
+        .accordion-header.active .accordion-toggle {
+            transform: rotate(180deg);
+        }
+        .accordion-content {
+            padding: 0;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease, padding 0.3s ease;
+        }
+        .accordion-content.open {
+            padding: 24px;
+            max-height: 2000px;
+        }
+        .section-description {
+            color: #6c757d;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border-left: 4px solid #488C9A;
+        }
+
+        /* Form Fields */
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .form-row.single {
+            grid-template-columns: 1fr;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .form-group label {
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+        }
+        .form-group label .required-star {
+            color: #dc3545;
+            margin-left: 4px;
+        }
+        .form-group label .optional-tag {
+            color: #6c757d;
+            font-weight: 400;
+            font-size: 0.85rem;
+            margin-left: 8px;
+        }
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            padding: 12px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: all 0.2s ease;
+            background: #fafafa;
+        }
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #488C9A;
+            background: #fff;
+            box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
+        }
+        .form-group .help-text {
+            font-size: 0.85rem;
+            color: #6c757d;
+            margin-top: 6px;
+        }
+
+        /* Address Grid */
+        .address-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 16px;
+        }
+        @media (max-width: 768px) {
+            .address-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        /* Port Toggle */
+        .port-toggle {
+            padding: 20px;
+            background: linear-gradient(135deg, #e8f4f8 0%, #f0f9fb 100%);
+            border-radius: 12px;
+            border: 2px solid #bee5eb;
+            margin-top: 16px;
+        }
+        .port-toggle label {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            color: #0c5460;
+        }
+        .port-toggle input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        .port-toggle .help-text {
+            margin-left: 32px;
+            margin-top: 8px;
+            font-size: 0.9rem;
+            color: #0c5460;
+        }
+
+        /* Messages */
+        .success-message {
+            color: #155724;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 12px;
         }
         .error-message {
             color: #721c24;
             background-color: #f8d7da;
-            padding: 15px;
             border: 1px solid #f5c6cb;
-            border-radius: 4px;
+            padding: 15px 20px;
             margin-bottom: 20px;
+            border-radius: 12px;
         }
-        .success-message {
-            color: #155724;
-            background-color: #d4edda;
-            padding: 15px;
-            border: 1px solid #c3e6cb;
-            border-radius: 4px;
-            margin-bottom: 20px;
+
+        /* Submit Button */
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 32px;
         }
-        @media (max-width: 768px) {
-            .address-grid {
-                grid-template-columns: 1fr;
-            }
-            .fee-grid {
-                grid-template-columns: 1fr;
-            }
-            .button-group {
-                flex-direction: column;
-            }
+        .btn-submit {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 32px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+        .btn-submit:hover {
+            background: linear-gradient(135deg, #3a7a87 0%, #293E4C 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
         }
 
         /* Fee Table Styles */
         .fee-table-container {
             overflow-x: auto;
-            border-radius: 8px;
+            border-radius: 12px;
             border: 1px solid #e9ecef;
             margin-bottom: 12px;
         }
@@ -339,13 +521,13 @@ if (!$warehouse && empty($successMessage)) {
         .fee-table th {
             background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
             color: #fff;
-            padding: 12px 14px;
+            padding: 14px 16px;
             text-align: left;
             font-weight: 600;
             font-size: 0.85rem;
         }
         .fee-table td {
-            padding: 10px 14px;
+            padding: 12px 16px;
             border-bottom: 1px solid #f0f0f0;
             vertical-align: middle;
         }
@@ -356,20 +538,20 @@ if (!$warehouse && empty($successMessage)) {
         .fee-table input[type="number"],
         .fee-table select {
             width: 100%;
-            padding: 8px 10px;
-            border: 1px solid #e0e0e0;
-            border-radius: 4px;
+            padding: 10px 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
             font-size: 0.9rem;
             box-sizing: border-box;
         }
         .fee-table .amount-input {
-            max-width: 100px;
+            max-width: 110px;
         }
         .fee-table select {
-            max-width: 140px;
+            max-width: 150px;
         }
         .unit-param {
-            margin-top: 6px;
+            margin-top: 8px;
             font-size: 0.8rem;
             display: flex;
             align-items: center;
@@ -383,7 +565,7 @@ if (!$warehouse && empty($successMessage)) {
         }
         .unit-param input {
             width: 70px !important;
-            padding: 4px 6px !important;
+            padding: 6px 8px !important;
             font-size: 0.85rem !important;
         }
         .fee-row-remove {
@@ -403,13 +585,13 @@ if (!$warehouse && empty($successMessage)) {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 10px 16px;
+            padding: 12px 18px;
             background: #f8f9fa;
             color: #488C9A;
-            border: 1px dashed #488C9A;
-            border-radius: 6px;
+            border: 2px dashed #488C9A;
+            border-radius: 10px;
             cursor: pointer;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
             font-weight: 500;
             transition: all 0.2s;
         }
@@ -432,84 +614,132 @@ if (!$warehouse && empty($successMessage)) {
         ]);
     ?>
 
-    <div class="form-container">
-        <h1 style="margin-bottom: 30px; color: #333;">Edit Warehouse</h1>
-
-        <?php if (!empty($errorMessage)): ?>
-            <div class="error-message">
-                <strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?>
+    <!-- Modern Page Header -->
+    <div class="edit-warehouse-header">
+        <div class="edit-warehouse-header-content">
+            <div>
+                <h1>Edit Warehouse</h1>
+                <p class="subtitle"><?php echo htmlspecialchars($warehouse['name'] ?? 'Unknown'); ?></p>
             </div>
-        <?php endif; ?>
-
-        <?php if (!empty($successMessage)): ?>
-            <div class="success-message">
-                <strong><?php echo htmlspecialchars($successMessage); ?></strong>
+            <div class="header-actions">
+                <a href="manage_warehouses.php" class="btn-back">Back to Warehouses</a>
             </div>
-        <?php endif; ?>
-
-        <?php if ($warehouse): ?>
-        <form method="POST" action="">
-            <div class="form-group">
-                <label for="name">Warehouse Name <span class="required">*</span></label>
-                <input type="text" id="name" name="name" value="<?php echo htmlspecialchars($warehouse['name']); ?>" required>
-            </div>
-
-            <h3 style="margin: 30px 0 15px 0; color: #333;">Address Information</h3>
-            <div class="address-grid">
-                <div class="form-group">
-                    <label for="street_address">Street Address</label>
-                    <input type="text" id="street_address" name="street_address" value="<?php echo htmlspecialchars($warehouse['street_address'] ?? ''); ?>" placeholder="123 Main Street">
-                </div>
-                <div class="form-group">
-                    <label for="city">City</label>
-                    <input type="text" id="city" name="city" value="<?php echo htmlspecialchars($warehouse['city'] ?? ''); ?>" placeholder="Phoenix">
-                </div>
-                <div class="form-group">
-                    <label for="state">State/Province</label>
-                    <input type="text" id="state" name="state" value="<?php echo htmlspecialchars($warehouse['state'] ?? ''); ?>" placeholder="AZ">
-                </div>
-                <div class="form-group">
-                    <label for="zip_code">ZIP/Postal Code</label>
-                    <input type="text" id="zip_code" name="zip_code" value="<?php echo htmlspecialchars($warehouse['zip_code'] ?? ''); ?>" placeholder="85001">
-                </div>
-                <div class="form-group">
-                    <label for="country">Country</label>
-                    <input type="text" id="country" name="country" value="<?php echo htmlspecialchars($warehouse['country'] ?? 'USA'); ?>" placeholder="USA">
-                </div>
-            </div>
-            <small style="color: #666; font-style: italic;">At least one address field is required</small>
-
-            <div style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
-                <label style="display: flex; align-items: center; margin: 0; font-weight: 600; cursor: pointer;">
-                    <input type="checkbox" id="is_port" name="is_port" style="margin-right: 8px; transform: scale(1.2);" <?php echo !empty($warehouse['is_port']) && $warehouse['is_port'] == 1 ? 'checked' : ''; ?>>
-                    <span>🚢 This warehouse functions as a port of entry for overseas shipments</span>
-                </label>
-                <small style="color: #6c757d; margin-left: 24px; display: block; margin-top: 5px;">
-                    Check this if this warehouse will receive overseas shipments and handle customs clearance
-                </small>
-            </div>
-
-            <h3 style="margin: 30px 0 15px 0; color: #333;">💰 Cost Structure</h3>
-            <p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">
-                Configure fees for this warehouse. You can add multiple fee types with different billing units.
-            </p>
-
-            <!-- Dynamic Fee Manager Container -->
-            <div id="feeManagerContainer"></div>
-
-            <!-- Hidden input for form submission -->
-            <input type="hidden" name="warehouse_fees" id="warehouseFeesInput" value="<?php echo htmlspecialchars($warehouse['fees_json'] ?? '[]'); ?>">
-
-            <small style="color: #666; font-style: italic; display: block; margin-top: 10px;">
-                💡 Leave amounts at $0.00 if not applicable. You can modify these anytime.
-            </small>
-
-            <div class="button-group">
-                <button type="submit" class="btn btn-primary">Update Warehouse</button>
-            </div>
-        </form>
-        <?php endif; ?>
+        </div>
     </div>
+
+    <?php if (!empty($errorMessage)): ?>
+        <div class="error-message">
+            <strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?>
+        </div>
+    <?php endif; ?>
+
+    <?php if (!empty($successMessage)): ?>
+        <div class="success-message">
+            <strong><?php echo htmlspecialchars($successMessage); ?></strong>
+        </div>
+    <?php endif; ?>
+
+    <?php if ($warehouse): ?>
+    <form method="POST" action="">
+
+        <!-- Section 1: Basic Information -->
+        <div class="accordion-section">
+            <div class="accordion-header active" onclick="toggleAccordion(this)">
+                <h2><span class="step-badge">1</span> Basic Information</h2>
+                <span class="accordion-toggle">&#9660;</span>
+            </div>
+            <div class="accordion-content open">
+                <div class="section-description">
+                    Update the warehouse name and port status.
+                </div>
+
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label for="name">Warehouse Name <span class="required-star">*</span></label>
+                        <input type="text" id="name" name="name" value="<?php echo htmlspecialchars($warehouse['name']); ?>" required>
+                    </div>
+                </div>
+
+                <div class="port-toggle">
+                    <label>
+                        <input type="checkbox" id="is_port" name="is_port" <?php echo !empty($warehouse['is_port']) && $warehouse['is_port'] == 1 ? 'checked' : ''; ?>>
+                        <span>This warehouse functions as a port of entry for overseas shipments</span>
+                    </label>
+                    <div class="help-text">Check this if this facility will receive overseas shipments and handle customs clearance</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 2: Location -->
+        <div class="accordion-section">
+            <div class="accordion-header active" onclick="toggleAccordion(this)">
+                <h2><span class="step-badge">2</span> Location</h2>
+                <span class="accordion-toggle">&#9660;</span>
+            </div>
+            <div class="accordion-content open">
+                <div class="section-description">
+                    Update the address for this facility. Start typing to use address autocomplete.
+                </div>
+
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label for="street_address">Street Address</label>
+                        <input type="text" id="street_address" name="street_address" value="<?php echo htmlspecialchars($warehouse['street_address'] ?? ''); ?>" placeholder="123 Main Street">
+                    </div>
+                </div>
+
+                <div class="address-grid">
+                    <div class="form-group">
+                        <label for="city">City</label>
+                        <input type="text" id="city" name="city" value="<?php echo htmlspecialchars($warehouse['city'] ?? ''); ?>" placeholder="Phoenix">
+                    </div>
+                    <div class="form-group">
+                        <label for="state">State/Province</label>
+                        <input type="text" id="state" name="state" value="<?php echo htmlspecialchars($warehouse['state'] ?? ''); ?>" placeholder="AZ">
+                    </div>
+                    <div class="form-group">
+                        <label for="zip_code">ZIP/Postal Code</label>
+                        <input type="text" id="zip_code" name="zip_code" value="<?php echo htmlspecialchars($warehouse['zip_code'] ?? ''); ?>" placeholder="85001">
+                    </div>
+                    <div class="form-group">
+                        <label for="country">Country</label>
+                        <input type="text" id="country" name="country" value="<?php echo htmlspecialchars($warehouse['country'] ?? 'USA'); ?>" placeholder="USA">
+                    </div>
+                </div>
+                <p class="help-text">At least one address field is required</p>
+            </div>
+        </div>
+
+        <!-- Section 3: Cost Structure -->
+        <div class="accordion-section">
+            <div class="accordion-header active" onclick="toggleAccordion(this)">
+                <h2><span class="step-badge">3</span> Cost Structure</h2>
+                <span class="accordion-toggle">&#9660;</span>
+            </div>
+            <div class="accordion-content open">
+                <div class="section-description">
+                    Configure fees for this warehouse. You can add multiple fee types with different billing units (per pallet, per truck, per sqft, or flat rate).
+                </div>
+
+                <!-- Dynamic Fee Manager Container -->
+                <div id="feeManagerContainer"></div>
+
+                <!-- Hidden input for form submission -->
+                <input type="hidden" name="warehouse_fees" id="warehouseFeesInput" value="<?php echo htmlspecialchars($warehouse['fees_json'] ?? '[]'); ?>">
+
+                <p class="help-text" style="margin-top: 16px;">
+                    Leave amounts at $0.00 if not applicable. You can modify these anytime.
+                </p>
+            </div>
+        </div>
+
+        <!-- Form Actions -->
+        <div class="form-actions">
+            <a href="manage_warehouses.php" class="btn-back">Cancel</a>
+            <button type="submit" class="btn-submit">Update Warehouse</button>
+        </div>
+    </form>
+    <?php endif; ?>
 </main>
 
 <!-- Load the Google Maps JavaScript API with Places library -->
@@ -519,6 +749,13 @@ if (!$warehouse && empty($successMessage)) {
 <script src="components/warehouse-fee-manager.js"></script>
 
 <script>
+// Accordion toggle function
+function toggleAccordion(header) {
+    const content = header.nextElementSibling;
+    header.classList.toggle('active');
+    content.classList.toggle('open');
+}
+
 // Initialize the fee manager when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
     // Parse existing fees from hidden input

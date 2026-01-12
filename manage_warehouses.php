@@ -102,81 +102,206 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
     <style>
-        .header-container {
+        /* Modern Page Header */
+        .warehouses-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 24px;
+            padding: 32px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .warehouses-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
+        }
+        .warehouses-header-content {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #e0e0e0;
         }
-        .action-buttons.add-new {
-            display: inline-block;
-            padding: 8px 15px;
-            background-color: #488C9A;
+        .warehouses-header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 8px 0;
+            line-height: 1.2;
+        }
+        .warehouses-header .subtitle {
+            color: #6c757d;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 0;
+        }
+        .btn-add-warehouse {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
             color: white;
             text-decoration: none;
             border: none;
-            border-radius: 4px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
+        }
+        .btn-add-warehouse:hover {
+            background: linear-gradient(135deg, #3a7a87 0%, #293E4C 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.4);
+            color: white;
+        }
+
+        /* Modern Table Container */
+        .table-container {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            overflow: hidden;
+            margin-bottom: 32px;
+        }
+        .table-container table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0;
+        }
+        .table-container thead {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+        }
+        .table-container th {
+            padding: 16px 20px;
+            text-align: left;
+            font-weight: 600;
+            color: #fff;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: none;
+        }
+        .table-container td {
+            padding: 16px 20px;
+            vertical-align: middle;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .table-container tbody tr {
+            transition: background-color 0.2s ease;
+        }
+        .table-container tbody tr:hover {
+            background-color: #f8f9fa;
+        }
+        .table-container tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Modern Action Buttons */
+        .btn-action {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            border: none;
             cursor: pointer;
         }
-        .action-buttons.add-new:hover {
-            background-color: #293E4C;
-        }
-        .action-buttons.edit {
-            background-color: #488C9A;
+        .btn-action.primary {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
             color: white;
-            padding: 4px 8px;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
-            margin-right: 5px;
         }
-        .action-buttons.edit:hover {
-            background-color: #293E4C;
+        .btn-action.primary:hover {
+            background: linear-gradient(135deg, #3a7a87 0%, #293E4C 100%);
+            transform: translateY(-1px);
         }
-        .action-buttons.delete {
-            background-color: #dc3545;
-            color: white;
-            padding: 4px 8px;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
+        .btn-action.secondary {
+            background: #f8f9fa;
+            color: #488C9A;
+            border: 1px solid #e9ecef;
         }
-        .action-buttons.delete:hover {
-            background-color: #c82333;
+        .btn-action.secondary:hover {
+            background: #e9ecef;
+            color: #293E4C;
         }
+
+        /* Legacy action-buttons for backwards compatibility */
         .action-buttons.view {
-            background-color: #488C9A;
-            color: white;
-            padding: 4px 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
             text-decoration: none;
-            border-radius: 3px;
-            font-size: 0.9em;
-            margin-right: 5px;
+            transition: all 0.2s ease;
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: white;
         }
         .action-buttons.view:hover {
-            background-color: #293E4C;
+            background: linear-gradient(135deg, #3a7a87 0%, #293E4C 100%);
+            transform: translateY(-1px);
         }
+
+        /* Messages */
         .error-message {
             color: #721c24;
             background-color: #f8d7da;
-            padding: 15px;
+            padding: 15px 20px;
             border: 1px solid #f5c6cb;
-            border-radius: 4px;
+            border-radius: 12px;
             margin-bottom: 20px;
         }
         .success-message {
             color: #155724;
             background-color: #d4edda;
-            padding: 15px;
+            padding: 15px 20px;
             border: 1px solid #c3e6cb;
-            border-radius: 4px;
+            border-radius: 12px;
             margin-bottom: 20px;
+        }
+
+        /* Warehouse info styling */
+        .warehouse-name {
+            font-weight: 600;
+            color: #293E4C;
+        }
+        .port-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #007cba 0%, #0056b3 100%);
+            color: white;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 0.75em;
+            font-weight: 500;
+            margin-top: 4px;
         }
         .fee-info {
             font-size: 0.9em;
             color: #666;
+            line-height: 1.6;
+        }
+        .fee-info a {
+            color: #488C9A;
+            text-decoration: none;
+        }
+        .fee-info a:hover {
+            text-decoration: underline;
         }
         .pallet-count {
             font-weight: 500;
@@ -190,24 +315,24 @@ $conn->close();
         .pallet-count.low {
             color: #28a745;
         }
-        
+
         /* Dropdown menu styling */
         .dropdown {
             position: relative;
             display: inline-block;
         }
         .dropdown-toggle {
-            background: none;
-            border: none;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
             color: #488C9A;
-            padding: 4px;
+            padding: 6px 10px;
             cursor: pointer;
-            font-size: 1.1em;
-            border-radius: 3px;
+            font-size: 0.9em;
+            border-radius: 6px;
             transition: all 0.2s ease;
         }
         .dropdown-toggle:hover {
-            background-color: #f8f9fa;
+            background-color: #e9ecef;
             color: #293E4C;
         }
         .dropdown-menu {
@@ -216,11 +341,12 @@ $conn->close();
             right: 0;
             top: 100%;
             background-color: white;
-            min-width: 120px;
-            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
-            border-radius: 4px;
+            min-width: 130px;
+            box-shadow: 0px 8px 24px rgba(0,0,0,0.15);
+            border-radius: 8px;
             z-index: 1000;
-            border: 1px solid #ddd;
+            border: 1px solid #e9ecef;
+            margin-top: 4px;
         }
         .dropdown-menu.show {
             display: block;
@@ -228,7 +354,7 @@ $conn->close();
         .dropdown-item {
             display: block;
             width: 100%;
-            padding: 8px 12px;
+            padding: 10px 14px;
             text-decoration: none;
             color: #333;
             border: none;
@@ -236,6 +362,7 @@ $conn->close();
             text-align: left;
             cursor: pointer;
             font-size: 0.9em;
+            transition: background-color 0.2s ease;
         }
         .dropdown-item:hover {
             background-color: #f8f9fa;
@@ -247,20 +374,42 @@ $conn->close();
             color: #dc3545;
         }
         .dropdown-item:first-child {
-            border-radius: 4px 4px 0 0;
+            border-radius: 8px 8px 0 0;
         }
         .dropdown-item:last-child {
-            border-radius: 0 0 4px 4px;
+            border-radius: 0 0 8px 8px;
         }
-        
+
         /* Actions cell styling */
         .actions-cell {
-            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-        .actions-cell .dropdown {
-            position: absolute;
-            top: 4px;
-            right: 4px;
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 48px 20px;
+            background: #fafafa;
+        }
+        .empty-state-icon {
+            font-size: 3rem;
+            opacity: 0.5;
+            margin-bottom: 12px;
+        }
+        .empty-state p {
+            color: #666;
+            margin: 0;
+            font-size: 0.95rem;
+        }
+        .empty-state a {
+            color: #488C9A;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .empty-state a:hover {
+            text-decoration: underline;
         }
     </style>
     <script>
@@ -298,10 +447,18 @@ $conn->close();
 <?php include 'header.php'; ?>
 <main>
     <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Manage Warehouses']); ?>
-    
-    <div class="header-container">
-        <h1>Manage Warehouses</h1>
-        <a href="add_warehouse.php" class="action-buttons add-new">Add New Warehouse</a>
+
+    <!-- Modern Page Header -->
+    <div class="warehouses-header">
+        <div class="warehouses-header-content">
+            <div>
+                <h1>Manage Warehouses</h1>
+                <p class="subtitle">View and manage warehouse facilities and fee structures</p>
+            </div>
+            <a href="add_warehouse.php" class="btn-add-warehouse">
+                <span>+</span> Add Warehouse
+            </a>
+        </div>
     </div>
 
     <?php if (!empty($errorMessage)): ?>
@@ -316,7 +473,7 @@ $conn->close();
         </div>
     <?php endif; ?>
 
-    <div class="table-responsive">
+    <div class="table-container">
         <table>
             <thead>
                 <tr>
@@ -332,9 +489,9 @@ $conn->close();
                     <?php foreach ($warehouses as $warehouse): ?>
                         <tr>
                             <td>
-                                <strong><?php echo htmlspecialchars($warehouse['name']); ?></strong>
+                                <span class="warehouse-name"><?php echo htmlspecialchars($warehouse['name']); ?></span>
                                 <?php if (!empty($warehouse['is_port']) && $warehouse['is_port'] == 1): ?>
-                                    <br><span style="background: #007cba; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em;">🚢 PORT</span>
+                                    <br><span class="port-badge">PORT</span>
                                 <?php endif; ?>
                             </td>
                             <td class="fee-info">
@@ -342,12 +499,12 @@ $conn->close();
                                     <?php echo $warehouse['cost_summary']; ?>
                                 <?php else: ?>
                                     <em style="color: #999;">No cost structure defined</em><br>
-                                    <small><a href="edit_warehouse.php?id=<?php echo $warehouse['id']; ?>">Set up costs →</a></small>
+                                    <small><a href="edit_warehouse.php?id=<?php echo $warehouse['id']; ?>">Set up costs</a></small>
                                 <?php endif; ?>
                             </td>
                             <td><?php echo htmlspecialchars($warehouse['address']); ?></td>
                             <td>
-                                <?php 
+                                <?php
                                     $total_pallets = $warehouse['current_pallet_count'];
                                     $in_transit = $warehouse['in_transit_pallet_count'];
                                     $pallet_class = 'low';
@@ -355,18 +512,18 @@ $conn->close();
                                     elseif ($total_pallets > 50) $pallet_class = 'medium';
                                 ?>
                                 <div class="pallet-count <?php echo $pallet_class; ?>">
-                                    📦 <?php echo number_format($total_pallets); ?> stored
+                                    <?php echo number_format($total_pallets); ?> stored
                                 </div>
                                 <?php if ($in_transit > 0): ?>
                                     <div style="font-size: 0.85em; color: #666;">
-                                        🚛 <?php echo number_format($in_transit); ?> in transit
+                                        <?php echo number_format($in_transit); ?> in transit
                                     </div>
                                 <?php endif; ?>
                             </td>
                             <td class="actions-cell">
                                 <a href="manage_warehouse_inventory.php?warehouse_id=<?php echo $warehouse['id']; ?>" class="action-buttons view">View Inventory</a>
                                 <div class="dropdown">
-                                    <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $warehouse['id']; ?>')" title="More actions">✏️</button>
+                                    <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $warehouse['id']; ?>')" title="More actions">...</button>
                                     <div id="dropdown-menu-<?php echo $warehouse['id']; ?>" class="dropdown-menu">
                                         <a href="edit_warehouse.php?id=<?php echo $warehouse['id']; ?>" class="dropdown-item edit">Edit</a>
                                         <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($warehouse['name'], ENT_QUOTES); ?>', <?php echo $warehouse['id']; ?>)" class="dropdown-item delete">Delete</a>
@@ -377,8 +534,9 @@ $conn->close();
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="5" style="text-align: center; padding: 20px; color: #666;">
-                            No warehouses found. <a href="add_warehouse.php">Add the first warehouse</a>
+                        <td colspan="5" class="empty-state">
+                            <div class="empty-state-icon">🏭</div>
+                            <p>No warehouses found. <a href="add_warehouse.php">Add the first warehouse</a></p>
                         </td>
                     </tr>
                 <?php endif; ?>

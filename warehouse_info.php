@@ -600,6 +600,7 @@ if ($conn) {
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
         .back-icon {
             text-decoration: none;
@@ -638,7 +639,36 @@ if ($conn) {
         .warehouse-image img {
             display: block;
             border-radius: 4px;
-            margin-right: 20px; 
+            margin-right: 20px;
+        }
+        .warehouse-image-placeholder {
+            width: 200px;
+            height: 150px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            margin-right: 20px;
+        }
+        .warehouse-image-placeholder i {
+            font-size: 4rem;
+            color: #488C9A;
+            opacity: 0.7;
+        }
+        .warehouse-card-image-placeholder {
+            width: 100%;
+            height: 150px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px 8px 0 0;
+        }
+        .warehouse-card-image-placeholder i {
+            font-size: 3rem;
+            color: #488C9A;
+            opacity: 0.7;
         }
         .warehouse-details {
             flex: 1; 
@@ -1373,25 +1403,31 @@ if ($conn) {
             <?php foreach ($relevant_warehouses as $wh): ?>
                 <div class="warehouse-card">
                     <a href="warehouse_info.php?warehouse_id=<?php echo $wh['id']; ?>&project_id=<?php echo $project_id; ?>" class="warehouse-card-link">
-                        <?php 
-                        $wh_image_path = "pictures/warehouse-default.png"; // Default image
+                        <?php
+                        $wh_image_path = "";
+                        $has_wh_image = false;
                         if (!empty($wh['image_url'])) {
                             // Basic check if it's a full URL or a relative path
                             if (filter_var($wh['image_url'], FILTER_VALIDATE_URL)) {
                                 $wh_image_path = $wh['image_url'];
+                                $has_wh_image = true;
                             } else {
-                                // Assuming it might be a path relative to a specific directory if not a full URL
-                                // For now, let's prepend 'uploads/warehouse_images/' if it doesn't look like a full URL
-                                // and isn't already starting with a common image path indicator.
                                 if (strpos($wh['image_url'], 'http') !== 0 && strpos($wh['image_url'], 'pictures/') !== 0 && strpos($wh['image_url'], 'uploads/') !== 0) {
                                    $wh_image_path = 'uploads/warehouse_images/' . ltrim(htmlspecialchars($wh['image_url']), '/');
                                 } else {
-                                   $wh_image_path = htmlspecialchars($wh['image_url']); 
+                                   $wh_image_path = htmlspecialchars($wh['image_url']);
                                 }
+                                $has_wh_image = file_exists(__DIR__ . '/' . $wh_image_path);
                             }
                         }
                         ?>
-                        <img src="<?php echo $wh_image_path; ?>" alt="<?php echo htmlspecialchars($wh['name']); ?>" class="warehouse-card-image">
+                        <?php if ($has_wh_image): ?>
+                            <img src="<?php echo $wh_image_path; ?>" alt="<?php echo htmlspecialchars($wh['name']); ?>" class="warehouse-card-image">
+                        <?php else: ?>
+                            <div class="warehouse-card-image-placeholder">
+                                <i class="fas fa-warehouse"></i>
+                            </div>
+                        <?php endif; ?>
                         <div class="warehouse-card-name">
                             <?php echo htmlspecialchars($wh['name']); ?> (ID: <?php echo $wh['id']; ?>)
                         </div>
@@ -1412,20 +1448,27 @@ if ($conn) {
 
         <div class="warehouse-info-container">
             <div class="warehouse-image">
-                <?php 
-                $image_path = "pictures/warehouse-default.png"; // Default image
+                <?php
+                $image_path = "";
+                $has_main_image = false;
                 if (!empty($warehouse_data['image_url'])) {
                     // Check if the image_url is a full URL or a relative path
                     if (filter_var($warehouse_data['image_url'], FILTER_VALIDATE_URL)) {
                         $image_path = $warehouse_data['image_url'];
+                        $has_main_image = true;
                     } else {
-                        // Assuming it's a relative path from the webroot, adjust if structure is different
-                        // If image_url already includes a base path like 'uploads/', that's fine.
-                        $image_path = htmlspecialchars($warehouse_data['image_url']); 
+                        $image_path = htmlspecialchars($warehouse_data['image_url']);
+                        $has_main_image = file_exists(__DIR__ . '/' . $image_path);
                     }
                 }
                 ?>
-                <img src="<?php echo $image_path; ?>" alt="<?php echo htmlspecialchars($warehouse_data['name']); ?> Warehouse">
+                <?php if ($has_main_image): ?>
+                    <img src="<?php echo $image_path; ?>" alt="<?php echo htmlspecialchars($warehouse_data['name']); ?> Warehouse">
+                <?php else: ?>
+                    <div class="warehouse-image-placeholder">
+                        <i class="fas fa-warehouse"></i>
+                    </div>
+                <?php endif; ?>
             </div>
             <div class="warehouse-details">
                 <h1><?php echo htmlspecialchars($warehouse_data['name']); ?></h1>

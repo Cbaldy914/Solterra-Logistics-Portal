@@ -61,6 +61,24 @@ $stmt->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .warehouse-image-placeholder {
+            width: 100%;
+            height: 200px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+        }
+        .warehouse-image-placeholder i {
+            font-size: 4rem;
+            color: #488C9A;
+            opacity: 0.7;
+        }
+    </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
@@ -80,7 +98,9 @@ $stmt->close();
                         <?php if (!empty($warehouse['image_url'])): ?>
                             <img src="<?php echo htmlspecialchars($warehouse['image_url']); ?>" alt="<?php echo htmlspecialchars($warehouse['name']); ?>">
                         <?php else: ?>
-                            <img src="default_warehouse.png" alt="Default Warehouse Image">
+                            <div class="warehouse-image-placeholder">
+                                <i class="fas fa-warehouse"></i>
+                            </div>
                         <?php endif; ?>
                     </div>
                     <div class="warehouse-info">
