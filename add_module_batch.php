@@ -263,6 +263,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $module_id = $conn->insert_id;
             $stmtInsert->close();
+
+            // Ensure logistics specs are stored (including derived values)
+            $mpp_val = $modules_per_pallet ?? 0;
+            $ppt_val = $pallets_per_truck ?? 0;
+            $mpt_val = $modules_per_truck ?? 0;
+            $stmtLog = $conn->prepare("UPDATE modules SET modules_per_pallet = ?, pallets_per_truck = ?, modules_per_truck = ? WHERE id = ?");
+            if ($stmtLog) {
+                $stmtLog->bind_param("iiii", $mpp_val, $ppt_val, $mpt_val, $module_id);
+                $stmtLog->execute();
+                $stmtLog->close();
+            }
             
             // Insert wattage items
             $stmtWattages = $conn->prepare("
@@ -316,7 +327,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $enable_palletization = isset($_POST['enable_palletization']) && $_POST['enable_palletization'] === '1';
             $auto_modules_per_pallet = isset($_POST['auto_modules_per_pallet']) && $_POST['auto_modules_per_pallet'] !== '' ? intval($_POST['auto_modules_per_pallet']) : 0;
 
+            // Harmonize pallet sizing values
+            if ($enable_palletization && $auto_modules_per_pallet <= 0 && !empty($modules_per_pallet)) {
+                $auto_modules_per_pallet = (int)$modules_per_pallet;
+            }
+            // If neither auto nor logistics pallet count was supplied, treat as 0 for validation and later update
+            if ($modules_per_pallet === null && $auto_modules_per_pallet > 0) {
+                $modules_per_pallet = $auto_modules_per_pallet;
+            }
+
+            // Derive modules_per_truck when possible
+            if ((int)$modules_per_truck === 0 && (int)$pallets_per_truck > 0 && (int)$modules_per_pallet > 0) {
+                $modules_per_truck = (int)$pallets_per_truck * (int)$modules_per_pallet;
+            }
+
             $pallets_created = 0;
+            if ($enable_palletization) {
+                if ($auto_modules_per_pallet <= 0) {
+                    throw new Exception('Auto-palletization is enabled but Modules per Pallet is missing or zero.');
+                }
+                if ($project_id <= 0) {
+                    throw new Exception('Auto-palletization requires the batch to be assigned to a project.');
+                }
+            }
+
             if ($enable_palletization && $auto_modules_per_pallet > 0 && $project_id > 0) {
                 // Get the unassigned_module_items we just created
                 $stmtItems = $conn->prepare("
