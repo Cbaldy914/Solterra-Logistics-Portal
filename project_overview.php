@@ -111,6 +111,11 @@ document.addEventListener('DOMContentLoaded', function() {
                             <span class="health-dot"></span>
                             <span class="health-text"><?php echo $project_health_text; ?></span>
                         </div>
+                        <?php else: ?>
+                        <div class="health-indicator health-on_track" data-tooltip="<?php echo htmlspecialchars($project_health_reason ?: 'Project is on track'); ?>">
+                            <span class="health-dot"></span>
+                            <span class="health-text"><?php echo $project_health_text; ?></span>
+                        </div>
                         <?php endif; ?>
                     </div>
                     <p class="project-header-subtitle"><?php echo htmlspecialchars($project['project_address']); ?></p>
@@ -196,6 +201,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     <a href="module_movements.php?project_id=<?php echo $project_id; ?>">Module Movements</a>
                     <a href="module_overview.php?project_id=<?php echo $project_id; ?>">Module Overview</a>
                     <a href="<?php echo $isAdmin ? 'create_shipment.php' : 'manage_pallets.php'; ?>?project_id=<?php echo $project_id; ?>"><?php echo $isAdmin ? 'Manage Pallets' : 'View Pallets'; ?></a>
+                    <?php if ($can_add_modules): ?>
+                    <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>">Add Modules</a>
+                    <?php endif; ?>
                 </div>
             </div>
 
