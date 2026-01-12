@@ -100,10 +100,11 @@ function calculatePalletWarehousingCost($pallet_id, $conn) {
                 if (!isset($warehouse_costs[$wid])) {
                     $warehouse_costs[$wid] = ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
                 }
+                // Use += to accumulate multiple fees of same trigger type
                 switch ($cost['trigger_event']) {
-                    case 'entry': $warehouse_costs[$wid]['in_fee'] = (float)$cost['amount']; break;
-                    case 'exit': $warehouse_costs[$wid]['out_fee'] = (float)$cost['amount']; break;
-                    case 'monthly': $warehouse_costs[$wid]['monthly_storage_fee'] = (float)$cost['amount']; break;
+                    case 'entry': $warehouse_costs[$wid]['in_fee'] += (float)$cost['amount']; break;
+                    case 'exit': $warehouse_costs[$wid]['out_fee'] += (float)$cost['amount']; break;
+                    case 'monthly': $warehouse_costs[$wid]['monthly_storage_fee'] += (float)$cost['amount']; break;
                 }
             }
         }

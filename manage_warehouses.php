@@ -43,29 +43,30 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
 
 try {
     // Fetch warehouses along with a count of pallets currently stored and in transit
-    $sql = "SELECT 
-                w.id, 
-                w.name, 
+    $sql = "SELECT
+                w.id,
+                w.name,
                 w.address,
                 w.is_port,
                 COUNT(DISTINCT CASE WHEN ip_stored.status = 'In Warehouse' THEN ip_stored.id ELSE NULL END) AS current_pallet_count,
                 COUNT(DISTINCT CASE WHEN ip_transit.status = 'In Transit to Warehouse' THEN ip_transit.id ELSE NULL END) AS in_transit_pallet_count,
-                -- Get cost information from warehouse_cost_items (summarized by trigger type)
+                -- Get cost information from warehouse_cost_items using label and unit_type
                 GROUP_CONCAT(
                     DISTINCT CONCAT(
-                        CASE wci.trigger_event
-                            WHEN 'entry' THEN 'Entry Fee'
-                            WHEN 'exit' THEN 'Exit Fee' 
-                            WHEN 'monthly' THEN 'Monthly Storage'
-                            WHEN 'customs_clearance' THEN 'Customs Clearance'
-                            WHEN 'drayage' THEN 'Drayage'
-                            ELSE 'Other'
-                        END,
-                        ': $', wci.amount
+                        COALESCE(CONVERT(wci.label USING utf8mb4), ''),
+                        ': $', FORMAT(wci.amount, 2),
+                        CASE wci.unit_type
+                            WHEN 'per_pallet' THEN '/pallet'
+                            WHEN 'per_truck' THEN '/truck'
+                            WHEN 'per_sqft' THEN '/sqft'
+                            WHEN 'flat' THEN ' flat'
+                            ELSE '/pallet'
+                        END
                     )
-                    ORDER BY wci.trigger_event 
+                    ORDER BY wci.display_order, wci.trigger_event
                     SEPARATOR '<br>'
-                ) as cost_summary
+                ) as cost_summary,
+                COUNT(DISTINCT wci.id) as fee_count
             FROM warehouses w
             LEFT JOIN inventory_pallets ip_stored ON w.id = ip_stored.current_warehouse_id AND ip_stored.status = 'In Warehouse'
             LEFT JOIN deliveries d_transit ON w.id = d_transit.warehouse_id

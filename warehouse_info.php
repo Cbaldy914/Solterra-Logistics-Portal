@@ -491,15 +491,28 @@ if (!$show_warehouse_list && empty($errorMessage) && $warehouse_data) {
         $current_storage_cost = 0;
         $departed_pallets_count = 0;
         
-        // Get cost rates from warehouse_cost_items
-        $monthly_rate_per_pallet = !empty($warehouse_costs['monthly']) ? floatval($warehouse_costs['monthly'][0]['amount']) : 0;
+        // Get cost rates from warehouse_cost_items - sum ALL costs of each trigger type
+        $monthly_rate_per_pallet = 0;
+        if (!empty($warehouse_costs['monthly'])) {
+            foreach ($warehouse_costs['monthly'] as $cost) {
+                $monthly_rate_per_pallet += floatval($cost['amount']);
+            }
+        }
         $daily_rate = $monthly_rate_per_pallet > 0 ? ($monthly_rate_per_pallet / 30) : 0;
 
         if (!empty($warehouse_costs['entry'])) {
-            $in_fee_cost = $warehouse_costs['entry'][0]['amount'] * $total_inbound_pallets_count;
+            $entry_rate = 0;
+            foreach ($warehouse_costs['entry'] as $cost) {
+                $entry_rate += floatval($cost['amount']);
+            }
+            $in_fee_cost = $entry_rate * $total_inbound_pallets_count;
         }
         if (!empty($warehouse_costs['exit'])) {
-            $out_fee_cost = $warehouse_costs['exit'][0]['amount'] * $total_outbound_pallets_count;
+            $exit_rate = 0;
+            foreach ($warehouse_costs['exit'] as $cost) {
+                $exit_rate += floatval($cost['amount']);
+            }
+            $out_fee_cost = $exit_rate * $total_outbound_pallets_count;
         }
         if ($monthly_rate_per_pallet > 0) {
             $monthly_storage_rate = $monthly_rate_per_pallet * $total_pallets_count; // current pallets only
@@ -1572,7 +1585,13 @@ if ($conn) {
                                                          <?php foreach ($inventory_pallets as $pallet): 
                                 // Calculate costs for this pallet using new cost structure
                                 $days_stored = max(0, intval($pallet['days_stored'] ?? 0));
-                                $monthly_storage_fee = !empty($warehouse_costs['monthly']) ? floatval($warehouse_costs['monthly'][0]['amount']) : 0;
+                                // Sum ALL monthly fees (supports multiple fees per trigger type)
+                                $monthly_storage_fee = 0;
+                                if (!empty($warehouse_costs['monthly'])) {
+                                    foreach ($warehouse_costs['monthly'] as $cost) {
+                                        $monthly_storage_fee += floatval($cost['amount']);
+                                    }
+                                }
                                 $daily_storage_cost = $monthly_storage_fee / 30; // Approximate daily cost
                                 $storage_cost = $days_stored * $daily_storage_cost;
                                 
