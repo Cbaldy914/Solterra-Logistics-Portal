@@ -523,6 +523,47 @@ try {
     $stmtW->close();
 
     // ===========================================================================================
+    // FETCH WAREHOUSE COST ITEMS FROM warehouse_cost_items TABLE
+    // ===========================================================================================
+    $warehouse_cost_items = [];
+    $warehouse_fees = [
+        'entry' => 0,
+        'exit' => 0,
+        'monthly' => 0,
+        'customs_clearance' => 0,
+        'drayage' => 0,
+        'other' => 0,
+        'all_items' => []
+    ];
+
+    $stmtCosts = $conn->prepare("
+        SELECT id, label, amount, trigger_event, unit_type, pallets_per_truck, sqft_per_pallet, display_order
+        FROM warehouse_cost_items
+        WHERE warehouse_id = ? AND is_active = 1
+        ORDER BY display_order ASC, trigger_event ASC
+    ");
+    if ($stmtCosts) {
+        $stmtCosts->bind_param("i", $warehouse_id);
+        $stmtCosts->execute();
+        $resultCosts = $stmtCosts->get_result();
+        while ($cost = $resultCosts->fetch_assoc()) {
+            $warehouse_cost_items[] = $cost;
+            $warehouse_fees['all_items'][] = $cost;
+
+            // Sum amounts by trigger event type (for per_pallet base rates)
+            $trigger = $cost['trigger_event'] ?? 'other';
+            if (isset($warehouse_fees[$trigger])) {
+                // For per_pallet fees, add the amount directly
+                // For other unit types, we'll calculate differently when needed
+                if ($cost['unit_type'] === 'per_pallet' || $cost['unit_type'] === '' || $cost['unit_type'] === null) {
+                    $warehouse_fees[$trigger] += floatval($cost['amount']);
+                }
+            }
+        }
+        $stmtCosts->close();
+    }
+
+    // ===========================================================================================
     // FACILITY TYPE DETECTION AND UI CONFIGURATION
     // ===========================================================================================
     $is_port = ($warehouse['is_port'] == 1);
@@ -566,8 +607,8 @@ try {
     // CALCULATE COST ESTIMATES AND FETCH REFERENCE DATA
     // ===========================================================================================
     
-    // Monthly cost estimate calculation
-    $total_storage_cost_monthly_rate = $total_pallets * ($warehouse['monthly_storage_fee'] ?? 0);
+    // Monthly cost estimate calculation - using warehouse_fees from warehouse_cost_items
+    $total_storage_cost_monthly_rate = $total_pallets * $warehouse_fees['monthly'];
 
     // Fetch all projects for dropdown options (build full addresses like create_shipment.php)
     $stmtAllP = $conn->prepare("SELECT id, project_name, street_address, city, state, zip_code FROM projects ORDER BY project_name ASC");
@@ -975,12 +1016,35 @@ $conn->close();
             <div class="warehouse-info">
                 <h1><?php echo htmlspecialchars($warehouse['name']); ?></h1>
                 <p><strong>Address:</strong> <?php echo htmlspecialchars($warehouse['address']); ?></p>
-                <p><strong>In Fee:</strong> $<?php echo number_format($warehouse['in_fee'] ?? 0, 2); ?></p>
-                <p><strong>Out Fee:</strong> $<?php echo number_format($warehouse['out_fee'] ?? 0, 2); ?></p>
-                <p><strong>Monthly Storage Fee (per Pallet):</strong> $<?php echo number_format($warehouse['monthly_storage_fee'] ?? 0, 2); ?></p>
+
+                <?php if (!empty($warehouse_fees['all_items'])): ?>
+                    <div class="fee-breakdown" style="margin-top: 10px;">
+                        <p><strong>Fee Structure:</strong></p>
+                        <ul style="margin: 5px 0 0 20px; padding: 0; list-style-type: none;">
+                            <?php foreach ($warehouse_fees['all_items'] as $fee_item): ?>
+                                <?php
+                                    $unit_suffix = '/pallet';
+                                    switch ($fee_item['unit_type']) {
+                                        case 'per_truck': $unit_suffix = '/truck'; break;
+                                        case 'per_sqft': $unit_suffix = '/sqft'; break;
+                                        case 'flat': $unit_suffix = ' (flat)'; break;
+                                    }
+                                    $trigger_label = ucwords(str_replace('_', ' ', $fee_item['trigger_event']));
+                                ?>
+                                <li style="margin-bottom: 3px; font-size: 0.95em;">
+                                    <span style="color: #488C9A; font-weight: 500;"><?php echo htmlspecialchars($fee_item['label']); ?>:</span>
+                                    $<?php echo number_format($fee_item['amount'], 2); ?><?php echo $unit_suffix; ?>
+                                    <span style="color: #666; font-size: 0.85em;">(<?php echo $trigger_label; ?>)</span>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    </div>
+                <?php else: ?>
+                    <p style="color: #999; font-style: italic; margin-top: 10px;"><em>No fee structure defined</em></p>
+                <?php endif; ?>
             </div>
             <div class="warehouse-actions">
-                <a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="action-buttons">
+                <a href="edit_warehouse.php?id=<?php echo $warehouse_id; ?>" class="action-buttons">
                     Edit Warehouse Info
                 </a>
             </div>
