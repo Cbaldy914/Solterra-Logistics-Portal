@@ -140,6 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $module_docs_sub_type      = trim($_POST['module_docs_sub_type'] ?? '');
         $module_docs_description   = trim($_POST['module_docs_description'] ?? '');
         $module_docs_url           = null; // Legacy column (now stored in project_documents)
+        $cost_per_watt             = isset($_POST['cost_per_watt']) && $_POST['cost_per_watt'] !== '' ? floatval($_POST['cost_per_watt']) : null;
 
         if ($project_name === '') {
             throw new Exception("Project Name is required.");
@@ -507,14 +508,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     stacking_in_warehouse, stacking_during_transport,
                     forklift_truck_long_side_mm, forklift_truck_short_side_mm,
                     pallet_jack_long_side_mm, pallet_jack_short_side_mm,
-                    module_notes, module_docs_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    module_notes, module_docs_url, cost_per_watt
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             if (!$stmt_module) {
                 throw new Exception("Error preparing module batch insert: " . $conn->error);
             }
             $stmt_module->bind_param(
-                "issiiiiiiiissiiiiis",
+                "issiiiiiiiissiiiissd",
                 $account_id,
                 $default_vendor_name,
                 $default_initial_location,
@@ -533,7 +534,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pallet_jack_long_side_mm,
                 $pallet_jack_short_side_mm,
                 $module_notes,
-                $module_docs_url
+                $module_docs_url,
+                $cost_per_watt
             );
 
             if (!$stmt_module->execute()) {

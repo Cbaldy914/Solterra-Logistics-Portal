@@ -290,6 +290,13 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Cost Per Watt (Optional) -->
+            <div class="input-group" style="margin-top: 20px; max-width: 300px;">
+                <label for="cost_per_watt">Cost Per Watt ($/W) <span style="color: #6c757d; font-weight: 400; font-size: 0.85em;">(optional)</span></label>
+                <input type="number" step="0.000001" min="0" name="cost_per_watt" id="cost_per_watt" placeholder="e.g. 0.25" value="<?php echo htmlspecialchars($module['cost_per_watt'] ?? ''); ?>">
+                <small style="color: #6c757d; font-size: 0.8rem; margin-top: 4px; display: block;">Enter the module cost in price per watt for reporting.</small>
+            </div>
         </div>
     </div>
 

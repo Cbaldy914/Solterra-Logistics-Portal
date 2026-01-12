@@ -1239,6 +1239,11 @@ $conn->close();
                             <label for="module_notes">Module Notes</label>
                             <textarea id="module_notes" name="module_notes" rows="2" placeholder="General notes about the modules..."></textarea>
                         </div>
+                        <div class="form-group" style="margin-top: 12px;">
+                            <label for="cost_per_watt">Cost Per Watt ($/W) <span style="color: #6c757d; font-weight: 400; font-size: 0.85em;">(optional)</span></label>
+                            <input type="number" step="0.000001" min="0" id="cost_per_watt" name="cost_per_watt" placeholder="e.g. 0.25">
+                            <small style="color: #6c757d; font-size: 0.75rem;">Module cost in price per watt for reporting</small>
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -2300,7 +2305,7 @@ $conn->close();
             'pallet_length_mm', 'pallet_depth_mm', 'pallet_double_stacked_height_mm', 'pallet_total_weight_kg',
             'forklift_truck_long_side_mm', 'forklift_truck_short_side_mm',
             'pallet_jack_long_side_mm', 'pallet_jack_short_side_mm',
-            'stacking_in_warehouse', 'stacking_during_transport', 'module_notes'
+            'stacking_in_warehouse', 'stacking_during_transport', 'module_notes', 'cost_per_watt'
         ];
         logisticsFields.forEach(field => {
             const el = document.getElementById(field);
