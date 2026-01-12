@@ -142,11 +142,17 @@
 
                 <!-- Step 4: Shipping -->
                 <li class="timeline-item<?php echo $step4_completed ? ' completed' : ''; ?><?php echo $current_step == 4 ? ' current' : ''; ?>">
-                    <div class="circle clickable" onclick="window.location.href='<?php echo $deliveriesLink; ?>'">4</div>
+                    <div class="circle circle-map clickable" onclick="window.location.href='module_movements.php?project_id=<?php echo $project_id; ?>'">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
+                            <line x1="8" y1="2" x2="8" y2="18"></line>
+                            <line x1="16" y1="6" x2="16" y2="22"></line>
+                        </svg>
+                    </div>
                     <span class="label">
-                        <a href="<?php echo $deliveriesLink; ?>">Shipping</a>
+                        <a href="module_movements.php?project_id=<?php echo $project_id; ?>">Shipping</a>
                     </span>
-                    <div class="description">Logistics in progress</div>
+                    <div class="description">View Supply Chain Map</div>
 
                     <?php if ($current_step >= 4): ?>
                     <div class="shipping-connector"></div>
