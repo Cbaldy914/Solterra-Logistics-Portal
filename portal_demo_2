@@ -1,0 +1,174 @@
+# Solterra Logistics Portal - Demo Script
+
+---
+
+## OPENING (30 seconds)
+
+> "Thank you for taking the time to meet with us today. I'm going to show you our logistics portal which is pretty much your window into everything we'd be managing on your behalf. Behind the scenes, we'd coordinate with manufacturers, EPCs, carriers, and any other parties involved to make sure everything runs smoothly and the portal gives you full visibility into that. 
+
+We built this around an **exceptions-based approach**—so instead of digging through spreadsheets and emails hoping you catch something before it becomes a problem, the system will proactively show what needs your attention and you can configure notifications so issues come to you directly"
+
+> "There's a lot of information in here so for the sake of time I'll try to keep this high level, but if you have any questions or if anything catches your eye, just let me know and we can dig in and explore that further."
+ 
+---
+
+## 1. PORTFOLIO DASHBOARD (2-3 minutes)
+
+**[dashboard.php - Stay on this page]**
+
+### Quick Stats & Charts
+> "This is your command center. 
+
+
+### Module Distribution
+
+> "This chart is a quick sanity check for if you're short on modules for any project, or do you have excess that might need storage? It's simple math, but it keeps you ahead of surprises. And if you need help deciding where to store excess inventory, we have tools for that too."
+
+
+
+### Project Overview
+**[Click into the at-risk project → project_overview.php]**
+
+> "This is the Project Overview page which is the central hub for this specific project. I can see progress, delivery timeline, metrics and what's flagged. In this case, [explain why it's at-risk based on actual status]."
+
+
+
+**[Click into a warranty claim in 'Submitted' status → warranty_detail.php]**
+
+> "I can see exactly what happened: which pallets, when they arrived, photos of the damage, and the current status. Everything is documented and tied back to the original shipment."
+
+> "This gives complete chain of custody. When we're working with the manufacturer on a claim, all the evidence is right here—no digging through emails or shared drives."
+
+**TRANSITION:**
+> "Speaking of traceability, let me show you how we track every module from manufacturer to site..."
+
+---
+
+## 3. MODULE MOVEMENTS & TRACEABILITY (3-4 minutes) - KEY DEMO MOMENT
+
+**[Navigate to Module Movements → module_movements.php]**
+
+> "This is Module Movements—one of the most powerful features in the platform."
+
+*Pause briefly to let the map load:*
+> "You're looking at a live map of this project's supply chain from the manufacturer, to the warehouse, and project site. The lines show shipment routes, and the thickness indicates volume."
+
+### Map Interaction
+**[Click on a location marker]**
+
+> "When I click on a location, I get real-time inventory: how many pallets, how many modules, broken down by wattage."
+
+### The Traceability Message
+> "Here's the key point: **you're always audit-ready**. If someone asks 'where are my modules?' or 'what shipped last month?'—you have the answer in seconds. All inventory flows live within this single source of truth."
+
+**Pallets:**
+**Warehousing:**
+**TRANSITION:**
+> "Let's take a look at reporting..."
+
+## 5. REPORTS (2-3 minutes)
+
+### Export Capability
+> "Everything is **automated and ready for export**— When leadership asks for an update, you're not spending hours pulling data together. It's here, it's current, and it's ready to share."
+
+
+
+---
+
+## 6. DOCUMENTS (1-2 minutes)
+
+
+
+**TRANSITION:**
+> "Now, what happens when a project wraps up..."
+
+---
+
+## 7. PROJECT CLOSEOUT (1-2 minutes)
+
+**[Show a completed project]**
+
+> "When a project is complete, there's a formal closeout process handled by our admin team. We reconcile all deliveries, ensure documentation is complete, and archive the project."
+
+> "You'll have a complete, exportable record of every delivery, every pallet, every document. Even years later, if there's a warranty question or an audit, you can pull up exactly what was delivered, when, and by whom. That peace of mind is built into the platform."
+
+---
+
+
+
+## 8. SUNNY - AI ASSISTANT (2-3 minutes) - CLOSING DEMO MOMENT
+
+**[Open Sunny chat interface]**
+
+### Benefits
+> "Sunny has access to all your project data which includes your inventory, deliveries, costs, documents—and can answer questions in seconds that would normally take you 10-15 minutes of digging through reports. If you need a quick answered before a call or pull numbers for a stakeholder update you can just ask"
+
+### Demo
+> "Let me show you. I'll ask: **'Tell me what's in inventory for Example Project.'**"
+
+*Wait for Sunny's response, then:*
+> "Just like that—current inventory, broken down by location and status."
+
+> "Now let me ask a follow-up: **'Can you tell me the value of that assuming a module cost of $0.28 per watt?'**"
+
+*Wait for Sunny's response:*
+> "Sunny understands context and learns your preferences over time, so the more you use it, the more tailored the answers become to how you like to see information. Instead of running reports or calling the warehouse, you just ask."
+
+---
+
+
+
+## CLOSING
+
+> "I know that was a lot to take in, but the main takeaway is this: we handle the logistics, you get the visibility. All the coordination with manufacturers, carriers, warehouses—that's happening behind the scenes. The portal just lets you see exactly what's going on and step in when something actually needs your attention."
+
+> "questions?"
+
+---
+
+## QUICK REFERENCE: Navigation Flow
+
+| Step | Page | Key Action |
+|------|------|------------|
+| 1 | dashboard.php | Overview, At Risk filter |
+| 2 | project_overview.php | Drill into flagged project |
+| 3 | warranty.php → warranty_detail.php | Follow submitted claim (2 damaged modules) |
+| 4 | module_movements.php | Map, traceability message |
+| 5 | manage_pallets.php | Click "View Pallets" from popup |
+| 6 | warehouse_info.php | Click warehouse name, mention optimizer |
+| 7 | project_overview.php | Delivery metrics |
+| 8 | project_cost_details.php | Cost breakdown |
+| 9 | project_sustainability_details.php | Sustainability data |
+| 10 | global_documents.php | Global docs |
+| 11 | project_documents.php | Project docs |
+| 12 | Export / Closeout | Show export, explain closeout |
+| 13 | Sunny | Interactive Q&A |
+
+---
+
+## DEMO CHECKLIST
+
+- [ ] Dashboard - quick stats, exceptions-based workflow, coordination mention
+- [ ] Click "At Risk" filter
+- [ ] Drill into at-risk project
+- [ ] Navigate to warranty claim (Submitted status, 2 damaged modules)
+- [ ] Module Movements - map, click markers, traceability message
+- [ ] Click "View Pallets" → manage_pallets.php
+- [ ] Click warehouse link → warehouse_info.php (mention optimizer/scenario planner)
+- [ ] Reports: delivery metrics, project_cost_details, project_sustainability_details
+- [ ] Mention portfolio-level reports and export capability
+- [ ] Documents: global_documents.php, project_documents.php
+- [ ] Project closeout - export data, explain process
+- [ ] Sunny: "What's in inventory for Example Project?"
+- [ ] Sunny: "Value at $0.28 per watt?"
+
+---
+
+## TIPS FOR SUCCESS
+
+1. **Pause at the map** - Let it load, let them absorb it. Visual impact matters.
+2. **Don't rush traceability** - This is a key differentiator.
+3. **Plant the optimizer seed casually** - Don't oversell, just mention it's available.
+4. **Emphasize "ready for export"** - Procurement people hate manual report building.
+5. **End strong with Sunny** - The follow-up question shows intelligence, not just search.
+6. **If something breaks, pivot** - "Let me show you this instead..."
