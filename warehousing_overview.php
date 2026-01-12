@@ -50,7 +50,9 @@ if ($role === 'admin' || $role === 'global_admin') {
             w.state,
             w.zip_code,
             w.image_url,
-            COALESCE(wci_monthly.amount, 0) as monthly_storage_fee,
+            -- Sum ALL monthly fees (supports multiple fees per trigger type)
+            (SELECT COALESCE(SUM(amount), 0) FROM warehouse_cost_items
+             WHERE warehouse_id = w.id AND trigger_event = 'monthly' AND is_active = 1) as monthly_storage_fee,
             -- Count pallets stored (assigned to projects)
             (SELECT COUNT(ip_stored.id)
              FROM inventory_pallets ip_stored
@@ -90,8 +92,6 @@ if ($role === 'admin' || $role === 'global_admin') {
              WHERE ip_transit.status = 'In Transit to Warehouse'
                AND d_transit.warehouse_id = w.id) as modules_in_transit
         FROM warehouses w
-        LEFT JOIN warehouse_cost_items wci_monthly ON w.id = wci_monthly.warehouse_id
-            AND wci_monthly.trigger_event = 'monthly' AND wci_monthly.is_active = 1
         ORDER BY w.name ASC
     ";
     $result_all_warehouses = $conn->query($sql_all_warehouses);
@@ -107,7 +107,9 @@ if ($role === 'admin' || $role === 'global_admin') {
             w.state,
             w.zip_code,
             w.image_url,
-            COALESCE(wci_monthly.amount, 0) as monthly_storage_fee,
+            -- Sum ALL monthly fees (supports multiple fees per trigger type)
+            (SELECT COALESCE(SUM(amount), 0) FROM warehouse_cost_items
+             WHERE warehouse_id = w.id AND trigger_event = 'monthly' AND is_active = 1) as monthly_storage_fee,
             -- Count pallets stored (assigned to projects in user's account)
             (SELECT COUNT(ip_stored.id)
              FROM inventory_pallets ip_stored
@@ -167,8 +169,6 @@ if ($role === 'admin' || $role === 'global_admin') {
                AND d_transit.warehouse_id = w.id
                AND (cau_transit.user_id = ? OR d_transit.project_id IS NULL)) as modules_in_transit
         FROM warehouses w
-        LEFT JOIN warehouse_cost_items wci_monthly ON w.id = wci_monthly.warehouse_id
-            AND wci_monthly.trigger_event = 'monthly' AND wci_monthly.is_active = 1
         ORDER BY w.name ASC
     ";
     $stmt_all = $conn->prepare($sql_all_warehouses);
@@ -188,135 +188,135 @@ if (isset($stmt_all)) {
 // 1) Fetch warehouses that have modules in storage for this account
 if ($role === 'admin' || $role === 'global_admin') {
     $sql_warehouses = "
-        SELECT DISTINCT 
-            w.id, 
+        SELECT DISTINCT
+            w.id,
             w.name,
-            w.address, 
+            w.address,
             w.image_url,
-            COALESCE(wci_monthly.amount, 0) as monthly_storage_fee,
+            -- Sum ALL monthly fees (supports multiple fees per trigger type)
+            (SELECT COALESCE(SUM(amount), 0) FROM warehouse_cost_items
+             WHERE warehouse_id = w.id AND trigger_event = 'monthly' AND is_active = 1) as monthly_storage_fee,
             -- Count pallets stored (assigned to projects)
-            (SELECT COUNT(ip_stored.id) 
-             FROM inventory_pallets ip_stored 
-             WHERE ip_stored.current_warehouse_id = w.id 
-               AND ip_stored.status = 'In Warehouse' 
+            (SELECT COUNT(ip_stored.id)
+             FROM inventory_pallets ip_stored
+             WHERE ip_stored.current_warehouse_id = w.id
+               AND ip_stored.status = 'In Warehouse'
                AND ip_stored.assigned_project_id IS NOT NULL) as assigned_pallets_stored,
             -- Count modules stored (assigned to projects)
-            (SELECT SUM(ip_stored.quantity) 
-             FROM inventory_pallets ip_stored 
-             WHERE ip_stored.current_warehouse_id = w.id 
-               AND ip_stored.status = 'In Warehouse' 
+            (SELECT SUM(ip_stored.quantity)
+             FROM inventory_pallets ip_stored
+             WHERE ip_stored.current_warehouse_id = w.id
+               AND ip_stored.status = 'In Warehouse'
                AND ip_stored.assigned_project_id IS NOT NULL) as assigned_modules_stored,
             -- Count unassigned pallets stored
-            (SELECT COUNT(ip_unassigned.id) 
-             FROM inventory_pallets ip_unassigned 
-             WHERE ip_unassigned.current_warehouse_id = w.id 
-               AND ip_unassigned.status = 'In Warehouse' 
+            (SELECT COUNT(ip_unassigned.id)
+             FROM inventory_pallets ip_unassigned
+             WHERE ip_unassigned.current_warehouse_id = w.id
+               AND ip_unassigned.status = 'In Warehouse'
                AND ip_unassigned.assigned_project_id IS NULL) as unassigned_pallets_stored,
             -- Count unassigned modules stored
-            (SELECT SUM(ip_unassigned.quantity) 
-             FROM inventory_pallets ip_unassigned 
-             WHERE ip_unassigned.current_warehouse_id = w.id 
-               AND ip_unassigned.status = 'In Warehouse' 
+            (SELECT SUM(ip_unassigned.quantity)
+             FROM inventory_pallets ip_unassigned
+             WHERE ip_unassigned.current_warehouse_id = w.id
+               AND ip_unassigned.status = 'In Warehouse'
                AND ip_unassigned.assigned_project_id IS NULL) as unassigned_modules_stored,
             -- Count pallets in transit
-            (SELECT COUNT(ip_transit.id) 
-             FROM inventory_pallets ip_transit 
+            (SELECT COUNT(ip_transit.id)
+             FROM inventory_pallets ip_transit
              JOIN delivery_pallets dp_transit ON ip_transit.id = dp_transit.inventory_pallet_id
              JOIN deliveries d_transit ON dp_transit.delivery_id = d_transit.id
-             WHERE ip_transit.status = 'In Transit to Warehouse' 
+             WHERE ip_transit.status = 'In Transit to Warehouse'
                AND d_transit.warehouse_id = w.id) as pallets_in_transit,
             -- Count modules in transit
-            (SELECT SUM(ip_transit.quantity) 
-             FROM inventory_pallets ip_transit 
+            (SELECT SUM(ip_transit.quantity)
+             FROM inventory_pallets ip_transit
              JOIN delivery_pallets dp_transit ON ip_transit.id = dp_transit.inventory_pallet_id
              JOIN deliveries d_transit ON dp_transit.delivery_id = d_transit.id
-             WHERE ip_transit.status = 'In Transit to Warehouse' 
+             WHERE ip_transit.status = 'In Transit to Warehouse'
                AND d_transit.warehouse_id = w.id) as modules_in_transit
         FROM warehouses w
-        LEFT JOIN warehouse_cost_items wci_monthly ON w.id = wci_monthly.warehouse_id 
-            AND wci_monthly.trigger_event = 'monthly' AND wci_monthly.is_active = 1
         WHERE EXISTS (
             SELECT 1 FROM inventory_pallets ip_check
-            WHERE ip_check.current_warehouse_id = w.id 
+            WHERE ip_check.current_warehouse_id = w.id
               AND ip_check.status = 'In Warehouse'
         ) OR EXISTS (
             SELECT 1 FROM inventory_pallets ip_transit_check
             JOIN delivery_pallets dp_check ON ip_transit_check.id = dp_check.inventory_pallet_id
             JOIN deliveries d_check ON dp_check.delivery_id = d_check.id
-            WHERE ip_transit_check.status = 'In Transit to Warehouse' 
+            WHERE ip_transit_check.status = 'In Transit to Warehouse'
               AND d_check.warehouse_id = w.id
         )
         ORDER BY w.name ASC
     ";
 } else {
     $sql_warehouses = "
-        SELECT DISTINCT 
-            w.id, 
+        SELECT DISTINCT
+            w.id,
             w.name,
-            w.address, 
+            w.address,
             w.image_url,
-            COALESCE(wci_monthly.amount, 0) as monthly_storage_fee,
+            -- Sum ALL monthly fees (supports multiple fees per trigger type)
+            (SELECT COALESCE(SUM(amount), 0) FROM warehouse_cost_items
+             WHERE warehouse_id = w.id AND trigger_event = 'monthly' AND is_active = 1) as monthly_storage_fee,
             -- Count pallets stored (assigned to projects in user's account)
-            (SELECT COUNT(ip_stored.id) 
-             FROM inventory_pallets ip_stored 
+            (SELECT COUNT(ip_stored.id)
+             FROM inventory_pallets ip_stored
              JOIN projects p_stored ON ip_stored.assigned_project_id = p_stored.id
              JOIN customer_account_users cau_stored ON p_stored.account_id = cau_stored.account_id
-             WHERE ip_stored.current_warehouse_id = w.id 
-               AND ip_stored.status = 'In Warehouse' 
+             WHERE ip_stored.current_warehouse_id = w.id
+               AND ip_stored.status = 'In Warehouse'
                AND ip_stored.assigned_project_id IS NOT NULL
                AND cau_stored.user_id = ?) as assigned_pallets_stored,
             -- Count modules stored (assigned to projects in user's account)
-            (SELECT SUM(ip_stored.quantity) 
-             FROM inventory_pallets ip_stored 
+            (SELECT SUM(ip_stored.quantity)
+             FROM inventory_pallets ip_stored
              JOIN projects p_stored ON ip_stored.assigned_project_id = p_stored.id
              JOIN customer_account_users cau_stored ON p_stored.account_id = cau_stored.account_id
-             WHERE ip_stored.current_warehouse_id = w.id 
-               AND ip_stored.status = 'In Warehouse' 
+             WHERE ip_stored.current_warehouse_id = w.id
+               AND ip_stored.status = 'In Warehouse'
                AND ip_stored.assigned_project_id IS NOT NULL
                AND cau_stored.user_id = ?) as assigned_modules_stored,
             -- Count unassigned pallets stored (from user's account batches)
-            (SELECT COUNT(ip_unassigned.id) 
-             FROM inventory_pallets ip_unassigned 
+            (SELECT COUNT(ip_unassigned.id)
+             FROM inventory_pallets ip_unassigned
              JOIN unassigned_module_items umi ON ip_unassigned.unassigned_module_item_id = umi.id
              JOIN modules m ON umi.unassigned_module_id = m.id
              JOIN customer_account_users cau_unassigned ON m.account_id = cau_unassigned.account_id
-             WHERE ip_unassigned.current_warehouse_id = w.id 
-               AND ip_unassigned.status = 'In Warehouse' 
+             WHERE ip_unassigned.current_warehouse_id = w.id
+               AND ip_unassigned.status = 'In Warehouse'
                AND ip_unassigned.assigned_project_id IS NULL
                AND cau_unassigned.user_id = ?) as unassigned_pallets_stored,
             -- Count unassigned modules stored (from user's account batches)
-            (SELECT SUM(ip_unassigned.quantity) 
-             FROM inventory_pallets ip_unassigned 
+            (SELECT SUM(ip_unassigned.quantity)
+             FROM inventory_pallets ip_unassigned
              JOIN unassigned_module_items umi ON ip_unassigned.unassigned_module_item_id = umi.id
              JOIN modules m ON umi.unassigned_module_id = m.id
              JOIN customer_account_users cau_unassigned ON m.account_id = cau_unassigned.account_id
-             WHERE ip_unassigned.current_warehouse_id = w.id 
-               AND ip_unassigned.status = 'In Warehouse' 
+             WHERE ip_unassigned.current_warehouse_id = w.id
+               AND ip_unassigned.status = 'In Warehouse'
                AND ip_unassigned.assigned_project_id IS NULL
                AND cau_unassigned.user_id = ?) as unassigned_modules_stored,
             -- Count pallets in transit (for user's account)
-            (SELECT COUNT(ip_transit.id) 
-             FROM inventory_pallets ip_transit 
+            (SELECT COUNT(ip_transit.id)
+             FROM inventory_pallets ip_transit
              JOIN delivery_pallets dp_transit ON ip_transit.id = dp_transit.inventory_pallet_id
              JOIN deliveries d_transit ON dp_transit.delivery_id = d_transit.id
              LEFT JOIN projects p_transit ON d_transit.project_id = p_transit.id
              LEFT JOIN customer_account_users cau_transit ON p_transit.account_id = cau_transit.account_id
-             WHERE ip_transit.status = 'In Transit to Warehouse' 
+             WHERE ip_transit.status = 'In Transit to Warehouse'
                AND d_transit.warehouse_id = w.id
                AND (cau_transit.user_id = ? OR d_transit.project_id IS NULL)) as pallets_in_transit,
             -- Count modules in transit (for user's account)
-            (SELECT SUM(ip_transit.quantity) 
-             FROM inventory_pallets ip_transit 
+            (SELECT SUM(ip_transit.quantity)
+             FROM inventory_pallets ip_transit
              JOIN delivery_pallets dp_transit ON ip_transit.id = dp_transit.inventory_pallet_id
              JOIN deliveries d_transit ON dp_transit.delivery_id = d_transit.id
              LEFT JOIN projects p_transit ON d_transit.project_id = p_transit.id
              LEFT JOIN customer_account_users cau_transit ON p_transit.account_id = cau_transit.account_id
-             WHERE ip_transit.status = 'In Transit to Warehouse' 
+             WHERE ip_transit.status = 'In Transit to Warehouse'
                AND d_transit.warehouse_id = w.id
                AND (cau_transit.user_id = ? OR d_transit.project_id IS NULL)) as modules_in_transit
         FROM warehouses w
-        LEFT JOIN warehouse_cost_items wci_monthly ON w.id = wci_monthly.warehouse_id 
-            AND wci_monthly.trigger_event = 'monthly' AND wci_monthly.is_active = 1
         WHERE EXISTS (
             -- Warehouses with assigned inventory for user's account
             SELECT 1 FROM inventory_pallets ip_check

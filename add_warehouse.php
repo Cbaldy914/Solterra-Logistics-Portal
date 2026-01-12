@@ -33,11 +33,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit'])) {
         $country = trim($_POST['country'] ?? 'USA');
         $is_port = isset($_POST['is_port']) ? 1 : 0;
         
-        // Cost structure fields
-        $entry_fee = floatval($_POST['entry_fee'] ?? 0);
-        $exit_fee = floatval($_POST['exit_fee'] ?? 0);
-        $monthly_storage_fee = floatval($_POST['monthly_storage_fee'] ?? 0);
-        $customs_clearance_fee = floatval($_POST['customs_clearance_fee'] ?? 0);
+        // Cost structure - parse JSON from dynamic fee manager
+        $warehouse_fees_json = $_POST['warehouse_fees'] ?? '[]';
+        $warehouse_fees = json_decode($warehouse_fees_json, true);
+        if (!is_array($warehouse_fees)) {
+            $warehouse_fees = [];
+        }
 
         if (empty($name)) {
             throw new Exception("Warehouse Name is required.");
@@ -93,33 +94,43 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit'])) {
         if ($stmt->execute()) {
             $warehouse_id = $conn->insert_id;
             
-            // Add cost structure items for any non-zero fees
-            $cost_items = [];
-            if ($entry_fee > 0) {
-                $cost_items[] = ['Entry Fee', 'entry', $entry_fee];
-            }
-            if ($exit_fee > 0) {
-                $cost_items[] = ['Exit Fee', 'exit', $exit_fee];
-            }
-            if ($monthly_storage_fee > 0) {
-                $cost_items[] = ['Monthly Storage', 'monthly', $monthly_storage_fee];
-            }
-            if ($customs_clearance_fee > 0 && $is_port) {
-                $cost_items[] = ['Customs Clearance Fee', 'customs_clearance', $customs_clearance_fee];
-            }
-            
-            // Insert cost items
-            if (!empty($cost_items)) {
-                $stmt_cost = $conn->prepare("INSERT INTO warehouse_cost_items (warehouse_id, label, trigger_event, amount) VALUES (?, ?, ?, ?)");
+            // Insert cost items from dynamic fee manager
+            if (!empty($warehouse_fees)) {
+                $stmt_cost = $conn->prepare("INSERT INTO warehouse_cost_items
+                    (warehouse_id, label, trigger_event, amount, unit_type, pallets_per_truck, sqft_per_pallet, display_order)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
                 if (!$stmt_cost) {
                     throw new Exception("Error preparing cost items insert: " . $conn->error);
                 }
-                
-                foreach ($cost_items as $cost_item) {
-                    $stmt_cost->bind_param("issd", $warehouse_id, $cost_item[0], $cost_item[1], $cost_item[2]);
-                    if (!$stmt_cost->execute()) {
-                        throw new Exception("Error adding cost item '{$cost_item[0]}': " . $stmt_cost->error);
+
+                $display_order = 0;
+                foreach ($warehouse_fees as $fee) {
+                    $label = trim($fee['name'] ?? 'Unnamed Fee');
+                    $trigger = $fee['trigger'] ?? 'other';
+                    $amount = floatval($fee['amount'] ?? 0);
+                    $unit_type = $fee['unit'] ?? 'per_pallet';
+                    $pallets_per_truck = intval($fee['palletsPerTruck'] ?? 26);
+                    $sqft_per_pallet = floatval($fee['sqftPerPallet'] ?? 13.33);
+
+                    // Skip customs clearance fee if not a port
+                    if ($trigger === 'customs_clearance' && !$is_port) {
+                        continue;
                     }
+
+                    $stmt_cost->bind_param("issdsidi",
+                        $warehouse_id,
+                        $label,
+                        $trigger,
+                        $amount,
+                        $unit_type,
+                        $pallets_per_truck,
+                        $sqft_per_pallet,
+                        $display_order
+                    );
+                    if (!$stmt_cost->execute()) {
+                        throw new Exception("Error adding cost item '{$label}': " . $stmt_cost->error);
+                    }
+                    $display_order++;
                 }
                 $stmt_cost->close();
             }
@@ -215,6 +226,101 @@ $conn->close();
         form br {
             display: none;
         }
+
+        /* Fee Table Styles */
+        .fee-table-container {
+            overflow-x: auto;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+            margin-bottom: 12px;
+        }
+        .fee-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 500px;
+        }
+        .fee-table th {
+            background: linear-gradient(135deg, #488C9A 0%, #3a7a87 100%);
+            color: #fff;
+            padding: 12px 14px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        .fee-table td {
+            padding: 10px 14px;
+            border-bottom: 1px solid #f0f0f0;
+            vertical-align: middle;
+        }
+        .fee-table tr:last-child td {
+            border-bottom: none;
+        }
+        .fee-table input[type="text"],
+        .fee-table input[type="number"],
+        .fee-table select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            box-sizing: border-box;
+        }
+        .fee-table .amount-input {
+            max-width: 100px;
+        }
+        .fee-table select {
+            max-width: 140px;
+        }
+        .unit-param {
+            margin-top: 6px;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .unit-param label {
+            color: #6c757d;
+            margin: 0;
+            font-size: 0.75rem;
+            white-space: nowrap;
+        }
+        .unit-param input {
+            width: 70px !important;
+            padding: 4px 6px !important;
+            font-size: 0.85rem !important;
+        }
+        .fee-row-remove {
+            background: none;
+            border: none;
+            color: #dc3545;
+            cursor: pointer;
+            font-size: 1.3rem;
+            padding: 4px 8px;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        .fee-row-remove:hover {
+            opacity: 1;
+        }
+        .btn-add-fee {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 16px;
+            background: #f8f9fa;
+            color: #488C9A;
+            border: 1px dashed #488C9A;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .btn-add-fee:hover {
+            background: #488C9A;
+            color: #fff;
+            border-style: solid;
+        }
     </style>
 </head>
 <body>
@@ -282,31 +388,18 @@ $conn->close();
 
         <div style="margin-top: 20px; padding: 15px; background-color: #e8f4f8; border-radius: 4px; border: 1px solid #bee5eb;">
             <h4 style="margin-top: 0; color: #0c5460;">💰 Cost Structure</h4>
-            
-            <div class="form-row">
-                <div>
-                    <label for="entry_fee" style="margin-top: 0; font-size: 0.9em; color: #0c5460;">Entry Fee (per pallet):</label>
-                    <input type="number" id="entry_fee" name="entry_fee" step="0.01" min="0" value="0" placeholder="0.00">
-                </div>
-                <div>
-                    <label for="exit_fee" style="margin-top: 0; font-size: 0.9em; color: #0c5460;">Exit Fee (per pallet):</label>
-                    <input type="number" id="exit_fee" name="exit_fee" step="0.01" min="0" value="0" placeholder="0.00">
-                </div>
-            </div>
-            
-            <div class="form-row">
-                <div>
-                    <label for="monthly_storage_fee" style="margin-top: 0; font-size: 0.9em; color: #0c5460;">Monthly Storage (per pallet):</label>
-                    <input type="number" id="monthly_storage_fee" name="monthly_storage_fee" step="0.01" min="0" value="0" placeholder="0.00">
-                </div>
-                <div>
-                    <label for="customs_clearance_fee" style="margin-top: 0; font-size: 0.9em; color: #0c5460;">Customs Clearance Fee (if port):</label>
-                    <input type="number" id="customs_clearance_fee" name="customs_clearance_fee" step="0.01" min="0" value="0" placeholder="0.00">
-                </div>
-            </div>
-            
-            <small style="color: #0c5460; font-size: 0.85em;">
-                💡 You can modify these costs anytime after creation. Leave at $0.00 if not applicable.
+            <p style="color: #0c5460; font-size: 0.9em; margin-bottom: 15px;">
+                Configure fees for this warehouse. You can add multiple fee types with different billing units.
+            </p>
+
+            <!-- Dynamic Fee Manager Container -->
+            <div id="feeManagerContainer"></div>
+
+            <!-- Hidden input for form submission -->
+            <input type="hidden" name="warehouse_fees" id="warehouseFeesInput" value="[]">
+
+            <small style="color: #0c5460; font-size: 0.85em; display: block; margin-top: 10px;">
+                💡 You can modify these costs anytime after creation. Leave amounts at $0.00 if not applicable.
             </small>
         </div>
 
@@ -320,8 +413,26 @@ $conn->close();
 
 <!-- Load the Google Maps JavaScript API with Places library -->
 <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places"></script>
+<!-- Load the Warehouse Fee Manager component -->
+<script src="components/warehouse-fee-manager.js"></script>
 
 <script>
+// Initialize the fee manager when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize fee manager with default fees
+    feeManager = new WarehouseFeeManager({
+        containerId: 'feeManagerContainer',
+        inputId: 'warehouseFeesInput',
+        initialFees: [],
+        isPort: document.getElementById('is_port').checked
+    });
+
+    // Listen for port checkbox changes
+    document.getElementById('is_port').addEventListener('change', function() {
+        feeManager.setIsPort(this.checked);
+    });
+});
+
 function initializeAddressAutocomplete() {
     // Get the street address input element
     const streetAddressInput = document.getElementById('street_address');
