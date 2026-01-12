@@ -1599,6 +1599,19 @@
     stroke: #ffffff;
 }
 
+/* Clickable description link for map */
+.timeline-item .description-link {
+    color: #488C9A;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    border-bottom: 1px dashed transparent;
+}
+
+.timeline-item .description-link:hover {
+    color: #3A6E7F;
+    border-bottom-color: #3A6E7F;
+}
+
 .timeline-item .label,
 .timeline-content h3 {
     font-weight: 600;
