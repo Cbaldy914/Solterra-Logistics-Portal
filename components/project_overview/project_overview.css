@@ -1585,6 +1585,20 @@
     box-shadow: 0 12px 35px rgba(255, 193, 7, 0.5);
 }
 
+/* Map icon circle for Step 4 */
+.timeline-item .circle.circle-map svg {
+    stroke: #adb5bd;
+    transition: stroke 0.3s ease;
+}
+
+.timeline-item.completed .circle.circle-map svg {
+    stroke: #ffffff;
+}
+
+.timeline-item.current .circle.circle-map svg {
+    stroke: #ffffff;
+}
+
 .timeline-item .label,
 .timeline-content h3 {
     font-weight: 600;
