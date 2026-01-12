@@ -18,7 +18,8 @@
       "Bash(copy project_overview.php project_overview_backup.php)",
       "Bash(copy /Y project_overview_new.php project_overview.php)",
       "Bash(del temp_extract.php project_overview_new.php)",
-      "Bash(cmd /c \"copy project_overview.php project_overview_backup.php && copy /Y project_overview_new.php project_overview.php && del temp_extract.php project_overview_new.php\")"
+      "Bash(cmd /c \"copy project_overview.php project_overview_backup.php && copy /Y project_overview_new.php project_overview.php && del temp_extract.php project_overview_new.php\")",
+      "Bash(del \"\\\\?\\\\C:\\\\xampp\\\\htdocs\\\\Solterra-Solutions\\\\Solterra-Logistics-Portal\\\\nul\")"
     ],
     "deny": [],
     "ask": []
