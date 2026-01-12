@@ -411,7 +411,8 @@ CREATE TABLE `modules` (
   `pallet_jack_short_side_mm` int(11) DEFAULT NULL,
   `module_notes` text DEFAULT NULL,
   `module_docs_url` text DEFAULT NULL,
-  `module_additional_notes` text DEFAULT NULL
+  `module_additional_notes` text DEFAULT NULL,
+  `cost_per_watt` decimal(10,6) DEFAULT NULL COMMENT 'Module cost in price per watt (optional)'
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
 --
