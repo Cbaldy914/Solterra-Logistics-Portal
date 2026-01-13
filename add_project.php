@@ -106,9 +106,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $phone1                    = trim($_POST['phone1'] ?? '');
         $phone2                    = trim($_POST['phone2'] ?? '');
         $timezone                  = trim($_POST['timezone'] ?? 'America/New_York');
-        // Site receiving hours - will be stored in site_operating_hours table
-        $receiving_hours_start     = trim($_POST['receiving_hours_start'] ?? '08:00');
-        $receiving_hours_end       = trim($_POST['receiving_hours_end'] ?? '17:00');
+        // Site receiving hours - will be stored in site_operating_hours table (per-day)
+        $operating_hours = [];
+        for ($day = 0; $day <= 6; $day++) {
+            $start = trim($_POST["hours_start_{$day}"] ?? '');
+            $end = trim($_POST["hours_end_{$day}"] ?? '');
+            // Only add if both start and end are provided (day is enabled)
+            if ($start !== '' && $end !== '') {
+                $operating_hours[$day] = ['start' => $start, 'end' => $end];
+            }
+        }
         $reference_numbers         = ''; // Deprecated - using site_operating_hours table instead
         $instructions              = trim($_POST['instructions'] ?? '');
         $additional_notes          = trim($_POST['additional_notes'] ?? '');
@@ -222,16 +229,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $project_id = $stmt->insert_id;
         $stmt->close();
 
-        // Insert site operating hours (Mon-Fri with the specified times)
+        // Insert site operating hours (per-day from form)
         // day_of_week: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday
         $stmtHours = $conn->prepare("
             INSERT INTO site_operating_hours (project_id, day_of_week, start_time, end_time)
             VALUES (?, ?, ?, ?)
         ");
-        if ($stmtHours) {
-            // Insert for Monday (1) through Friday (5)
-            for ($day = 1; $day <= 5; $day++) {
-                $stmtHours->bind_param("iiss", $project_id, $day, $receiving_hours_start, $receiving_hours_end);
+        if ($stmtHours && !empty($operating_hours)) {
+            foreach ($operating_hours as $day => $hours) {
+                $start = $hours['start'];
+                $end = $hours['end'];
+                $stmtHours->bind_param("iiss", $project_id, $day, $start, $end);
                 $stmtHours->execute();
             }
             $stmtHours->close();
@@ -898,12 +906,130 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        /* Hours Grid */
-        .hours-grid {
+        /* Daily Hours Schedule */
+        .receiving-schedule-container {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 16px;
+        }
+        .schedule-quick-set {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 16px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .quick-set-btn {
+            padding: 8px 14px;
+            background: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: #495057;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .quick-set-btn:hover {
+            border-color: #488C9A;
+            color: #488C9A;
+        }
+        .quick-set-btn.active {
+            background: #488C9A;
+            border-color: #488C9A;
+            color: #fff;
+        }
+        .daily-hours-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .day-row {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            max-width: 400px;
+            grid-template-columns: 100px 1fr auto;
+            gap: 12px;
+            align-items: center;
+            padding: 10px 12px;
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        .day-row.disabled {
+            background: #f8f9fa;
+            opacity: 0.6;
+        }
+        .day-row .day-name {
+            font-weight: 500;
+            color: #293E4C;
+            font-size: 0.9rem;
+        }
+        .day-row .day-name abbr {
+            display: none;
+        }
+        .day-row .hours-inputs {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .day-row .hours-inputs input[type="time"] {
+            padding: 6px 8px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            width: 110px;
+        }
+        .day-row .hours-inputs input[type="time"]:focus {
+            outline: none;
+            border-color: #488C9A;
+        }
+        .day-row .hours-inputs span {
+            color: #6c757d;
+            font-size: 0.85rem;
+        }
+        .day-row .day-toggle {
+            width: 44px;
+            height: 24px;
+            background: #dee2e6;
+            border-radius: 12px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .day-row .day-toggle.active {
+            background: #488C9A;
+        }
+        .day-row .day-toggle::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.2s ease;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .day-row .day-toggle.active::after {
+            transform: translateX(20px);
+        }
+        @media (max-width: 600px) {
+            .day-row {
+                grid-template-columns: 80px 1fr auto;
+                gap: 8px;
+                padding: 8px 10px;
+            }
+            .day-row .day-name span {
+                display: none;
+            }
+            .day-row .day-name abbr {
+                display: inline;
+            }
+            .day-row .hours-inputs input[type="time"] {
+                width: 90px;
+                font-size: 0.8rem;
+            }
         }
 
         /* Section Actions */
@@ -987,98 +1113,162 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
         }
 
-        /* Wattage Entries */
-        .wattage-container {
-            margin: 20px 0;
+        /* Module Setup uses component CSS from module_batch_section.php */
+
+        /* Photo Upload - Profile Image Style */
+        .photo-upload-container {
+            display: flex;
+            gap: 24px;
+            align-items: flex-start;
         }
-        .wattage-entry {
-            display: grid;
-            grid-template-columns: 1fr 1fr auto;
-            gap: 16px;
-            align-items: end;
-            padding: 16px;
+        .profile-image-preview {
+            position: relative;
+            width: 180px;
+            height: 180px;
+            border-radius: 12px;
+            overflow: hidden;
+            flex-shrink: 0;
             background: #f8f9fa;
-            border-radius: 12px;
-            margin-bottom: 12px;
-            border: 1px solid #e9ecef;
+            border: 2px solid #e9ecef;
         }
-        .wattage-entry .form-group {
-            margin-bottom: 0;
+        .profile-image-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
-        .btn-remove {
-            padding: 10px 16px;
-            background: #dc3545;
+        .profile-image-preview .profile-badge {
+            position: absolute;
+            bottom: 8px;
+            left: 8px;
+            background: rgba(41, 62, 76, 0.85);
             color: #fff;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .profile-image-preview .change-photo-btn {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            background: rgba(72, 140, 154, 0.9);
+            color: #fff;
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 6px 10px;
+            border-radius: 6px;
             border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: background 0.2s ease;
-        }
-        .btn-remove:hover {
-            background: #c82333;
-        }
-        .btn-add-wattage {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 12px 20px;
-            background: #fff;
-            color: #488C9A;
-            border: 2px dashed #488C9A;
-            border-radius: 10px;
-            font-size: 0.95rem;
-            font-weight: 500;
             cursor: pointer;
             transition: all 0.2s ease;
         }
-        .btn-add-wattage:hover {
-            background: rgba(72, 140, 154, 0.1);
+        .profile-image-preview .change-photo-btn:hover {
+            background: rgba(72, 140, 154, 1);
         }
-
-        /* Specs Grid */
-        .specs-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-            gap: 16px;
+        .photo-upload-info {
+            flex: 1;
         }
-        .specs-grid .form-group {
-            margin-bottom: 0;
+        .photo-upload-info h4 {
+            margin: 0 0 8px 0;
+            font-size: 1rem;
+            color: #293E4C;
         }
-
-        /* Photo Upload */
-        .photo-upload-area {
-            padding: 40px 20px;
-            text-align: center;
-            border: 2px dashed rgba(72, 140, 154, 0.3);
-            border-radius: 12px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            background: #fafafa;
-        }
-        .photo-upload-area:hover {
-            border-color: #488C9A;
-            background: rgba(72, 140, 154, 0.05);
-        }
-        .photo-upload-area .upload-icon {
-            font-size: 2.5rem;
-            color: #488C9A;
-            margin-bottom: 12px;
-        }
-        .photo-upload-area .upload-text {
-            color: #333;
-            font-weight: 500;
-            margin-bottom: 8px;
-        }
-        .photo-upload-area .upload-subtext {
-            color: #6c757d;
+        .photo-upload-info p {
+            margin: 0 0 12px 0;
             font-size: 0.9rem;
+            color: #6c757d;
+            line-height: 1.5;
+        }
+        .photo-upload-info .info-note {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 10px 12px;
+            background: #f0f8ff;
+            border: 1px solid #b8daff;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            color: #0056b3;
+        }
+        .photo-upload-info .info-note i {
+            flex-shrink: 0;
+            margin-top: 2px;
         }
         .photo-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
             margin-top: 16px;
+        }
+        .photo-grid-item {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            aspect-ratio: 1;
+            background: #f8f9fa;
+        }
+        .photo-grid-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .photo-grid-item .photo-loading {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f8f9fa;
+        }
+        .photo-grid-item .photo-loading::after {
+            content: '';
+            width: 24px;
+            height: 24px;
+            border: 3px solid #e9ecef;
+            border-top-color: #488C9A;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .photo-grid-item .remove-photo-btn {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+        .photo-grid-item:hover .remove-photo-btn {
+            opacity: 1;
+        }
+        .add-more-photos-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            aspect-ratio: 1;
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            cursor: pointer;
+            color: #6c757d;
+            font-size: 1.5rem;
+            transition: all 0.2s ease;
+            background: #fafafa;
+        }
+        .add-more-photos-btn:hover {
+            border-color: #488C9A;
+            color: #488C9A;
+            background: rgba(72, 140, 154, 0.05);
         }
 
         /* Success/Error Messages */
@@ -1468,13 +1658,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-row single">
                     <div class="form-group">
                         <label>Project Photo<span class="optional-tag">(optional)</span></label>
-                        <div class="photo-upload-area" id="prePhotoDrop" onclick="document.getElementById('prePhotoInput').click()">
-                            <div class="upload-icon">&#128247;</div>
-                            <div class="upload-text">Drop image here or click to browse</div>
-                            <div class="upload-subtext">PNG, JPG, or GIF up to 10MB</div>
+                        <div class="photo-upload-container">
+                            <div class="profile-image-preview" id="profileImagePreview">
+                                <img src="pictures/project_default.png" alt="Project Photo" id="profileImageImg">
+                                <span class="profile-badge">Profile</span>
+                                <button type="button" class="change-photo-btn" onclick="document.getElementById('prePhotoInput').click()">
+                                    <i class="fas fa-camera"></i> Change
+                                </button>
+                            </div>
+                            <div class="photo-upload-info">
+                                <h4>Project Profile Image</h4>
+                                <p>This image will be displayed on the project card and overview. If you don't upload an image, a default placeholder will be used.</p>
+                                <div class="info-note">
+                                    <i class="fas fa-info-circle"></i>
+                                    <span>You can upload additional photos from the Project Overview page after creating the project.</span>
+                                </div>
+                            </div>
                         </div>
-                        <input type="file" id="prePhotoInput" accept="image/*" style="display:none">
-                        <div class="photo-grid" id="prePhotoGrid"></div>
+                        <input type="file" id="prePhotoInput" accept="image/*" style="display:none" multiple>
+                        <div class="photo-grid" id="prePhotoGrid">
+                            <!-- Additional photos will appear here -->
+                        </div>
                     </div>
                 </div>
 
@@ -1530,27 +1734,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-row">
                     <div class="form-group">
                         <label>Timezone</label>
-                        <select name="timezone">
+                        <select name="timezone" id="timezone">
                             <option value="America/New_York" selected>Eastern</option>
                             <option value="America/Chicago">Central</option>
                             <option value="America/Denver">Mountain</option>
                             <option value="America/Los_Angeles">Pacific</option>
                             <option value="UTC">UTC</option>
                         </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Site Receiving Hours</label>
-                        <div class="hours-grid">
-                            <div class="form-group">
-                                <label style="font-size: 0.85rem; color: #6c757d;">Opens</label>
-                                <input type="time" name="receiving_hours_start" value="08:00">
-                            </div>
-                            <div class="form-group">
-                                <label style="font-size: 0.85rem; color: #6c757d;">Closes</label>
-                                <input type="time" name="receiving_hours_end" value="17:00">
-                            </div>
-                        </div>
-                        <span class="help-text">Hours will be set for Monday-Friday</span>
                     </div>
                     <div class="form-group">
                         <label>Appointment Window<span class="optional-tag">(optional)</span></label>
@@ -1563,6 +1753,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <option value="120">2 hours</option>
                         </select>
                         <span class="help-text">Duration of each delivery appointment slot</span>
+                    </div>
+                </div>
+
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label>Site Receiving Hours</label>
+                        <div class="receiving-schedule-container">
+                            <div class="schedule-quick-set">
+                                <button type="button" class="quick-set-btn active" onclick="setQuickSchedule('business')">Mon-Fri 8am-5pm</button>
+                                <button type="button" class="quick-set-btn" onclick="setQuickSchedule('extended')">Mon-Sat 7am-6pm</button>
+                                <button type="button" class="quick-set-btn" onclick="setQuickSchedule('24-7')">24/7</button>
+                                <button type="button" class="quick-set-btn" onclick="setQuickSchedule('custom')">Custom</button>
+                            </div>
+                            <div class="daily-hours-grid" id="dailyHoursGrid">
+                                <div class="day-row" data-day="0">
+                                    <div class="day-name"><span>Sunday</span><abbr>Sun</abbr></div>
+                                    <div class="hours-inputs">
+                                        <input type="time" name="hours_start_0" value="08:00" disabled>
+                                        <span>to</span>
+                                        <input type="time" name="hours_end_0" value="17:00" disabled>
+                                    </div>
+                                    <div class="day-toggle" onclick="toggleDay(this, 0)"></div>
+                                </div>
+                                <div class="day-row" data-day="1">
+                                    <div class="day-name"><span>Monday</span><abbr>Mon</abbr></div>
+                                    <div class="hours-inputs">
+                                        <input type="time" name="hours_start_1" value="08:00">
+                                        <span>to</span>
+                                        <input type="time" name="hours_end_1" value="17:00">
+                                    </div>
+                                    <div class="day-toggle active" onclick="toggleDay(this, 1)"></div>
+                                </div>
+                                <div class="day-row" data-day="2">
+                                    <div class="day-name"><span>Tuesday</span><abbr>Tue</abbr></div>
+                                    <div class="hours-inputs">
+                                        <input type="time" name="hours_start_2" value="08:00">
+                                        <span>to</span>
+                                        <input type="time" name="hours_end_2" value="17:00">
+                                    </div>
+                                    <div class="day-toggle active" onclick="toggleDay(this, 2)"></div>
+                                </div>
+                                <div class="day-row" data-day="3">
+                                    <div class="day-name"><span>Wednesday</span><abbr>Wed</abbr></div>
+                                    <div class="hours-inputs">
+                                        <input type="time" name="hours_start_3" value="08:00">
+                                        <span>to</span>
+                                        <input type="time" name="hours_end_3" value="17:00">
+                                    </div>
+                                    <div class="day-toggle active" onclick="toggleDay(this, 3)"></div>
+                                </div>
+                                <div class="day-row" data-day="4">
+                                    <div class="day-name"><span>Thursday</span><abbr>Thu</abbr></div>
+                                    <div class="hours-inputs">
+                                        <input type="time" name="hours_start_4" value="08:00">
+                                        <span>to</span>
+                                        <input type="time" name="hours_end_4" value="17:00">
+                                    </div>
+                                    <div class="day-toggle active" onclick="toggleDay(this, 4)"></div>
+                                </div>
+                                <div class="day-row" data-day="5">
+                                    <div class="day-name"><span>Friday</span><abbr>Fri</abbr></div>
+                                    <div class="hours-inputs">
+                                        <input type="time" name="hours_start_5" value="08:00">
+                                        <span>to</span>
+                                        <input type="time" name="hours_end_5" value="17:00">
+                                    </div>
+                                    <div class="day-toggle active" onclick="toggleDay(this, 5)"></div>
+                                </div>
+                                <div class="day-row" data-day="6">
+                                    <div class="day-name"><span>Saturday</span><abbr>Sat</abbr></div>
+                                    <div class="hours-inputs">
+                                        <input type="time" name="hours_start_6" value="08:00" disabled>
+                                        <span>to</span>
+                                        <input type="time" name="hours_end_6" value="17:00" disabled>
+                                    </div>
+                                    <div class="day-toggle" onclick="toggleDay(this, 6)"></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -1638,77 +1907,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <!-- Manual Setup Mode -->
                 <div class="module-mode-content" id="mode-manual">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Manufacturer<span class="required-star">*</span></label>
-                            <select name="manufacturer_id" id="manufacturer_id" onchange="handleManufacturerChange(this)">
-                                <option value="">Select Manufacturer</option>
-                                <?php foreach ($manufacturers as $mfg): ?>
-                                    <option value="<?php echo $mfg['id']; ?>">
-                                        <?php echo htmlspecialchars($mfg['name']); ?>
-                                        <?php if (!empty($mfg['short_name'])): ?>(<?php echo htmlspecialchars($mfg['short_name']); ?>)<?php endif; ?>
-                                    </option>
-                                <?php endforeach; ?>
-                                <option value="add_new" style="font-style: italic;">+ Add New Manufacturer</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Location<span class="required-star">*</span></label>
-                            <select name="location_id" id="location_id" disabled onchange="checkModuleFieldsVisibility()">
-                                <option value="">Select a manufacturer first</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div id="module-fields-container" style="display: none;">
-                        <div class="form-group">
-                            <label>Wattage Orders<span class="required-star">*</span></label>
-                            <div id="wattage-container" class="wattage-container">
-                                <!-- Wattage entries added by JS -->
-                            </div>
-                            <button type="button" class="btn-add-wattage" onclick="addWattageField()">
-                                <span>+</span> Add Wattage Order
-                            </button>
-                        </div>
-
-                        <details style="margin-top: 24px;">
-                            <summary style="cursor: pointer; font-weight: 500; color: #488C9A; padding: 12px 0;">
-                                Advanced: Pallet & Logistics Specifications
-                            </summary>
-                            <div style="padding: 20px; background: #f8f9fa; border-radius: 12px; margin-top: 12px;">
-                                <div class="specs-grid">
-                                    <div class="form-group">
-                                        <label>Modules/Pallet</label>
-                                        <input type="number" name="modules_per_pallet" min="1" placeholder="e.g. 30">
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Pallets/Truck</label>
-                                        <input type="number" name="pallets_per_truck" min="1" placeholder="e.g. 22">
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Length (mm)</label>
-                                        <input type="number" name="pallet_length_mm" min="1" placeholder="e.g. 2384">
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Depth (mm)</label>
-                                        <input type="number" name="pallet_depth_mm" min="1" placeholder="e.g. 1303">
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Stack Height (mm)</label>
-                                        <input type="number" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g. 2200">
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Weight (kg)</label>
-                                        <input type="number" name="pallet_total_weight_kg" min="1" placeholder="e.g. 1200">
-                                    </div>
-                                </div>
-                            </div>
-                        </details>
-                    </div>
-
-                    <div id="module-fields-notice" class="module-selection-notice" style="padding: 20px; background: #f0f4f5; border-radius: 12px; text-align: center; color: #666;">
-                        <p style="margin: 0;">Please select a manufacturer and location above to add wattage orders.</p>
-                    </div>
+                    <?php
+                    // Include the shared module batch section component
+                    $prefManufacturerId = null;
+                    $prefLocationId = null;
+                    $existingWattages = [];
+                    $module = null; // No existing module data for new project
+                    include __DIR__ . '/components/module_batch_section.php';
+                    ?>
                 </div>
 
                 <div class="section-actions">
@@ -1767,6 +1973,147 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <script>
 let currentStep = 1;
+
+// ========== Receiving Schedule Functions ==========
+function toggleDay(toggleEl, dayNum) {
+    const row = document.querySelector(`.day-row[data-day="${dayNum}"]`);
+    const inputs = row.querySelectorAll('input[type="time"]');
+    const isActive = toggleEl.classList.toggle('active');
+
+    inputs.forEach(input => {
+        input.disabled = !isActive;
+        if (!isActive) {
+            // Clear the name attribute so disabled days don't submit
+            input.dataset.originalName = input.name;
+            input.name = '';
+        } else {
+            // Restore the name attribute
+            if (input.dataset.originalName) {
+                input.name = input.dataset.originalName;
+            }
+        }
+    });
+
+    row.classList.toggle('disabled', !isActive);
+    updateQuickSetButtons();
+}
+
+function setQuickSchedule(preset) {
+    const schedules = {
+        'business': {
+            days: [1, 2, 3, 4, 5],
+            start: '08:00',
+            end: '17:00'
+        },
+        'extended': {
+            days: [1, 2, 3, 4, 5, 6],
+            start: '07:00',
+            end: '18:00'
+        },
+        '24-7': {
+            days: [0, 1, 2, 3, 4, 5, 6],
+            start: '00:00',
+            end: '23:59'
+        },
+        'custom': null
+    };
+
+    if (preset === 'custom') {
+        // Just highlight the custom button, don't change anything
+        document.querySelectorAll('.quick-set-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelector('.quick-set-btn:last-child').classList.add('active');
+        return;
+    }
+
+    const schedule = schedules[preset];
+    if (!schedule) return;
+
+    // Reset all days first
+    for (let day = 0; day <= 6; day++) {
+        const row = document.querySelector(`.day-row[data-day="${day}"]`);
+        const toggle = row.querySelector('.day-toggle');
+        const inputs = row.querySelectorAll('input[type="time"]');
+        const isEnabled = schedule.days.includes(day);
+
+        // Set toggle state
+        toggle.classList.toggle('active', isEnabled);
+        row.classList.toggle('disabled', !isEnabled);
+
+        // Set input values and enabled state
+        inputs.forEach((input, idx) => {
+            input.disabled = !isEnabled;
+            if (idx === 0) input.value = schedule.start;
+            if (idx === 1) input.value = schedule.end;
+
+            if (!isEnabled) {
+                input.dataset.originalName = input.name;
+                input.name = '';
+            } else {
+                const baseName = idx === 0 ? `hours_start_${day}` : `hours_end_${day}`;
+                input.name = baseName;
+            }
+        });
+    }
+
+    // Update button states
+    document.querySelectorAll('.quick-set-btn').forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+}
+
+function updateQuickSetButtons() {
+    // Check if current schedule matches any preset
+    const rows = document.querySelectorAll('.day-row');
+    let enabledDays = [];
+    let startTime = null;
+    let endTime = null;
+
+    rows.forEach(row => {
+        const day = parseInt(row.dataset.day);
+        const toggle = row.querySelector('.day-toggle');
+        if (toggle.classList.contains('active')) {
+            enabledDays.push(day);
+            const inputs = row.querySelectorAll('input[type="time"]');
+            if (!startTime) startTime = inputs[0].value;
+            if (!endTime) endTime = inputs[1].value;
+        }
+    });
+
+    // Check against presets
+    const isBusiness = JSON.stringify(enabledDays.sort()) === JSON.stringify([1,2,3,4,5]) &&
+                       startTime === '08:00' && endTime === '17:00';
+    const isExtended = JSON.stringify(enabledDays.sort()) === JSON.stringify([1,2,3,4,5,6]) &&
+                       startTime === '07:00' && endTime === '18:00';
+    const is247 = JSON.stringify(enabledDays.sort()) === JSON.stringify([0,1,2,3,4,5,6]) &&
+                  startTime === '00:00' && endTime === '23:59';
+
+    document.querySelectorAll('.quick-set-btn').forEach(btn => btn.classList.remove('active'));
+
+    if (isBusiness) {
+        document.querySelector('.quick-set-btn:nth-child(1)').classList.add('active');
+    } else if (isExtended) {
+        document.querySelector('.quick-set-btn:nth-child(2)').classList.add('active');
+    } else if (is247) {
+        document.querySelector('.quick-set-btn:nth-child(3)').classList.add('active');
+    } else {
+        document.querySelector('.quick-set-btn:nth-child(4)').classList.add('active');
+    }
+}
+
+// Initialize schedule form - disable inputs for non-active days
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.day-row').forEach(row => {
+        const toggle = row.querySelector('.day-toggle');
+        const inputs = row.querySelectorAll('input[type="time"]');
+        const isActive = toggle.classList.contains('active');
+
+        if (!isActive) {
+            inputs.forEach(input => {
+                input.dataset.originalName = input.name;
+                input.name = '';
+            });
+        }
+    });
+});
 
 // Site document type sub-types mapping
 const siteDocSubTypes = {
@@ -2004,76 +2351,8 @@ function submitForm() {
     }
 }
 
-function addWattageField() {
-    const container = document.getElementById('wattage-container');
-    const index = container.children.length;
-
-    const entry = document.createElement('div');
-    entry.className = 'wattage-entry';
-    entry.innerHTML = `
-        <div class="form-group">
-            <label>Wattage (W)</label>
-            <input type="number" name="wattages[${index}]" placeholder="e.g. 555" step="1">
-        </div>
-        <div class="form-group">
-            <label>Quantity</label>
-            <input type="number" name="quantities[${index}]" placeholder="e.g. 1000" step="1">
-        </div>
-        <button type="button" class="btn-remove" onclick="this.parentElement.remove()">Remove</button>
-    `;
-    container.appendChild(entry);
-}
-
-function handleManufacturerChange(select) {
-    if (select.value === 'add_new') {
-        window.location.href = 'add_manufacturer.php';
-        return;
-    }
-
-    const locationSelect = document.getElementById('location_id');
-    if (select.value) {
-        locationSelect.disabled = false;
-        // Fetch locations via AJAX
-        fetch(`get_manufacturer_locations.php?manufacturer_id=${select.value}`)
-            .then(r => r.json())
-            .then(data => {
-                locationSelect.innerHTML = '<option value="">Select Location</option>';
-                if (data.locations && data.locations.length > 0) {
-                    data.locations.forEach(loc => {
-                        const name = loc.location_name || loc.city || 'Location';
-                        const address = loc.formatted_address ? ` - ${loc.formatted_address}` : '';
-                        locationSelect.innerHTML += `<option value="${loc.id}">${name}${address}</option>`;
-                    });
-                } else {
-                    locationSelect.innerHTML = '<option value="">No locations found</option>';
-                }
-                checkModuleFieldsVisibility();
-            })
-            .catch(() => {
-                locationSelect.innerHTML = '<option value="">No locations found</option>';
-                checkModuleFieldsVisibility();
-            });
-    } else {
-        locationSelect.disabled = true;
-        locationSelect.innerHTML = '<option value="">Select a manufacturer first</option>';
-        checkModuleFieldsVisibility();
-    }
-}
-
-function checkModuleFieldsVisibility() {
-    const manufacturerId = document.getElementById('manufacturer_id').value;
-    const locationId = document.getElementById('location_id').value;
-    const moduleFieldsContainer = document.getElementById('module-fields-container');
-    const moduleFieldsNotice = document.getElementById('module-fields-notice');
-
-    if (manufacturerId && manufacturerId !== 'add_new' && locationId) {
-        moduleFieldsContainer.style.display = 'block';
-        moduleFieldsNotice.style.display = 'none';
-    } else {
-        moduleFieldsContainer.style.display = 'none';
-        moduleFieldsNotice.style.display = 'block';
-    }
-}
+// Module mode uses the shared component from module_batch_section.php
+// Functions like mb_addWattageField, mb_handleManufacturerChange are provided by the component
 
 let currentModuleMode = 'import';
 
@@ -2088,24 +2367,22 @@ function setModuleMode(mode) {
     document.getElementById('mode-import').classList.toggle('active', mode === 'import');
     document.getElementById('mode-manual').classList.toggle('active', mode === 'manual');
 
-    // If switching to manual mode, auto-add first wattage field if none exist
-    if (mode === 'manual') {
-        const container = document.getElementById('wattage-container');
-        if (container && container.children.length === 0) {
-            addWattageField();
-        }
-    }
+    // The module_batch_section.php component already initializes a wattage field on DOMContentLoaded
 }
 
 // Photo upload handling
 (function() {
-    const drop = document.getElementById('prePhotoDrop');
+    const profilePreview = document.getElementById('profileImagePreview');
+    const profileImg = document.getElementById('profileImageImg');
     const input = document.getElementById('prePhotoInput');
     const grid = document.getElementById('prePhotoGrid');
     const token = document.getElementById('tempPhotoToken');
     const orderInput = document.getElementById('tempPhotoOrder');
+    const defaultImageSrc = 'pictures/project_default.png';
+    let uploadedPhotos = [];
+    let isFirstPhoto = true;
 
-    if (!drop || !input) return;
+    if (!input) return;
 
     input.addEventListener('change', async () => {
         if (input.files?.length) {
@@ -2116,49 +2393,176 @@ function setModuleMode(mode) {
         }
     });
 
-    drop.addEventListener('dragover', e => { e.preventDefault(); drop.style.borderColor = '#488C9A'; });
-    drop.addEventListener('dragleave', () => { drop.style.borderColor = ''; });
-    drop.addEventListener('drop', async e => {
-        e.preventDefault();
-        drop.style.borderColor = '';
-        if (e.dataTransfer?.files?.length) {
-            for (const file of e.dataTransfer.files) {
-                await uploadPhoto(file);
+    // Drag and drop on profile preview
+    if (profilePreview) {
+        profilePreview.addEventListener('dragover', e => {
+            e.preventDefault();
+            profilePreview.style.borderColor = '#488C9A';
+        });
+        profilePreview.addEventListener('dragleave', () => {
+            profilePreview.style.borderColor = '';
+        });
+        profilePreview.addEventListener('drop', async e => {
+            e.preventDefault();
+            profilePreview.style.borderColor = '';
+            if (e.dataTransfer?.files?.length) {
+                for (const file of e.dataTransfer.files) {
+                    await uploadPhoto(file);
+                }
             }
-        }
-    });
+        });
+    }
 
     async function uploadPhoto(file) {
+        // Show loading state
+        const tileId = 'photo-' + Date.now();
+        const isFirst = uploadedPhotos.length === 0;
+
+        if (isFirst) {
+            // Show loading on profile preview
+            profileImg.style.opacity = '0.5';
+        }
+
+        // Add loading tile to grid for additional photos
+        if (!isFirst) {
+            addLoadingTile(tileId);
+        }
+
         const fd = new FormData();
         fd.append('file', file);
         fd.append('token', token.value);
+
         try {
             const res = await fetch('upload_temp_photo.php', { method: 'POST', body: fd });
             const data = await res.json();
             if (data.success) {
-                addPhotoTile(data);
+                uploadedPhotos.push({ name: data.name, path: data.path });
+
+                if (isFirst) {
+                    // Update profile preview with first photo
+                    updateProfileImage(data.path);
+                } else {
+                    // Replace loading tile with actual photo
+                    replaceLoadingTile(tileId, data);
+                }
+
+                updatePhotoOrder();
+                updateAddMoreButton();
+            } else {
+                // Remove loading tile on error
+                removeLoadingTile(tileId);
+                profileImg.style.opacity = '1';
             }
         } catch (err) {
             console.error('Upload failed', err);
+            removeLoadingTile(tileId);
+            profileImg.style.opacity = '1';
         }
     }
 
-    function addPhotoTile(data) {
+    function updateProfileImage(path) {
+        const tempImg = new Image();
+        tempImg.onload = function() {
+            profileImg.src = path;
+            profileImg.style.opacity = '1';
+        };
+        tempImg.onerror = function() {
+            profileImg.src = defaultImageSrc;
+            profileImg.style.opacity = '1';
+        };
+        tempImg.src = path;
+    }
+
+    function addLoadingTile(tileId) {
         const tile = document.createElement('div');
-        tile.style.cssText = 'position:relative; border-radius:8px; overflow:hidden;';
-        tile.innerHTML = `
-            <img src="${data.path}" style="width:100%; height:80px; object-fit:cover;">
-            <button type="button" onclick="this.parentElement.remove(); updatePhotoOrder();" style="position:absolute; top:4px; right:4px; background:rgba(0,0,0,0.5); color:#fff; border:none; border-radius:50%; width:24px; height:24px; cursor:pointer;">&times;</button>
-        `;
+        tile.className = 'photo-grid-item';
+        tile.id = tileId;
+        tile.innerHTML = '<div class="photo-loading"></div>';
+
+        // Insert before the add more button if it exists
+        const addMoreBtn = grid.querySelector('.add-more-photos-btn');
+        if (addMoreBtn) {
+            grid.insertBefore(tile, addMoreBtn);
+        } else {
+            grid.appendChild(tile);
+        }
+    }
+
+    function replaceLoadingTile(tileId, data) {
+        const tile = document.getElementById(tileId);
+        if (!tile) return;
+
+        const img = document.createElement('img');
+        img.onload = function() {
+            tile.innerHTML = '';
+            tile.appendChild(img);
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'remove-photo-btn';
+            removeBtn.innerHTML = '&times;';
+            removeBtn.onclick = () => removePhoto(data.name);
+            tile.appendChild(removeBtn);
+        };
+        img.onerror = function() {
+            tile.remove();
+        };
+        img.src = data.path;
         tile.dataset.name = data.name;
-        grid.appendChild(tile);
+    }
+
+    function removeLoadingTile(tileId) {
+        const tile = document.getElementById(tileId);
+        if (tile) tile.remove();
+    }
+
+    function removePhoto(name) {
+        const index = uploadedPhotos.findIndex(p => p.name === name);
+        if (index === -1) return;
+
+        uploadedPhotos.splice(index, 1);
+
+        // Remove tile from grid
+        const tile = grid.querySelector(`[data-name="${name}"]`);
+        if (tile) tile.remove();
+
+        // If we removed the first photo, update profile preview
+        if (index === 0) {
+            if (uploadedPhotos.length > 0) {
+                // Move the next photo to be the profile
+                updateProfileImage(uploadedPhotos[0].path);
+                // Remove it from grid since it's now the profile
+                const nextTile = grid.querySelector(`[data-name="${uploadedPhotos[0].name}"]`);
+                if (nextTile) nextTile.remove();
+            } else {
+                // No more photos, show default
+                profileImg.src = defaultImageSrc;
+            }
+        }
+
         updatePhotoOrder();
+        updateAddMoreButton();
+    }
+
+    function updateAddMoreButton() {
+        // Add the "add more" button if there are photos and no button exists
+        let addMoreBtn = grid.querySelector('.add-more-photos-btn');
+
+        if (uploadedPhotos.length > 0 && !addMoreBtn) {
+            addMoreBtn = document.createElement('div');
+            addMoreBtn.className = 'add-more-photos-btn';
+            addMoreBtn.innerHTML = '+';
+            addMoreBtn.onclick = () => input.click();
+            grid.appendChild(addMoreBtn);
+        } else if (uploadedPhotos.length === 0 && addMoreBtn) {
+            addMoreBtn.remove();
+        }
     }
 
     window.updatePhotoOrder = function() {
-        const names = Array.from(grid.querySelectorAll('[data-name]')).map(el => el.dataset.name);
-        orderInput.value = names.join(',');
+        orderInput.value = uploadedPhotos.map(p => p.name).join(',');
     };
+
+    window.removePhoto = removePhoto;
 })();
 
 // Google Places Address Autocomplete
