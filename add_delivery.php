@@ -47,7 +47,7 @@ if ($project_id) {
 }
 
 // Fetch all projects (Global Admins see all, Admins might see filtered later if needed)
-$stmtP = $conn->prepare("SELECT id, project_name FROM projects ORDER BY project_name ASC");
+$stmtP = $conn->prepare("SELECT id, project_name FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY project_name ASC");
 if ($stmtP) {
     $stmtP->execute();
     $resultP = $stmtP->get_result();

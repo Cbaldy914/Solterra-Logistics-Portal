@@ -1388,6 +1388,78 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
         $stmtClose->execute();
         $stmtClose->close();
 
+        // Delete bulk data from database (data is preserved in the ZIP archive)
+        // Order matters due to foreign key constraints
+
+        // 1. Delete warranty_claims linked to site_scheduling for this project
+        $stmtDelWarranty = $conn->prepare('DELETE wc FROM warranty_claims wc
+            JOIN site_scheduling ss ON wc.scheduling_id = ss.id
+            WHERE ss.project_id = ?');
+        $stmtDelWarranty->bind_param('i', $project_id);
+        $stmtDelWarranty->execute();
+        $stmtDelWarranty->close();
+
+        // 2. Delete site_safety for this project
+        $stmtDelSiteSafety = $conn->prepare('DELETE FROM site_safety WHERE project_id = ?');
+        $stmtDelSiteSafety->bind_param('i', $project_id);
+        $stmtDelSiteSafety->execute();
+        $stmtDelSiteSafety->close();
+
+        // 3. Delete site_scheduling for this project
+        $stmtDelScheduling = $conn->prepare('DELETE FROM site_scheduling WHERE project_id = ?');
+        $stmtDelScheduling->bind_param('i', $project_id);
+        $stmtDelScheduling->execute();
+        $stmtDelScheduling->close();
+
+        // 4. Delete site_operating_hours for this project
+        $stmtDelSiteHours = $conn->prepare('DELETE FROM site_operating_hours WHERE project_id = ?');
+        $stmtDelSiteHours->bind_param('i', $project_id);
+        $stmtDelSiteHours->execute();
+        $stmtDelSiteHours->close();
+
+        // 5. Delete delivery_pallets (links between deliveries and pallets)
+        $stmtDelDP = $conn->prepare('DELETE dp FROM delivery_pallets dp
+            INNER JOIN deliveries d ON dp.delivery_id = d.id
+            WHERE d.project_id = ?');
+        $stmtDelDP->bind_param('i', $project_id);
+        $stmtDelDP->execute();
+        $stmtDelDP->close();
+
+        // 6. Delete inventory_pallets tied to modules for this project
+        $stmtDelPallets = $conn->prepare('DELETE ip FROM inventory_pallets ip
+            JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            JOIN modules m ON umi.unassigned_module_id = m.id
+            WHERE m.project_id = ?');
+        $stmtDelPallets->bind_param('i', $project_id);
+        $stmtDelPallets->execute();
+        $stmtDelPallets->close();
+
+        // 7. Delete unassigned_module_items tied to modules for this project
+        $stmtDelModuleItems = $conn->prepare('DELETE umi FROM unassigned_module_items umi
+            JOIN modules m ON umi.unassigned_module_id = m.id
+            WHERE m.project_id = ?');
+        $stmtDelModuleItems->bind_param('i', $project_id);
+        $stmtDelModuleItems->execute();
+        $stmtDelModuleItems->close();
+
+        // 8. Delete modules (batches) for this project
+        $stmtDelModules = $conn->prepare('DELETE FROM modules WHERE project_id = ?');
+        $stmtDelModules->bind_param('i', $project_id);
+        $stmtDelModules->execute();
+        $stmtDelModules->close();
+
+        // 9. Delete deliveries for this project
+        $stmtDelDeliveries = $conn->prepare('DELETE FROM deliveries WHERE project_id = ?');
+        $stmtDelDeliveries->bind_param('i', $project_id);
+        $stmtDelDeliveries->execute();
+        $stmtDelDeliveries->close();
+
+        // 10. Delete project_wattage_orders for this project
+        $stmtDelWattageOrders = $conn->prepare('DELETE FROM project_wattage_orders WHERE project_id = ?');
+        $stmtDelWattageOrders->bind_param('i', $project_id);
+        $stmtDelWattageOrders->execute();
+        $stmtDelWattageOrders->close();
+
         // Cleanup temp files
         @unlink($zipPath);
         $it = new RecursiveDirectoryIterator($tmpDir, FilesystemIterator::SKIP_DOTS);
@@ -1630,18 +1702,33 @@ if ($posted_summary_text !== null) {
         <p style="color: #664d03; margin-bottom: 15px;">
             You are about to close out <strong><?php echo htmlspecialchars($project_row['project_name'] ?? ''); ?></strong>.
         </p>
-        <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #ffc107;">
+        <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #ffc107;">
             <p style="margin: 0; color: #664d03; font-size: 14px;">
                 <strong>This action will:</strong>
             </p>
             <ul style="margin: 8px 0 0 20px; color: #664d03; font-size: 14px;">
-                <li>Generate a complete archive of all project data</li>
+                <li>Generate a complete archive of all project data (ZIP file)</li>
                 <li>Mark the project as closed in the system</li>
                 <li>Hide the project from active project views</li>
             </ul>
         </div>
+        <div style="background: #f8d7da; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #f5c6cb;">
+            <p style="margin: 0; color: #721c24; font-size: 14px;">
+                <strong>Warning - Permanent Data Deletion:</strong>
+            </p>
+            <ul style="margin: 8px 0 0 20px; color: #721c24; font-size: 14px;">
+                <li>All inventory pallets for this project will be deleted</li>
+                <li>All deliveries and delivery records will be deleted</li>
+                <li>All module batches will be deleted</li>
+                <li>All site scheduling appointments will be deleted</li>
+                <li>All warranty claims will be deleted</li>
+            </ul>
+            <p style="margin: 10px 0 0 0; color: #721c24; font-size: 13px;">
+                This data will only exist in the archived ZIP file after close-out.
+            </p>
+        </div>
         <p style="color: #5f6f7d; font-size: 13px; margin-bottom: 20px;">
-            The archived data will remain accessible from the Archived Projects page.
+            The archived ZIP file will remain accessible from the Archived Projects page.
         </p>
         <div style="display: flex; gap: 12px; justify-content: flex-end;">
             <button type="button" class="cta cta-secondary" onclick="hideCloseoutConfirm()">Cancel</button>
