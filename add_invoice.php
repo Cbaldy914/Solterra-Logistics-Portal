@@ -94,8 +94,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Fetch list of projects to select from
 $stmtProj = $conn->prepare("
-    SELECT id, project_name 
+    SELECT id, project_name
       FROM projects
+     WHERE (status IS NULL OR status = 'active')
 ");
 $stmtProj->execute();
 $projects_result = $stmtProj->get_result();

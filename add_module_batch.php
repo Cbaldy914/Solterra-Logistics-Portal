@@ -85,7 +85,7 @@ if (!$project && $role === 'admin') {
     $stmtAdmin->fetch();
     $stmtAdmin->close();
     if ($account_id_for_admin) {
-        $stmtProj = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC");
+        $stmtProj = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? AND (status IS NULL OR status = 'active') ORDER BY project_name ASC");
         $stmtProj->bind_param("i", $account_id_for_admin);
         $stmtProj->execute();
         $resProj = $stmtProj->get_result();
@@ -96,7 +96,7 @@ if (!$project && $role === 'admin') {
 if (!$project && $role === 'global_admin') {
     $resAcc = $conn->query("SELECT id, name FROM customer_accounts ORDER BY name ASC");
     if ($resAcc) { while ($r = $resAcc->fetch_assoc()) { $accounts[] = $r; } }
-    $resProj = $conn->query("SELECT id, project_name, account_id FROM projects ORDER BY account_id, project_name ASC");
+    $resProj = $conn->query("SELECT id, project_name, account_id FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY account_id, project_name ASC");
     if ($resProj) { while ($r = $resProj->fetch_assoc()) { $projects_for_account[] = $r; } }
 }
 

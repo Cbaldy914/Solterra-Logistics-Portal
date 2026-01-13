@@ -33,9 +33,10 @@ $account_id_for_admin = null; // Define it here for potential reuse
 // If the user is global_admin, they can see all projects
 if ($role === 'global_admin') {
     $sqlProjects = "
-        SELECT 
+        SELECT
             p.id,
             p.project_name,
+            p.image_url,
             c.name AS account_name,
             p.estimated_completion_date,
             p.project_address,
@@ -51,20 +52,21 @@ if ($role === 'global_admin') {
                   AND (d3.status_of_delivery IS NULL OR d3.status_of_delivery <> 'Canceled')
             ), 0) AS delivery_count,
             (
-                SELECT COUNT(*) FROM inventory_pallets ip 
+                SELECT COUNT(*) FROM inventory_pallets ip
                 LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
                 LEFT JOIN modules m ON umi.unassigned_module_id = m.id
                 WHERE (m.project_id = p.id OR ip.assigned_project_id = p.id OR ip.current_project_id = p.id)
                   AND ip.status = 'Delivered to Project'
             ) AS delivered_pallets,
             (
-                SELECT COUNT(*) FROM inventory_pallets ip 
+                SELECT COUNT(*) FROM inventory_pallets ip
                 LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
                 LEFT JOIN modules m ON umi.unassigned_module_id = m.id
                 WHERE (m.project_id = p.id OR ip.assigned_project_id = p.id OR ip.current_project_id = p.id)
             ) AS total_pallets
         FROM projects p
         JOIN customer_accounts c ON p.account_id = c.id
+        WHERE (p.status IS NULL OR p.status = 'active')
         ORDER BY c.name ASC, p.project_name ASC
     ";
 } elseif ($role === 'admin') {
@@ -84,9 +86,10 @@ if ($role === 'global_admin') {
          $sqlProjects = "SELECT NULL LIMIT 0"; // No projects if no account
     } else {
         $sqlProjects = "
-            SELECT 
+            SELECT
                 p.id,
                 p.project_name,
+                p.image_url,
                 c.name AS account_name,
                 p.estimated_completion_date,
                 p.project_address,
@@ -102,21 +105,21 @@ if ($role === 'global_admin') {
                       AND (d3.status_of_delivery IS NULL OR d3.status_of_delivery <> 'Canceled')
                 ), 0) AS delivery_count,
                 (
-                    SELECT COUNT(*) FROM inventory_pallets ip 
+                    SELECT COUNT(*) FROM inventory_pallets ip
                     LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
                     LEFT JOIN modules m ON umi.unassigned_module_id = m.id
                     WHERE (m.project_id = p.id OR ip.assigned_project_id = p.id OR ip.current_project_id = p.id)
                       AND ip.status = 'Delivered to Project'
                 ) AS delivered_pallets,
                 (
-                    SELECT COUNT(*) FROM inventory_pallets ip 
+                    SELECT COUNT(*) FROM inventory_pallets ip
                     LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
                     LEFT JOIN modules m ON umi.unassigned_module_id = m.id
                     WHERE (m.project_id = p.id OR ip.assigned_project_id = p.id OR ip.current_project_id = p.id)
                 ) AS total_pallets
             FROM projects p
             JOIN customer_accounts c ON p.account_id = c.id
-            WHERE p.account_id = ?
+            WHERE p.account_id = ? AND (p.status IS NULL OR p.status = 'active')
             ORDER BY p.project_name ASC
         ";
         $paramTypesProjects = "i";
@@ -136,27 +139,120 @@ if (!empty($paramTypesProjects)) {
 $stmtProjects->execute();
 $resultProjects = $stmtProjects->get_result();
 
+// Health counts for stats
+$health_counts = ['on_track' => 0, 'at_risk' => 0, 'behind' => 0, 'completed' => 0];
+$total_pallets_all = 0;
+$total_storage_modules = 0;
+
 if ($resultProjects) {
     while ($project = $resultProjects->fetch_assoc()) {
-        // Calculate project status and progress
+        $project_id = $project['id'];
+
+        // Fetch order data from project_wattage_orders (like dashboard.php)
+        $stmt_wattage = $conn->prepare("SELECT wattage, total_order FROM project_wattage_orders WHERE project_id = ? ORDER BY wattage ASC");
+        $stmt_wattage->bind_param("i", $project_id);
+        $stmt_wattage->execute();
+        $wattage_result = $stmt_wattage->get_result();
+
+        $total_order_quantity = 0;
+        $weighted_wattage_sum = 0;
+        while ($wattage_row = $wattage_result->fetch_assoc()) {
+            $qty = (int)$wattage_row['total_order'];
+            $watt = (float)$wattage_row['wattage'];
+            $total_order_quantity += $qty;
+            $weighted_wattage_sum += ($qty * $watt);
+        }
+        $stmt_wattage->close();
+
+        $avg_wattage = $total_order_quantity > 0 ? $weighted_wattage_sum / $total_order_quantity : 0;
+        $project['total_modules'] = $total_order_quantity;
+        $project['ordered_mw'] = ($total_order_quantity * $avg_wattage) / 1000000;
+        $project['order_progress'] = $project['project_size'] > 0 ? min(100, ($project['ordered_mw'] / $project['project_size']) * 100) : 0;
+
+        // Fetch delivered MW (like dashboard.php)
+        $stmt_delivered = $conn->prepare("SELECT d.wattage, SUM(d.quantity) as delivered_qty FROM deliveries d WHERE d.project_id = ? AND d.status_of_delivery = 'Delivered to Project' GROUP BY d.wattage");
+        $stmt_delivered->bind_param("i", $project_id);
+        $stmt_delivered->execute();
+        $delivered_result = $stmt_delivered->get_result();
+
+        $total_delivered = 0;
+        $delivered_mw = 0;
+        while ($del_row = $delivered_result->fetch_assoc()) {
+            $del_qty = (int)$del_row['delivered_qty'];
+            $del_watt = (float)$del_row['wattage'];
+            $total_delivered += $del_qty;
+            $delivered_mw += ($del_qty * $del_watt) / 1000000;
+        }
+        $stmt_delivered->close();
+
+        $project['delivered_modules'] = $total_delivered;
+        $project['delivered_mw'] = $delivered_mw;
+        $project['delivery_progress'] = $project['project_size'] > 0 ? min(100, ($delivered_mw / $project['project_size']) * 100) : 0;
+
+        // Fetch storage modules (like dashboard.php)
+        $stmt_storage = $conn->prepare("SELECT SUM(ip.quantity) AS total_in_storage FROM inventory_pallets ip WHERE ip.assigned_project_id = ? AND ip.status = 'In Warehouse'");
+        $stmt_storage->bind_param("i", $project_id);
+        $stmt_storage->execute();
+        $stmt_storage->bind_result($total_in_storage);
+        $stmt_storage->fetch();
+        $stmt_storage->close();
+        $total_in_storage = $total_in_storage ?: 0;
+        $project['storage_modules'] = $total_in_storage;
+        $project['storage_percent'] = $total_order_quantity > 0 ? round(($total_in_storage / $total_order_quantity) * 100) : 0;
+        $total_storage_modules += $total_in_storage;
+
+        // Legacy pallet-based progress calculations
         $delivered_pallets = (int)($project['delivered_pallets'] ?? 0);
         $total_pallets = (int)($project['total_pallets'] ?? 0);
-        $delivery_progress = $total_pallets > 0 ? ($delivered_pallets / $total_pallets) * 100 : 0;
-        
+        $total_pallets_all += $total_pallets;
+
         // Determine project status
         $project_status = 'Planning';
         if ($total_pallets > 0) {
-            if ($delivery_progress >= 100) {
+            if ($project['delivery_progress'] >= 100) {
                 $project_status = 'Completed';
-            } elseif ($delivery_progress > 0) {
+            } elseif ($project['delivery_progress'] > 0) {
                 $project_status = 'In Progress';
             } else {
                 $project_status = 'Ready to Ship';
             }
         }
-        
-        $project['delivery_progress'] = $delivery_progress;
+
+        // Calculate health (same logic as dashboard.php)
+        $today = new DateTime();
+        $health = 'on_track';
+        $health_text = 'On Track';
+        $health_reason = 'Project is progressing normally';
+
+        if ($project['delivery_progress'] >= 100) {
+            $health = 'completed';
+            $health_text = 'Completed';
+            $health_reason = 'All modules have been delivered to the project site';
+        } elseif (!empty($project['estimated_completion_date'])) {
+            $est_date = new DateTime($project['estimated_completion_date']);
+            $diff = $today->diff($est_date);
+            $days_remaining = $diff->days;
+            $is_past = $est_date < $today;
+
+            if ($is_past && $project['delivery_progress'] < 100) {
+                $health = 'behind';
+                $health_text = 'Behind';
+                $health_reason = 'Past completion date (' . $est_date->format('M j, Y') . ') with ' . round($project['delivery_progress']) . '% delivered';
+            } elseif (!$is_past && $days_remaining <= 30 && $project['delivery_progress'] < 80) {
+                $health = 'at_risk';
+                $health_text = 'At Risk';
+                $health_reason = $days_remaining . ' days until deadline with only ' . round($project['delivery_progress']) . '% delivered';
+            } else {
+                $health_reason = $is_past ? 'Completed on schedule' : $days_remaining . ' days remaining with ' . round($project['delivery_progress']) . '% delivered';
+            }
+        }
+
+        $health_counts[$health]++;
+
         $project['project_status'] = $project_status;
+        $project['health'] = $health;
+        $project['health_text'] = $health_text;
+        $project['health_reason'] = $health_reason;
         $projects[] = $project;
     }
 }
@@ -164,9 +260,24 @@ $stmtProjects->close();
 
 // Calculate summary statistics
 $total_projects = count($projects);
-$completed_projects = count(array_filter($projects, fn($p) => $p['project_status'] === 'Completed'));
-$in_progress_projects = count(array_filter($projects, fn($p) => $p['project_status'] === 'In Progress'));
 $total_mw = array_sum(array_map(fn($p) => (float)($p['project_size'] ?? 0), $projects));
+
+// Get archived projects count
+$archived_count = 0;
+if ($role === 'global_admin') {
+    $stmtArchived = $conn->prepare("SELECT COUNT(*) FROM archived_projects");
+    $stmtArchived->execute();
+    $stmtArchived->bind_result($archived_count);
+    $stmtArchived->fetch();
+    $stmtArchived->close();
+} elseif ($account_id_for_admin) {
+    $stmtArchived = $conn->prepare("SELECT COUNT(*) FROM archived_projects WHERE account_id = ?");
+    $stmtArchived->bind_param("i", $account_id_for_admin);
+    $stmtArchived->execute();
+    $stmtArchived->bind_result($archived_count);
+    $stmtArchived->fetch();
+    $stmtArchived->close();
+}
 
 $conn->close(); // Close connection after fetching project data
 ?>
@@ -179,6 +290,7 @@ $conn->close(); // Close connection after fetching project data
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         /* Header Section - Exact Match to Global Documents */
         .projects-header {
@@ -262,6 +374,38 @@ $conn->close(); // Close connection after fetching project data
             margin: 4px 0 0 0;
             font-weight: 500;
         }
+
+        .pipeline-chart-stat {
+            min-width: 140px;
+            padding: 10px 16px;
+        }
+
+        .pipeline-chart-container {
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 4px;
+        }
+
+        .pipeline-legend {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            font-size: 0.65em;
+            margin-top: 4px;
+        }
+
+        .pipeline-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .pipeline-legend-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
         
         .add-project-btn {
             background: #488C9A;
@@ -308,212 +452,144 @@ $conn->close(); // Close connection after fetching project data
                 font-size: 1rem;
             }
         }
-        /* Project Cards */
-        .projects-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-            gap: 25px;
-            margin-top: 30px;
-        }
-        
-        .project-card {
-            background: white;
-            border-radius: 16px;
-            padding: 25px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-            border: 1px solid #f0f0f0;
-            transition: all 0.3s ease;
-            position: relative;
-            /* Allow dropdowns to be fully visible outside the card */
-            overflow: visible;
-        }
-        
-        .project-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 32px rgba(72, 140, 154, 0.15);
-            border-color: #488C9A;
-        }
-        
-        .project-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-        }
-        
-        .project-header {
+        /* Section Header Row - Dashboard Style */
+        .section-header-row {
             display: flex;
             justify-content: space-between;
-            align-items: flex-start;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            padding: 16px 20px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            border-radius: 12px;
+            border: 1px solid #e9ecef;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
             margin-bottom: 20px;
         }
-        
-        .project-title {
-            font-size: 1.4rem;
+        .section-title-row { display: flex; align-items: center; gap: 12px; }
+        .section-header {
+            font-size: 1.3em;
             font-weight: 700;
-            color: #293E4C;
-            margin: 0 0 5px 0;
-            line-height: 1.3;
-        }
-        
-        .project-account {
-            font-size: 0.95rem;
-            color: #666;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             margin: 0;
-            font-weight: 500;
         }
-        
-        .project-status {
+        .section-controls { display: flex; align-items: center; gap: 12px; }
+        .view-archived-link {
             display: inline-flex;
             align-items: center;
             gap: 6px;
             padding: 6px 12px;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
             border-radius: 20px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .status-planning {
-            background: #fff3cd;
-            color: #856404;
-        }
-        
-        .status-ready {
-            background: #d1ecf1;
-            color: #0c5460;
-        }
-        
-        .status-progress {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        .status-completed {
-            background: #e2e3e5;
-            color: #383d41;
-        }
-        
-        .project-metrics {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin: 20px 0;
-        }
-        
-        .metric-item {
-            text-align: center;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 10px;
-        }
-        
-        .metric-value {
-            font-size: 1.3rem;
-            font-weight: 700;
-            color: #488C9A;
-            margin: 0 0 5px 0;
-        }
-        
-        .metric-label {
-            font-size: 0.85rem;
-            color: #666;
-            margin: 0;
+            color: #6c757d;
+            font-size: 0.8em;
             font-weight: 500;
-        }
-        
-        .progress-section {
-            margin: 20px 0;
-        }
-        
-        .progress-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-        
-        .progress-label {
-            font-size: 0.9rem;
-            font-weight: 600;
-            color: #293E4C;
-        }
-        
-        .progress-percentage {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: #488C9A;
-        }
-        
-        .progress-bar {
-            width: 100%;
-            height: 8px;
-            background: #e9ecef;
-            border-radius: 4px;
-            overflow: hidden;
-        }
-        
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            border-radius: 4px;
-            transition: width 0.6s ease;
-        }
-        
-        .project-actions {
-            display: flex;
-            gap: 10px;
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #f0f0f0;
-        }
-        
-        .btn-details {
-            flex: 1;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            color: white;
-            padding: 12px 20px;
-            border: none;
-            border-radius: 8px;
             text-decoration: none;
-            font-weight: 600;
-            text-align: center;
-            transition: all 0.3s ease;
+            transition: all 0.2s;
         }
-        
-        .btn-details:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3);
-        }
-        
-        .completion-date {
-            font-size: 0.9rem;
-            color: #666;
-            margin-top: 15px;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            text-align: center;
-        }
-        
-        .completion-date.overdue {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        
-        .completion-date.upcoming {
-            background: #fff3cd;
-            color: #856404;
-        }
-        
-        /* Legacy table styles for fallback */
-        .table-responsive {
-            display: none;
-        }
+        .view-archived-link:hover { background: #e8f4f7; border-color: #488C9A; color: #488C9A; }
+        .archived-count { background: #488C9A; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 0.9em; font-weight: 600; }
+        .view-toggle { display: inline-flex; background: #f1f3f4; border-radius: 8px; padding: 3px; gap: 3px; }
+        .view-toggle button { padding: 8px 14px; border-radius: 6px; font-weight: 600; font-size: 1em; border: none; cursor: pointer; color: #6c757d; background: transparent; transition: all 0.2s; }
+        .view-toggle button:hover { color: #293E4C; background: rgba(255,255,255,0.5); }
+        .view-toggle button.active { background: #fff; color: #293E4C; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+
+        /* Project Cards - Dashboard Style */
+        .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 28px; justify-content: start; max-width: 1400px; margin-top: 0; }
+        @media (min-width: 1400px) { .projects-grid { grid-template-columns: repeat(4, 1fr); } }
+        .projects-grid.active { display: grid; }
+        .projects-grid:not(.active) { display: none; }
+
+        .project-card { background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; overflow: hidden; transition: all 0.2s; cursor: pointer; }
+        .project-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.12); }
+        .project-card-image { width: 100%; height: 160px; background: #f0f2f4; position: relative; overflow: hidden; }
+        .project-card-image img { width: 100%; height: 100%; object-fit: cover; }
+        .project-card-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(45deg, rgba(72,140,154,0.9), rgba(58,110,127,0.9)); display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s; }
+        .project-card:hover .project-card-overlay { opacity: 1; }
+        .project-card-overlay span { color: #fff; font-size: 1em; font-weight: 600; }
+        .project-card-content { padding: 14px; }
+        .project-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; gap: 8px; }
+        .project-card-title { margin: 0; font-size: 1.05em; color: #293E4C; font-weight: 600; flex: 1; line-height: 1.3; }
+        .project-card-location { color: #6c757d; font-size: 0.75em; margin-bottom: 12px; }
+
+        /* Progress Rings Row - matching dashboard.php */
+        .progress-rings-row { display: flex; justify-content: center; gap: 24px; margin-bottom: 12px; }
+        .progress-ring-fill.order { stroke: #488C9A; }
+
+        /* Storage Badge */
+        .storage-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: #fff3cd; border-radius: 6px; font-size: 0.7em; color: #856404; margin-top: 8px; }
+        .storage-badge strong { color: #664d03; }
+        .project-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 0; }
+
+        /* Health Badges */
+        .health-badge { padding: 3px 8px; border-radius: 10px; font-size: 0.65em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; cursor: help; position: relative; }
+        .health-badge:hover .health-tooltip { opacity: 1; visibility: visible; }
+        .health-tooltip { position: absolute; bottom: calc(100% + 6px); right: 0; background: #293E4C; color: #fff; padding: 8px 10px; border-radius: 6px; font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; white-space: normal; width: 180px; text-align: left; opacity: 0; visibility: hidden; transition: all 0.2s; z-index: 100; line-height: 1.4; }
+        .health-tooltip::after { content: ''; position: absolute; top: 100%; right: 10px; border: 5px solid transparent; border-top-color: #293E4C; }
+        .health-on_track { background: #d4edda; color: #155724; }
+        .health-at_risk { background: #fff3cd; color: #856404; }
+        .health-behind { background: #f8d7da; color: #721c24; }
+        .health-completed { background: #cce7ff; color: #004085; }
+
+        /* Progress Rings */
+        .progress-ring-item { text-align: center; padding: 6px; border-radius: 8px; transition: background 0.2s; }
+        .progress-ring { width: 64px; height: 64px; position: relative; margin: 0 auto 4px; }
+        .progress-ring svg { transform: rotate(-90deg); }
+        .progress-ring-bg { fill: none; stroke: #e9ecef; stroke-width: 5; }
+        .progress-ring-fill { fill: none; stroke-width: 5; stroke-linecap: round; transition: stroke-dashoffset 0.8s; }
+        .progress-ring-fill.delivery { stroke: #28a745; }
+        .progress-ring-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+        .progress-ring-value { font-size: 0.95em; font-weight: 700; color: #293E4C; line-height: 1; }
+        .progress-ring-label { font-size: 0.55em; color: #6c757d; }
+        .ring-title { font-size: 0.7em; color: #495057; font-weight: 500; }
+        .ring-subtitle { font-size: 0.65em; color: #999; }
+
+        /* Project Info Grid */
+        .project-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+        .info-item { padding: 6px 8px; background: #f8f9fa; border-radius: 6px; }
+        .info-label { font-size: 0.65em; color: #6c757d; }
+        .info-value { font-size: 0.85em; font-weight: 600; color: #293E4C; }
+
+        /* Card Actions */
+        .project-card-actions { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid #f0f0f0; margin-top: 10px; }
+        .btn-view { flex: 1; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color: white; padding: 10px 16px; border: none; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.85em; text-align: center; transition: all 0.2s; }
+        .btn-view:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(72, 140, 154, 0.3); }
+
+        /* Add Project Card */
+        .add-project-card { display: flex; align-items: center; justify-content: center; flex-direction: column; border: 2px dashed #d0d0d0; background: #f9f9f9; color: #6c757d; min-height: 360px; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
+        .add-project-card:hover { border-color: #488C9A; background: #f0f8fa; color: #488C9A; transform: translateY(-4px); }
+        .add-project-icon { font-size: 3em; margin-bottom: 10px; }
+        .add-project-text { font-size: 1.1em; font-weight: 600; }
+
+        /* Table View */
+        .projects-table-container { background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef; overflow: hidden; display: none; }
+        .projects-table-container.active { display: block; }
+        .projects-table { width: 100%; border-collapse: collapse; }
+        .projects-table th { background: #488C9A; padding: 12px 14px; text-align: left; font-weight: 600; color: #fff; font-size: 0.8em; white-space: nowrap; }
+        .projects-table td { padding: 12px 14px; border-bottom: 1px solid #f1f3f4; color: #495057; font-size: 0.85em; vertical-align: middle; }
+        .projects-table tr { cursor: pointer; transition: background 0.2s; }
+        .projects-table tbody tr:hover { background: #f8f9fa; }
+        .table-project-name { font-weight: 600; color: #293E4C; }
+        .table-progress { display: flex; align-items: center; gap: 8px; }
+        .table-progress-bar { flex: 1; height: 6px; background: #e9ecef; border-radius: 3px; overflow: hidden; min-width: 60px; }
+        .table-progress-fill { height: 100%; border-radius: 3px; }
+        .table-progress-fill.order { background: linear-gradient(90deg, #488C9A, #5AA8B7); }
+        .table-progress-fill.delivery { background: linear-gradient(90deg, #28a745, #34ce57); }
+        .table-progress-text { font-weight: 600; min-width: 40px; font-size: 0.9em; }
+        .table-progress-text.order { color: #488C9A; }
+        .table-progress-text.delivery { color: #28a745; }
+        .table-actions { display: flex; gap: 6px; }
+        .table-btn { padding: 5px 10px; border-radius: 5px; font-size: 0.75em; font-weight: 500; text-decoration: none; transition: all 0.2s; border: none; cursor: pointer; }
+        .table-btn-view { background: #488C9A; color: white; }
+        .table-btn-view:hover { background: #3A6E7F; }
+        .table-btn-edit { background: #f8f9fa; color: #488C9A; border: 1px solid #dee2e6; }
+        .table-btn-edit:hover { background: #e9ecef; }
+        .table-btn-delete { background: #f8f9fa; color: #dc3545; border: 1px solid #dee2e6; }
+        .table-btn-delete:hover { background: #f8d7da; }
         /* Clean up old styles - replaced with modern card design */
         .error-message {
             color: #721c24;
@@ -1028,149 +1104,214 @@ $conn->close(); // Close connection after fetching project data
             <div class="header-stats">
                 <div class="stat-item">
                     <p class="stat-number"><?php echo $total_projects; ?></p>
-                    <p class="stat-label">Projects</p>
+                    <p class="stat-label">Active Projects</p>
                 </div>
                 <div class="stat-item">
                     <p class="stat-number"><?php echo number_format($total_mw, 1); ?></p>
                     <p class="stat-label">Total MW</p>
                 </div>
                 <div class="stat-item">
-                    <p class="stat-number"><?php echo $in_progress_projects; ?></p>
-                    <p class="stat-label">In Progress</p>
+                    <p class="stat-number"><?php echo number_format($total_storage_modules); ?></p>
+                    <p class="stat-label">In Storage</p>
                 </div>
-                <div class="stat-item">
-                    <p class="stat-number"><?php echo $completed_projects; ?></p>
-                    <p class="stat-label">Completed</p>
+                <div class="stat-item pipeline-chart-stat">
+                    <div class="pipeline-chart-container">
+                        <canvas id="pipelineChartMini"></canvas>
+                    </div>
+                    <p class="stat-label">Pipeline Status</p>
                 </div>
             </div>
         </div>
     </div>
     
-    <div style="display: flex; justify-content: flex-end; margin-bottom: 20px;">
-        <a href="add_project.php" class="add-project-btn">+ Add New Project</a>
+    <?php if (!empty($errorMessage)): ?>
+        <div class="error-message"><strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?></div>
+    <?php endif; ?>
+    <?php if (!empty($successMessage)): ?>
+        <div class="success-message"><strong><?php echo htmlspecialchars($successMessage); ?></strong></div>
+    <?php endif; ?>
+
+    <div class="section-header-row">
+        <div class="section-title-row">
+            <h2 class="section-header">Active Projects</h2>
+            <a href="archived_projects.php" class="view-archived-link">
+                Archived <span class="archived-count"><?php echo $archived_count; ?></span>
+            </a>
+        </div>
+        <div class="section-controls">
+            <div class="view-toggle">
+                <button class="active" onclick="setView('grid')" id="btn-grid" title="Grid View">▦</button>
+                <button onclick="setView('table')" id="btn-table" title="Table View">☰</button>
+            </div>
+            <a href="add_project.php" class="add-project-btn">+ Add Project</a>
+        </div>
     </div>
 
-    <?php if (!empty($errorMessage)): ?>
-        <div class="error-message">
-            <strong>Error:</strong> <?php echo htmlspecialchars($errorMessage); ?>
-        </div>
-    <?php endif; ?>
-
-    <?php if (!empty($successMessage)): ?>
-        <div class="success-message">
-            <strong><?php echo htmlspecialchars($successMessage); ?></strong>
-        </div>
-    <?php endif; ?>
-
-    <div class="projects-grid">
+    <!-- Grid View -->
+    <div class="projects-grid active" id="projects-grid">
         <?php if (!empty($projects)): ?>
-            <?php foreach ($projects as $project): ?>
-                <?php
-                    $project_size_mw = (float)($project['project_size'] ?? 0); // project_size is already in MW
-                    $delivery_progress = $project['delivery_progress'];
-                    $project_status = $project['project_status'];
-                    
-                    // Format address
-                    $address_parts = array_filter([
-                        $project['street_address'], 
-                        $project['city'], 
-                        $project['state'], 
-                        $project['zip_code']
-                    ]);
-                    $formatted_address = implode(', ', $address_parts);
-                    
-                    // Status class mapping
-                    $status_classes = [
-                        'Planning' => 'status-planning',
-                        'Ready to Ship' => 'status-ready',
-                        'In Progress' => 'status-progress',
-                        'Completed' => 'status-completed'
-                    ];
-                    $status_class = $status_classes[$project_status] ?? 'status-planning';
-                ?>
-                <div class="project-card">
-                    <div class="project-header">
-                        <div>
-                            <h3 class="project-title"><?php echo htmlspecialchars($project['project_name']); ?></h3>
-                            <p class="project-account"><?php echo htmlspecialchars($project['account_name']); ?></p>
-                        </div>
-                        <div class="project-status <?php echo $status_class; ?>">
-                            <?php echo $project_status; ?>
-                        </div>
+            <?php
+            $health_definitions = [
+                'on_track' => 'On schedule relative to completion date.',
+                'at_risk' => 'Less than 30 days to deadline with <80% delivered.',
+                'behind' => 'Past completion date, not fully delivered.',
+                'completed' => 'All modules delivered to site.'
+            ];
+            foreach ($projects as $project):
+                $project_size_mw = (float)($project['project_size'] ?? 0);
+                $delivery_progress = $project['delivery_progress'] ?? 0;
+                $order_progress = $project['order_progress'] ?? 0;
+                $address_parts = array_filter([$project['street_address'], $project['city'], $project['state'], $project['zip_code']]);
+                $formatted_address = implode(', ', $address_parts);
+                $circ = 2 * 3.14159 * 26;
+                $order_offset = $circ - ($order_progress / 100) * $circ;
+                $delivery_offset = $circ - ($delivery_progress / 100) * $circ;
+                $est_date_display = !empty($project['estimated_completion_date']) ? (new DateTime($project['estimated_completion_date']))->format('M j, Y') : 'N/A';
+            ?>
+            <div class="project-card" onclick="window.location.href='project_overview.php?project_id=<?php echo $project['id']; ?>'">
+                <div class="project-card-image">
+                    <img src="<?php echo htmlspecialchars(!empty($project['image_url']) ? $project['image_url'] : 'pictures/project_default.png'); ?>" alt="<?php echo htmlspecialchars($project['project_name']); ?>" onerror="this.src='pictures/project_default.png'">
+                    <div class="project-card-overlay"><span>View Details</span></div>
+                </div>
+                <div class="project-card-content">
+                    <div class="project-card-header">
+                        <h3 class="project-card-title"><?php echo htmlspecialchars($project['project_name']); ?></h3>
+                        <span class="health-badge health-<?php echo $project['health']; ?>" onclick="event.stopPropagation()">
+                            <?php echo $project['health_text']; ?>
+                            <span class="health-tooltip"><strong><?php echo $health_definitions[$project['health']]; ?></strong><br><br><?php echo htmlspecialchars($project['health_reason']); ?></span>
+                        </span>
                     </div>
-                    
                     <?php if (!empty($formatted_address)): ?>
-                    <div style="margin-bottom: 15px; color: #666; font-size: 0.9rem;">
-                        📍 <?php echo htmlspecialchars($formatted_address); ?>
+                    <div class="project-card-location">📍 <?php echo htmlspecialchars($formatted_address); ?></div>
+                    <?php endif; ?>
+
+                    <div class="progress-rings-row">
+                        <div class="progress-ring-item">
+                            <div class="progress-ring">
+                                <svg width="64" height="64">
+                                    <circle class="progress-ring-bg" cx="32" cy="32" r="26"></circle>
+                                    <circle class="progress-ring-fill order" cx="32" cy="32" r="26" stroke-dasharray="<?php echo $circ; ?>" stroke-dashoffset="<?php echo $order_offset; ?>"></circle>
+                                </svg>
+                                <div class="progress-ring-center">
+                                    <div class="progress-ring-value"><?php echo round($order_progress); ?>%</div>
+                                    <div class="progress-ring-label">ordered</div>
+                                </div>
+                            </div>
+                            <div class="ring-title">Order Progress</div>
+                            <div class="ring-subtitle"><?php echo number_format($project['ordered_mw'] ?? 0, 2); ?>/<?php echo number_format($project_size_mw, 2); ?> MW</div>
+                        </div>
+                        <div class="progress-ring-item">
+                            <div class="progress-ring">
+                                <svg width="64" height="64">
+                                    <circle class="progress-ring-bg" cx="32" cy="32" r="26"></circle>
+                                    <circle class="progress-ring-fill delivery" cx="32" cy="32" r="26" stroke-dasharray="<?php echo $circ; ?>" stroke-dashoffset="<?php echo $delivery_offset; ?>"></circle>
+                                </svg>
+                                <div class="progress-ring-center">
+                                    <div class="progress-ring-value"><?php echo round($delivery_progress); ?>%</div>
+                                    <div class="progress-ring-label">delivered</div>
+                                </div>
+                            </div>
+                            <div class="ring-title">Delivery Progress</div>
+                            <div class="ring-subtitle"><?php echo number_format($project['delivered_mw'] ?? 0, 2); ?>/<?php echo number_format($project_size_mw, 2); ?> MW</div>
+                        </div>
+                    </div>
+
+                    <div class="project-info-grid">
+                        <div class="info-item"><div class="info-label">Project Size</div><div class="info-value"><?php echo number_format($project_size_mw, 2); ?> MW</div></div>
+                        <div class="info-item"><div class="info-label">Est. Completion</div><div class="info-value"><?php echo $est_date_display; ?></div></div>
+                    </div>
+
+                    <?php if (($project['storage_modules'] ?? 0) > 0): ?>
+                    <div class="project-badges">
+                        <div class="storage-badge">🏭 <strong><?php echo number_format($project['storage_modules']); ?></strong> in storage (<?php echo $project['storage_percent']; ?>%)</div>
                     </div>
                     <?php endif; ?>
-                    
-                    <div class="project-metrics">
-                        <div class="metric-item">
-                            <div class="metric-value"><?php echo number_format($project_size_mw, 2); ?></div>
-                            <div class="metric-label">MW Size</div>
-                        </div>
-                        <div class="metric-item">
-                            <div class="metric-value"><?php echo (int)($project['delivery_count'] ?? 0); ?></div>
-                            <div class="metric-label">Deliveries</div>
-                        </div>
-                    </div>
-                    
-                    <?php if ($project['total_pallets'] > 0): ?>
-                    <div class="progress-section">
-                        <div class="progress-header">
-                            <span class="progress-label">Delivery Progress</span>
-                            <span class="progress-percentage"><?php echo number_format($delivery_progress, 1); ?>%</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" style="width: <?php echo min(100, $delivery_progress); ?>%;"></div>
-                        </div>
-                    </div>
-                    <?php endif; ?>
-                    
-                    <?php if (!empty($project['estimated_completion_date'])): ?>
-                        <?php 
-                            $completion_date = new DateTime($project['estimated_completion_date']);
-                            $today = new DateTime();
-                            $interval = $today->diff($completion_date);
-                            $days_until = (int)$interval->format('%R%a');
-                            
-                            $date_class = 'completion-date';
-                            if ($days_until < 0) $date_class .= ' overdue';
-                            elseif ($days_until <= 30) $date_class .= ' upcoming';
-                        ?>
-                        <div class="<?php echo $date_class; ?>">
-                            📅 Target: <?php echo $completion_date->format('M j, Y'); ?>
-                            <?php if ($days_until < 0): ?>
-                                <br><small><?php echo abs($days_until); ?> days overdue</small>
-                            <?php elseif ($days_until <= 30): ?>
-                                <br><small><?php echo $days_until; ?> days remaining</small>
-                            <?php endif; ?>
-                        </div>
-                    <?php endif; ?>
-                    
-                    <div class="project-actions">
-                        <a href="project_overview.php?project_id=<?php echo $project['id']; ?>" class="btn-details">
-                            View Details
-                        </a>
+
+                    <div class="project-card-actions" onclick="event.stopPropagation()">
+                        <a href="project_overview.php?project_id=<?php echo $project['id']; ?>" class="btn-view">View Details</a>
                         <div class="dropdown">
-                            <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-menu-<?php echo $project['id']; ?>')" title="More actions">⚙️</button>
-                            <div id="dropdown-menu-<?php echo $project['id']; ?>" class="dropdown-menu">
+                            <button class="dropdown-toggle" onclick="toggleDropdown(event, 'dropdown-<?php echo $project['id']; ?>')">⚙️</button>
+                            <div id="dropdown-<?php echo $project['id']; ?>" class="dropdown-menu">
                                 <a href="edit_project.php?project_id=<?php echo $project['id']; ?>" class="dropdown-item edit">Edit Project</a>
+                                <a href="project_close.php?project_id=<?php echo $project['id']; ?>" class="dropdown-item">Close Out</a>
                                 <a href="javascript:void(0);" onclick="confirmDelete('<?php echo htmlspecialchars($project['project_name'], ENT_QUOTES); ?>', <?php echo $project['id']; ?>)" class="dropdown-item delete">Delete Project</a>
                             </div>
                         </div>
                     </div>
                 </div>
+            </div>
             <?php endforeach; ?>
+            <div class="add-project-card" onclick="window.location.href='add_project.php'">
+                <div class="add-project-icon">+</div>
+                <div class="add-project-text">Add New Project</div>
+            </div>
         <?php else: ?>
-            <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: #666;">
+            <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e9ecef;">
                 <div style="font-size: 3rem; margin-bottom: 20px; opacity: 0.3;">📋</div>
-                <h3 style="margin-bottom: 10px; color: #293E4C;">No Projects Found</h3>
-                <p style="margin-bottom: 30px;">Get started by creating your first project</p>
-                <a href="add_project.php" class="btn-details" style="display: inline-block; max-width: 200px;">Add First Project</a>
+                <h3 style="margin-bottom: 10px; color: #293E4C;">No Active Projects</h3>
+                <p style="margin-bottom: 20px; color: #6c757d;">Get started by creating your first project</p>
+                <a href="add_project.php" class="add-project-btn" style="display: inline-flex;">+ Add First Project</a>
             </div>
         <?php endif; ?>
+    </div>
+
+    <!-- Table View -->
+    <div class="projects-table-container" id="projects-table">
+        <table class="projects-table">
+            <thead>
+                <tr>
+                    <th>Project Name</th>
+                    <th>Account</th>
+                    <th>Size (MW)</th>
+                    <th>Ordered</th>
+                    <th>Delivered</th>
+                    <th>In Storage</th>
+                    <th>Health</th>
+                    <th>Target Date</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($projects as $project):
+                    $project_size_mw = (float)($project['project_size'] ?? 0);
+                    $delivery_progress = $project['delivery_progress'] ?? 0;
+                    $order_progress = $project['order_progress'] ?? 0;
+                    $est_date_display = !empty($project['estimated_completion_date']) ? (new DateTime($project['estimated_completion_date']))->format('M j, Y') : '—';
+                ?>
+                <tr onclick="window.location.href='project_overview.php?project_id=<?php echo $project['id']; ?>'">
+                    <td class="table-project-name"><?php echo htmlspecialchars($project['project_name']); ?></td>
+                    <td><?php echo htmlspecialchars($project['account_name']); ?></td>
+                    <td><?php echo number_format($project_size_mw, 2); ?></td>
+                    <td>
+                        <div class="table-progress">
+                            <div class="table-progress-bar">
+                                <div class="table-progress-fill order" style="width: <?php echo min(100, $order_progress); ?>%;"></div>
+                            </div>
+                            <span class="table-progress-text order"><?php echo round($order_progress); ?>%</span>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="table-progress">
+                            <div class="table-progress-bar">
+                                <div class="table-progress-fill delivery" style="width: <?php echo min(100, $delivery_progress); ?>%;"></div>
+                            </div>
+                            <span class="table-progress-text delivery"><?php echo round($delivery_progress); ?>%</span>
+                        </div>
+                    </td>
+                    <td><?php echo number_format($project['storage_modules'] ?? 0); ?></td>
+                    <td><span class="health-badge health-<?php echo $project['health']; ?>"><?php echo $project['health_text']; ?></span></td>
+                    <td><?php echo $est_date_display; ?></td>
+                    <td onclick="event.stopPropagation();">
+                        <div class="table-actions">
+                            <a href="project_overview.php?project_id=<?php echo $project['id']; ?>" class="table-btn table-btn-view">View</a>
+                            <a href="edit_project.php?project_id=<?php echo $project['id']; ?>" class="table-btn table-btn-edit">Edit</a>
+                            <button onclick="confirmDelete('<?php echo htmlspecialchars($project['project_name'], ENT_QUOTES); ?>', <?php echo $project['id']; ?>)" class="table-btn table-btn-delete">Delete</button>
+                        </div>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
     </div>
 
     <!-- Delete Confirmation Modal -->
@@ -1201,5 +1342,66 @@ $conn->close(); // Close connection after fetching project data
     </div>
 
 </main>
+
+<script>
+function setView(view) {
+    const grid = document.getElementById('projects-grid');
+    const table = document.getElementById('projects-table');
+    const btnGrid = document.getElementById('btn-grid');
+    const btnTable = document.getElementById('btn-table');
+
+    if (view === 'grid') {
+        grid.classList.add('active');
+        table.classList.remove('active');
+        btnGrid.classList.add('active');
+        btnTable.classList.remove('active');
+        localStorage.setItem('manageProjectsView', 'grid');
+    } else {
+        grid.classList.remove('active');
+        table.classList.add('active');
+        btnGrid.classList.remove('active');
+        btnTable.classList.add('active');
+        localStorage.setItem('manageProjectsView', 'table');
+    }
+}
+
+// Restore saved view preference
+document.addEventListener('DOMContentLoaded', function() {
+    const savedView = localStorage.getItem('manageProjectsView');
+    if (savedView) setView(savedView);
+
+    // Initialize pipeline chart
+    const ctx = document.getElementById('pipelineChartMini');
+    if (ctx) {
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['On Track', 'At Risk', 'Behind', 'Completed'],
+                datasets: [{
+                    data: [<?php echo $health_counts['on_track'].','.$health_counts['at_risk'].','.$health_counts['behind'].','.$health_counts['completed']; ?>],
+                    backgroundColor: ['#28a745', '#ffc107', '#dc3545', '#488C9A'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        enabled: true,
+                        callbacks: {
+                            label: function(context) {
+                                return context.label + ': ' + context.raw;
+                            }
+                        }
+                    }
+                },
+                cutout: '55%'
+            }
+        });
+    }
+});
+</script>
 </body>
 </html>

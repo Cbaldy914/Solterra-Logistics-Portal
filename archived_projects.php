@@ -16,10 +16,156 @@ if (!$conn) {
 
 $user_id = $_SESSION['user_id'];
 $user_role = $_SESSION['role'];
+$canDeleteArchives = in_array($user_role, ['admin', 'global_admin']);
+
+function deleteDirectoryRecursive($dir) {
+    if (!is_dir($dir)) {
+        return;
+    }
+    $iterator = new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS);
+    $files = new RecursiveIteratorIterator($iterator, RecursiveIteratorIterator::CHILD_FIRST);
+    foreach ($files as $file) {
+        $file->isDir() ? @rmdir($file->getRealPath()) : @unlink($file->getRealPath());
+    }
+    @rmdir($dir);
+}
 
 // Get success message if redirected from close-out
 $success_message = $_SESSION['archive_success'] ?? '';
 unset($_SESSION['archive_success']);
+
+// Handle delete request (admin/global_admin only)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_archive_id'])) {
+    if (!$canDeleteArchives) {
+        $_SESSION['archive_error'] = 'You do not have permission to delete archived projects.';
+        header('Location: archived_projects.php');
+        exit();
+    }
+
+    $archive_id = intval($_POST['delete_archive_id']);
+    if ($archive_id <= 0) {
+        $_SESSION['archive_error'] = 'Invalid archive selection.';
+        header('Location: archived_projects.php');
+        exit();
+    }
+
+    if ($user_role === 'global_admin') {
+        $stmt = $conn->prepare('SELECT id, project_id, account_id, project_name, archive_path FROM archived_projects WHERE id = ?');
+        $stmt->bind_param('i', $archive_id);
+    } else {
+        $stmt = $conn->prepare('
+            SELECT ap.id, ap.project_id, ap.account_id, ap.project_name, ap.archive_path
+            FROM archived_projects ap
+            JOIN customer_account_users cau ON ap.account_id = cau.account_id
+            WHERE ap.id = ? AND cau.user_id = ? AND cau.role = "admin"
+        ');
+        $stmt->bind_param('ii', $archive_id, $user_id);
+    }
+    $stmt->execute();
+    $archive = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$archive) {
+        $_SESSION['archive_error'] = 'Archive not found or access denied.';
+        header('Location: archived_projects.php');
+        exit();
+    }
+
+    $project_id = (int)$archive['project_id'];
+    $project_name = $archive['project_name'] ?? 'project';
+    $archivePath = $archive['archive_path'] ? __DIR__ . '/' . ltrim($archive['archive_path'], '/\\') : '';
+    $archiveDir = $archivePath ? dirname($archivePath) : (__DIR__ . '/uploads/archived_projects/' . $project_id);
+
+    try {
+        $conn->begin_transaction();
+
+        $stmtDelWarrantyClaims = $conn->prepare('DELETE wc FROM warranty_claims wc
+            JOIN site_scheduling ss ON wc.scheduling_id = ss.id
+            WHERE ss.project_id = ?');
+        $stmtDelWarrantyClaims->bind_param('i', $project_id);
+        $stmtDelWarrantyClaims->execute();
+        $stmtDelWarrantyClaims->close();
+
+        $stmtDelSiteSafety = $conn->prepare('DELETE FROM site_safety WHERE project_id = ?');
+        $stmtDelSiteSafety->bind_param('i', $project_id);
+        $stmtDelSiteSafety->execute();
+        $stmtDelSiteSafety->close();
+
+        $stmtDelSiteScheduling = $conn->prepare('DELETE FROM site_scheduling WHERE project_id = ?');
+        $stmtDelSiteScheduling->bind_param('i', $project_id);
+        $stmtDelSiteScheduling->execute();
+        $stmtDelSiteScheduling->close();
+
+        $stmtDelSiteHours = $conn->prepare('DELETE FROM site_operating_hours WHERE project_id = ?');
+        $stmtDelSiteHours->bind_param('i', $project_id);
+        $stmtDelSiteHours->execute();
+        $stmtDelSiteHours->close();
+
+        $stmtDelDeliveryPallets = $conn->prepare('DELETE dp FROM delivery_pallets dp
+            JOIN deliveries d ON dp.delivery_id = d.id
+            WHERE d.project_id = ?');
+        $stmtDelDeliveryPallets->bind_param('i', $project_id);
+        $stmtDelDeliveryPallets->execute();
+        $stmtDelDeliveryPallets->close();
+
+        $stmtDelPallets = $conn->prepare('DELETE ip FROM inventory_pallets ip
+            JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            JOIN modules m ON umi.unassigned_module_id = m.id
+            WHERE m.project_id = ?');
+        $stmtDelPallets->bind_param('i', $project_id);
+        $stmtDelPallets->execute();
+        $stmtDelPallets->close();
+
+        $stmtDelModuleItems = $conn->prepare('DELETE umi FROM unassigned_module_items umi
+            JOIN modules m ON umi.unassigned_module_id = m.id
+            WHERE m.project_id = ?');
+        $stmtDelModuleItems->bind_param('i', $project_id);
+        $stmtDelModuleItems->execute();
+        $stmtDelModuleItems->close();
+
+        $stmtDelModules = $conn->prepare('DELETE FROM modules WHERE project_id = ?');
+        $stmtDelModules->bind_param('i', $project_id);
+        $stmtDelModules->execute();
+        $stmtDelModules->close();
+
+        $stmtDelDeliveries = $conn->prepare('DELETE FROM deliveries WHERE project_id = ?');
+        $stmtDelDeliveries->bind_param('i', $project_id);
+        $stmtDelDeliveries->execute();
+        $stmtDelDeliveries->close();
+
+        $stmtDelWattageOrders = $conn->prepare('DELETE FROM project_wattage_orders WHERE project_id = ?');
+        $stmtDelWattageOrders->bind_param('i', $project_id);
+        $stmtDelWattageOrders->execute();
+        $stmtDelWattageOrders->close();
+
+        $stmtDelProject = $conn->prepare('DELETE FROM projects WHERE id = ?');
+        $stmtDelProject->bind_param('i', $project_id);
+        $stmtDelProject->execute();
+        $projectDeleted = $stmtDelProject->affected_rows > 0;
+        $stmtDelProject->close();
+
+        if (!$projectDeleted) {
+            throw new Exception('Failed to delete project data.');
+        }
+
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        $_SESSION['archive_error'] = 'Delete failed: ' . $e->getMessage();
+        header('Location: archived_projects.php');
+        exit();
+    }
+
+    if ($archiveDir && is_dir($archiveDir)) {
+        deleteDirectoryRecursive($archiveDir);
+    }
+    deleteDirectoryRecursive(__DIR__ . '/uploads/project_summaries/' . $project_id);
+    deleteDirectoryRecursive(__DIR__ . '/uploads/project_documents/' . $project_id);
+
+    $_SESSION['archive_success'] = 'Project "' . htmlspecialchars($project_name) . '" and its archived data were deleted.';
+    header('Location: archived_projects.php');
+    exit();
+}
 
 // Handle download request
 if (isset($_GET['download']) && is_numeric($_GET['download'])) {
@@ -228,24 +374,40 @@ $conn->close();
             display: flex;
             gap: 10px;
         }
-        .btn-download {
+        .icon-btn {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            padding: 10px 16px;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
             border: none;
-            border-radius: 8px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            border-radius: 10px;
             color: #fff;
-            font-weight: 600;
-            font-size: 0.9em;
             text-decoration: none;
             cursor: pointer;
             transition: transform 0.1s, box-shadow 0.2s;
         }
-        .btn-download:hover {
+        .icon-btn svg {
+            width: 18px;
+            height: 18px;
+        }
+        .icon-btn-download {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+        }
+        .icon-btn-delete {
+            background: linear-gradient(135deg, #d9534f 0%, #c9302c 100%);
+        }
+        .icon-btn:hover {
             transform: translateY(-1px);
+        }
+        .icon-btn-download:hover {
             box-shadow: 0 4px 12px rgba(72,140,154,0.3);
+        }
+        .icon-btn-delete:hover {
+            box-shadow: 0 4px 12px rgba(217, 83, 79, 0.3);
+        }
+        .archive-actions form {
+            margin: 0;
         }
         .file-size {
             font-size: 0.8em;
@@ -386,30 +548,28 @@ $conn->close();
             font-size: 0.8em;
             color: #6c757d;
         }
-        .archive-table .btn-download-sm {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 12px;
-            border: none;
-            border-radius: 6px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-            color: #fff;
-            font-weight: 600;
-            font-size: 0.8em;
-            text-decoration: none;
-            cursor: pointer;
-            transition: transform 0.1s, box-shadow 0.2s;
-            white-space: nowrap;
+        .archive-table .icon-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
         }
-        .archive-table .btn-download-sm:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(72,140,154,0.3);
+        .archive-table .icon-btn svg {
+            width: 16px;
+            height: 16px;
         }
         .archive-table .file-size-sm {
             font-size: 0.75em;
             color: #6c757d;
             margin-left: 8px;
+        }
+        .archive-table-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .archive-table-actions form {
+            margin: 0;
         }
 
         @media (max-width: 768px) {
@@ -492,13 +652,22 @@ $conn->close();
                 </div>
 
                 <div class="archive-actions">
-                    <a href="?download=<?php echo (int)$archive['id']; ?>" class="btn-download">
+                    <a href="?download=<?php echo (int)$archive['id']; ?>" class="icon-btn icon-btn-download" aria-label="Download archive">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                             <path d="M8 12l-4-4h2.5V3h3v5H12L8 12z"/>
                             <path d="M14 14H2v-2h12v2z"/>
                         </svg>
-                        Download Archive
                     </a>
+                    <?php if ($canDeleteArchives): ?>
+                    <form method="POST" onsubmit="return confirm('Permanently delete the archived project \"<?php echo htmlspecialchars(addslashes($archive['project_name'] ?? ''), ENT_QUOTES); ?>\" and all associated data? This cannot be undone.');">
+                        <input type="hidden" name="delete_archive_id" value="<?php echo (int)$archive['id']; ?>">
+                        <button type="submit" class="icon-btn icon-btn-delete" aria-label="Delete project">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M9 3h6l1 2h5v2H3V5h5l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM6 9h2v9H6V9z"/>
+                            </svg>
+                        </button>
+                    </form>
+                    <?php endif; ?>
                     <span class="file-size">
                         <?php
                         $size = $archive['file_size_bytes'] ?? 0;
@@ -547,27 +716,38 @@ $conn->close();
                             </div>
                         </td>
                         <td>
-                            <a href="?download=<?php echo (int)$archive['id']; ?>" class="btn-download-sm">
-                                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                                    <path d="M8 12l-4-4h2.5V3h3v5H12L8 12z"/>
-                                    <path d="M14 14H2v-2h12v2z"/>
-                                </svg>
-                                Download
-                            </a>
-                            <span class="file-size-sm">
-                                <?php
-                                $size = $archive['file_size_bytes'] ?? 0;
-                                if ($size >= 1073741824) {
-                                    echo number_format($size / 1073741824, 2) . ' GB';
-                                } elseif ($size >= 1048576) {
-                                    echo number_format($size / 1048576, 1) . ' MB';
-                                } elseif ($size >= 1024) {
-                                    echo number_format($size / 1024, 0) . ' KB';
-                                } else {
-                                    echo $size . ' B';
-                                }
-                                ?>
-                            </span>
+                            <div class="archive-table-actions">
+                                <a href="?download=<?php echo (int)$archive['id']; ?>" class="icon-btn icon-btn-download" aria-label="Download archive">
+                                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                        <path d="M8 12l-4-4h2.5V3h3v5H12L8 12z"/>
+                                        <path d="M14 14H2v-2h12v2z"/>
+                                    </svg>
+                                </a>
+                                <span class="file-size-sm">
+                                    <?php
+                                    $size = $archive['file_size_bytes'] ?? 0;
+                                    if ($size >= 1073741824) {
+                                        echo number_format($size / 1073741824, 2) . ' GB';
+                                    } elseif ($size >= 1048576) {
+                                        echo number_format($size / 1048576, 1) . ' MB';
+                                    } elseif ($size >= 1024) {
+                                        echo number_format($size / 1024, 0) . ' KB';
+                                    } else {
+                                        echo $size . ' B';
+                                    }
+                                    ?>
+                                </span>
+                                <?php if ($canDeleteArchives): ?>
+                                <form method="POST" onsubmit="return confirm('Permanently delete the archived project \"<?php echo htmlspecialchars(addslashes($archive['project_name'] ?? ''), ENT_QUOTES); ?>\" and all associated data? This cannot be undone.');">
+                                    <input type="hidden" name="delete_archive_id" value="<?php echo (int)$archive['id']; ?>">
+                                    <button type="submit" class="icon-btn icon-btn-delete" aria-label="Delete project">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                            <path d="M9 3h6l1 2h5v2H3V5h5l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM6 9h2v9H6V9z"/>
+                                        </svg>
+                                    </button>
+                                </form>
+                                <?php endif; ?>
+                            </div>
                         </td>
                     </tr>
                     <?php endforeach; ?>
