@@ -97,16 +97,17 @@ try {
     if ($role === 'global_admin') {
         $stmtProjects = $conn->prepare("
             SELECT p.id, p.project_name, p.street_address, p.city, p.state, p.zip_code, c.name as account_name
-            FROM projects p 
-            JOIN customer_accounts c ON p.account_id = c.id 
+            FROM projects p
+            JOIN customer_accounts c ON p.account_id = c.id
+            WHERE (p.status IS NULL OR p.status = 'active')
             ORDER BY p.project_name ASC
         ");
     } else if ($role === 'admin' && $account_id_for_admin) {
         $stmtProjects = $conn->prepare("
             SELECT p.id, p.project_name, p.street_address, p.city, p.state, p.zip_code, c.name as account_name
-            FROM projects p 
-            JOIN customer_accounts c ON p.account_id = c.id 
-            WHERE p.account_id = ?
+            FROM projects p
+            JOIN customer_accounts c ON p.account_id = c.id
+            WHERE p.account_id = ? AND (p.status IS NULL OR p.status = 'active')
             ORDER BY p.project_name ASC
         ");
         $stmtProjects->bind_param("i", $account_id_for_admin);
@@ -114,12 +115,12 @@ try {
         // Create placeholders for IN clause
         $placeholders = implode(',', array_fill(0, count($user_account_ids), '?'));
         $types = str_repeat('i', count($user_account_ids));
-        
+
         $stmtProjects = $conn->prepare("
             SELECT p.id, p.project_name, p.street_address, p.city, p.state, p.zip_code, c.name as account_name
-            FROM projects p 
-            JOIN customer_accounts c ON p.account_id = c.id 
-            WHERE p.account_id IN ($placeholders)
+            FROM projects p
+            JOIN customer_accounts c ON p.account_id = c.id
+            WHERE p.account_id IN ($placeholders) AND (p.status IS NULL OR p.status = 'active')
             ORDER BY p.project_name ASC
         ");
         $stmtProjects->bind_param($types, ...$user_account_ids);

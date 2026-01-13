@@ -101,7 +101,7 @@ if ($role === 'global_admin') {
         }
     }
     // Fetch all projects
-    $sqlAllProj = "SELECT id, project_name, account_id FROM projects ORDER BY account_id, project_name ASC";
+    $sqlAllProj = "SELECT id, project_name, account_id FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY account_id, project_name ASC";
     $resAllProj = $conn->query($sqlAllProj);
     if ($resAllProj && $resAllProj->num_rows > 0) {
         while ($proj = $resAllProj->fetch_assoc()) {
@@ -123,7 +123,7 @@ if ($role === 'global_admin') {
         die("Admin user not associated with any account.");
     }
     // Fetch projects for the admin's account
-    $sqlOneProj = "SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+    $sqlOneProj = "SELECT id, project_name FROM projects WHERE account_id = ? AND (status IS NULL OR status = 'active') ORDER BY project_name ASC";
     $stmtOneProj = $conn->prepare($sqlOneProj);
     if (!$stmtOneProj) die("Error preparing project lookup: " . $conn->error);
     $stmtOneProj->bind_param("i", $account_id_for_admin);

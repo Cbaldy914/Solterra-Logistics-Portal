@@ -529,13 +529,13 @@ if (!$is_global_admin) {
 // Fetch all projects for the filter dropdown (from manage_deliveries)
 $all_projects_for_filter = [];
 if ($is_global_admin) {
-    $stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects ORDER BY project_name ASC");
-} else { 
+    $stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY project_name ASC");
+} else {
     if ($account_id_for_admin) {
-        $stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC");
+        $stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? AND (status IS NULL OR status = 'active') ORDER BY project_name ASC");
         $stmt_all_proj->bind_param("i", $account_id_for_admin);
     } else {
-        $stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects WHERE 1=0"); 
+        $stmt_all_proj = $conn->prepare("SELECT id, project_name FROM projects WHERE 1=0");
     }
 }
 if ($stmt_all_proj) {

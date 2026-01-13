@@ -1147,7 +1147,7 @@ try {
     // Get all projects for the filter dropdown
     $all_projects_for_filter = [];
     if ($is_global_admin) {
-        $stmtPFilter = $conn->prepare("SELECT id, project_name FROM projects ORDER BY project_name ASC");
+        $stmtPFilter = $conn->prepare("SELECT id, project_name FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY project_name ASC");
         if ($stmtPFilter) {
             $stmtPFilter->execute();
             $resultPFilter = $stmtPFilter->get_result();
@@ -1157,7 +1157,7 @@ try {
             $stmtPFilter->close();
         }
     } else if ($account_id_for_admin) {
-        $stmtPFilter = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC");
+        $stmtPFilter = $conn->prepare("SELECT id, project_name FROM projects WHERE account_id = ? AND (status IS NULL OR status = 'active') ORDER BY project_name ASC");
         if ($stmtPFilter) {
             $stmtPFilter->bind_param("i", $account_id_for_admin);
             $stmtPFilter->execute();
@@ -1198,7 +1198,7 @@ try {
     // Fetch all projects for shipping (with addresses)
     $all_projects = [];
     if ($is_global_admin) {
-        $stmtP = $conn->prepare("SELECT id, project_name, street_address, city, state, zip_code FROM projects ORDER BY project_name ASC");
+        $stmtP = $conn->prepare("SELECT id, project_name, street_address, city, state, zip_code FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY project_name ASC");
         if ($stmtP) {
             $stmtP->execute();
             $resultP = $stmtP->get_result();
@@ -1210,7 +1210,7 @@ try {
             $stmtP->close();
         }
     } else if ($account_id_for_admin) {
-        $stmtP = $conn->prepare("SELECT id, project_name, street_address, city, state, zip_code FROM projects WHERE account_id = ? ORDER BY project_name ASC");
+        $stmtP = $conn->prepare("SELECT id, project_name, street_address, city, state, zip_code FROM projects WHERE account_id = ? AND (status IS NULL OR status = 'active') ORDER BY project_name ASC");
         if ($stmtP) {
             $stmtP->bind_param("i", $account_id_for_admin);
             $stmtP->execute();
@@ -2297,6 +2297,9 @@ if (!empty($bolCompletionMessage)) {
                     <label for="palletsPerTruck">Pallets per Truck:</label>
                     <input type="number" id="palletsPerTruck" min="1" max="12" value="1" style="width:100px;" data-user-edited="false">
                     <div id="multiShipSummary" style="margin-top:10px; color:#488C9A;"></div>
+                    <div id="maxShipmentsNote" style="display:none; margin-top:8px; padding:8px 12px; background-color:#fff3cd; border:1px solid #ffc107; border-radius:4px; font-size:0.85em; color:#856404;">
+                        <strong>Note:</strong> Maximum 12 shipments can be created at once. For more shipments, please use the <a href="#" onclick="document.querySelector('.import-btn')?.click(); return false;" style="color:#664d03; text-decoration:underline;">Import feature</a>.
+                    </div>
                     
                     <!-- Dynamic BOL Number Fields -->
                     <div id="bolFieldsContainer" style="margin-top:15px;">
@@ -3090,9 +3093,9 @@ function calculateDistanceFromAddresses(originAddress, destinationAddress, callb
     });
 }
 
-function populateDropdown(selectElement, type, dataSource, nameField, placeholderPrefix) {
+function populateDropdown(selectElement, type, dataSource, nameField, placeholderPrefix, defaultValue = null) {
     if (!selectElement) return;
-    
+
     selectElement.innerHTML = '';
 
     if (!dataSource || dataSource.length === 0) {
@@ -3106,6 +3109,10 @@ function populateDropdown(selectElement, type, dataSource, nameField, placeholde
             opt.value = item.id;
             opt.textContent = item[nameField];
             opt.setAttribute('data-address', item.full_address || '');
+            // Select default value if provided
+            if (defaultValue && item.id == defaultValue) {
+                opt.selected = true;
+            }
             selectElement.appendChild(opt);
         });
     }
@@ -3678,24 +3685,28 @@ function calculateApproximateInternationalDistance(originAddress, destAddress, c
 function toggleDestinationSelectSingle() {
     const destType = document.querySelector('input[name="destination_type"]:checked').value;
     const destSelect = document.getElementById('destination_id');
-    
+
     const data = (destType === 'project') ? projectsData : warehousesData;
     const nameField = (destType === 'project') ? 'project_name' : 'name';
     const placeholder = (destType === 'project') ? 'Project' : 'Warehouse';
+    // Default to current project if destination type is project and we have a project from URL
+    const defaultValue = (destType === 'project' && projectIdFromUrl > 0) ? projectIdFromUrl : null;
 
-    populateDropdown(destSelect, destType, data, nameField, placeholder);
+    populateDropdown(destSelect, destType, data, nameField, placeholder, defaultValue);
     calculateDistance();
 }
 
 function toggleDestinationSelectMulti() {
     const destType = document.querySelector('input[name="destination_type_multi"]:checked').value;
     const destSelect = document.getElementById('destination_id_multi');
-    
+
     const data = (destType === 'project') ? projectsData : warehousesData;
     const nameField = (destType === 'project') ? 'project_name' : 'name';
     const placeholder = (destType === 'project') ? 'Project' : 'Warehouse';
+    // Default to current project if destination type is project and we have a project from URL
+    const defaultValue = (destType === 'project' && projectIdFromUrl > 0) ? projectIdFromUrl : null;
 
-    populateDropdown(destSelect, destType, data, nameField, placeholder);
+    populateDropdown(destSelect, destType, data, nameField, placeholder, defaultValue);
     calculateDistanceMulti();
 }
 
@@ -4328,7 +4339,14 @@ function updateMultiShipSummary() {
     multiShipSummary.textContent = selected > 0
         ? (numDeliveries + ' deliveries will be created (' + validPerTruck + ' pallets per truck)')
         : '';
-    
+
+    // Show/hide max shipments note
+    const maxShipmentsNote = document.getElementById('maxShipmentsNote');
+    if (maxShipmentsNote) {
+        const wouldNeedMoreThan12 = selected > 0 && Math.ceil(selected / validPerTruck) > 12;
+        maxShipmentsNote.style.display = wouldNeedMoreThan12 ? 'block' : 'none';
+    }
+
     // Update BOL fields
     updateBolFields(numDeliveries);
 }

@@ -371,15 +371,15 @@ try {
 
     // Fetch all projects for page filter dropdown
     if ($is_global_admin) {
-        $sqlProjects = "SELECT id, project_name FROM projects ORDER BY project_name ASC";
+        $sqlProjects = "SELECT id, project_name FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY project_name ASC";
         $resultProjects = $conn->query($sqlProjects);
         if ($resultProjects) {
             while ($row = $resultProjects->fetch_assoc()) {
-                $projects[] = $row; 
+                $projects[] = $row;
             }
         }
     } else if ($account_id_for_user) {
-        $sqlProjects = "SELECT id, project_name FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+        $sqlProjects = "SELECT id, project_name FROM projects WHERE account_id = ? AND (status IS NULL OR status = 'active') ORDER BY project_name ASC";
         $stmtProjects = $conn->prepare($sqlProjects);
         if ($stmtProjects) {
             $stmtProjects->bind_param("i", $account_id_for_user);
@@ -387,7 +387,7 @@ try {
             $resultProjects = $stmtProjects->get_result();
             if ($resultProjects) {
                 while ($row = $resultProjects->fetch_assoc()) {
-                    $projects[] = $row; 
+                    $projects[] = $row;
                 }
             }
             $stmtProjects->close();
@@ -400,7 +400,7 @@ try {
     // Fetch all projects and warehouses for SHIPPING MODAL (with addresses)
     $all_projects_for_shipping = [];
     if ($is_global_admin) {
-        $sqlAllProjectsModal = "SELECT id, project_name, street_address, city, state, zip_code FROM projects ORDER BY project_name ASC";
+        $sqlAllProjectsModal = "SELECT id, project_name, street_address, city, state, zip_code FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY project_name ASC";
         $resultAllProjectsModal = $conn->query($sqlAllProjectsModal);
         if ($resultAllProjectsModal) {
             while ($row = $resultAllProjectsModal->fetch_assoc()) {
@@ -411,7 +411,7 @@ try {
             }
         }
     } else if ($account_id_for_user) {
-        $sqlAllProjectsModal = "SELECT id, project_name, street_address, city, state, zip_code FROM projects WHERE account_id = ? ORDER BY project_name ASC";
+        $sqlAllProjectsModal = "SELECT id, project_name, street_address, city, state, zip_code FROM projects WHERE account_id = ? AND (status IS NULL OR status = 'active') ORDER BY project_name ASC";
         $stmtAllProjectsModal = $conn->prepare($sqlAllProjectsModal);
         if ($stmtAllProjectsModal) {
             $stmtAllProjectsModal->bind_param("i", $account_id_for_user);

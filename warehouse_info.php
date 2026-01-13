@@ -114,9 +114,10 @@ try {
 
         // Fetch warehouse cost items for this warehouse
         $warehouse_costs = [];
+        $warehouse_costs_all = []; // Flat list for modal
         $stmtCosts = $conn->prepare("
-            SELECT label, trigger_event, amount 
-            FROM warehouse_cost_items 
+            SELECT label, trigger_event, amount, unit_type
+            FROM warehouse_cost_items
             WHERE warehouse_id = ? AND is_active = 1
             ORDER BY trigger_event, label
         ");
@@ -126,6 +127,7 @@ try {
             $resultCosts = $stmtCosts->get_result();
             while ($cost = $resultCosts->fetch_assoc()) {
                 $warehouse_costs[$cost['trigger_event']][] = $cost;
+                $warehouse_costs_all[] = $cost; // Flat list for modal
             }
             $stmtCosts->close();
         }
@@ -218,7 +220,7 @@ try {
             $page_title = "Inventory for Project: " . htmlspecialchars($project_name_for_title);
         } elseif ($warehouse_count === 1) {
             $single_warehouse_id = $relevant_warehouses[0]['id'];
-            header("Location: warehouse_info.php?warehouse_id={$single_warehouse_id}&project_id={$project_id}");
+            header("Location: warehouse_info.php?warehouse_id={$single_warehouse_id}&project_id={$project_id}&single_wh=1");
             exit();
         } else {
             $show_warehouse_list = true;
@@ -671,8 +673,9 @@ if ($conn) {
             opacity: 0.7;
         }
         .warehouse-details {
-            flex: 1; 
-            min-width: 300px; 
+            flex: 1;
+            min-width: 300px;
+            position: relative;
         }
         .warehouse-details h1 {
             margin-top: 0;
@@ -684,6 +687,176 @@ if ($conn) {
              margin: 5px 0;
              line-height: 1.5;
          }
+        /* Fee Summary Link Styles */
+        .fee-summary-container {
+            margin-top: 10px;
+        }
+        .fee-summary-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+            color: #488C9A;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+        .fee-summary-link:hover {
+            color: #3A6E7F;
+            text-decoration: underline;
+        }
+        .fee-summary-link i {
+            font-size: 0.9em;
+        }
+        /* Warehouse Edit Button */
+        .warehouse-edit-btn {
+            position: absolute;
+            top: 0;
+            right: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            color: #495057;
+            font-size: 0.85em;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+        .warehouse-edit-btn:hover {
+            background: #f8f9fa;
+            border-color: #488C9A;
+            color: #488C9A;
+        }
+        .warehouse-edit-btn i {
+            font-size: 0.85em;
+        }
+        /* Fee Modal Styles */
+        .fee-modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            animation: fadeInModal 0.2s ease;
+        }
+        @keyframes fadeInModal {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .fee-modal-content {
+            background: #fff;
+            margin: 8% auto;
+            max-width: 550px;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            animation: slideInModal 0.3s ease;
+            overflow: hidden;
+        }
+        @keyframes slideInModal {
+            from { opacity: 0; transform: translateY(-30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fee-modal-header {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: #fff;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .fee-modal-header h3 {
+            margin: 0;
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+        .fee-modal-close {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 1.5em;
+            cursor: pointer;
+            opacity: 0.8;
+            transition: opacity 0.2s;
+            line-height: 1;
+        }
+        .fee-modal-close:hover {
+            opacity: 1;
+        }
+        .fee-modal-body {
+            padding: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .fee-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .fee-table th {
+            text-align: left;
+            padding: 10px 12px;
+            background: #f8f9fa;
+            font-weight: 600;
+            font-size: 0.85em;
+            color: #495057;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .fee-table td {
+            padding: 12px;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 0.9em;
+        }
+        .fee-table tr:last-child td {
+            border-bottom: none;
+        }
+        .fee-table tr:hover td {
+            background: #f8f9fa;
+        }
+        .fee-table .fee-name {
+            font-weight: 500;
+            color: #293E4C;
+        }
+        .fee-table .fee-amount {
+            font-weight: 600;
+            color: #488C9A;
+        }
+        .fee-table .fee-unit, .fee-table .fee-trigger {
+            color: #6c757d;
+            font-size: 0.85em;
+        }
+        .fee-trigger-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: 500;
+        }
+        .fee-trigger-badge.entry { background: #d4edda; color: #155724; }
+        .fee-trigger-badge.exit { background: #f8d7da; color: #721c24; }
+        .fee-trigger-badge.monthly { background: #d1ecf1; color: #0c5460; }
+        .fee-trigger-badge.customs_clearance { background: #fff3cd; color: #856404; }
+        .fee-trigger-badge.drayage { background: #e2e3e5; color: #383d41; }
+        .fee-trigger-badge.other { background: #f5f5f5; color: #666; }
+        .fee-modal-footer {
+            padding: 12px 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #dee2e6;
+            text-align: right;
+        }
+        .fee-modal-footer .action-button {
+            padding: 8px 16px;
+            font-size: 0.9em;
+        }
         .tabs-container {
             text-align: center; /* Center the tabs */
             width: 100%;
@@ -1356,11 +1529,21 @@ if ($conn) {
             if ($project_id && !$warehouse_id && !$module_batch_id) {
                 echo slp_render_breadcrumbs(['current_label' => 'Warehouse Locations', 'project_id' => (int)$project_id]);
             } elseif ($warehouse_id && $project_id) {
-                echo slp_render_breadcrumbs([
-                    'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
-                    'project_id' => (int)$project_id,
-                    'extra' => [ ['label' => 'Warehouse Locations', 'url' => 'warehouse_info.php?project_id='.(int)$project_id] ]
-                ]);
+                // Only show "Warehouse Locations" breadcrumb if there's more than one warehouse
+                $single_wh = isset($_GET['single_wh']) && $_GET['single_wh'] == '1';
+                if ($single_wh) {
+                    // Single warehouse - don't show "Warehouse Locations" as it would just redirect back here
+                    echo slp_render_breadcrumbs([
+                        'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
+                        'project_id' => (int)$project_id
+                    ]);
+                } else {
+                    echo slp_render_breadcrumbs([
+                        'current_label' => ($warehouse_data['name'] ?? 'Warehouse Details'),
+                        'project_id' => (int)$project_id,
+                        'extra' => [ ['label' => 'Warehouse Locations', 'url' => 'warehouse_info.php?project_id='.(int)$project_id] ]
+                    ]);
+                }
             } elseif ($module_batch_id && !$warehouse_id) {
                 echo slp_render_breadcrumbs([
                     'current_label' => 'Warehouse Locations',
@@ -1471,6 +1654,11 @@ if ($conn) {
                 <?php endif; ?>
             </div>
             <div class="warehouse-details">
+                <?php if (($_SESSION['role'] ?? '') === 'global_admin'): ?>
+                    <a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="warehouse-edit-btn">
+                        <i class="fas fa-edit"></i> Edit
+                    </a>
+                <?php endif; ?>
                 <h1><?php echo htmlspecialchars($warehouse_data['name']); ?></h1>
                  <?php if ($project_name_for_title): ?>
                     <h2 style="font-size: 1.1em; color: #555; margin-top: 5px;">Viewing Inventory for Project: <?php echo htmlspecialchars($project_name_for_title); ?></h2>
@@ -1478,33 +1666,21 @@ if ($conn) {
                     <h2 style="font-size: 1.1em; color: #555; margin-top: 5px;">Viewing Inventory from Batch: <?php echo htmlspecialchars($origin_batch_vendor_name); ?> (ID: <?php echo $module_batch_id; ?>)</h2>
                  <?php endif; ?>
                 <p><strong>Address:</strong> <?php echo htmlspecialchars($warehouse_data['address']); ?></p>
-                <?php if (!empty($warehouse_costs)): ?>
-                    <div class="warehouse-cost-summary">
-                        <p><strong>Cost Structure:</strong></p>
-                        <?php 
-                        foreach ($warehouse_costs as $trigger => $costs): 
-                            foreach ($costs as $cost):
-                        ?>
-                            <p style="margin-left: 15px; font-size: 0.9em;">
-                                <strong><?php echo htmlspecialchars($cost['label']); ?>:</strong> 
-                                $<?php echo number_format($cost['amount'], 2); ?>
-                                <?php if ($trigger === 'monthly'): ?> per pallet per month<?php endif; ?>
-                                <?php if ($trigger === 'entry' || $trigger === 'exit'): ?> per pallet<?php endif; ?>
-                            </p>
-                        <?php 
-                            endforeach;
-                        endforeach; 
-                        ?>
+                <?php if (!empty($warehouse_costs_all)): ?>
+                    <?php $fee_count = count($warehouse_costs_all); ?>
+                    <div class="fee-summary-container">
+                        <button type="button" class="fee-summary-link" onclick="openFeeModal()">
+                            <i class="fas fa-file-invoice-dollar"></i>
+                            Cost Structure (<?php echo $fee_count; ?> fee<?php echo $fee_count !== 1 ? 's' : ''; ?>)
+                            <i class="fas fa-chevron-right" style="font-size: 0.8em; opacity: 0.7;"></i>
+                        </button>
                     </div>
                 <?php else: ?>
                     <p><em>No cost structure defined for this warehouse.</em></p>
                 <?php endif; ?>
-                <?php if (($_SESSION['role'] ?? '') === 'global_admin'): // Only allow edit for global admin ?>
-                    <p style="margin-top:10px;"><a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="action-button">Edit Warehouse Info</a></p>
-                <?php endif; ?>
             </div>
         </div>
-        
+
         <!-- Cost Summary -->
         <div class="cost-overview-container">
             <div class="cost-card">
@@ -1929,7 +2105,16 @@ if ($conn) {
 </main>
 
 <script>
-    // --- Tab Switching --- 
+    // --- Fee Modal Functions ---
+    function openFeeModal() {
+        document.getElementById('feeModal').style.display = 'block';
+    }
+
+    function closeFeeModal() {
+        document.getElementById('feeModal').style.display = 'none';
+    }
+
+    // --- Tab Switching ---
     function openTab(evt, tabName) {
         var i, tabcontent, tablinks;
         tabcontent = document.getElementsByClassName("tab-content");
@@ -2229,7 +2414,68 @@ if ($conn) {
         }
     }
 
+    // Close fee modal when clicking outside or pressing Escape
+    document.getElementById('feeModal')?.addEventListener('click', function(e) {
+        if (e.target === this) closeFeeModal();
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeFeeModal();
+    });
+
 </script>
+
+<!-- Fee Structure Modal -->
+<?php if (!empty($warehouse_costs_all) && $warehouse_data): ?>
+<div id="feeModal" class="fee-modal">
+    <div class="fee-modal-content">
+        <div class="fee-modal-header">
+            <h3>Cost Structure - <?php echo htmlspecialchars($warehouse_data['name']); ?></h3>
+            <button class="fee-modal-close" onclick="closeFeeModal()">&times;</button>
+        </div>
+        <div class="fee-modal-body">
+            <table class="fee-table">
+                <thead>
+                    <tr>
+                        <th>Fee Name</th>
+                        <th>Amount</th>
+                        <th>Billing Unit</th>
+                        <th>When Charged</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($warehouse_costs_all as $fee): ?>
+                    <?php
+                        // Format unit type for display
+                        $unit_display = 'Per Pallet';
+                        switch ($fee['unit_type'] ?? 'per_pallet') {
+                            case 'per_truck': $unit_display = 'Per Truck'; break;
+                            case 'per_sqft': $unit_display = 'Per Sq Ft'; break;
+                            case 'flat': $unit_display = 'Flat Rate'; break;
+                        }
+                        // Format trigger event for display
+                        $trigger = $fee['trigger_event'] ?? 'other';
+                        $trigger_display = ucwords(str_replace('_', ' ', $trigger));
+                    ?>
+                    <tr>
+                        <td class="fee-name"><?php echo htmlspecialchars($fee['label']); ?></td>
+                        <td class="fee-amount">$<?php echo number_format($fee['amount'], 2); ?></td>
+                        <td class="fee-unit"><?php echo $unit_display; ?></td>
+                        <td><span class="fee-trigger-badge <?php echo $trigger; ?>"><?php echo $trigger_display; ?></span></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php if (($_SESSION['role'] ?? '') === 'global_admin'): ?>
+        <div class="fee-modal-footer">
+            <a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="action-button">
+                <i class="fas fa-edit"></i> Edit Fees
+            </a>
+        </div>
+        <?php endif; ?>
+    </div>
+</div>
+<?php endif; ?>
 
 </body>
 </html>
