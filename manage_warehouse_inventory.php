@@ -611,7 +611,7 @@ try {
     $total_storage_cost_monthly_rate = $total_pallets * $warehouse_fees['monthly'];
 
     // Fetch all projects for dropdown options (build full addresses like create_shipment.php)
-    $stmtAllP = $conn->prepare("SELECT id, project_name, street_address, city, state, zip_code FROM projects ORDER BY project_name ASC");
+    $stmtAllP = $conn->prepare("SELECT id, project_name, street_address, city, state, zip_code FROM projects WHERE (status IS NULL OR status = 'active') ORDER BY project_name ASC");
     if ($stmtAllP) {
         $stmtAllP->execute();
         $resultAllP = $stmtAllP->get_result();
@@ -654,22 +654,107 @@ $conn->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <script async defer src="https://maps.googleapis.com/maps/api/js?key=<?php echo htmlspecialchars($google_maps_api_key); ?>&libraries=places,geometry"></script>
 
     <style>
         .warehouse-details-container {
             background-color: #f9f9f9;
-            padding: 20px;
+            padding: 15px;
             border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            margin-bottom: 25px;
+            border-radius: 5px;
+            margin-bottom: 20px;
             display: flex;
-            justify-content: space-between;
+            align-items: flex-start;
             flex-wrap: wrap;
         }
+        .warehouse-image {
+            margin-right: 20px;
+        }
+        .warehouse-image img {
+            display: block;
+            border-radius: 4px;
+            width: 200px;
+            height: 150px;
+            object-fit: cover;
+        }
+        .warehouse-image-placeholder {
+            width: 200px;
+            height: 150px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+        }
+        .warehouse-image-placeholder i {
+            font-size: 4rem;
+            color: #488C9A;
+            opacity: 0.7;
+        }
+        .warehouse-info {
+            flex: 1;
+            min-width: 300px;
+        }
+        .warehouse-info h1 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.6em;
+            color: #293E4C;
+        }
         .warehouse-info p {
-            margin: 6px 0;
+            margin: 5px 0;
             line-height: 1.5;
+        }
+        .warehouse-cost-summary {
+            margin-top: 10px;
+        }
+        .warehouse-cost-summary p {
+            margin-left: 15px;
+            font-size: 0.9em;
+        }
+        /* Cost Overview Cards - matching warehouse_info.php */
+        .cost-overview-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        .cost-card {
+            background: linear-gradient(135deg, #fff 0%, #f8f9fa 100%);
+            border-radius: 12px;
+            padding: 20px 16px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e9ecef;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .cost-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(72, 140, 154, 0.12);
+        }
+        .cost-card .cost-icon {
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+        .cost-card .cost-value {
+            font-size: 26px;
+            font-weight: 700;
+            color: #488C9A;
+            margin-bottom: 4px;
+        }
+        .cost-card .cost-label {
+            font-size: 0.85em;
+            color: #6c757d;
+            font-weight: 500;
+        }
+        .cost-card.total-cost {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+        }
+        .cost-card.total-cost .cost-icon,
+        .cost-card.total-cost .cost-value,
+        .cost-card.total-cost .cost-label {
+            color: rgba(255, 255, 255, 0.9);
         }
         .cost-summary {
             margin-bottom: 25px;
@@ -1011,50 +1096,88 @@ $conn->close();
         </div>
         
     <?php else: ?>
-        <!-- Warehouse Details -->
+        <!-- Warehouse Details - styled like warehouse_info.php -->
         <div class="warehouse-details-container">
+            <div class="warehouse-image">
+                <?php
+                $image_path = "";
+                $has_main_image = false;
+                if (!empty($warehouse['image_url'])) {
+                    // Check if the image_url is a full URL or a relative path
+                    if (filter_var($warehouse['image_url'], FILTER_VALIDATE_URL)) {
+                        $image_path = $warehouse['image_url'];
+                        $has_main_image = true;
+                    } else {
+                        $image_path = htmlspecialchars($warehouse['image_url']);
+                        $has_main_image = file_exists(__DIR__ . '/' . $image_path);
+                    }
+                }
+                ?>
+                <?php if ($has_main_image): ?>
+                    <img src="<?php echo $image_path; ?>" alt="<?php echo htmlspecialchars($warehouse['name']); ?> Warehouse">
+                <?php else: ?>
+                    <div class="warehouse-image-placeholder">
+                        <i class="fas fa-warehouse"></i>
+                    </div>
+                <?php endif; ?>
+            </div>
             <div class="warehouse-info">
                 <h1><?php echo htmlspecialchars($warehouse['name']); ?></h1>
                 <p><strong>Address:</strong> <?php echo htmlspecialchars($warehouse['address']); ?></p>
 
                 <?php if (!empty($warehouse_fees['all_items'])): ?>
-                    <div class="fee-breakdown" style="margin-top: 10px;">
-                        <p><strong>Fee Structure:</strong></p>
-                        <ul style="margin: 5px 0 0 20px; padding: 0; list-style-type: none;">
-                            <?php foreach ($warehouse_fees['all_items'] as $fee_item): ?>
-                                <?php
-                                    $unit_suffix = '/pallet';
-                                    switch ($fee_item['unit_type']) {
-                                        case 'per_truck': $unit_suffix = '/truck'; break;
-                                        case 'per_sqft': $unit_suffix = '/sqft'; break;
-                                        case 'flat': $unit_suffix = ' (flat)'; break;
-                                    }
-                                    $trigger_label = ucwords(str_replace('_', ' ', $fee_item['trigger_event']));
-                                ?>
-                                <li style="margin-bottom: 3px; font-size: 0.95em;">
-                                    <span style="color: #488C9A; font-weight: 500;"><?php echo htmlspecialchars($fee_item['label']); ?>:</span>
-                                    $<?php echo number_format($fee_item['amount'], 2); ?><?php echo $unit_suffix; ?>
-                                    <span style="color: #666; font-size: 0.85em;">(<?php echo $trigger_label; ?>)</span>
-                                </li>
-                            <?php endforeach; ?>
-                        </ul>
+                    <div class="warehouse-cost-summary">
+                        <p><strong>Cost Structure:</strong></p>
+                        <?php foreach ($warehouse_fees['all_items'] as $fee_item): ?>
+                            <?php
+                                $unit_suffix = ' per pallet';
+                                switch ($fee_item['unit_type']) {
+                                    case 'per_truck': $unit_suffix = ' per truck'; break;
+                                    case 'per_sqft': $unit_suffix = ' per sqft'; break;
+                                    case 'flat': $unit_suffix = ' (flat)'; break;
+                                }
+                                $trigger = $fee_item['trigger_event'];
+                                if ($trigger === 'monthly') $unit_suffix .= ' per month';
+                            ?>
+                            <p style="margin-left: 15px; font-size: 0.9em;">
+                                <strong><?php echo htmlspecialchars($fee_item['label']); ?>:</strong>
+                                $<?php echo number_format($fee_item['amount'], 2); ?><?php echo $unit_suffix; ?>
+                            </p>
+                        <?php endforeach; ?>
                     </div>
                 <?php else: ?>
-                    <p style="color: #999; font-style: italic; margin-top: 10px;"><em>No fee structure defined</em></p>
+                    <p><em>No cost structure defined for this warehouse.</em></p>
                 <?php endif; ?>
-            </div>
-            <div class="warehouse-actions">
-                <a href="edit_warehouse.php?id=<?php echo $warehouse_id; ?>" class="action-buttons">
-                    Edit Warehouse Info
-                </a>
+                <?php if (($_SESSION['role'] ?? '') === 'global_admin'): ?>
+                    <p style="margin-top:10px;"><a href="edit_warehouse.php?warehouse_id=<?php echo $warehouse_id; ?>" class="action-button">Edit Warehouse Info</a></p>
+                <?php endif; ?>
             </div>
         </div>
 
-        <!-- Cost Summary -->
-        <div class="cost-summary">
-            <h2>Current Inventory Summary</h2>
-            <p>Total Pallets Currently Stored: <span><?php echo number_format($total_pallets); ?></span></p>
-            <p>Estimated Monthly Storage Cost (Current Rate): <span>$<?php echo number_format($total_storage_cost_monthly_rate, 2); ?></span></p>
+        <!-- Cost Overview Cards - matching warehouse_info.php -->
+        <?php
+        // Calculate total modules in storage
+        $total_modules_stored = 0;
+        foreach ($pallets_in_storage as $p) {
+            $total_modules_stored += (int)($p['quantity'] ?? 0);
+        }
+        ?>
+        <div class="cost-overview-container">
+            <div class="cost-card">
+                <div class="cost-icon">📦</div>
+                <div class="cost-value"><?php echo number_format($total_pallets); ?></div>
+                <div class="cost-label">Total Pallets Stored</div>
+            </div>
+            <div class="cost-card">
+                <div class="cost-icon">⚡</div>
+                <div class="cost-value"><?php echo number_format($total_modules_stored); ?></div>
+                <div class="cost-label">Total Modules Stored</div>
+            </div>
+            <div class="cost-card total-cost">
+                <div class="cost-icon">💰</div>
+                <div class="cost-value">$<?php echo number_format($total_storage_cost_monthly_rate, 2); ?></div>
+                <div class="cost-label">Est. Monthly Cost</div>
+            </div>
         </div>
 
         <!-- TABS (always visible) -->
@@ -1973,50 +2096,81 @@ function openReceiveTruckloadModal() {
         const arrivalDateField = document.getElementById('actual_truckload_arrival_date');
         if (arrivalDateField) {
             <?php if ($is_port): ?>
-                // For ports: try to use anticipated delivery date from selected truckload
+                // For ports: try to use anticipated delivery date from selected containers
                 let defaultDate = '';
-                const firstSelectedCheckbox = selectedCheckboxes[0];
-                if (firstSelectedCheckbox) {
-                    const selectedRow = firstSelectedCheckbox.closest('tr');
-                    // Find the Est. Arrival Date column (should be the 5th visible column, account for checkbox)
-                    const estArrivalCellIndex = 4; // Est. Arrival Date column index
+                let earliestDate = null;
+
+                // Loop through all selected checkboxes to find the earliest anticipated delivery date
+                selectedCheckboxes.forEach(checkbox => {
+                    const selectedRow = checkbox.closest('tr');
+                    // Find the Est. Arrival Date column (5th column - index 4)
+                    const estArrivalCellIndex = 4;
                     const estArrivalCell = selectedRow ? selectedRow.cells[estArrivalCellIndex] : null;
                     if (estArrivalCell && estArrivalCell.textContent.trim() !== 'N/A' && estArrivalCell.textContent.trim() !== '') {
-                        defaultDate = estArrivalCell.textContent.trim();
-                    }
-                }
-                
-                // If no anticipated date found, use today's date
-                if (!defaultDate) {
-                    const today = new Date();
-                    defaultDate = today.getFullYear() + '-' + 
-                                 String(today.getMonth() + 1).padStart(2, '0') + '-' + 
-                                 String(today.getDate()).padStart(2, '0');
-                } else {
-                    // Convert from display format (if needed) to YYYY-MM-DD
-                    try {
-                        const date = new Date(defaultDate);
-                        if (!isNaN(date.getTime())) {
-                            defaultDate = date.getFullYear() + '-' + 
-                                         String(date.getMonth() + 1).padStart(2, '0') + '-' + 
-                                         String(date.getDate()).padStart(2, '0');
+                        try {
+                            const dateText = estArrivalCell.textContent.trim();
+                            const date = new Date(dateText);
+                            if (!isNaN(date.getTime())) {
+                                if (earliestDate === null || date < earliestDate) {
+                                    earliestDate = date;
+                                }
+                            }
+                        } catch (e) {
+                            // Skip invalid dates
                         }
-                    } catch (e) {
-                        // If date parsing fails, use today
-                        const today = new Date();
-                        defaultDate = today.getFullYear() + '-' + 
-                                     String(today.getMonth() + 1).padStart(2, '0') + '-' + 
-                                     String(today.getDate()).padStart(2, '0');
                     }
+                });
+
+                // Use earliest anticipated date if found, otherwise use today
+                if (earliestDate) {
+                    defaultDate = earliestDate.getFullYear() + '-' +
+                                 String(earliestDate.getMonth() + 1).padStart(2, '0') + '-' +
+                                 String(earliestDate.getDate()).padStart(2, '0');
+                } else {
+                    const today = new Date();
+                    defaultDate = today.getFullYear() + '-' +
+                                 String(today.getMonth() + 1).padStart(2, '0') + '-' +
+                                 String(today.getDate()).padStart(2, '0');
                 }
                 arrivalDateField.value = defaultDate;
             <?php else: ?>
-                // For warehouses: use today's date
-                const today = new Date();
-                const todayString = today.getFullYear() + '-' + 
-                                   String(today.getMonth() + 1).padStart(2, '0') + '-' + 
-                                   String(today.getDate()).padStart(2, '0');
-                arrivalDateField.value = todayString;
+                // For warehouses: try to use anticipated delivery date from selected truckloads
+                let defaultDate = '';
+                let earliestDate = null;
+
+                // Loop through all selected checkboxes to find the earliest anticipated delivery date
+                selectedCheckboxes.forEach(checkbox => {
+                    const selectedRow = checkbox.closest('tr');
+                    // Find the Est. Arrival Date column (5th column - index 4)
+                    const estArrivalCellIndex = 4;
+                    const estArrivalCell = selectedRow ? selectedRow.cells[estArrivalCellIndex] : null;
+                    if (estArrivalCell && estArrivalCell.textContent.trim() !== 'N/A' && estArrivalCell.textContent.trim() !== '') {
+                        try {
+                            const dateText = estArrivalCell.textContent.trim();
+                            const date = new Date(dateText);
+                            if (!isNaN(date.getTime())) {
+                                if (earliestDate === null || date < earliestDate) {
+                                    earliestDate = date;
+                                }
+                            }
+                        } catch (e) {
+                            // Skip invalid dates
+                        }
+                    }
+                });
+
+                // Use earliest anticipated date if found, otherwise use today
+                if (earliestDate) {
+                    defaultDate = earliestDate.getFullYear() + '-' +
+                                 String(earliestDate.getMonth() + 1).padStart(2, '0') + '-' +
+                                 String(earliestDate.getDate()).padStart(2, '0');
+                } else {
+                    const today = new Date();
+                    defaultDate = today.getFullYear() + '-' +
+                                 String(today.getMonth() + 1).padStart(2, '0') + '-' +
+                                 String(today.getDate()).padStart(2, '0');
+                }
+                arrivalDateField.value = defaultDate;
             <?php endif; ?>
         }
     }, 100);
