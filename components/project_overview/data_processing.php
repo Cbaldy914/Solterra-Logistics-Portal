@@ -22,6 +22,7 @@ $project_id = intval($_GET['project_id']);
 // Database connection
 require_once '../config.php';
 require_once 'anticipated_schedule_helpers.php';
+require_once 'cost_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -1017,6 +1018,18 @@ while ($dv = $dres->fetch_assoc()) {
 
 // Calculate total logistics cost (includes warehousing from pallets)
 $total_logistics_cost = $total_freight_cost + $total_accessorial_costs + $total_warehousing_cost + $total_solterra_fee;
+
+// Calculate module costs from cost_per_watt
+$module_cost_data = calculate_project_module_cost($project_id, $conn);
+$total_module_cost = $module_cost_data['total_module_cost'];
+$module_cost_per_watt = $module_cost_data['avg_cost_per_watt'];
+$has_module_cost_data = $module_cost_data['has_cost_data'];
+
+// Calculate logistics as percentage of module cost (if module cost data available)
+$logistics_percentage_of_module = ($total_module_cost > 0) ? ($total_logistics_cost / $total_module_cost) * 100 : null;
+
+// Total project cost (modules + logistics)
+$total_project_cost = $total_module_cost + $total_logistics_cost;
 
 // Build cost_data
 $cost_data = [];
