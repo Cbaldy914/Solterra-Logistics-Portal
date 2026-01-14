@@ -3359,32 +3359,37 @@ function addEditWattageField(wattage = '', quantity = '', itemId = '') {
 }
 
 // Form submission handlers
-document.getElementById('addModuleForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    
-    const formData = new FormData(this);
-    formData.append('project_id', <?php echo $project_id; ?>);
-    formData.append('action', 'add_module_batch');
-    
-    fetch('handle_module_batch.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            alert('Module batch added successfully!');
-            location.reload();
-        } else {
-            alert('Error adding module batch: ' + (data.error || 'Unknown error'));
-        }
-    })
-    .catch(error => {
-        alert('Error adding module batch: ' + error.message);
-    });
-});
+const addModuleForm = document.getElementById('addModuleForm');
+if (addModuleForm) {
+    addModuleForm.addEventListener('submit', function(e) {
+        e.preventDefault();
 
-document.getElementById('editBatchForm').addEventListener('submit', function(e) {
+        const formData = new FormData(this);
+        formData.append('project_id', <?php echo $project_id; ?>);
+        formData.append('action', 'add_module_batch');
+
+        fetch('handle_module_batch.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Module batch added successfully!');
+                location.reload();
+            } else {
+                alert('Error adding module batch: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            alert('Error adding module batch: ' + error.message);
+        });
+    });
+}
+
+const editBatchForm = document.getElementById('editBatchForm');
+if (editBatchForm) {
+    editBatchForm.addEventListener('submit', function(e) {
     e.preventDefault();
     
     const formData = new FormData(this);
@@ -3406,7 +3411,8 @@ document.getElementById('editBatchForm').addEventListener('submit', function(e) 
     .catch(error => {
         alert('Error updating module batch: ' + error.message);
     });
-});
+    });
+}
 <?php endif; ?>
 </script>
 

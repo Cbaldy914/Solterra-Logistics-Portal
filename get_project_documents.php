@@ -35,6 +35,7 @@ $document_sub_type = trim($_GET['document_sub_type'] ?? '');
 // New: support multi-type and multi-subtype filters (CSV)
 $document_type_in = trim($_GET['document_type_in'] ?? '');
 $document_sub_type_in = trim($_GET['document_sub_type_in'] ?? '');
+$module_id = intval($_GET['module_id'] ?? 0); // Filter by specific module batch
 $limit = intval($_GET['limit'] ?? 0); // 0 means no limit
 
 $user_id = $_SESSION['user_id'];
@@ -149,6 +150,13 @@ try {
             $sql .= " AND pd.document_sub_type = ?";
             $params[] = $document_sub_type;
             $param_types .= "s";
+        }
+
+        // Apply module_id filter (for batch-specific documents)
+        if ($module_id > 0) {
+            $sql .= " AND pd.module_id = ?";
+            $params[] = $module_id;
+            $param_types .= "i";
         }
 
         $sql .= " ORDER BY pd.uploaded_at DESC";

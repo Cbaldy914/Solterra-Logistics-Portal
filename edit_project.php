@@ -47,8 +47,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $phone1                   = trim($_POST['phone1'] ?? '');
         $phone2                   = trim($_POST['phone2'] ?? '');
         $timezone                 = trim($_POST['timezone'] ?? 'America/New_York');
-        $receiving_hours_start    = trim($_POST['receiving_hours_start'] ?? '08:00');
-        $receiving_hours_end      = trim($_POST['receiving_hours_end'] ?? '17:00');
         $instructions             = trim($_POST['instructions'] ?? '');
         $additional_notes         = trim($_POST['additional_notes'] ?? '');
 
@@ -151,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             WHERE id = ?
         ");
         $stmtUpdate->bind_param(
-            "sdsssssdsssssssssii",
+            "sdsssssdssssssssii",
             $project_name,
             $project_size,
             $street_address,
@@ -177,7 +175,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $stmtUpdate->close();
 
-        // Update site operating hours (delete existing and re-insert for Mon-Fri)
+        // Update site operating hours (delete existing and re-insert per day)
         $stmtDelHours = $conn->prepare("DELETE FROM site_operating_hours WHERE project_id = ?");
         $stmtDelHours->bind_param("i", $project_id);
         $stmtDelHours->execute();
@@ -188,10 +186,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             VALUES (?, ?, ?, ?)
         ");
         if ($stmtHours) {
-            // Insert for Monday (1) through Friday (5)
-            for ($day = 1; $day <= 5; $day++) {
-                $stmtHours->bind_param("iiss", $project_id, $day, $receiving_hours_start, $receiving_hours_end);
-                $stmtHours->execute();
+            // Insert for each day that has hours_start and hours_end set
+            for ($day = 0; $day <= 6; $day++) {
+                $start_key = "hours_start_$day";
+                $end_key = "hours_end_$day";
+                if (!empty($_POST[$start_key]) && !empty($_POST[$end_key])) {
+                    $day_start = trim($_POST[$start_key]);
+                    $day_end = trim($_POST[$end_key]);
+                    $stmtHours->bind_param("iiss", $project_id, $day, $day_start, $day_end);
+                    $stmtHours->execute();
+                }
             }
             $stmtHours->close();
         }
@@ -215,17 +219,18 @@ if (!$project) {
     die("Project not found.");
 }
 
-// Get site operating hours (use first weekday found)
-$receiving_hours_start = '08:00';
-$receiving_hours_end = '17:00';
-$stmtHours = $conn->prepare("SELECT start_time, end_time FROM site_operating_hours WHERE project_id = ? AND day_of_week BETWEEN 1 AND 5 LIMIT 1");
+// Get site operating hours by day
+$site_operating_hours = [];
+$stmtHours = $conn->prepare("SELECT day_of_week, start_time, end_time FROM site_operating_hours WHERE project_id = ?");
 if ($stmtHours) {
     $stmtHours->bind_param("i", $project_id);
     $stmtHours->execute();
-    $stmtHours->bind_result($start_time, $end_time);
-    if ($stmtHours->fetch()) {
-        $receiving_hours_start = $start_time;
-        $receiving_hours_end = $end_time;
+    $result = $stmtHours->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $site_operating_hours[$row['day_of_week']] = [
+            'start' => $row['start_time'],
+            'end' => $row['end_time']
+        ];
     }
     $stmtHours->close();
 }
@@ -265,6 +270,24 @@ while ($row = $resultBatches->fetch_assoc()) {
     $assigned_batches[] = $row;
 }
 $stmtBatches->close();
+
+// Get module batches for edit links
+$module_batches = [];
+$stmtModuleBatches = $conn->prepare("
+    SELECT m.id, m.vendor_name,
+           (SELECT SUM(u.quantity) FROM unassigned_module_items u WHERE u.unassigned_module_id = m.id) as total_modules,
+           (SELECT GROUP_CONCAT(DISTINCT u.wattage ORDER BY u.wattage SEPARATOR ', ') FROM unassigned_module_items u WHERE u.unassigned_module_id = m.id) as wattages
+    FROM modules m
+    WHERE m.project_id = ?
+    ORDER BY m.id ASC
+");
+$stmtModuleBatches->bind_param("i", $project_id);
+$stmtModuleBatches->execute();
+$resultModuleBatches = $stmtModuleBatches->get_result();
+while ($row = $resultModuleBatches->fetch_assoc()) {
+    $module_batches[] = $row;
+}
+$stmtModuleBatches->close();
 ?>
 
 <!DOCTYPE html>
@@ -762,6 +785,362 @@ $stmtBatches->close();
                 display: none;
             }
         }
+
+        /* Daily Hours Schedule */
+        .receiving-schedule-container {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 16px;
+        }
+        .schedule-quick-set {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 16px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .quick-set-btn {
+            padding: 8px 14px;
+            background: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: #495057;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .quick-set-btn:hover {
+            border-color: #488C9A;
+            color: #488C9A;
+        }
+        .quick-set-btn.active {
+            background: #488C9A;
+            border-color: #488C9A;
+            color: #fff;
+        }
+        .daily-hours-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .day-row {
+            display: grid;
+            grid-template-columns: 100px 1fr auto;
+            gap: 12px;
+            align-items: center;
+            padding: 10px 12px;
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        .day-row.disabled {
+            background: #f8f9fa;
+            opacity: 0.6;
+        }
+        .day-row .day-name {
+            font-weight: 500;
+            color: #293E4C;
+            font-size: 0.9rem;
+        }
+        .day-row .day-name abbr {
+            display: none;
+        }
+        .day-row .hours-inputs {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .day-row .hours-inputs input[type="time"] {
+            padding: 6px 8px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            width: 110px;
+        }
+        .day-row .hours-inputs input[type="time"]:focus {
+            outline: none;
+            border-color: #488C9A;
+        }
+        .day-row .hours-inputs span {
+            color: #6c757d;
+            font-size: 0.85rem;
+        }
+        .day-row .day-toggle {
+            width: 44px;
+            height: 24px;
+            background: #dee2e6;
+            border-radius: 12px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .day-row .day-toggle.active {
+            background: #488C9A;
+        }
+        .day-row .day-toggle::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.2s ease;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .day-row .day-toggle.active::after {
+            transform: translateX(20px);
+        }
+        @media (max-width: 600px) {
+            .day-row {
+                grid-template-columns: 80px 1fr auto;
+                gap: 8px;
+                padding: 8px 10px;
+            }
+            .day-row .day-name span {
+                display: none;
+            }
+            .day-row .day-name abbr {
+                display: inline;
+            }
+            .day-row .hours-inputs input[type="time"] {
+                width: 90px;
+            }
+        }
+
+        /* Site Documents Modal */
+        .site-docs-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .site-docs-modal.open {
+            display: flex;
+        }
+        .site-docs-modal-content {
+            background: #fff;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .site-docs-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .site-docs-modal-header h3 {
+            margin: 0;
+            color: #293E4C;
+        }
+        .modal-close-btn {
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: #6c757d;
+            cursor: pointer;
+        }
+        .site-docs-modal-body {
+            padding: 24px;
+        }
+        .site-docs-modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid #e9ecef;
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+        .btn-modal-cancel {
+            padding: 10px 20px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .btn-modal-confirm {
+            padding: 10px 20px;
+            background: #488C9A;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .file-drop-zone {
+            border: 2px dashed #dee2e6;
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .file-drop-zone:hover {
+            border-color: #488C9A;
+            background: #f8f9fa;
+        }
+        .file-drop-zone .drop-icon {
+            font-size: 2rem;
+            display: block;
+            margin-bottom: 8px;
+        }
+        .file-drop-zone .drop-text {
+            color: #495057;
+            display: block;
+        }
+        .file-drop-zone .drop-hint {
+            color: #6c757d;
+            font-size: 0.85rem;
+            display: block;
+            margin-top: 4px;
+        }
+        .selected-files-list {
+            margin-top: 12px;
+        }
+        .selected-file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            margin-bottom: 6px;
+        }
+        .selected-file-item .file-name {
+            font-size: 0.9rem;
+            color: #293E4C;
+        }
+        .selected-file-item .file-size {
+            font-size: 0.8rem;
+            color: #6c757d;
+            margin-left: 12px;
+        }
+        .selected-file-item .remove-file {
+            color: #dc3545;
+            cursor: pointer;
+            font-size: 1.2rem;
+            margin-left: 12px;
+        }
+        .site-docs-upload-area {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .site-docs-upload-btn {
+            padding: 14px 24px;
+            background: #f8f9fa;
+            border: 2px dashed #dee2e6;
+            border-radius: 10px;
+            color: #495057;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .site-docs-upload-btn:hover {
+            border-color: #488C9A;
+            color: #488C9A;
+        }
+        #site-docs-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .uploaded-doc-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #e8f4f6;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: #293E4C;
+        }
+        .uploaded-doc-item .remove-doc {
+            color: #dc3545;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        /* Module batch links */
+        .module-batch-links {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 20px;
+        }
+        .module-batch-link {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border: 1px solid #e9ecef;
+            transition: all 0.2s ease;
+        }
+        .module-batch-link:hover {
+            border-color: #488C9A;
+            background: #fff;
+        }
+        .module-batch-link .batch-info {
+            display: flex;
+            flex-direction: column;
+        }
+        .module-batch-link .batch-name {
+            font-weight: 600;
+            color: #293E4C;
+        }
+        .module-batch-link .batch-details {
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+        .module-batch-link .batch-action {
+            padding: 8px 16px;
+            background: #488C9A;
+            color: #fff;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: background 0.2s ease;
+        }
+        .module-batch-link .batch-action:hover {
+            background: #3a7a87;
+        }
+        .add-batch-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 16px;
+            background: #fff;
+            border: 2px dashed #488C9A;
+            border-radius: 10px;
+            color: #488C9A;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+        .add-batch-btn:hover {
+            background: #488C9A;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -924,7 +1303,7 @@ $stmtBatches->close();
                 <div class="form-row">
                     <div class="form-group">
                         <label>Timezone</label>
-                        <select name="timezone">
+                        <select name="timezone" id="timezone">
                             <?php
                             $timezones = [
                                 'America/New_York' => 'Eastern',
@@ -942,20 +1321,6 @@ $stmtBatches->close();
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Site Receiving Hours</label>
-                        <div class="hours-grid">
-                            <div class="form-group">
-                                <label style="font-size: 0.85rem; color: #6c757d;">Opens</label>
-                                <input type="time" name="receiving_hours_start" value="<?php echo htmlspecialchars($receiving_hours_start); ?>">
-                            </div>
-                            <div class="form-group">
-                                <label style="font-size: 0.85rem; color: #6c757d;">Closes</label>
-                                <input type="time" name="receiving_hours_end" value="<?php echo htmlspecialchars($receiving_hours_end); ?>">
-                            </div>
-                        </div>
-                        <span class="help-text">Hours will be set for Monday-Friday</span>
-                    </div>
-                    <div class="form-group">
                         <label>Appointment Window<span class="optional-tag">(optional)</span></label>
                         <?php $current_appt = $project['appointment_duration'] ?? 30; ?>
                         <select name="appointment_duration">
@@ -967,6 +1332,44 @@ $stmtBatches->close();
                             <option value="120" <?php echo $current_appt == 120 ? 'selected' : ''; ?>>2 hours</option>
                         </select>
                         <span class="help-text">Duration of each delivery appointment slot</span>
+                    </div>
+                </div>
+
+                <div class="form-row single">
+                    <div class="form-group">
+                        <label>Site Receiving Hours</label>
+                        <div class="receiving-schedule-container">
+                            <div class="schedule-quick-set">
+                                <button type="button" class="quick-set-btn" onclick="setQuickSchedule('business')">Mon-Fri 8am-5pm</button>
+                                <button type="button" class="quick-set-btn" onclick="setQuickSchedule('extended')">Mon-Sat 7am-6pm</button>
+                                <button type="button" class="quick-set-btn" onclick="setQuickSchedule('24-7')">24/7</button>
+                                <button type="button" class="quick-set-btn" onclick="setQuickSchedule('custom')">Custom</button>
+                            </div>
+                            <div class="daily-hours-grid" id="dailyHoursGrid">
+                                <?php
+                                $day_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                                $day_abbr = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                                for ($d = 0; $d <= 6; $d++):
+                                    $has_hours = isset($site_operating_hours[$d]);
+                                    $start_val = $has_hours ? $site_operating_hours[$d]['start'] : '08:00';
+                                    $end_val = $has_hours ? $site_operating_hours[$d]['end'] : '17:00';
+                                    $is_active = $has_hours;
+                                    $disabled_attr = $is_active ? '' : 'disabled';
+                                    $row_class = $is_active ? '' : 'disabled';
+                                    $toggle_class = $is_active ? 'active' : '';
+                                ?>
+                                <div class="day-row <?php echo $row_class; ?>" data-day="<?php echo $d; ?>">
+                                    <div class="day-name"><span><?php echo $day_names[$d]; ?></span><abbr><?php echo $day_abbr[$d]; ?></abbr></div>
+                                    <div class="hours-inputs">
+                                        <input type="time" name="hours_start_<?php echo $d; ?>" value="<?php echo htmlspecialchars($start_val); ?>" <?php echo $disabled_attr; ?>>
+                                        <span>to</span>
+                                        <input type="time" name="hours_end_<?php echo $d; ?>" value="<?php echo htmlspecialchars($end_val); ?>" <?php echo $disabled_attr; ?>>
+                                    </div>
+                                    <div class="day-toggle <?php echo $toggle_class; ?>" onclick="toggleDay(this, <?php echo $d; ?>)"></div>
+                                </div>
+                                <?php endfor; ?>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -986,26 +1389,15 @@ $stmtBatches->close();
                 </div>
 
                 <h4 class="form-subsection-title">Site Documents</h4>
-                <input type="hidden" name="site_doc_type" id="site_doc_type" value="site">
-                <div class="form-row single">
-                    <div class="form-group">
-                        <label>Document Sub-Type<span class="optional-tag">(optional)</span></label>
-                        <select name="site_doc_sub_type" id="site_doc_sub_type">
-                            <option value="">Select sub-type...</option>
-                            <option value="Delivery SOP">Delivery SOP / Driver Handout</option>
-                            <option value="Site Map">Site Map</option>
-                            <option value="Safety Document">Safety Document</option>
-                            <option value="Permit">Permit</option>
-                            <option value="Other">Other</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-row single">
-                    <div class="form-group">
-                        <label>Upload Documents<span class="optional-tag">(optional)</span></label>
-                        <input type="file" name="site_documents[]" id="site_documents" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xls,.xlsx">
-                        <span class="help-text">Upload site documents like driver handouts, site maps, SOPs, etc. (PDF, DOC, JPG, PNG, XLS - max 10MB each)</span>
-                    </div>
+                <input type="hidden" name="site_doc_type" id="site_doc_type_hidden" value="site">
+                <input type="hidden" name="site_doc_sub_type" id="site_doc_sub_type_hidden" value="">
+                <div class="site-docs-upload-area">
+                    <button type="button" class="site-docs-upload-btn" onclick="openSiteDocsModal()">
+                        <i class="fas fa-cloud-upload-alt"></i> Upload Site Documents
+                    </button>
+                    <span class="help-text">Upload driver handouts, site maps, SOPs, and other site documents</span>
+                    <div id="site-docs-list"></div>
+                    <input type="file" name="site_documents[]" id="site_documents" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xls,.xlsx" style="display:none">
                 </div>
 
                 <div class="section-actions">
@@ -1021,20 +1413,20 @@ $stmtBatches->close();
             </div>
         </div>
 
-        <!-- Step 3: Module Summary (View Only) -->
+        <!-- Step 3: Module Summary -->
         <div class="accordion-section" data-section="3">
             <div class="accordion-header" onclick="toggleAccordion(3)">
-                <h2><span class="step-badge" id="badge-3">3</span> Module Summary <span class="step-tag optional">View Only</span></h2>
+                <h2><span class="step-badge" id="badge-3">3</span> Module Summary</h2>
                 <span class="accordion-toggle">&#9660;</span>
             </div>
             <div class="accordion-content">
                 <div class="section-description">
-                    View the modules assigned to this project. To add or edit modules, use the Module Batches management from the Project Overview page.
+                    Manage module batches assigned to this project. Click on a batch to edit it.
                 </div>
 
                 <div class="module-summary">
                     <?php if (!empty($actual_modules)): ?>
-                        <h3>Module Quantities by Wattage</h3>
+                        <h4 class="form-subsection-title">Module Quantities by Wattage</h4>
                         <div class="module-stats">
                             <?php foreach ($actual_modules as $module_row): ?>
                                 <div class="module-stat">
@@ -1052,20 +1444,36 @@ $stmtBatches->close();
                                 ?>
                             </strong>
                         </div>
-                    <?php else: ?>
-                        <div style="text-align: center; padding: 40px; color: #666;">
-                            <h3 style="color: #293E4C; margin-bottom: 12px;">No Module Batches Assigned</h3>
-                            <p>This project doesn't have any module batches assigned to it yet.</p>
-                            <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" style="color: #488C9A; text-decoration: none; font-weight: 600;">
-                                &rarr; Add Module Batch
-                            </a>
-                        </div>
                     <?php endif; ?>
 
-                    <div class="info-note">
-                        <strong>Note:</strong> Module quantities are automatically calculated from batches assigned to this project.
-                        To modify module quantities, edit the individual module batches from the
-                        <a href="project_overview?project_id=<?php echo $project_id; ?>" style="color: #856404; font-weight: 600;">Project Overview</a>.
+                    <h4 class="form-subsection-title" style="margin-top: 24px;">Module Batches</h4>
+                    <div class="module-batch-links">
+                        <?php if (!empty($module_batches)): ?>
+                            <?php foreach ($module_batches as $batch): ?>
+                                <div class="module-batch-link">
+                                    <div class="batch-info">
+                                        <span class="batch-name"><?php echo htmlspecialchars($batch['vendor_name'] ?? 'Module Batch #' . $batch['id']); ?></span>
+                                        <span class="batch-details">
+                                            <?php echo number_format($batch['total_modules'] ?? 0); ?> modules
+                                            <?php if (!empty($batch['wattages'])): ?>
+                                                &bull; <?php echo htmlspecialchars($batch['wattages']); ?>W
+                                            <?php endif; ?>
+                                        </span>
+                                    </div>
+                                    <a href="edit_module_batch.php?batch_id=<?php echo $batch['id']; ?>" class="batch-action">
+                                        <i class="fas fa-edit"></i> Edit
+                                    </a>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <div style="text-align: center; padding: 20px; color: #666; background: #f8f9fa; border-radius: 10px;">
+                                <p style="margin: 0;">No module batches assigned to this project yet.</p>
+                            </div>
+                        <?php endif; ?>
+
+                        <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" class="add-batch-btn">
+                            <i class="fas fa-plus"></i> Add New Module Batch
+                        </a>
                     </div>
                 </div>
 
@@ -1081,16 +1489,305 @@ $stmtBatches->close();
                 </div>
             </div>
         </div>
+
+        <!-- Site Documents Upload Modal -->
+        <div id="siteDocsModal" class="site-docs-modal">
+            <div class="site-docs-modal-content">
+                <div class="site-docs-modal-header">
+                    <h3>Upload Site Documents</h3>
+                    <button type="button" class="modal-close-btn" onclick="closeSiteDocsModal()">&times;</button>
+                </div>
+                <div class="site-docs-modal-body">
+                    <input type="hidden" id="site_doc_type" value="site">
+                    <div class="form-group">
+                        <label>Document Sub-Type <span class="required-star">*</span></label>
+                        <select id="site_doc_sub_type">
+                            <option value="">Select sub-type...</option>
+                            <option value="Delivery SOP">Delivery SOP / Driver Handout</option>
+                            <option value="Site Map">Site Map</option>
+                            <option value="Safety Document">Safety Document</option>
+                            <option value="Permit">Permit</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Select Files</label>
+                        <div class="file-drop-zone" onclick="document.getElementById('modal_site_documents').click()">
+                            <span class="drop-icon"><i class="fas fa-cloud-upload-alt"></i></span>
+                            <span class="drop-text">Click to select files or drag & drop</span>
+                            <span class="drop-hint">PDF, DOC, JPG, PNG, XLS (max 10MB each)</span>
+                        </div>
+                        <input type="file" id="modal_site_documents" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xls,.xlsx" style="display:none" onchange="handleSiteDocsSelection(event)">
+                        <div id="selected-files-list" class="selected-files-list"></div>
+                    </div>
+                </div>
+                <div class="site-docs-modal-footer">
+                    <button type="button" class="btn-modal-cancel" onclick="closeSiteDocsModal()">Cancel</button>
+                    <button type="button" class="btn-modal-confirm" onclick="confirmSiteDocs()">Add Documents</button>
+                </div>
+            </div>
+        </div>
     </form>
 </main>
 
 <script>
 let currentStep = 1;
+let selectedSiteFiles = [];
 
-// Site document sub-types are now static in the HTML - this function is no longer needed
-function updateSiteDocSubTypes() {
-    return;
+// Site Documents Modal Functions
+function openSiteDocsModal() {
+    document.getElementById('siteDocsModal').classList.add('open');
+    document.getElementById('site_doc_sub_type').value = '';
+    document.getElementById('selected-files-list').innerHTML = '';
+    selectedSiteFiles = [];
 }
+
+function closeSiteDocsModal() {
+    document.getElementById('siteDocsModal').classList.remove('open');
+}
+
+function handleSiteDocsSelection(event) {
+    const files = Array.from(event.target.files);
+    selectedSiteFiles = files;
+    renderSelectedFiles();
+}
+
+function renderSelectedFiles() {
+    const container = document.getElementById('selected-files-list');
+    container.innerHTML = '';
+
+    selectedSiteFiles.forEach((file, index) => {
+        const size = (file.size / 1024).toFixed(1) + ' KB';
+        const div = document.createElement('div');
+        div.className = 'selected-file-item';
+        div.innerHTML = `
+            <span class="file-name">${file.name}</span>
+            <span class="file-size">${size}</span>
+            <span class="remove-file" onclick="removeSiteFile(${index})">&times;</span>
+        `;
+        container.appendChild(div);
+    });
+}
+
+function removeSiteFile(index) {
+    selectedSiteFiles.splice(index, 1);
+    renderSelectedFiles();
+    const dt = new DataTransfer();
+    selectedSiteFiles.forEach(f => dt.items.add(f));
+    document.getElementById('modal_site_documents').files = dt.files;
+}
+
+function confirmSiteDocs() {
+    const docType = document.getElementById('site_doc_type').value || 'site';
+    const subType = document.getElementById('site_doc_sub_type').value;
+
+    if (!subType) {
+        alert('Please select a document sub-type');
+        return;
+    }
+
+    if (selectedSiteFiles.length === 0) {
+        alert('Please select at least one file');
+        return;
+    }
+
+    // Store type and sub-type in hidden fields
+    document.getElementById('site_doc_type_hidden').value = docType;
+    document.getElementById('site_doc_sub_type_hidden').value = subType;
+
+    // Update the file input with selected files
+    const dt = new DataTransfer();
+    selectedSiteFiles.forEach(f => dt.items.add(f));
+    document.getElementById('site_documents').files = dt.files;
+
+    // Update the visible list
+    const listContainer = document.getElementById('site-docs-list');
+    listContainer.innerHTML = '';
+    selectedSiteFiles.forEach((file, index) => {
+        const div = document.createElement('div');
+        div.className = 'uploaded-doc-item';
+        div.innerHTML = `
+            <span>${file.name}</span>
+            <span class="remove-doc" onclick="removeUploadedDoc(${index})">&times;</span>
+        `;
+        listContainer.appendChild(div);
+    });
+
+    closeSiteDocsModal();
+}
+
+function removeUploadedDoc(index) {
+    selectedSiteFiles.splice(index, 1);
+    const dt = new DataTransfer();
+    selectedSiteFiles.forEach(f => dt.items.add(f));
+    document.getElementById('site_documents').files = dt.files;
+
+    const listContainer = document.getElementById('site-docs-list');
+    listContainer.innerHTML = '';
+    selectedSiteFiles.forEach((file, i) => {
+        const div = document.createElement('div');
+        div.className = 'uploaded-doc-item';
+        div.innerHTML = `
+            <span>${file.name}</span>
+            <span class="remove-doc" onclick="removeUploadedDoc(${i})">&times;</span>
+        `;
+        listContainer.appendChild(div);
+    });
+}
+
+// Receiving Schedule Functions
+function toggleDay(toggleEl, dayNum) {
+    const row = document.querySelector(`.day-row[data-day="${dayNum}"]`);
+    const inputs = row.querySelectorAll('input[type="time"]');
+    const isActive = toggleEl.classList.toggle('active');
+
+    inputs.forEach(input => {
+        input.disabled = !isActive;
+        if (!isActive) {
+            input.dataset.originalName = input.name;
+            input.name = '';
+        } else {
+            if (input.dataset.originalName) {
+                input.name = input.dataset.originalName;
+            }
+        }
+    });
+
+    row.classList.toggle('disabled', !isActive);
+    updateQuickSetButtons();
+}
+
+function setQuickSchedule(preset) {
+    const schedules = {
+        'business': {
+            days: [1, 2, 3, 4, 5],
+            start: '08:00',
+            end: '17:00'
+        },
+        'extended': {
+            days: [1, 2, 3, 4, 5, 6],
+            start: '07:00',
+            end: '18:00'
+        },
+        '24-7': {
+            days: [0, 1, 2, 3, 4, 5, 6],
+            start: '00:00',
+            end: '23:59'
+        },
+        'custom': null
+    };
+
+    if (preset === 'custom') {
+        document.querySelectorAll('.quick-set-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelector('.quick-set-btn:last-child').classList.add('active');
+        return;
+    }
+
+    const schedule = schedules[preset];
+    if (!schedule) return;
+
+    // Update all days
+    for (let d = 0; d <= 6; d++) {
+        const row = document.querySelector(`.day-row[data-day="${d}"]`);
+        const toggle = row.querySelector('.day-toggle');
+        const inputs = row.querySelectorAll('input[type="time"]');
+        const shouldBeActive = schedule.days.includes(d);
+
+        // Set toggle state
+        if (shouldBeActive && !toggle.classList.contains('active')) {
+            toggle.classList.add('active');
+            row.classList.remove('disabled');
+        } else if (!shouldBeActive && toggle.classList.contains('active')) {
+            toggle.classList.remove('active');
+            row.classList.add('disabled');
+        }
+
+        // Update inputs
+        inputs.forEach((input, idx) => {
+            input.disabled = !shouldBeActive;
+            if (shouldBeActive) {
+                input.value = idx === 0 ? schedule.start : schedule.end;
+                if (!input.name && input.dataset.originalName) {
+                    input.name = input.dataset.originalName;
+                }
+            } else {
+                if (input.name) {
+                    input.dataset.originalName = input.name;
+                    input.name = '';
+                }
+            }
+        });
+    }
+
+    document.querySelectorAll('.quick-set-btn').forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+}
+
+function updateQuickSetButtons() {
+    const enabledDays = [];
+    let startTime = null;
+    let endTime = null;
+    let allSameTime = true;
+
+    document.querySelectorAll('.day-row').forEach(row => {
+        const day = parseInt(row.dataset.day);
+        const toggle = row.querySelector('.day-toggle');
+        if (toggle.classList.contains('active')) {
+            enabledDays.push(day);
+            const inputs = row.querySelectorAll('input[type="time"]');
+            if (startTime === null) {
+                startTime = inputs[0].value;
+                endTime = inputs[1].value;
+            } else {
+                if (inputs[0].value !== startTime || inputs[1].value !== endTime) {
+                    allSameTime = false;
+                }
+            }
+        }
+    });
+
+    if (!allSameTime) {
+        document.querySelectorAll('.quick-set-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelector('.quick-set-btn:last-child').classList.add('active');
+        return;
+    }
+
+    const isBusiness = JSON.stringify(enabledDays.sort()) === JSON.stringify([1,2,3,4,5]) &&
+                       startTime === '08:00' && endTime === '17:00';
+    const isExtended = JSON.stringify(enabledDays.sort()) === JSON.stringify([1,2,3,4,5,6]) &&
+                       startTime === '07:00' && endTime === '18:00';
+    const is247 = JSON.stringify(enabledDays.sort()) === JSON.stringify([0,1,2,3,4,5,6]) &&
+                  startTime === '00:00' && endTime === '23:59';
+
+    document.querySelectorAll('.quick-set-btn').forEach(btn => btn.classList.remove('active'));
+
+    if (isBusiness) {
+        document.querySelector('.quick-set-btn:nth-child(1)').classList.add('active');
+    } else if (isExtended) {
+        document.querySelector('.quick-set-btn:nth-child(2)').classList.add('active');
+    } else if (is247) {
+        document.querySelector('.quick-set-btn:nth-child(3)').classList.add('active');
+    } else {
+        document.querySelector('.quick-set-btn:nth-child(4)').classList.add('active');
+    }
+}
+
+// Initialize schedule form
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.day-row').forEach(row => {
+        const toggle = row.querySelector('.day-toggle');
+        const inputs = row.querySelectorAll('input[type="time"]');
+        const isActive = toggle.classList.contains('active');
+
+        if (!isActive) {
+            inputs.forEach(input => {
+                input.dataset.originalName = input.name;
+                input.name = '';
+            });
+        }
+    });
+    updateQuickSetButtons();
+});
 
 function goToStep(step) {
     // Close current accordion
