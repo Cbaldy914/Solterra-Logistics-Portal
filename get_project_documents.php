@@ -213,6 +213,7 @@ try {
                     'file_path' => $row['file_path'],
                     'document_type' => $row['document_type'],
                     'document_sub_type' => $row['document_sub_type'],
+                    'module_id' => $row['module_id'],
                     'module_batch_name' => $row['module_batch_name']
                 ];
             }

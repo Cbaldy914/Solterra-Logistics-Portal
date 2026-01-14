@@ -474,7 +474,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             'mime_type' => $mime,
                             'uploaded_by' => $user_id,
                             'tmp_name' => $tmpName,
-                            'description' => ($module_docs_description !== '' ? $module_docs_description : 'Module Documentation')
+                            'description' => ($module_docs_description !== '' ? $module_docs_description : 'Module Documentation'),
+                            'module_id' => $module_id
                         ];
                         saveDocumentToProjectDocuments($conn, $doc);
                     } else {
