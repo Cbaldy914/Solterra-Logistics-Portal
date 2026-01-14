@@ -881,73 +881,85 @@ document.addEventListener('keydown', function(e) {
                             </div>
                         </div>
 
+                        <!-- Module Documents Section - Inside Batch Card, own grid row -->
+                        <div class="info-grid">
+                            <div class="info-section" style="grid-column: 1 / -1;">
+                                <h3>
+                                    Documents
+                                    <a href="project_documents.php?project_id=<?php echo $project_id; ?>&filter_type=modules&module_id=<?php echo $batch['id']; ?>" id="module-docs-count-link-<?php echo $batch['id']; ?>" class="docs-count-link" style="display: none;"></a>
+                                </h3>
+                                <div id="module-docs-list-<?php echo $batch['id']; ?>" class="docs-grid">
+                                    <div class="docs-loading"><i class="fas fa-spinner fa-spin"></i> Loading documents...</div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="batch-actions">
                             <a href="module_overview.php?batch_id=<?php echo $batch['id']; ?>" class="info-action-button">
                                 View Pallets & Module Status
                             </a>
                         </div>
+
+                        <script>
+                        (function() {
+                            const projectId = <?php echo $project_id; ?>;
+                            const batchId = <?php echo $batch['id']; ?>;
+                            // Fetch all module documents, then filter to show those matching this batch OR unassigned (no module_id)
+                            fetch(`get_project_documents.php?project_id=${projectId}&document_type_in=modules`)
+                                .then(r => r.json())
+                                .then(data => {
+                                    const container = document.getElementById('module-docs-list-' + batchId);
+                                    const countLink = document.getElementById('module-docs-count-link-' + batchId);
+
+                                    if (!data.success || !data.documents || data.documents.length === 0) {
+                                        container.innerHTML = '<div class="docs-empty"><i class="fas fa-folder-open"></i><span>No documents uploaded yet</span></div>';
+                                        return;
+                                    }
+
+                                    // Filter: show documents that match this batch's module_id OR have no module_id (legacy/unassigned)
+                                    const filteredDocs = data.documents.filter(doc =>
+                                        doc.module_id == batchId || !doc.module_id
+                                    );
+
+                                    if (filteredDocs.length === 0) {
+                                        container.innerHTML = '<div class="docs-empty"><i class="fas fa-folder-open"></i><span>No documents uploaded yet</span></div>';
+                                        return;
+                                    }
+
+                                    countLink.textContent = `(${filteredDocs.length})`;
+                                    countLink.style.display = 'inline';
+
+                                    let html = '';
+                                    filteredDocs.forEach(doc => {
+                                        const ext = (doc.original_name || '').split('.').pop().toLowerCase();
+                                        let iconClass = 'fas fa-file';
+                                        let iconColor = '#6c757d';
+                                        if (['pdf'].includes(ext)) { iconClass = 'fas fa-file-pdf'; iconColor = '#dc3545'; }
+                                        else if (['doc', 'docx'].includes(ext)) { iconClass = 'fas fa-file-word'; iconColor = '#2b579a'; }
+                                        else if (['xls', 'xlsx'].includes(ext)) { iconClass = 'fas fa-file-excel'; iconColor = '#217346'; }
+                                        else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) { iconClass = 'fas fa-file-image'; iconColor = '#488C9A'; }
+
+                                        let subtype = doc.document_sub_type || 'Module Document';
+
+                                        html += `
+                                            <div class="doc-item" onclick="openDocPreview('${doc.file_path}', '${(doc.original_name || 'Document').replace(/'/g, "\\'")}', '${ext}')" style="cursor: pointer;">
+                                                <i class="${iconClass}" style="color: ${iconColor};"></i>
+                                                <div class="doc-details">
+                                                    <span class="doc-name" title="${doc.original_name || 'Document'}">${doc.original_name || 'Document'}</span>
+                                                    <span class="doc-subtype">${subtype}</span>
+                                                </div>
+                                            </div>
+                                        `;
+                                    });
+                                    container.innerHTML = html;
+                                })
+                                .catch(err => {
+                                    document.getElementById('module-docs-list-' + batchId).innerHTML = '<div class="docs-error"><i class="fas fa-exclamation-triangle"></i> Error loading documents</div>';
+                                });
+                        })();
+                        </script>
                     </div>
                 <?php endforeach; ?>
-
-                <!-- Module Documents Section -->
-                <div class="info-grid" style="margin-top: 20px;">
-                    <div class="info-section" style="grid-column: 1 / -1;">
-                        <h3>
-                            Documents
-                            <a href="project_documents.php?project_id=<?php echo $project_id; ?>&filter_type=modules" id="module-docs-count-link" class="docs-count-link" style="display: none;"></a>
-                        </h3>
-                        <div id="module-docs-list" class="docs-grid">
-                            <div class="docs-loading"><i class="fas fa-spinner fa-spin"></i> Loading documents...</div>
-                        </div>
-                    </div>
-                </div>
-
-                <script>
-                (function() {
-                    const projectId = <?php echo $project_id; ?>;
-                    fetch(`get_project_documents.php?project_id=${projectId}&document_type_in=modules`)
-                        .then(r => r.json())
-                        .then(data => {
-                            const container = document.getElementById('module-docs-list');
-                            const countLink = document.getElementById('module-docs-count-link');
-
-                            if (!data.success || !data.documents || data.documents.length === 0) {
-                                container.innerHTML = '<div class="docs-empty"><i class="fas fa-folder-open"></i><span>No module documents uploaded yet</span></div>';
-                                return;
-                            }
-
-                            countLink.textContent = `(${data.documents.length})`;
-                            countLink.style.display = 'inline';
-
-                            let html = '';
-                            data.documents.forEach(doc => {
-                                const ext = (doc.original_name || '').split('.').pop().toLowerCase();
-                                let iconClass = 'fas fa-file';
-                                let iconColor = '#6c757d';
-                                if (['pdf'].includes(ext)) { iconClass = 'fas fa-file-pdf'; iconColor = '#dc3545'; }
-                                else if (['doc', 'docx'].includes(ext)) { iconClass = 'fas fa-file-word'; iconColor = '#2b579a'; }
-                                else if (['xls', 'xlsx'].includes(ext)) { iconClass = 'fas fa-file-excel'; iconColor = '#217346'; }
-                                else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) { iconClass = 'fas fa-file-image'; iconColor = '#488C9A'; }
-
-                                let subtype = doc.document_sub_type || 'Module Document';
-
-                                html += `
-                                    <div class="doc-item" onclick="openDocPreview('${doc.file_path}', '${(doc.original_name || 'Document').replace(/'/g, "\\'")}', '${ext}')" style="cursor: pointer;">
-                                        <i class="${iconClass}" style="color: ${iconColor};"></i>
-                                        <div class="doc-details">
-                                            <span class="doc-name" title="${doc.original_name || 'Document'}">${doc.original_name || 'Document'}</span>
-                                            <span class="doc-subtype">${subtype}</span>
-                                        </div>
-                                    </div>
-                                `;
-                            });
-                            container.innerHTML = html;
-                        })
-                        .catch(err => {
-                            document.getElementById('module-docs-list').innerHTML = '<div class="docs-error"><i class="fas fa-exclamation-triangle"></i> Error loading documents</div>';
-                        });
-                })();
-                </script>
             <?php else: ?>
                 <div class="no-data-message">
                     <p>No module batches have been added to this project yet.</p>
