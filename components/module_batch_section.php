@@ -6,6 +6,18 @@
 // - $prefLocationId: int|null (optional preselect)
 // - $existingWattages: array of ['wattage'=>int,'quantity'=>int] (optional for edit)
 // - $module (optional): existing module data for edit mode
+
+if (!function_exists('mb_optional_number_value')) {
+    function mb_optional_number_value($value) {
+        if ($value === null || $value === '') {
+            return '';
+        }
+        if (is_numeric($value) && (float)$value > 0) {
+            return htmlspecialchars((string)$value);
+        }
+        return '';
+    }
+}
 ?>
 
 <style>
@@ -335,15 +347,15 @@
             <div class="logistics-panel-grid">
                 <div class="logistics-panel-field">
                     <label>Modules per Pallet</label>
-                    <input type="number" id="modules_per_pallet" name="modules_per_pallet" min="1" placeholder="e.g. 30" value="<?php echo htmlspecialchars($module['modules_per_pallet'] ?? ''); ?>">
+                    <input type="number" id="modules_per_pallet" name="modules_per_pallet" min="1" placeholder="e.g. 30" value="<?php echo mb_optional_number_value($module['modules_per_pallet'] ?? null); ?>">
                 </div>
                 <div class="logistics-panel-field">
                     <label>Pallets per Truck</label>
-                    <input type="number" id="pallets_per_truck" name="pallets_per_truck" min="1" placeholder="e.g. 22" value="<?php echo htmlspecialchars($module['pallets_per_truck'] ?? ''); ?>">
+                    <input type="number" id="pallets_per_truck" name="pallets_per_truck" min="1" placeholder="e.g. 22" value="<?php echo mb_optional_number_value($module['pallets_per_truck'] ?? null); ?>">
                 </div>
                 <div class="logistics-panel-field">
                     <label>Modules per Truck</label>
-                    <input type="number" id="modules_per_truck" name="modules_per_truck" min="1" placeholder="Auto-calculated" readonly style="background-color: #f8f9fa; color: #6c757d;" value="<?php echo htmlspecialchars($module['modules_per_truck'] ?? ''); ?>">
+                    <input type="number" id="modules_per_truck" name="modules_per_truck" min="1" placeholder="Auto-calculated" readonly style="background-color: #f8f9fa; color: #6c757d;" value="<?php echo mb_optional_number_value($module['modules_per_truck'] ?? null); ?>">
                 </div>
             </div>
         </div>
@@ -354,19 +366,19 @@
             <div class="logistics-panel-grid">
                 <div class="logistics-panel-field">
                     <label>Length (mm)</label>
-                    <input type="number" id="pallet_length_mm" name="pallet_length_mm" min="1" placeholder="e.g. 2384" value="<?php echo htmlspecialchars($module['pallet_length_mm'] ?? ''); ?>">
+                    <input type="number" id="pallet_length_mm" name="pallet_length_mm" min="1" placeholder="e.g. 2384" value="<?php echo mb_optional_number_value($module['pallet_length_mm'] ?? null); ?>">
                 </div>
                 <div class="logistics-panel-field">
                     <label>Depth (mm)</label>
-                    <input type="number" id="pallet_depth_mm" name="pallet_depth_mm" min="1" placeholder="e.g. 1303" value="<?php echo htmlspecialchars($module['pallet_depth_mm'] ?? ''); ?>">
+                    <input type="number" id="pallet_depth_mm" name="pallet_depth_mm" min="1" placeholder="e.g. 1303" value="<?php echo mb_optional_number_value($module['pallet_depth_mm'] ?? null); ?>">
                 </div>
                 <div class="logistics-panel-field">
                     <label>Stack Height (mm)</label>
-                    <input type="number" id="pallet_double_stacked_height_mm" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g. 2200" value="<?php echo htmlspecialchars($module['pallet_double_stacked_height_mm'] ?? ''); ?>">
+                    <input type="number" id="pallet_double_stacked_height_mm" name="pallet_double_stacked_height_mm" min="1" placeholder="e.g. 2200" value="<?php echo mb_optional_number_value($module['pallet_double_stacked_height_mm'] ?? null); ?>">
                 </div>
                 <div class="logistics-panel-field">
                     <label>Weight (kg)</label>
-                    <input type="number" id="pallet_total_weight_kg" name="pallet_total_weight_kg" min="1" placeholder="e.g. 1200" value="<?php echo htmlspecialchars($module['pallet_total_weight_kg'] ?? ''); ?>">
+                    <input type="number" id="pallet_total_weight_kg" name="pallet_total_weight_kg" min="1" placeholder="e.g. 1200" value="<?php echo mb_optional_number_value($module['pallet_total_weight_kg'] ?? null); ?>">
                 </div>
             </div>
         </div>
@@ -377,19 +389,19 @@
             <div class="logistics-panel-grid">
                 <div class="logistics-panel-field">
                     <label>Forklift Long Side (mm)</label>
-                    <input type="number" id="forklift_truck_long_side_mm" name="forklift_truck_long_side_mm" min="1" placeholder="e.g. 1200" value="<?php echo htmlspecialchars($module['forklift_truck_long_side_mm'] ?? ''); ?>">
+                    <input type="number" id="forklift_truck_long_side_mm" name="forklift_truck_long_side_mm" min="1" placeholder="e.g. 1200" value="<?php echo mb_optional_number_value($module['forklift_truck_long_side_mm'] ?? null); ?>">
                 </div>
                 <div class="logistics-panel-field">
                     <label>Forklift Short Side (mm)</label>
-                    <input type="number" id="forklift_truck_short_side_mm" name="forklift_truck_short_side_mm" min="1" placeholder="e.g. 1000" value="<?php echo htmlspecialchars($module['forklift_truck_short_side_mm'] ?? ''); ?>">
+                    <input type="number" id="forklift_truck_short_side_mm" name="forklift_truck_short_side_mm" min="1" placeholder="e.g. 1000" value="<?php echo mb_optional_number_value($module['forklift_truck_short_side_mm'] ?? null); ?>">
                 </div>
                 <div class="logistics-panel-field">
                     <label>Pallet Jack Long (mm)</label>
-                    <input type="number" id="pallet_jack_long_side_mm" name="pallet_jack_long_side_mm" min="1" placeholder="e.g. 1150" value="<?php echo htmlspecialchars($module['pallet_jack_long_side_mm'] ?? ''); ?>">
+                    <input type="number" id="pallet_jack_long_side_mm" name="pallet_jack_long_side_mm" min="1" placeholder="e.g. 1150" value="<?php echo mb_optional_number_value($module['pallet_jack_long_side_mm'] ?? null); ?>">
                 </div>
                 <div class="logistics-panel-field">
                     <label>Pallet Jack Short (mm)</label>
-                    <input type="number" id="pallet_jack_short_side_mm" name="pallet_jack_short_side_mm" min="1" placeholder="e.g. 800" value="<?php echo htmlspecialchars($module['pallet_jack_short_side_mm'] ?? ''); ?>">
+                    <input type="number" id="pallet_jack_short_side_mm" name="pallet_jack_short_side_mm" min="1" placeholder="e.g. 800" value="<?php echo mb_optional_number_value($module['pallet_jack_short_side_mm'] ?? null); ?>">
                 </div>
             </div>
         </div>
