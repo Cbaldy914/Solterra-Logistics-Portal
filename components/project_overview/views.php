@@ -466,10 +466,16 @@
                                                 <label>Location:</label>
                                                 <span><?php echo htmlspecialchars($batch['initial_location']); ?></span>
                                             </div>
-                                                                                            <div class="info-item">
-                                                    <label>Account:</label>
-                                                    <span><?php echo htmlspecialchars($batch['account_name']); ?></span>
-                                                </div>
+                                            <div class="info-item">
+                                                <label>Price per Watt:</label>
+                                                <span>
+                                                    <?php if (!empty($batch['cost_per_watt']) && (float)$batch['cost_per_watt'] > 0): ?>
+                                                        $<?php echo number_format((float)$batch['cost_per_watt'], 4); ?> / W
+                                                    <?php else: ?>
+                                                        Not specified
+                                                    <?php endif; ?>
+                                                </span>
+                                            </div>
                                                 <div class="info-item">
                                                     <label>Module Configuration:</label>
                                                     <span>
