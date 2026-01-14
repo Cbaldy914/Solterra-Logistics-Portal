@@ -1262,6 +1262,7 @@ $conn->close();
                              <option value="Module Invoice">Module Invoice</option>
                              <option value="Flash Test Data">Flash Test Data</option>
                              <option value="Spec Sheets">Spec Sheets</option>
+                             <option value="Other">Other</option>
                          </select>
                      </div>
                      <div class="input-group" style="margin-bottom: 20px;">

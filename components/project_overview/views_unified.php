@@ -448,6 +448,118 @@
                 <?php endif; ?>
             </div>
             <?php endif; ?>
+
+            <!-- Site Documents Section -->
+            <div class="site-documents-section" style="margin-top: 24px;">
+                <div class="header-with-button">
+                    <h3 style="margin: 0;"><i class="fas fa-file-alt" style="color: #488C9A; margin-right: 8px;"></i>Site Documents</h3>
+                    <?php if ($isGlobalAdmin): ?>
+                    <a href="project_documents.php?project_id=<?php echo $project_id; ?>&filter_type=site" class="info-action-button" style="margin: 0; font-size: 0.85rem; padding: 6px 12px;">
+                        <i class="fas fa-folder-open"></i> View All
+                    </a>
+                    <?php endif; ?>
+                </div>
+                <div id="site-docs-list" class="site-docs-list" style="margin-top: 16px;">
+                    <div style="text-align: center; padding: 30px; color: #6c757d;">
+                        <i class="fas fa-spinner fa-spin"></i> Loading documents...
+                    </div>
+                </div>
+            </div>
+
+            <style>
+                .site-documents-section .site-docs-list {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                    gap: 12px;
+                }
+                .site-doc-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 12px 16px;
+                    background: #f8f9fa;
+                    border-radius: 8px;
+                    transition: all 0.2s ease;
+                    border: 1px solid #e9ecef;
+                }
+                .site-doc-item:hover {
+                    background: #e9ecef;
+                    border-color: #488C9A;
+                }
+                .site-doc-item .doc-icon {
+                    font-size: 1.5rem;
+                    width: 32px;
+                    text-align: center;
+                }
+                .site-doc-item .doc-info {
+                    flex: 1;
+                    min-width: 0;
+                }
+                .site-doc-item .doc-name {
+                    font-weight: 500;
+                    color: #293E4C;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .site-doc-item .doc-subtype {
+                    font-size: 0.8rem;
+                    color: #6c757d;
+                }
+                .site-doc-item .doc-actions a {
+                    color: #488C9A;
+                    text-decoration: none;
+                    font-size: 0.85rem;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    transition: background 0.2s;
+                }
+                .site-doc-item .doc-actions a:hover {
+                    background: rgba(72, 140, 154, 0.1);
+                }
+            </style>
+
+            <script>
+            (function() {
+                const projectId = <?php echo $project_id; ?>;
+                fetch(`get_project_documents.php?project_id=${projectId}&document_type_in=site`)
+                    .then(r => r.json())
+                    .then(data => {
+                        const container = document.getElementById('site-docs-list');
+                        if (!data.success || !data.documents || data.documents.length === 0) {
+                            container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 30px; color: #6c757d; font-style: italic; background: #f8f9fa; border-radius: 8px;"><i class="fas fa-folder-open" style="font-size: 2rem; display: block; margin-bottom: 10px; opacity: 0.5;"></i>No site documents uploaded yet</div>';
+                            return;
+                        }
+
+                        let html = '';
+                        data.documents.forEach(doc => {
+                            const ext = (doc.original_name || '').split('.').pop().toLowerCase();
+                            let icon = '<i class="fas fa-file" style="color: #6c757d;"></i>';
+                            if (['pdf'].includes(ext)) icon = '<i class="fas fa-file-pdf" style="color: #dc3545;"></i>';
+                            else if (['doc', 'docx'].includes(ext)) icon = '<i class="fas fa-file-word" style="color: #2b579a;"></i>';
+                            else if (['xls', 'xlsx'].includes(ext)) icon = '<i class="fas fa-file-excel" style="color: #217346;"></i>';
+                            else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) icon = '<i class="fas fa-file-image" style="color: #488C9A;"></i>';
+
+                            html += `
+                                <div class="site-doc-item">
+                                    <div class="doc-icon">${icon}</div>
+                                    <div class="doc-info">
+                                        <div class="doc-name" title="${doc.original_name || 'Document'}">${doc.original_name || 'Document'}</div>
+                                        <div class="doc-subtype">${doc.document_sub_type || 'Site Document'}</div>
+                                    </div>
+                                    <div class="doc-actions">
+                                        <a href="${doc.file_path}" target="_blank"><i class="fas fa-external-link-alt"></i></a>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        container.innerHTML = html;
+                    })
+                    .catch(err => {
+                        document.getElementById('site-docs-list').innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: #dc3545;"><i class="fas fa-exclamation-triangle"></i> Error loading documents</div>';
+                    });
+            })();
+            </script>
         </div>
     </div>
 
@@ -550,6 +662,124 @@
                     <?php endif; ?>
                 </div>
             <?php endif; ?>
+
+            <!-- Module Documents Section -->
+            <div class="module-documents-section" style="margin-top: 24px;">
+                <div class="header-with-button">
+                    <h3 style="margin: 0;"><i class="fas fa-file-alt" style="color: #488C9A; margin-right: 8px;"></i>Module Documents</h3>
+                    <?php if ($isGlobalAdmin): ?>
+                    <a href="project_documents.php?project_id=<?php echo $project_id; ?>&filter_type=modules" class="info-action-button" style="margin: 0; font-size: 0.85rem; padding: 6px 12px;">
+                        <i class="fas fa-folder-open"></i> View All
+                    </a>
+                    <?php endif; ?>
+                </div>
+                <div id="module-docs-list" class="module-docs-list" style="margin-top: 16px;">
+                    <div style="text-align: center; padding: 30px; color: #6c757d;">
+                        <i class="fas fa-spinner fa-spin"></i> Loading documents...
+                    </div>
+                </div>
+            </div>
+
+            <style>
+                .module-documents-section .module-docs-list {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                    gap: 12px;
+                }
+                .module-doc-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 12px 16px;
+                    background: #f8f9fa;
+                    border-radius: 8px;
+                    transition: all 0.2s ease;
+                    border: 1px solid #e9ecef;
+                }
+                .module-doc-item:hover {
+                    background: #e9ecef;
+                    border-color: #488C9A;
+                }
+                .module-doc-item .doc-icon {
+                    font-size: 1.5rem;
+                    width: 32px;
+                    text-align: center;
+                }
+                .module-doc-item .doc-info {
+                    flex: 1;
+                    min-width: 0;
+                }
+                .module-doc-item .doc-name {
+                    font-weight: 500;
+                    color: #293E4C;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .module-doc-item .doc-subtype {
+                    font-size: 0.8rem;
+                    color: #6c757d;
+                }
+                .module-doc-item .doc-actions a {
+                    color: #488C9A;
+                    text-decoration: none;
+                    font-size: 0.85rem;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    transition: background 0.2s;
+                }
+                .module-doc-item .doc-actions a:hover {
+                    background: rgba(72, 140, 154, 0.1);
+                }
+            </style>
+
+            <script>
+            (function() {
+                const projectId = <?php echo $project_id; ?>;
+                fetch(`get_project_documents.php?project_id=${projectId}&document_type_in=modules`)
+                    .then(r => r.json())
+                    .then(data => {
+                        const container = document.getElementById('module-docs-list');
+                        if (!data.success || !data.documents || data.documents.length === 0) {
+                            container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 30px; color: #6c757d; font-style: italic; background: #f8f9fa; border-radius: 8px;"><i class="fas fa-folder-open" style="font-size: 2rem; display: block; margin-bottom: 10px; opacity: 0.5;"></i>No module documents uploaded yet</div>';
+                            return;
+                        }
+
+                        let html = '';
+                        data.documents.forEach(doc => {
+                            const ext = (doc.original_name || '').split('.').pop().toLowerCase();
+                            let icon = '<i class="fas fa-file" style="color: #6c757d;"></i>';
+                            if (['pdf'].includes(ext)) icon = '<i class="fas fa-file-pdf" style="color: #dc3545;"></i>';
+                            else if (['doc', 'docx'].includes(ext)) icon = '<i class="fas fa-file-word" style="color: #2b579a;"></i>';
+                            else if (['xls', 'xlsx'].includes(ext)) icon = '<i class="fas fa-file-excel" style="color: #217346;"></i>';
+                            else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) icon = '<i class="fas fa-file-image" style="color: #488C9A;"></i>';
+
+                            // Add batch name if available
+                            let subtype = doc.document_sub_type || 'Module Document';
+                            if (doc.module_batch_name) {
+                                subtype += ' - ' + doc.module_batch_name;
+                            }
+
+                            html += `
+                                <div class="module-doc-item">
+                                    <div class="doc-icon">${icon}</div>
+                                    <div class="doc-info">
+                                        <div class="doc-name" title="${doc.original_name || 'Document'}">${doc.original_name || 'Document'}</div>
+                                        <div class="doc-subtype">${subtype}</div>
+                                    </div>
+                                    <div class="doc-actions">
+                                        <a href="${doc.file_path}" target="_blank"><i class="fas fa-external-link-alt"></i></a>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        container.innerHTML = html;
+                    })
+                    .catch(err => {
+                        document.getElementById('module-docs-list').innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: #dc3545;"><i class="fas fa-exclamation-triangle"></i> Error loading documents</div>';
+                    });
+            })();
+            </script>
         </div>
     </div>
 </div>

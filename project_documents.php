@@ -55,6 +55,19 @@ if (!$project_name) {
 $folder_key = isset($_GET['folder']) ? trim(strtolower($_GET['folder'])) : '';
 
 $folders_structure = [
+    'site' => [
+        'label' => 'Site',
+        'icon' => 'fas fa-map-marker-alt',
+        'class' => 'doc-site',
+        'description' => 'Site information and delivery documents',
+        'subfolders' => [
+            'delivery_sop' => ['label' => 'Delivery SOP / Driver Handout', 'icon' => 'fas fa-truck'],
+            'site_map' => ['label' => 'Site Map', 'icon' => 'fas fa-map'],
+            'safety_document' => ['label' => 'Safety Document', 'icon' => 'fas fa-hard-hat'],
+            'permit' => ['label' => 'Permit', 'icon' => 'fas fa-file-contract'],
+            'other' => ['label' => 'Other', 'icon' => 'fas fa-file']
+        ]
+    ],
     'invoices' => [
         'label' => 'Invoices',
         'icon' => 'fas fa-file-invoice-dollar',
@@ -63,7 +76,8 @@ $folders_structure = [
         'subfolders' => [
             'freight_invoice' => ['label' => 'Freight Invoice', 'icon' => 'fas fa-truck'],
             'solterra_invoice' => ['label' => 'Solterra Invoice', 'icon' => 'fas fa-building'],
-            'module_invoice' => ['label' => 'Module Invoice', 'icon' => 'fas fa-microchip']
+            'module_invoice' => ['label' => 'Module Invoice', 'icon' => 'fas fa-microchip'],
+            'other' => ['label' => 'Other', 'icon' => 'fas fa-file']
         ]
     ],
     'shipments' => [
@@ -76,7 +90,7 @@ $folders_structure = [
             'warehouse_pod' => ['label' => 'Warehouse PODs', 'icon' => 'fas fa-warehouse'],
             'arrival_notice' => ['label' => 'Arrival Notice', 'icon' => 'fas fa-bell'],
             'customs_document' => ['label' => 'Customs Document', 'icon' => 'fas fa-passport'],
-            'delivery_sop' => ['label' => 'Delivery SOP', 'icon' => 'fas fa-list-check']
+            'other' => ['label' => 'Other', 'icon' => 'fas fa-file']
         ]
     ],
     'warehousing' => [
@@ -87,7 +101,8 @@ $folders_structure = [
         'subfolders' => [
             'warehouse_pod' => ['label' => 'Warehouse POD', 'icon' => 'fas fa-clipboard'],
             'inventory_report' => ['label' => 'Inventory Report', 'icon' => 'fas fa-clipboard-list'],
-            'warehouse_photo' => ['label' => 'Warehouse Photo', 'icon' => 'fas fa-camera']
+            'warehouse_photo' => ['label' => 'Warehouse Photo', 'icon' => 'fas fa-camera'],
+            'other' => ['label' => 'Other', 'icon' => 'fas fa-file']
         ]
     ],
     'modules' => [
@@ -98,7 +113,8 @@ $folders_structure = [
         'subfolders' => [
             'module_invoice' => ['label' => 'Module Invoice', 'icon' => 'fas fa-file-invoice'],
             'flash_test_data' => ['label' => 'Flash Test Data', 'icon' => 'fas fa-bolt'],
-            'spec_sheet' => ['label' => 'Spec Sheet', 'icon' => 'fas fa-file']
+            'spec_sheet' => ['label' => 'Spec Sheet', 'icon' => 'fas fa-file'],
+            'other' => ['label' => 'Other', 'icon' => 'fas fa-file']
         ]
     ],
     'photos' => [
@@ -109,7 +125,8 @@ $folders_structure = [
         'subfolders' => [
             'project_photo' => ['label' => 'Project Photos', 'icon' => 'fas fa-camera'],
             'warehouse_photo' => ['label' => 'Warehouse Photos', 'icon' => 'fas fa-warehouse'],
-            'damage_photo' => ['label' => 'Damage Photos', 'icon' => 'fas fa-exclamation-triangle']
+            'damage_photo' => ['label' => 'Damage Photos', 'icon' => 'fas fa-exclamation-triangle'],
+            'other' => ['label' => 'Other', 'icon' => 'fas fa-file']
         ]
     ],
     'exception_reports' => [
@@ -123,52 +140,47 @@ $folders_structure = [
             'proof_of_completion' => ['label' => 'Proof of Completion', 'icon' => 'fas fa-check-circle'],
             'safety_incident' => ['label' => 'Safety Incident', 'icon' => 'fas fa-hard-hat'],
             'project_pod' => ['label' => 'Project POD', 'icon' => 'fas fa-clipboard'],
-            'warehouse_pod' => ['label' => 'Warehouse POD', 'icon' => 'fas fa-warehouse']
-        ]
-    ],
-    'safe_harbor' => [
-        'label' => 'Safe Harbor',
-        'icon' => 'fas fa-gavel',
-        'class' => 'doc-safe-harbor',
-        'description' => 'All docs for compliance review',
-        'subfolders' => [
-            'module_invoice' => ['label' => 'Module Invoice', 'icon' => 'fas fa-file-invoice'],
-            'project_pod' => ['label' => 'Project POD', 'icon' => 'fas fa-clipboard'],
             'warehouse_pod' => ['label' => 'Warehouse POD', 'icon' => 'fas fa-warehouse'],
-            'arrival_notice' => ['label' => 'Arrival Notice', 'icon' => 'fas fa-bell'],
-            'customs_document' => ['label' => 'Customs Document', 'icon' => 'fas fa-passport'],
-            'inventory_report' => ['label' => 'Warehouse Inventory Report', 'icon' => 'fas fa-clipboard-list'],
-            'warehouse_photo' => ['label' => 'Warehouse Photo', 'icon' => 'fas fa-camera'],
-            'flash_test_data' => ['label' => 'Flash Test Data', 'icon' => 'fas fa-bolt']
+            'other' => ['label' => 'Other', 'icon' => 'fas fa-file']
         ]
     ],
 ];
 
 // Map subfolder key to the document_sub_type value stored in DB
 $subfolder_doc_subtype_map = [
+    'site' => [
+        'delivery_sop'     => 'Delivery SOP',
+        'site_map'         => 'Site Map',
+        'safety_document'  => 'Safety Document',
+        'permit'           => 'Permit',
+        'other'            => 'Other',
+    ],
     'invoices' => [
         'freight_invoice' => 'Freight Invoice',
         'solterra_invoice' => 'Solterra Invoice',
         'module_invoice'  => 'Module Invoice',
+        'other'           => 'Other',
     ],
     'shipments' => [
         'project_pod'       => 'Project POD',
         'warehouse_pod'     => 'Warehouse POD',
         'arrival_notice'    => 'Arrival Notice',
         'customs_document'  => 'Customs Document',
-        'delivery_sop'      => 'Delivery SOP',
+        'other'             => 'Other',
     ],
     'warehousing' => [
         'warehouse_pod'  => 'Warehouse POD',
         'inventory_report'=> 'Inventory Report',
         // Stored as "Photos" in global uploads
         'warehouse_photo' => 'Photos',
+        'other'          => 'Other',
     ],
     'modules' => [
         'module_invoice'  => 'Module Invoice',
         'flash_test_data' => 'Flash Test Data',
         // Prefer plural, but allow synonym via JS IN support
         'spec_sheet'      => 'Spec Sheets',
+        'other'           => 'Other',
     ],
     // 'photos' is virtual and handled via JS using data-doc-types/data-sub-types
     'exception_reports' => [
@@ -178,6 +190,7 @@ $subfolder_doc_subtype_map = [
         'safety_incident'    => 'Safety Incident',
         'project_pod'        => 'Project POD',
         'warehouse_pod'      => 'Warehouse POD',
+        'other'              => 'Other',
     ],
 ];
 
@@ -444,6 +457,7 @@ foreach ($folders_structure as $key => $meta) {
         }
 
         /* Different colors for different document types */
+        .doc-site .document-icon { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); }
         .doc-invoices .document-icon { background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); }
         .doc-pods .document-icon { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); }
         .doc-flash-test .document-icon { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
@@ -452,7 +466,6 @@ foreach ($folders_structure as $key => $meta) {
         .doc-modules .document-icon { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
         .doc-delivery .document-icon { background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); }
         .doc-incident .document-icon { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
-        .doc-safe-harbor .document-icon { background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); }
         .doc-photos .document-icon { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
 
         /* Prevent title overlap with count badge */

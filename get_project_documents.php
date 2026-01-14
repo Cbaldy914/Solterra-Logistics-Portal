@@ -101,7 +101,7 @@ try {
     if ($table_check && $table_check->num_rows > 0) {
         // Build query for general documents
         $sql = "
-            SELECT 
+            SELECT
                 pd.id,
                 pd.original_file_name,
                 pd.file_size,
@@ -109,9 +109,14 @@ try {
                 pd.uploaded_at,
                 pd.description,
                 pd.file_path,
-                u.username as uploaded_by_name
+                pd.document_type,
+                pd.document_sub_type,
+                pd.module_id,
+                u.username as uploaded_by_name,
+                m.vendor_name as module_batch_name
             FROM project_documents pd
             LEFT JOIN users u ON pd.uploaded_by = u.id
+            LEFT JOIN modules m ON pd.module_id = m.id
             WHERE pd.project_id = ? AND pd.is_active = 1
         ";
 
@@ -189,6 +194,7 @@ try {
                 $documents[] = [
                     'id' => $row['id'],
                     'filename' => $row['original_file_name'],
+                    'original_name' => $row['original_file_name'],
                     'size' => $formatted_size,
                     'size_bytes' => $row['file_size'],
                     'mime_type' => $row['mime_type'],
@@ -196,7 +202,10 @@ try {
                     'uploaded_by' => $row['uploaded_by_name'],
                     'description' => $row['description'],
                     'icon' => $icon,
-                    'file_path' => $row['file_path']
+                    'file_path' => $row['file_path'],
+                    'document_type' => $row['document_type'],
+                    'document_sub_type' => $row['document_sub_type'],
+                    'module_batch_name' => $row['module_batch_name']
                 ];
             }
             $stmt->close();
