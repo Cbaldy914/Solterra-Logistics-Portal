@@ -1102,30 +1102,280 @@ function showView(viewId) {
 }
 
 <?php if (in_array($role, ['admin', 'global_admin', 'customer_admin'])): ?>
+// Site information data from PHP
+const siteInfoData = {
+    address: <?php echo json_encode(trim(($project['street_address'] ?? '') . ', ' . ($project['city'] ?? '') . ', ' . ($project['state'] ?? '') . ' ' . ($project['zip_code'] ?? ''), ', ')); ?>,
+    streetAddress: <?php echo json_encode($project['street_address'] ?? ''); ?>,
+    city: <?php echo json_encode($project['city'] ?? ''); ?>,
+    state: <?php echo json_encode($project['state'] ?? ''); ?>,
+    zipCode: <?php echo json_encode($project['zip_code'] ?? ''); ?>,
+    phone1: <?php echo json_encode($project['phone1'] ?? ''); ?>,
+    phone2: <?php echo json_encode($project['phone2'] ?? ''); ?>,
+    timezone: <?php echo json_encode($project['timezone'] ?? 'America/New_York'); ?>,
+    appointmentDuration: <?php echo json_encode($project['appointment_duration'] ?? 30); ?>,
+    instructions: <?php echo json_encode($project['instructions'] ?? ''); ?>,
+    additionalNotes: <?php echo json_encode($project['additional_notes'] ?? ''); ?>,
+    siteContact: {
+        name: <?php echo json_encode($project['site_contact_name'] ?? ''); ?>,
+        email: <?php echo json_encode($project['site_contact_email'] ?? ''); ?>,
+        phone: <?php echo json_encode($project['site_contact_phone'] ?? ''); ?>
+    },
+    operatingHours: <?php echo json_encode($site_operating_hours); ?>,
+    projectId: <?php echo $project_id; ?>
+};
+
+const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const timezoneLabels = {
+    'America/New_York': 'Eastern',
+    'America/Chicago': 'Central',
+    'America/Denver': 'Mountain',
+    'America/Los_Angeles': 'Pacific',
+    'UTC': 'UTC'
+};
+
+function formatTime12h(time24) {
+    if (!time24) return '';
+    const [hours, minutes] = time24.split(':');
+    const h = parseInt(hours, 10);
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 || 12;
+    return `${h12}:${minutes} ${ampm}`;
+}
+
 function loadSiteInfo() {
     var siteSection = document.getElementById('site-info');
     if(siteSection && siteSection.innerHTML.trim() === '') {
+        // Build operating hours HTML
+        let hoursHtml = '';
+        let hasHours = Object.keys(siteInfoData.operatingHours).length > 0;
+        if (hasHours) {
+            hoursHtml = '<div class="hours-grid-display">';
+            for (let day = 0; day <= 6; day++) {
+                const hours = siteInfoData.operatingHours[day];
+                if (hours) {
+                    hoursHtml += `<div class="hours-day-row">
+                        <span class="day-name">${dayNames[day]}</span>
+                        <span class="day-hours">${formatTime12h(hours.start)} - ${formatTime12h(hours.end)}</span>
+                    </div>`;
+                } else {
+                    hoursHtml += `<div class="hours-day-row closed">
+                        <span class="day-name">${dayNames[day]}</span>
+                        <span class="day-hours">Closed</span>
+                    </div>`;
+                }
+            }
+            hoursHtml += '</div>';
+        } else {
+            hoursHtml = '<p style="color: #6c757d; font-style: italic;">No hours configured</p>';
+        }
+
+        // Build contact HTML
+        let contactHtml = '';
+        if (siteInfoData.siteContact.name || siteInfoData.siteContact.email || siteInfoData.siteContact.phone) {
+            contactHtml = '<div class="contact-info">';
+            if (siteInfoData.siteContact.name) contactHtml += `<div><i class="fas fa-user"></i> ${siteInfoData.siteContact.name}</div>`;
+            if (siteInfoData.siteContact.email) contactHtml += `<div><i class="fas fa-envelope"></i> <a href="mailto:${siteInfoData.siteContact.email}">${siteInfoData.siteContact.email}</a></div>`;
+            if (siteInfoData.siteContact.phone) contactHtml += `<div><i class="fas fa-phone"></i> <a href="tel:${siteInfoData.siteContact.phone}">${siteInfoData.siteContact.phone}</a></div>`;
+            contactHtml += '</div>';
+        } else {
+            contactHtml = '<p style="color: #6c757d; font-style: italic;">No contact configured</p>';
+        }
+
         siteSection.innerHTML = `
-            <div style="text-align: center; padding: 40px; color: #6c757d;">
-                <h3 style="color: #293E4C; margin-bottom: 15px;">Site Information</h3>
-                <p>This section will contain project site details, location information, and site-specific requirements.</p>
-                <p style="font-style: italic; margin-top: 20px;">Content coming soon...</p>
+            <style>
+                .site-info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+                .site-info-card { background: #fff; border-radius: 12px; padding: 20px; border: 1px solid #e9ecef; }
+                .site-info-card h4 { margin: 0 0 16px 0; color: #293E4C; font-size: 1rem; display: flex; align-items: center; gap: 8px; border-bottom: 2px solid #488C9A; padding-bottom: 8px; }
+                .site-info-card h4 i { color: #488C9A; }
+                .hours-grid-display { display: flex; flex-direction: column; gap: 4px; }
+                .hours-day-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+                .hours-day-row:last-child { border-bottom: none; }
+                .hours-day-row .day-name { font-weight: 500; color: #293E4C; }
+                .hours-day-row .day-hours { color: #28a745; font-weight: 500; }
+                .hours-day-row.closed .day-hours { color: #dc3545; }
+                .contact-info { display: flex; flex-direction: column; gap: 10px; }
+                .contact-info div { display: flex; align-items: center; gap: 10px; }
+                .contact-info i { color: #488C9A; width: 16px; }
+                .contact-info a { color: #488C9A; text-decoration: none; }
+                .contact-info a:hover { text-decoration: underline; }
+                .instructions-text { background: #f8f9fa; padding: 12px; border-radius: 8px; color: #495057; line-height: 1.6; white-space: pre-wrap; }
+                .site-docs-container { margin-top: 24px; }
+                .site-docs-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+                .site-doc-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: #f8f9fa; border-radius: 8px; transition: background 0.2s; }
+                .site-doc-item:hover { background: #e9ecef; }
+                .site-doc-item .doc-icon { font-size: 1.5rem; }
+                .site-doc-item .doc-info { flex: 1; }
+                .site-doc-item .doc-name { font-weight: 500; color: #293E4C; }
+                .site-doc-item .doc-type { font-size: 0.85rem; color: #6c757d; }
+                .site-doc-item .doc-actions a { color: #488C9A; text-decoration: none; padding: 6px 12px; border: 1px solid #488C9A; border-radius: 6px; font-size: 0.85rem; }
+                .site-doc-item .doc-actions a:hover { background: #488C9A; color: #fff; }
+                .site-info-meta { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
+                .site-info-meta-item { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #e8f4f7; border-radius: 6px; font-size: 0.9rem; }
+                .site-info-meta-item i { color: #488C9A; }
+            </style>
+
+            <div class="site-info-meta">
+                <div class="site-info-meta-item"><i class="fas fa-clock"></i> ${timezoneLabels[siteInfoData.timezone] || siteInfoData.timezone}</div>
+                <div class="site-info-meta-item"><i class="fas fa-calendar-alt"></i> ${siteInfoData.appointmentDuration} min appointments</div>
+                ${siteInfoData.phone1 ? `<div class="site-info-meta-item"><i class="fas fa-phone"></i> ${siteInfoData.phone1}</div>` : ''}
+            </div>
+
+            <div class="site-info-grid">
+                <div class="site-info-card">
+                    <h4><i class="fas fa-clock"></i> Receiving Hours</h4>
+                    ${hoursHtml}
+                </div>
+
+                <div class="site-info-card">
+                    <h4><i class="fas fa-user-tie"></i> Site Contact</h4>
+                    ${contactHtml}
+                </div>
+
+                ${siteInfoData.instructions ? `
+                <div class="site-info-card">
+                    <h4><i class="fas fa-clipboard-list"></i> Special Instructions</h4>
+                    <div class="instructions-text">${siteInfoData.instructions}</div>
+                </div>
+                ` : ''}
+
+                ${siteInfoData.additionalNotes ? `
+                <div class="site-info-card">
+                    <h4><i class="fas fa-sticky-note"></i> Additional Notes</h4>
+                    <div class="instructions-text">${siteInfoData.additionalNotes}</div>
+                </div>
+                ` : ''}
+            </div>
+
+            <div class="site-docs-container">
+                <h4 style="margin: 0 0 4px 0; color: #293E4C;"><i class="fas fa-file-alt" style="color: #488C9A; margin-right: 8px;"></i>Site Documents</h4>
+                <div id="site-docs-list" class="site-docs-list">
+                    <div style="text-align: center; padding: 20px; color: #6c757d;">Loading documents...</div>
+                </div>
             </div>
         `;
+
+        // Fetch site documents
+        loadSiteDocuments();
     }
+}
+
+function loadSiteDocuments() {
+    const projectId = siteInfoData.projectId;
+    // Fetch documents with type: site
+    fetch(`get_project_documents.php?project_id=${projectId}&document_type_in=site`)
+        .then(r => r.json())
+        .then(data => {
+            const container = document.getElementById('site-docs-list');
+            if (!data.success || !data.documents || data.documents.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: #6c757d; font-style: italic;">No site documents uploaded yet</div>';
+                return;
+            }
+
+            let html = '';
+            data.documents.forEach(doc => {
+                const ext = (doc.original_name || '').split('.').pop().toLowerCase();
+                let icon = '📄';
+                if (['pdf'].includes(ext)) icon = '📕';
+                else if (['doc', 'docx'].includes(ext)) icon = '📘';
+                else if (['xls', 'xlsx'].includes(ext)) icon = '📗';
+                else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) icon = '🖼️';
+
+                html += `
+                    <div class="site-doc-item">
+                        <div class="doc-icon">${icon}</div>
+                        <div class="doc-info">
+                            <div class="doc-name">${doc.original_name || 'Document'}</div>
+                            <div class="doc-type">${doc.document_sub_type || doc.document_type || 'Document'}</div>
+                        </div>
+                        <div class="doc-actions">
+                            <a href="${doc.file_path}" target="_blank"><i class="fas fa-download"></i> View</a>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        })
+        .catch(err => {
+            document.getElementById('site-docs-list').innerHTML = '<div style="text-align: center; padding: 20px; color: #dc3545;">Error loading documents</div>';
+        });
 }
 
 function loadModuleInfo() {
     var moduleSection = document.getElementById('module-info');
     if(moduleSection && moduleSection.innerHTML.trim() === '') {
         moduleSection.innerHTML = `
-            <div style="text-align: center; padding: 40px; color: #6c757d;">
-                <h3 style="color: #293E4C; margin-bottom: 15px;">Module Information</h3>
-                <p>This section will contain detailed module specifications, performance data, and technical documentation.</p>
-                <p style="font-style: italic; margin-top: 20px;">Content coming soon...</p>
+            <style>
+                .module-info-container { }
+                .module-batches-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; margin-bottom: 24px; }
+                .module-batch-card { background: #fff; border-radius: 12px; padding: 20px; border: 1px solid #e9ecef; }
+                .module-batch-card h4 { margin: 0 0 12px 0; color: #293E4C; font-size: 1rem; display: flex; align-items: center; gap: 8px; }
+                .module-batch-card h4 .batch-badge { background: #488C9A; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; }
+                .module-specs-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+                .spec-item { text-align: center; padding: 10px; background: #f8f9fa; border-radius: 8px; }
+                .spec-item .spec-value { font-size: 1.2rem; font-weight: 700; color: #293E4C; }
+                .spec-item .spec-label { font-size: 0.75rem; color: #6c757d; margin-top: 4px; }
+                .module-docs-container { margin-top: 24px; }
+                .module-docs-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+                .module-doc-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: #f8f9fa; border-radius: 8px; transition: background 0.2s; }
+                .module-doc-item:hover { background: #e9ecef; }
+                .module-doc-item .doc-icon { font-size: 1.5rem; }
+                .module-doc-item .doc-info { flex: 1; }
+                .module-doc-item .doc-name { font-weight: 500; color: #293E4C; }
+                .module-doc-item .doc-type { font-size: 0.85rem; color: #6c757d; }
+                .module-doc-item .doc-actions a { color: #6f42c1; text-decoration: none; padding: 6px 12px; border: 1px solid #6f42c1; border-radius: 6px; font-size: 0.85rem; }
+                .module-doc-item .doc-actions a:hover { background: #6f42c1; color: #fff; }
+            </style>
+
+            <h4 style="margin: 0 0 16px 0; color: #293E4C;"><i class="fas fa-file-alt" style="color: #6f42c1; margin-right: 8px;"></i>Module Documentation</h4>
+            <div id="module-docs-list" class="module-docs-list">
+                <div style="text-align: center; padding: 20px; color: #6c757d;">Loading documents...</div>
             </div>
         `;
+
+        // Fetch module documents
+        loadModuleDocuments();
     }
+}
+
+function loadModuleDocuments() {
+    const projectId = <?php echo $project_id; ?>;
+    // Fetch documents with type: modules
+    fetch(`get_project_documents.php?project_id=${projectId}&document_type=modules`)
+        .then(r => r.json())
+        .then(data => {
+            const container = document.getElementById('module-docs-list');
+            if (!data.success || !data.documents || data.documents.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: #6c757d; font-style: italic;">No module documentation uploaded yet</div>';
+                return;
+            }
+
+            let html = '';
+            data.documents.forEach(doc => {
+                const ext = (doc.original_name || '').split('.').pop().toLowerCase();
+                let icon = '📄';
+                if (['pdf'].includes(ext)) icon = '📕';
+                else if (['doc', 'docx'].includes(ext)) icon = '📘';
+                else if (['xls', 'xlsx', 'csv'].includes(ext)) icon = '📗';
+                else if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) icon = '🖼️';
+
+                html += `
+                    <div class="module-doc-item">
+                        <div class="doc-icon">${icon}</div>
+                        <div class="doc-info">
+                            <div class="doc-name">${doc.original_name || 'Document'}</div>
+                            <div class="doc-type">${doc.document_sub_type || 'Module Documentation'}</div>
+                        </div>
+                        <div class="doc-actions">
+                            <a href="${doc.file_path}" target="_blank"><i class="fas fa-download"></i> View</a>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        })
+        .catch(err => {
+            document.getElementById('module-docs-list').innerHTML = '<div style="text-align: center; padding: 20px; color: #dc3545;">Error loading documents</div>';
+        });
 }
 
 // Shipping Breakdown modal

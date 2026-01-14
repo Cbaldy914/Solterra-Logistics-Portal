@@ -1936,19 +1936,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <button type="button" class="modal-close-btn" onclick="closeSiteDocsModal()">&times;</button>
                 </div>
                 <div class="site-docs-modal-body">
+                    <input type="hidden" id="site_doc_type" value="site">
                     <div class="form-group">
-                        <label>Document Type <span class="required-star">*</span></label>
-                        <select id="site_doc_type" onchange="updateSiteDocSubTypes()">
-                            <option value="">Select document type...</option>
-                            <option value="shipments">Shipments</option>
-                            <option value="warehousing">Warehousing</option>
-                            <option value="other">Other</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Sub-Type <span class="required-star">*</span></label>
-                        <select id="site_doc_sub_type" disabled>
-                            <option value="">Select type first...</option>
+                        <label>Document Sub-Type <span class="required-star">*</span></label>
+                        <select id="site_doc_sub_type">
+                            <option value="">Select sub-type...</option>
+                            <option value="Delivery SOP">Delivery SOP / Driver Handout</option>
+                            <option value="Site Map">Site Map</option>
+                            <option value="Safety Document">Safety Document</option>
+                            <option value="Permit">Permit</option>
+                            <option value="Other">Other</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -2115,31 +2112,11 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Site document type sub-types mapping
-const siteDocSubTypes = {
-    'shipments': [
-        { value: 'Delivery SOP', label: 'Delivery SOP / Driver Handout' },
-        { value: 'Arrival Notice', label: 'Arrival Notice' },
-        { value: 'Site Map', label: 'Site Map' }
-    ],
-    'warehousing': [
-        { value: 'Inventory Report', label: 'Inventory Report' },
-        { value: 'Quote', label: 'Quote' }
-    ],
-    'other': [
-        { value: 'General', label: 'General' },
-        { value: 'Safety Document', label: 'Safety Document' },
-        { value: 'Permit', label: 'Permit' }
-    ]
-};
-
 let selectedSiteFiles = [];
 
 function openSiteDocsModal() {
     document.getElementById('siteDocsModal').classList.add('open');
-    document.getElementById('site_doc_type').value = '';
-    document.getElementById('site_doc_sub_type').innerHTML = '<option value="">Select type first...</option>';
-    document.getElementById('site_doc_sub_type').disabled = true;
+    document.getElementById('site_doc_sub_type').value = '';
     document.getElementById('selected-files-list').innerHTML = '';
     selectedSiteFiles = [];
 }
@@ -2148,24 +2125,9 @@ function closeSiteDocsModal() {
     document.getElementById('siteDocsModal').classList.remove('open');
 }
 
+// Sub-types are now static in HTML - this function is no longer needed
 function updateSiteDocSubTypes() {
-    const typeSelect = document.getElementById('site_doc_type');
-    const subTypeSelect = document.getElementById('site_doc_sub_type');
-    const selectedType = typeSelect.value;
-
-    subTypeSelect.innerHTML = '<option value="">Select sub-type...</option>';
-
-    if (selectedType && siteDocSubTypes[selectedType]) {
-        subTypeSelect.disabled = false;
-        siteDocSubTypes[selectedType].forEach(item => {
-            const option = document.createElement('option');
-            option.value = item.value;
-            option.textContent = item.label;
-            subTypeSelect.appendChild(option);
-        });
-    } else {
-        subTypeSelect.disabled = true;
-    }
+    return;
 }
 
 function handleSiteDocsSelection(event) {
@@ -2201,11 +2163,11 @@ function removeSiteFile(index) {
 }
 
 function confirmSiteDocs() {
-    const docType = document.getElementById('site_doc_type').value;
+    const docType = document.getElementById('site_doc_type').value || 'site';
     const subType = document.getElementById('site_doc_sub_type').value;
 
-    if (!docType || !subType) {
-        alert('Please select both Document Type and Sub-Type');
+    if (!subType) {
+        alert('Please select a document sub-type');
         return;
     }
 
