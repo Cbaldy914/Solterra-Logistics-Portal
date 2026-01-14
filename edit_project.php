@@ -986,20 +986,17 @@ $stmtBatches->close();
                 </div>
 
                 <h4 class="form-subsection-title">Site Documents</h4>
-                <div class="form-row">
+                <input type="hidden" name="site_doc_type" id="site_doc_type" value="site">
+                <div class="form-row single">
                     <div class="form-group">
-                        <label>Document Type<span class="optional-tag">(optional)</span></label>
-                        <select name="site_doc_type" id="site_doc_type" onchange="updateSiteDocSubTypes()">
-                            <option value="">Select document type...</option>
-                            <option value="shipments">Shipments</option>
-                            <option value="warehousing">Warehousing</option>
-                            <option value="other">Other</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Sub-Type<span class="optional-tag">(optional)</span></label>
-                        <select name="site_doc_sub_type" id="site_doc_sub_type" disabled>
-                            <option value="">Select type first...</option>
+                        <label>Document Sub-Type<span class="optional-tag">(optional)</span></label>
+                        <select name="site_doc_sub_type" id="site_doc_sub_type">
+                            <option value="">Select sub-type...</option>
+                            <option value="Delivery SOP">Delivery SOP / Driver Handout</option>
+                            <option value="Site Map">Site Map</option>
+                            <option value="Safety Document">Safety Document</option>
+                            <option value="Permit">Permit</option>
+                            <option value="Other">Other</option>
                         </select>
                     </div>
                 </div>
@@ -1090,42 +1087,9 @@ $stmtBatches->close();
 <script>
 let currentStep = 1;
 
-// Site document type sub-types mapping
-const siteDocSubTypes = {
-    'shipments': [
-        { value: 'Delivery SOP', label: 'Delivery SOP / Driver Handout' },
-        { value: 'Arrival Notice', label: 'Arrival Notice' },
-        { value: 'Site Map', label: 'Site Map' }
-    ],
-    'warehousing': [
-        { value: 'Inventory Report', label: 'Inventory Report' },
-        { value: 'Quote', label: 'Quote' }
-    ],
-    'other': [
-        { value: 'General', label: 'General' },
-        { value: 'Safety Document', label: 'Safety Document' },
-        { value: 'Permit', label: 'Permit' }
-    ]
-};
-
+// Site document sub-types are now static in the HTML - this function is no longer needed
 function updateSiteDocSubTypes() {
-    const typeSelect = document.getElementById('site_doc_type');
-    const subTypeSelect = document.getElementById('site_doc_sub_type');
-    const selectedType = typeSelect.value;
-
-    subTypeSelect.innerHTML = '<option value="">Select sub-type...</option>';
-
-    if (selectedType && siteDocSubTypes[selectedType]) {
-        subTypeSelect.disabled = false;
-        siteDocSubTypes[selectedType].forEach(item => {
-            const option = document.createElement('option');
-            option.value = item.value;
-            option.textContent = item.label;
-            subTypeSelect.appendChild(option);
-        });
-    } else {
-        subTypeSelect.disabled = true;
-    }
+    return;
 }
 
 function goToStep(step) {
