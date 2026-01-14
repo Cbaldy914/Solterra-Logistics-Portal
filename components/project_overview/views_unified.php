@@ -833,8 +833,14 @@ document.addEventListener('keydown', function(e) {
                             <div class="info-section">
                                 <h3>Basic Information</h3>
                                 <div class="info-item">
-                                    <label>Account:</label>
-                                    <span><?php echo htmlspecialchars($batch['account_name'] ?? 'N/A'); ?></span>
+                                    <label>Price per Watt:</label>
+                                    <span>
+                                        <?php if (!empty($batch['cost_per_watt']) && (float)$batch['cost_per_watt'] > 0): ?>
+                                            $<?php echo number_format((float)$batch['cost_per_watt'], 4); ?> / W
+                                        <?php else: ?>
+                                            Not specified
+                                        <?php endif; ?>
+                                    </span>
                                 </div>
                                 <?php if (!empty($batch['wattages'])): ?>
                                     <div class="info-item">
@@ -1127,14 +1133,24 @@ document.addEventListener('keydown', function(e) {
 
     <!-- Financial Sub-tab -->
     <div id="subtab-financial" class="sub-tab-content" style="display:none;">
+        <!-- Unit Filters (inside content) -->
+        <div class="unit-filter-bar">
+            <span class="filter-label">View as:</span>
+            <div class="filter-chips">
+                <button type="button" class="filter-chip cost-unit-chip active" data-unit="total" title="Total Cost">Total</button>
+                <button type="button" class="filter-chip cost-unit-chip" data-unit="watt" title="Cost per Watt">$/W</button>
+                <button type="button" class="filter-chip cost-unit-chip" data-unit="module" title="Cost per Module">$/Mod</button>
+                <button type="button" class="filter-chip cost-unit-chip" data-unit="pallet" title="Cost per Pallet">$/Plt</button>
+            </div>
+        </div>
+
         <div class="tables-and-charts">
                 <div class="left-side">
                     <h2>Invoices and Cashflow Forecast</h2>
                     <div class="table-responsive">
-                        <table>
+                        <table id="invoices-forecast-table">
                             <thead>
                                 <tr>
-                                    <th>Project</th>
                                     <th>Open Invoices</th>
                                     <th>Total Costs</th>
                                     <?php foreach($weeks_financial as $wf): ?>
@@ -1144,16 +1160,19 @@ document.addEventListener('keydown', function(e) {
                             </thead>
                             <tbody>
                                 <tr>
-                                    <td><?php echo htmlspecialchars($project['project_name']);?></td>
                                     <td>
-                                        <a href="invoices.php?project_id=<?php echo $project_id; ?>">
+                                        <a href="invoices_all.php?project_id=<?php echo $project_id; ?>">
                                             $<?php echo number_format($open_invoices_total,2);?>
                                         </a>
                                     </td>
-                                    <td>$<?php echo number_format($total_logistics_cost,2);?></td>
+                                    <td class="financial-value" data-total="<?php echo $total_logistics_cost; ?>" data-watt="<?php echo $combined_ppw; ?>" data-module="<?php echo $combined_ppm; ?>" data-pallet="<?php echo $combined_ppp; ?>">$<?php echo number_format($total_logistics_cost,2);?></td>
                                     <?php foreach($weeks_financial as $ix=>$wf){
                                         $val = $anticipated_deliveries_financial[$ix] ?? 0;
-                                        echo "<td>$".number_format($val,2)."</td>";
+                                        // Calculate per-unit values for weekly forecasts
+                                        $week_ppw = $total_watts > 0 ? $val / $total_watts : 0;
+                                        $week_ppm = $total_modules > 0 ? $val / $total_modules : 0;
+                                        $week_ppp = $total_pallets > 0 ? $val / $total_pallets : 0;
+                                        echo "<td class=\"financial-value\" data-total=\"{$val}\" data-watt=\"{$week_ppw}\" data-module=\"{$week_ppm}\" data-pallet=\"{$week_ppp}\">$".number_format($val,2)."</td>";
                                     } ?>
                                 </tr>
                             </tbody>
@@ -1164,64 +1183,267 @@ document.addEventListener('keydown', function(e) {
                 </div>
 
                 <div class="right-side">
-                    <h2>Cost per Unit</h2>
+                    <style>
+                        .cost-summary-table {
+                            width: 100%;
+                            border-collapse: collapse;
+                        }
+                        .cost-summary-table thead th {
+                            background: #488C9A;
+                            color: #fff;
+                            padding: 12px 16px;
+                            text-align: left;
+                            font-size: 0.8em;
+                            font-weight: 600;
+                        }
+                        .cost-summary-table tbody td {
+                            padding: 14px 16px;
+                            border-bottom: 1px solid #f1f3f4;
+                            font-size: 0.9em;
+                        }
+                        .cost-summary-table .cost-label {
+                            color: #293E4C;
+                            font-weight: 500;
+                        }
+                        .cost-summary-table .cost-value {
+                            font-weight: 700;
+                            color: #488C9A;
+                            text-align: right;
+                        }
+                        .cost-summary-table .logistics-link {
+                            color: #488C9A;
+                            cursor: pointer;
+                            text-decoration: underline;
+                            text-decoration-style: dotted;
+                        }
+                        .cost-summary-table .logistics-link:hover {
+                            color: #3A6E7F;
+                        }
+                        .cost-summary-table tfoot td {
+                            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+                            color: #fff;
+                            font-weight: 700;
+                            padding: 14px 16px;
+                        }
+                        .cost-summary-table tfoot .cost-value {
+                            color: #fff;
+                        }
+                        .no-module-row {
+                            color: #9ca3af;
+                            font-style: italic;
+                        }
+                        .cost-chart-section {
+                            margin-top: 24px;
+                        }
+                        .cost-chart-container {
+                            display: flex;
+                            align-items: center;
+                            gap: 24px;
+                            padding: 16px;
+                            background: #fff;
+                            border-radius: 8px;
+                            border: 1px solid #e9ecef;
+                        }
+                        .cost-chart-canvas-lg { width: 220px; height: 220px; }
+                        .cost-chart-legend-lg { flex: 1; }
+                        .cost-legend-item-lg {
+                            display: flex;
+                            align-items: center;
+                            gap: 10px;
+                            padding: 6px 0;
+                        }
+                        .cost-legend-dot-lg {
+                            width: 14px; height: 14px;
+                            border-radius: 3px;
+                            flex-shrink: 0;
+                        }
+                        .cost-legend-dot-lg.module { background: #488C9A; }
+                        .cost-legend-dot-lg.freight { background: #3b82f6; }
+                        .cost-legend-dot-lg.warehousing { background: #8b5cf6; }
+                        .cost-legend-dot-lg.other { background: #9ca3af; }
+                        .cost-legend-info { flex: 1; }
+                        .cost-legend-label { font-size: 0.85em; color: #293E4C; font-weight: 500; }
+                        .cost-legend-value { font-size: 0.75em; color: #6c757d; }
+                        .cost-legend-pct-lg { font-weight: 700; color: #488C9A; font-size: 0.9em; }
+                    </style>
+
+                    <h2>Project Cost Summary</h2>
                     <div class="table-responsive">
-                        <table>
+                        <table class="cost-summary-table">
                             <thead>
                                 <tr>
-                                    <th>Project</th>
-                                    <th>Module Type</th>
-                                    <th>Total Costs</th>
-                                    <th>Price Per Pallet</th>
-                                    <th>Price Per Module</th>
-                                    <th>Price Per Watt</th>
+                                    <th>Cost Type</th>
+                                    <th style="text-align: right;">Amount</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr onclick="toggleSubRows('cost-row')">
-                                    <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                    <td><?php echo htmlspecialchars($combined_label);?></td>
-                                    <td>$<?php echo number_format($combined_total_costs,2);?></td>
-                                    <td>$<?php echo number_format($combined_ppp,2);?></td>
-                                    <td>$<?php echo number_format($combined_ppm,2);?></td>
-                                    <td>$<?php echo number_format($combined_ppw,4);?></td>
+                                <?php if ($has_module_cost_data): ?>
+                                <tr>
+                                    <td class="cost-label">Module Investment</td>
+                                    <td class="cost-value cost-value-dynamic" data-total="<?php echo $total_module_cost; ?>" data-watt="<?php echo $module_cost_per_watt ?? 0; ?>" data-module="<?php echo $total_raw_modules > 0 ? $total_module_cost / $total_raw_modules : 0; ?>" data-pallet="<?php echo $total_raw_modules > 0 ? ($total_module_cost / $total_raw_modules) * 30 : 0; ?>">$<?php echo number_format($total_module_cost, 2); ?></td>
                                 </tr>
-                                <?php foreach($cost_data as $key=>$cd): ?>
-                                    <tr class="cost-row" style="display:none;">
-                                        <td><?php echo htmlspecialchars($project['project_name']);?></td>
-                                        <td><?php echo htmlspecialchars($cd['module_type']);?></td>
-                                        <td>$<?php echo number_format($cd['total_costs'],2);?></td>
-                                        <td>$<?php echo number_format($cd['price_per_pallet'],2);?></td>
-                                        <td>$<?php echo number_format($cd['price_per_module'],2);?></td>
-                                        <td>$<?php echo number_format($cd['price_per_watt'],4);?></td>
-                                    </tr>
-                                <?php endforeach;?>
+                                <?php else: ?>
+                                <tr>
+                                    <td class="cost-label no-module-row">Module Investment</td>
+                                    <td class="cost-value no-module-row">N/A</td>
+                                </tr>
+                                <?php endif; ?>
+                                <tr>
+                                    <td class="cost-label">
+                                        <span class="logistics-link" onclick="openLogisticsBreakdownModal()">Logistics Cost</span>
+                                    </td>
+                                    <td class="cost-value cost-value-dynamic" data-total="<?php echo $total_logistics_cost; ?>" data-watt="<?php echo $combined_ppw; ?>" data-module="<?php echo $combined_ppm; ?>" data-pallet="<?php echo $combined_ppp; ?>">$<?php echo number_format($total_logistics_cost, 2); ?></td>
+                                </tr>
                             </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td>Total Project Cost</td>
+                                    <td class="cost-value cost-value-dynamic" data-total="<?php echo $total_project_cost; ?>" data-watt="<?php echo ($combined_ppw + ($module_cost_per_watt ?? 0)); ?>" data-module="<?php echo $total_raw_modules > 0 ? $total_project_cost / $total_raw_modules : 0; ?>" data-pallet="<?php echo $total_raw_modules > 0 ? ($total_project_cost / $total_raw_modules) * 30 : 0; ?>">$<?php echo number_format($total_project_cost, 2); ?></td>
+                                </tr>
+                            </tfoot>
                         </table>
                     </div>
-                    <h2>Cost Breakdown</h2>
-                    <div class="chart-container">
-                        <canvas id="costPieChart"></canvas>
+
+                    <!-- Cost Breakdown Chart -->
+                    <?php
+                    // Calculate percentages for chart
+                    $chart_total = $total_module_cost + $total_freight_cost + $total_warehousing_cost + $total_accessorial_costs + $total_solterra_fee;
+                    $module_pct = $chart_total > 0 ? ($total_module_cost / $chart_total) * 100 : 0;
+                    $freight_pct = $chart_total > 0 ? ($total_freight_cost / $chart_total) * 100 : 0;
+                    $warehousing_pct = $chart_total > 0 ? ($total_warehousing_cost / $chart_total) * 100 : 0;
+                    $other_cost = $total_accessorial_costs + $total_solterra_fee;
+                    $other_pct = $chart_total > 0 ? ($other_cost / $chart_total) * 100 : 0;
+                    ?>
+                    <div class="cost-chart-section">
+                        <h2>Project Cost Breakdown</h2>
+                        <div class="cost-chart-container">
+                            <canvas id="costDonutMini" class="cost-chart-canvas-lg" width="220" height="220"></canvas>
+                            <div class="cost-chart-legend-lg">
+                                <?php if ($has_module_cost_data && $total_module_cost > 0): ?>
+                                <div class="cost-legend-item-lg">
+                                    <div class="cost-legend-dot-lg module"></div>
+                                    <div class="cost-legend-info">
+                                        <div class="cost-legend-label">Modules</div>
+                                        <div class="cost-legend-value">$<?php echo number_format($total_module_cost, 0); ?></div>
+                                    </div>
+                                    <div class="cost-legend-pct-lg"><?php echo number_format($module_pct, 1); ?>%</div>
+                                </div>
+                                <?php endif; ?>
+                                <div class="cost-legend-item-lg">
+                                    <div class="cost-legend-dot-lg freight"></div>
+                                    <div class="cost-legend-info">
+                                        <div class="cost-legend-label">Freight</div>
+                                        <div class="cost-legend-value">$<?php echo number_format($total_freight_cost, 0); ?></div>
+                                    </div>
+                                    <div class="cost-legend-pct-lg"><?php echo number_format($freight_pct, 1); ?>%</div>
+                                </div>
+                                <div class="cost-legend-item-lg">
+                                    <div class="cost-legend-dot-lg warehousing"></div>
+                                    <div class="cost-legend-info">
+                                        <div class="cost-legend-label">Warehousing</div>
+                                        <div class="cost-legend-value">$<?php echo number_format($total_warehousing_cost, 0); ?></div>
+                                    </div>
+                                    <div class="cost-legend-pct-lg"><?php echo number_format($warehousing_pct, 1); ?>%</div>
+                                </div>
+                                <?php if ($other_cost > 0): ?>
+                                <div class="cost-legend-item-lg">
+                                    <div class="cost-legend-dot-lg other"></div>
+                                    <div class="cost-legend-info">
+                                        <div class="cost-legend-label">Other</div>
+                                        <div class="cost-legend-value">$<?php echo number_format($other_cost, 0); ?></div>
+                                    </div>
+                                    <div class="cost-legend-pct-lg"><?php echo number_format($other_pct, 1); ?>%</div>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
                     </div>
+
+                    <script>
+                    // Cost unit toggle functionality
+                    document.querySelectorAll('.cost-unit-chip').forEach(btn => {
+                        btn.addEventListener('click', function() {
+                            document.querySelectorAll('.cost-unit-chip').forEach(b => b.classList.remove('active'));
+                            this.classList.add('active');
+                            const unit = this.dataset.unit;
+
+                            // Update Project Cost Summary table
+                            document.querySelectorAll('.cost-value-dynamic').forEach(el => {
+                                const val = parseFloat(el.dataset[unit]) || 0;
+                                if (unit === 'watt') {
+                                    el.textContent = '$' + val.toFixed(4) + '/W';
+                                } else if (unit === 'module') {
+                                    el.textContent = '$' + val.toFixed(2) + '/mod';
+                                } else if (unit === 'pallet') {
+                                    el.textContent = '$' + val.toFixed(2) + '/plt';
+                                } else {
+                                    el.textContent = '$' + val.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                                }
+                            });
+
+                            // Update Invoices and Cashflow Forecast table
+                            document.querySelectorAll('.financial-value').forEach(el => {
+                                const val = parseFloat(el.dataset[unit]) || 0;
+                                if (unit === 'watt') {
+                                    el.textContent = '$' + val.toFixed(4) + '/W';
+                                } else if (unit === 'module') {
+                                    el.textContent = '$' + val.toFixed(2) + '/mod';
+                                } else if (unit === 'pallet') {
+                                    el.textContent = '$' + val.toFixed(2) + '/plt';
+                                } else {
+                                    el.textContent = '$' + val.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                                }
+                            });
+                        });
+                    });
+
+                    // Mini donut chart
+                    (function() {
+                        const ctx = document.getElementById('costDonutMini');
+                        if (ctx) {
+                            const chartData = [];
+                            const chartColors = [];
+                            <?php if ($has_module_cost_data && $total_module_cost > 0): ?>
+                            chartData.push(<?php echo $total_module_cost; ?>);
+                            chartColors.push('#488C9A');
+                            <?php endif; ?>
+                            chartData.push(<?php echo $total_freight_cost; ?>);
+                            chartColors.push('#3b82f6');
+                            chartData.push(<?php echo $total_warehousing_cost; ?>);
+                            chartColors.push('#8b5cf6');
+                            <?php if ($other_cost > 0): ?>
+                            chartData.push(<?php echo $other_cost; ?>);
+                            chartColors.push('#9ca3af');
+                            <?php endif; ?>
+
+                            new Chart(ctx, {
+                                type: 'doughnut',
+                                data: {
+                                    datasets: [{
+                                        data: chartData,
+                                        backgroundColor: chartColors,
+                                        borderWidth: 0
+                                    }]
+                                },
+                                options: {
+                                    cutout: '60%',
+                                    responsive: false,
+                                    maintainAspectRatio: false,
+                                    plugins: { legend: { display: false }, tooltip: { enabled: false } }
+                                }
+                            });
+                        }
+                    })();
+                    </script>
                 </div>
             </div>
     </div>
 </div>
 
 <!-- ==================== MODALS ==================== -->
+<!-- Note: Logistics Breakdown Modal is in modals.php -->
 
-<!-- Unified Shipping Modal -->
-<div id="shippingModal" class="warehouse-selection-modal" style="display:none;">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 id="shippingModalTitle"></h3>
-            <span class="close-modal" onclick="closeShippingModal()">&times;</span>
-        </div>
-        <div class="modal-body" id="shippingModalContent"></div>
-    </div>
-</div>
-
-<!-- Customer Shipping Modal (alias for unified) -->
+<!-- Customer Shipping Modal -->
 <div id="customerShippingModal" class="warehouse-selection-modal" style="display:none;">
     <div class="modal-content">
         <div class="modal-header">

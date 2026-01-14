@@ -250,4 +250,238 @@ function calculate_pallet_storage_cost($warehouse_id, $arrival_date, $departure_
 
     return $costs['total'];
 }
+
+/**
+ * Calculate module cost for a project based on cost_per_watt in the modules table.
+ * Returns the total module value and related metrics.
+ *
+ * @param int $project_id The project ID
+ * @param mysqli $conn Database connection
+ * @return array ['total_module_cost' => X, 'total_watts' => X, 'avg_cost_per_watt' => X, 'has_cost_data' => bool, 'breakdown' => [...]]
+ */
+function calculate_project_module_cost($project_id, $conn) {
+    $result = [
+        'total_module_cost' => 0.0,
+        'total_watts' => 0.0,
+        'avg_cost_per_watt' => null,
+        'has_cost_data' => false,
+        'breakdown' => []
+    ];
+
+    if (!$project_id || !$conn) {
+        return $result;
+    }
+
+    // Query modules directly by project_id and get wattage/quantity from unassigned_module_items
+    // This uses the direct modules.project_id relationship
+    $sql = "
+        SELECT
+            m.id AS module_id,
+            m.vendor_name,
+            m.cost_per_watt,
+            umi.wattage,
+            SUM(umi.quantity) AS total_quantity,
+            SUM(umi.wattage * umi.quantity) AS total_watts
+        FROM modules m
+        JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+        WHERE m.project_id = ?
+        GROUP BY m.id, m.vendor_name, m.cost_per_watt, umi.wattage
+        ORDER BY m.vendor_name, umi.wattage
+    ";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return $result;
+    }
+
+    $stmt->bind_param("i", $project_id);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    $total_module_cost = 0.0;
+    $total_watts_with_cost = 0.0;
+    $total_watts_all = 0.0;
+    $breakdown = [];
+
+    while ($row = $res->fetch_assoc()) {
+        $watts = (float)($row['total_watts'] ?? 0);
+        $cost_per_watt = $row['cost_per_watt'] !== null ? (float)$row['cost_per_watt'] : null;
+        $total_watts_all += $watts;
+
+        $module_cost = null;
+        if ($cost_per_watt !== null && $watts > 0) {
+            $module_cost = $cost_per_watt * $watts;
+            $total_module_cost += $module_cost;
+            $total_watts_with_cost += $watts;
+            $result['has_cost_data'] = true;
+        }
+
+        $breakdown[] = [
+            'module_id' => $row['module_id'],
+            'vendor_name' => $row['vendor_name'],
+            'wattage' => $row['wattage'],
+            'quantity' => (int)$row['total_quantity'],
+            'total_watts' => $watts,
+            'cost_per_watt' => $cost_per_watt,
+            'module_cost' => $module_cost
+        ];
+    }
+    $stmt->close();
+
+    $result['total_module_cost'] = $total_module_cost;
+    $result['total_watts'] = $total_watts_all;
+    $result['avg_cost_per_watt'] = $total_watts_with_cost > 0 ? ($total_module_cost / $total_watts_with_cost) : null;
+    $result['breakdown'] = $breakdown;
+
+    return $result;
+}
+
+/**
+ * Calculate module cost for a specific delivery based on its pallets.
+ *
+ * @param int $delivery_id The delivery ID
+ * @param mysqli $conn Database connection
+ * @return array ['module_cost' => X, 'total_watts' => X, 'has_cost_data' => bool]
+ */
+function calculate_delivery_module_cost($delivery_id, $conn) {
+    $result = [
+        'module_cost' => 0.0,
+        'total_watts' => 0.0,
+        'has_cost_data' => false
+    ];
+
+    if (!$delivery_id || !$conn) {
+        return $result;
+    }
+
+    $sql = "
+        SELECT
+            m.cost_per_watt,
+            ip.wattage,
+            ip.quantity
+        FROM delivery_pallets dp
+        JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+        JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+        JOIN modules m ON umi.unassigned_module_id = m.id
+        WHERE dp.delivery_id = ?
+    ";
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return $result;
+    }
+
+    $stmt->bind_param("i", $delivery_id);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    while ($row = $res->fetch_assoc()) {
+        $watts = (float)($row['wattage'] ?? 0) * (float)($row['quantity'] ?? 0);
+        $result['total_watts'] += $watts;
+
+        if ($row['cost_per_watt'] !== null) {
+            $result['module_cost'] += (float)$row['cost_per_watt'] * $watts;
+            $result['has_cost_data'] = true;
+        }
+    }
+    $stmt->close();
+
+    return $result;
+}
+
+/**
+ * Get aggregated module cost data across all projects for an account/user.
+ *
+ * @param mysqli $conn Database connection
+ * @param int|null $user_id User ID for access filtering (null for global admin)
+ * @param string $role User role
+ * @return array Aggregated module cost data
+ */
+function get_portfolio_module_costs($conn, $user_id, $role) {
+    $result = [
+        'total_module_cost' => 0.0,
+        'total_watts' => 0.0,
+        'avg_cost_per_watt' => null,
+        'has_cost_data' => false,
+        'by_vendor' => [],
+        'by_project' => []
+    ];
+
+    // Build project access query based on role
+    if ($role === 'global_admin') {
+        $project_sql = "SELECT id, project_name FROM projects WHERE status IS NULL OR status = 'active'";
+        $stmt = $conn->prepare($project_sql);
+    } else {
+        $project_sql = "
+            SELECT p.id, p.project_name
+            FROM projects p
+            JOIN customer_account_users cau ON p.account_id = cau.account_id
+            WHERE cau.user_id = ? AND (p.status IS NULL OR p.status = 'active')
+        ";
+        $stmt = $conn->prepare($project_sql);
+        $stmt->bind_param("i", $user_id);
+    }
+
+    if (!$stmt) {
+        return $result;
+    }
+
+    $stmt->execute();
+    $projects = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    $by_vendor = [];
+    $total_cost = 0.0;
+    $total_watts_with_cost = 0.0;
+    $total_watts_all = 0.0;
+
+    foreach ($projects as $project) {
+        $project_costs = calculate_project_module_cost($project['id'], $conn);
+
+        if ($project_costs['has_cost_data']) {
+            $result['has_cost_data'] = true;
+        }
+
+        $result['by_project'][$project['id']] = [
+            'project_name' => $project['project_name'],
+            'module_cost' => $project_costs['total_module_cost'],
+            'total_watts' => $project_costs['total_watts'],
+            'has_cost_data' => $project_costs['has_cost_data']
+        ];
+
+        $total_cost += $project_costs['total_module_cost'];
+        $total_watts_all += $project_costs['total_watts'];
+
+        // Aggregate by vendor
+        foreach ($project_costs['breakdown'] as $item) {
+            $vendor = $item['vendor_name'] ?? 'Unknown';
+            if (!isset($by_vendor[$vendor])) {
+                $by_vendor[$vendor] = [
+                    'total_cost' => 0.0,
+                    'total_watts' => 0.0,
+                    'cost_per_watt' => null
+                ];
+            }
+            if ($item['module_cost'] !== null) {
+                $by_vendor[$vendor]['total_cost'] += $item['module_cost'];
+                $by_vendor[$vendor]['total_watts'] += $item['total_watts'];
+                $total_watts_with_cost += $item['total_watts'];
+            }
+        }
+    }
+
+    // Calculate vendor averages
+    foreach ($by_vendor as $vendor => &$data) {
+        if ($data['total_watts'] > 0) {
+            $data['cost_per_watt'] = $data['total_cost'] / $data['total_watts'];
+        }
+    }
+
+    $result['total_module_cost'] = $total_cost;
+    $result['total_watts'] = $total_watts_all;
+    $result['avg_cost_per_watt'] = $total_watts_with_cost > 0 ? ($total_cost / $total_watts_with_cost) : null;
+    $result['by_vendor'] = $by_vendor;
+
+    return $result;
+}
 ?>

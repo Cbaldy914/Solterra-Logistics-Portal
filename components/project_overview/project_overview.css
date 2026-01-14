@@ -2517,7 +2517,6 @@
 
 .table-responsive tbody tr:hover {
     background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-    transform: translateX(2px);
 }
 
 .table-responsive tbody tr:last-child td {
