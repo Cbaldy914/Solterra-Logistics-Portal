@@ -8,6 +8,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 require_once '../config.php';
+require_once 'cost_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -15,244 +16,11 @@ if (!$conn) {
 
 $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'] ?? 'user';
-
-/**
- * Calculate warehousing cost for a single pallet by looking at its delivery history.
- * This mirrors the calculatePalletWarehousingCostFallback function in project_cost_details.php
- */
-function calculatePalletWarehousingCost($pallet_id, $conn) {
-    if (!$conn || !$pallet_id) {
-        return 0.0;
-    }
-
-    // Find all warehouses this pallet has visited via deliveries
-    $sql = "SELECT DISTINCT
-                w.id AS warehouse_id,
-                (SELECT MIN(d_arr.warehouse_arrival_date)
-                 FROM deliveries d_arr
-                 JOIN delivery_pallets dp_arr ON d_arr.id = dp_arr.delivery_id
-                 WHERE dp_arr.inventory_pallet_id = ?
-                   AND d_arr.warehouse_id = w.id
-                   AND d_arr.warehouse_arrival_date IS NOT NULL) AS arrival_date,
-                (SELECT MIN(d_dep.left_warehouse_date)
-                 FROM deliveries d_dep
-                 JOIN delivery_pallets dp_dep ON d_dep.id = dp_dep.delivery_id
-                 WHERE dp_dep.inventory_pallet_id = ?
-                   AND d_dep.origin_type = 'warehouse'
-                   AND d_dep.origin_id = w.id
-                   AND d_dep.left_warehouse_date IS NOT NULL) AS departure_date,
-                (SELECT COUNT(DISTINCT d_in.id)
-                 FROM deliveries d_in
-                 JOIN delivery_pallets dp_in ON d_in.id = dp_in.delivery_id
-                 WHERE dp_in.inventory_pallet_id = ?
-                   AND d_in.warehouse_id = w.id
-                   AND d_in.warehouse_arrival_date IS NOT NULL) AS inbound_deliveries,
-                (SELECT COUNT(DISTINCT d_out.id)
-                 FROM deliveries d_out
-                 JOIN delivery_pallets dp_out ON d_out.id = dp_out.delivery_id
-                 WHERE dp_out.inventory_pallet_id = ?
-                   AND d_out.origin_type = 'warehouse'
-                   AND d_out.origin_id = w.id
-                   AND d_out.left_warehouse_date IS NOT NULL) AS outbound_deliveries
-            FROM warehouses w
-            WHERE w.id IN (
-                SELECT DISTINCT COALESCE(d.warehouse_id, d.origin_id)
-                FROM deliveries d
-                JOIN delivery_pallets dp ON d.id = dp.delivery_id
-                WHERE dp.inventory_pallet_id = ?
-                  AND (d.warehouse_id IS NOT NULL OR (d.origin_type = 'warehouse' AND d.origin_id IS NOT NULL))
-            )
-            ORDER BY arrival_date ASC";
-
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        return 0.0;
-    }
-
-    $stmt->bind_param("iiiii", $pallet_id, $pallet_id, $pallet_id, $pallet_id, $pallet_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-
-    if (!$result || $result->num_rows === 0) {
-        $stmt->close();
-        return 0.0;
-    }
-
-    $warehouse_rows = [];
-    $warehouse_ids = [];
-    while ($row = $result->fetch_assoc()) {
-        $warehouse_rows[] = $row;
-        $warehouse_ids[] = (int)$row['warehouse_id'];
-    }
-    $stmt->close();
-
-    // Get cost rates for these warehouses
-    $warehouse_costs = [];
-    if (!empty($warehouse_ids)) {
-        $warehouse_ids_str = implode(',', array_map('intval', $warehouse_ids));
-        $cost_sql = "SELECT warehouse_id, trigger_event, amount
-                     FROM warehouse_cost_items
-                     WHERE warehouse_id IN ({$warehouse_ids_str}) AND is_active = 1";
-        $cost_result = $conn->query($cost_sql);
-        if ($cost_result) {
-            while ($cost = $cost_result->fetch_assoc()) {
-                $wid = (int)$cost['warehouse_id'];
-                if (!isset($warehouse_costs[$wid])) {
-                    $warehouse_costs[$wid] = ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
-                }
-                // Use += to accumulate multiple fees of same trigger type
-                switch ($cost['trigger_event']) {
-                    case 'entry': $warehouse_costs[$wid]['in_fee'] += (float)$cost['amount']; break;
-                    case 'exit': $warehouse_costs[$wid]['out_fee'] += (float)$cost['amount']; break;
-                    case 'monthly': $warehouse_costs[$wid]['monthly_storage_fee'] += (float)$cost['amount']; break;
-                }
-            }
-        }
-    }
-
-    // Calculate total cost from all warehouse visits
-    $total_warehouse_cost = 0.0;
-    foreach ($warehouse_rows as $row) {
-        $wid = (int)$row['warehouse_id'];
-        $costs = $warehouse_costs[$wid] ?? ['in_fee' => 0, 'out_fee' => 0, 'monthly_storage_fee' => 0];
-
-        $in_fee_cost = $costs['in_fee'] * (int)($row['inbound_deliveries'] ?? 0);
-        $out_fee_cost = $costs['out_fee'] * (int)($row['outbound_deliveries'] ?? 0);
-
-        $storage_cost = 0.0;
-        if (!empty($row['arrival_date'])) {
-            $arrival = new DateTime($row['arrival_date']);
-            $departure = !empty($row['departure_date']) ? new DateTime($row['departure_date']) : new DateTime();
-            $days = max(0, $arrival->diff($departure)->days);
-            $daily_fee = ($costs['monthly_storage_fee'] ?? 0) / 30;
-            $storage_cost = $days * $daily_fee;
-        }
-
-        $total_warehouse_cost += $in_fee_cost + $out_fee_cost + $storage_cost;
-    }
-
-    return $total_warehouse_cost;
-}
-
-/**
- * Calculate warehousing cost for a project (TOTAL).
- * Uses pallet-level data matching project_cost_details.php approach.
- */
-function calculateProjectWarehousingCost($conn, $project_id) {
-    $total_warehousing_cost = 0;
-
-    // Get all pallets for this project
-    $stmt = $conn->prepare("
-        SELECT ip.id, ip.warehouse_cost, ip.current_warehouse_id, ip.arrival_date, ip.status
-        FROM inventory_pallets ip
-        WHERE ip.assigned_project_id = ?
-    ");
-    $stmt->bind_param("i", $project_id);
-    $stmt->execute();
-    $pallets_result = $stmt->get_result();
-    $stmt->close();
-
-    while ($pallet = $pallets_result->fetch_assoc()) {
-        $pallet_cost = 0.0;
-
-        // First use recorded warehouse_cost if available
-        if (!empty($pallet['warehouse_cost']) && $pallet['warehouse_cost'] > 0) {
-            $pallet_cost = (float)$pallet['warehouse_cost'];
-
-            // For pallets still in warehouse, add pending storage cost
-            if ($pallet['status'] === 'In Warehouse' && !empty($pallet['current_warehouse_id']) && !empty($pallet['arrival_date'])) {
-                // Get warehouse monthly rate
-                $wh_stmt = $conn->prepare("SELECT amount FROM warehouse_cost_items WHERE warehouse_id = ? AND trigger_event = 'monthly' AND is_active = 1");
-                if ($wh_stmt) {
-                    $wh_stmt->bind_param("i", $pallet['current_warehouse_id']);
-                    $wh_stmt->execute();
-                    $wh_stmt->bind_result($monthly_fee);
-                    if ($wh_stmt->fetch() && $monthly_fee > 0) {
-                        $arrival = new DateTime($pallet['arrival_date']);
-                        $now = new DateTime();
-                        $days = max(0, $arrival->diff($now)->days);
-                        $estimated_storage = $days * ($monthly_fee / 30);
-                        // Add any accrued storage beyond what's recorded
-                        if ($estimated_storage > $pallet_cost) {
-                            $pallet_cost = $estimated_storage;
-                        }
-                    }
-                    $wh_stmt->close();
-                }
-            }
-        } else {
-            // No recorded cost - calculate from delivery history
-            $pallet_cost = calculatePalletWarehousingCost((int)$pallet['id'], $conn);
-        }
-
-        $total_warehousing_cost += $pallet_cost;
-    }
-
-    return $total_warehousing_cost;
-}
-
-/**
- * Calculate YTD warehousing cost for a project.
- * For simplicity, uses the same calculation as total (most costs are current year for active projects).
- */
-function calculateProjectYTDWarehousingCost($conn, $project_id, $current_year) {
-    // For YTD, we use the same calculation as total since warehouse costs
-    // are typically incurred in the current year for active projects
-    return calculateProjectWarehousingCost($conn, $project_id);
-}
-
-/**
- * Calculate total logistics cost and watts for a project.
- */
-function calculateProjectTotalLogisticsCost($conn, $project_id, $filter) {
-    $current_year = date('Y');
-
-    $sql_deliv = "SELECT freight_cost, accessorial_costs, wattage, quantity FROM deliveries WHERE project_id=?";
-    if ($filter === 'ytd') $sql_deliv .= " AND YEAR(created_at)=?";
-
-    $stmt = $conn->prepare($sql_deliv);
-    if ($filter === 'ytd') {
-        $stmt->bind_param("ii", $project_id, $current_year);
-    } else {
-        $stmt->bind_param("i", $project_id);
-    }
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $stmt->close();
-
-    $freight_cost = 0;
-    $accessorial_costs = 0;
-    $total_watts = 0;
-
-    while ($r = $res->fetch_assoc()) {
-        $freight_cost += (float)$r['freight_cost'];
-        $accessorial_costs += (float)$r['accessorial_costs'];
-        $total_watts += (float)$r['wattage'] * (float)$r['quantity'];
-    }
-
-    $warehousing_cost = ($filter === 'ytd')
-        ? calculateProjectYTDWarehousingCost($conn, $project_id, $current_year)
-        : calculateProjectWarehousingCost($conn, $project_id);
-
-    return [
-        'freight_cost' => $freight_cost,
-        'accessorial_costs' => $accessorial_costs,
-        'warehousing_cost' => $warehousing_cost,
-        'total_logistics_cost' => $freight_cost + $accessorial_costs + $warehousing_cost,
-        'total_watts' => $total_watts
-    ];
-}
-
 $filter = isset($_GET['filter']) ? $_GET['filter'] : 'total';
 $view_mode = isset($_GET['view_mode']) ? $_GET['view_mode'] : 'dollars';
 $current_year = date('Y');
 
-$total_freight = 0;
-$total_accessorial = 0;
-$total_warehousing = 0;
-$total_logistics_cost = 0;
-$total_watts = 0;
-
+// Get projects based on user role
 if ($role === 'global_admin') {
     $sql_proj = "SELECT p.id, p.project_name, p.image_url, p.project_address FROM projects p WHERE status IS NULL OR status = 'active'";
     $paramTypes = "";
@@ -272,45 +40,183 @@ $projects_res = $stmtProj->get_result();
 $stmtProj->close();
 
 $projects = [];
+$total_module_cost = 0;
+$total_wattage = 0;
+$projects_with_cost_data = 0;
+$manufacturer_costs = [];
+
+// Logistics cost totals
+$total_freight_cost = 0;
+$total_warehousing_cost = 0;
+$total_accessorial_cost = 0;
+$total_logistics_cost = 0;
+
 while ($p = $projects_res->fetch_assoc()) {
-    $calc = calculateProjectTotalLogisticsCost($conn, $p['id'], $filter);
+    // Calculate module costs for this project
+    $module_data = calculate_project_module_cost($p['id'], $conn);
 
-    $total_freight += $calc['freight_cost'];
-    $total_accessorial += $calc['accessorial_costs'];
-    $total_warehousing += $calc['warehousing_cost'];
-    $total_logistics_cost += $calc['total_logistics_cost'];
-    $total_watts += $calc['total_watts'];
+    $p['module_cost'] = $module_data['total_module_cost'];
+    $p['total_wattage'] = $module_data['total_watts'];
+    $p['avg_cost_per_watt'] = $module_data['avg_cost_per_watt'];
+    $p['has_cost_data'] = $module_data['has_cost_data'];
+    $p['breakdown'] = $module_data['breakdown'];
 
-    $p['freight_cost'] = $calc['freight_cost'];
-    $p['accessorial_costs'] = $calc['accessorial_costs'];
-    $p['warehousing_cost'] = $calc['warehousing_cost'];
-    $p['total_logistics_cost'] = $calc['total_logistics_cost'];
-    $p['total_watts'] = $calc['total_watts'];
-    $p['cost_per_watt'] = $calc['total_watts'] > 0 ? $calc['total_logistics_cost'] / $calc['total_watts'] : 0;
+    $total_module_cost += $module_data['total_module_cost'];
+    $total_wattage += $module_data['total_watts'];
+
+    // Calculate logistics costs for this project
+    $project_freight = 0;
+    $project_warehousing = 0;
+    $project_accessorial = 0;
+
+    $stmt_logistics = $conn->prepare("
+        SELECT
+            COALESCE(SUM(COALESCE(d.freight_cost, d.customer_cost, 0)), 0) as freight,
+            COALESCE(SUM(COALESCE(d.accessorial_costs, 0)), 0) as accessorial
+        FROM deliveries d
+        WHERE d.project_id = ?
+    ");
+    $stmt_logistics->bind_param("i", $p['id']);
+    $stmt_logistics->execute();
+    $stmt_logistics->bind_result($project_freight, $project_accessorial);
+    $stmt_logistics->fetch();
+    $stmt_logistics->close();
+
+    // Calculate warehousing costs using the helper function (includes fallback calculation)
+    $project_warehousing = calculate_project_warehousing_cost($p['id'], $conn);
+
+    $p['freight_cost'] = (float)$project_freight;
+    $p['warehousing_cost'] = (float)$project_warehousing;
+    $p['accessorial_cost'] = (float)$project_accessorial;
+    $p['logistics_cost'] = $p['freight_cost'] + $p['warehousing_cost'] + $p['accessorial_cost'];
+    $p['total_cost'] = $p['module_cost'] + $p['logistics_cost'];
+
+    $total_freight_cost += $p['freight_cost'];
+    $total_warehousing_cost += $p['warehousing_cost'];
+    $total_accessorial_cost += $p['accessorial_cost'];
+    $total_logistics_cost += $p['logistics_cost'];
+
+    // Count projects with any cost data (module OR logistics)
+    if ($module_data['has_cost_data'] || $p['logistics_cost'] > 0) {
+        $projects_with_cost_data++;
+    }
+
+    // Aggregate manufacturer costs - breakdown is an array of items with vendor_name
+    if (!empty($module_data['breakdown'])) {
+        $project_manufacturers = []; // Track which manufacturers we've seen for this project
+        foreach ($module_data['breakdown'] as $item) {
+            $mfr = $item['vendor_name'] ?? 'Unknown';
+            if (empty($mfr)) $mfr = 'Unknown';
+
+            if (!isset($manufacturer_costs[$mfr])) {
+                $manufacturer_costs[$mfr] = [
+                    'total_cost' => 0,
+                    'total_wattage' => 0,
+                    'project_count' => 0,
+                    'deliveries_total' => 0,
+                    'deliveries_on_time' => 0,
+                    'deliveries_late' => 0,
+                    'damaged_modules' => 0
+                ];
+            }
+            if ($item['module_cost'] !== null) {
+                $manufacturer_costs[$mfr]['total_cost'] += $item['module_cost'];
+            }
+            $manufacturer_costs[$mfr]['total_wattage'] += $item['total_watts'] ?? 0;
+
+            // Only count project once per manufacturer
+            if (!isset($project_manufacturers[$mfr])) {
+                $manufacturer_costs[$mfr]['project_count']++;
+                $project_manufacturers[$mfr] = true;
+            }
+        }
+    }
 
     $projects[] = $p;
 }
 
-$project_count = count($projects);
+// Calculate delivery performance per manufacturer (using distinct deliveries, filtered by accessible projects)
+// Build project IDs list for filtering
+$project_ids = array_column($projects, 'id');
+$project_ids_str = !empty($project_ids) ? implode(',', array_map('intval', $project_ids)) : '0';
 
-if ($filter === 'per_project' && $project_count > 0) {
-    $disp_freight = $total_freight / $project_count;
-    $disp_accessorial = $total_accessorial / $project_count;
-    $disp_warehousing = $total_warehousing / $project_count;
-    $disp_total = $total_logistics_cost / $project_count;
-    $disp_watts = $total_watts / $project_count;
-} else {
-    $disp_freight = $total_freight;
-    $disp_accessorial = $total_accessorial;
-    $disp_warehousing = $total_warehousing;
-    $disp_total = $total_logistics_cost;
-    $disp_watts = $total_watts;
+$delivery_perf_sql = "
+    SELECT
+        ip.manufacturer,
+        COUNT(DISTINCT d.id) as total_deliveries,
+        COUNT(DISTINCT CASE WHEN d.actual_delivery_date IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
+                 AND d.actual_delivery_date <= d.anticipated_delivery_date THEN d.id END) as on_time,
+        COUNT(DISTINCT CASE WHEN d.actual_delivery_date IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
+                 AND d.actual_delivery_date > d.anticipated_delivery_date THEN d.id END) as late
+    FROM deliveries d
+    JOIN delivery_pallets dp ON dp.delivery_id = d.id
+    JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+    WHERE ip.manufacturer IS NOT NULL AND ip.manufacturer != ''
+    AND d.project_id IN ($project_ids_str)
+    GROUP BY ip.manufacturer
+";
+$perf_result = $conn->query($delivery_perf_sql);
+if ($perf_result) {
+    while ($row = $perf_result->fetch_assoc()) {
+        $mfr = $row['manufacturer'];
+        if (isset($manufacturer_costs[$mfr])) {
+            $manufacturer_costs[$mfr]['deliveries_total'] = (int)$row['total_deliveries'];
+            $manufacturer_costs[$mfr]['deliveries_on_time'] = (int)$row['on_time'];
+            $manufacturer_costs[$mfr]['deliveries_late'] = (int)$row['late'];
+        }
+    }
 }
 
-$disp_cost_per_watt = $disp_watts > 0 ? $disp_total / $disp_watts : 0;
-$disp_freight_per_watt = $disp_watts > 0 ? $disp_freight / $disp_watts : 0;
-$disp_accessorial_per_watt = $disp_watts > 0 ? $disp_accessorial / $disp_watts : 0;
-$disp_warehousing_per_watt = $disp_watts > 0 ? $disp_warehousing / $disp_watts : 0;
+// Calculate damaged modules per manufacturer from warranty claims (sum module quantity, not pallet count)
+$damage_sql = "
+    SELECT
+        ip.manufacturer,
+        COALESCE(SUM(ip.quantity), 0) as damaged_count
+    FROM warranty_claim_replacements wcr
+    JOIN inventory_pallets ip ON wcr.pallet_id = ip.id
+    WHERE ip.manufacturer IS NOT NULL AND ip.manufacturer != ''
+    AND ip.assigned_project_id IN ($project_ids_str)
+    GROUP BY ip.manufacturer
+";
+$damage_result = $conn->query($damage_sql);
+if ($damage_result) {
+    while ($row = $damage_result->fetch_assoc()) {
+        $mfr = $row['manufacturer'];
+        if (isset($manufacturer_costs[$mfr])) {
+            $manufacturer_costs[$mfr]['damaged_modules'] = (int)$row['damaged_count'];
+        }
+    }
+}
+
+// Calculate averages for manufacturers
+foreach ($manufacturer_costs as $mfr => &$data) {
+    $data['avg_cost_per_watt'] = $data['total_wattage'] > 0 ? $data['total_cost'] / $data['total_wattage'] : 0;
+}
+unset($data);
+
+// Sort manufacturers by total cost descending
+uasort($manufacturer_costs, function($a, $b) {
+    return $b['total_cost'] <=> $a['total_cost'];
+});
+
+$project_count = count($projects);
+$avg_cost_per_watt = $total_wattage > 0 ? $total_module_cost / $total_wattage : 0;
+$total_combined_cost = $total_module_cost + $total_logistics_cost;
+
+// Apply filter for display
+if ($filter === 'per_project' && $project_count > 0) {
+    $disp_module_cost = $total_module_cost / $project_count;
+    $disp_wattage = $total_wattage / $project_count;
+    $disp_cost_per_watt = $avg_cost_per_watt;
+    $disp_logistics_cost = $total_logistics_cost / $project_count;
+    $disp_combined_cost = $total_combined_cost / $project_count;
+} else {
+    $disp_module_cost = $total_module_cost;
+    $disp_wattage = $total_wattage;
+    $disp_cost_per_watt = $avg_cost_per_watt;
+    $disp_logistics_cost = $total_logistics_cost;
+    $disp_combined_cost = $total_combined_cost;
+}
 
 $conn->close();
 ?>
@@ -319,11 +225,18 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cost Overview</title>
+    <title>Module Cost Analysis</title>
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
+        body {
+            background: #f8f9fa;
+            font-family: 'Poppins', sans-serif;
+        }
+
         .page-header {
             border-radius: 24px;
             padding: 32px;
@@ -340,6 +253,11 @@ $conn->close();
             height: 4px;
             background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%);
         }
+        .page-header-content {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
         .page-header h1 {
             font-size: 2.2em;
             font-weight: 700;
@@ -350,6 +268,41 @@ $conn->close();
             margin: 0 0 8px 0;
         }
         .page-header p { color: #6c757d; font-size: 1.1em; margin: 0; }
+
+        .info-tooltip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px; height: 22px;
+            background: #488C9A;
+            color: white;
+            border-radius: 50%;
+            font-weight: bold;
+            cursor: pointer;
+            position: relative;
+            font-size: 0.7em;
+            flex-shrink: 0;
+            margin-top: 8px;
+        }
+        .info-tooltip:hover { background: #293E4C; }
+        .info-tooltip .tooltip-text {
+            display: none;
+            width: 320px;
+            background: #fff;
+            color: #333;
+            text-align: left;
+            border-radius: 8px;
+            padding: 16px;
+            position: absolute;
+            z-index: 1000;
+            top: 30px;
+            left: -150px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            font-weight: normal;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+        .info-tooltip:hover .tooltip-text { display: block; }
 
         .controls-row {
             display: flex;
@@ -376,6 +329,7 @@ $conn->close();
             font-size: 0.9em;
             cursor: pointer;
             transition: all 0.2s;
+            font-family: 'Poppins', sans-serif;
         }
         .filter-pill:hover { background: rgba(255,255,255,0.5); color: #293E4C; }
         .filter-pill.active { background: #fff; color: #293E4C; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
@@ -397,6 +351,7 @@ $conn->close();
             font-size: 0.85em;
             cursor: pointer;
             transition: all 0.2s;
+            font-family: 'Poppins', sans-serif;
         }
         .view-mode-btn:hover { background: rgba(255,255,255,0.5); color: #293E4C; }
         .view-mode-btn.active { background: #fff; color: #488C9A; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
@@ -417,20 +372,421 @@ $conn->close();
             transition: transform 0.2s, box-shadow 0.2s;
         }
         .stat-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
-        .stat-card.primary { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); border: none; }
+        .stat-card.primary { background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%); border: none; }
         .stat-card.primary .stat-label, .stat-card.primary .stat-value { color: #fff; }
+        .stat-card-clickable { cursor: pointer; position: relative; }
+        .stat-card-clickable:hover { transform: translateY(-6px); box-shadow: 0 12px 28px rgba(0,0,0,0.15); }
+        .stat-card-clickable::after {
+            content: 'Click for breakdown';
+            position: absolute;
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.65em;
+            color: #488C9A;
+            opacity: 0;
+            transition: opacity 0.2s;
+            white-space: nowrap;
+        }
+        .stat-card-clickable:hover::after { opacity: 1; }
         .stat-icon {
             width: 48px; height: 48px;
             border-radius: 12px;
             display: flex; align-items: center; justify-content: center;
             margin: 0 auto 16px;
             font-size: 1.5em;
-            background: linear-gradient(135deg, #e8f4f7 0%, #d4eef3 100%);
         }
-        .stat-card.primary .stat-icon { background: rgba(255,255,255,0.2); }
+        .stat-card.primary .stat-icon { background: rgba(255,255,255,0.2); color: #fff; }
+        .stat-icon.pink { background: linear-gradient(135deg, #e8f4f6 0%, #d1e8ec 100%); color: #293E4C; }
+        .stat-icon.blue { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #2563eb; }
+        .stat-icon.purple { background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%); color: #7c3aed; }
+        .stat-icon.green { background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); color: #059669; }
         .stat-value { font-size: 1.8em; font-weight: 700; color: #293E4C; margin-bottom: 4px; }
         .stat-label { color: #6c757d; font-size: 0.85em; font-weight: 500; }
 
+        /* Logistics Modal */
+        .logistics-modal {
+            display: none;
+            position: fixed;
+            z-index: 10000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+        }
+        .logistics-modal-content {
+            background: white;
+            margin: 10% auto;
+            padding: 0;
+            width: 90%;
+            max-width: 600px;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+            animation: modalSlideIn 0.3s ease;
+        }
+        @keyframes modalSlideIn {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .logistics-modal-header {
+            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
+            color: white;
+            padding: 24px;
+            border-radius: 20px 20px 0 0;
+            position: relative;
+        }
+        .logistics-modal-header h2 {
+            margin: 0;
+            font-size: 1.4em;
+            font-weight: 600;
+        }
+        .logistics-modal-close {
+            position: absolute;
+            top: 20px;
+            right: 24px;
+            font-size: 28px;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+            border: none;
+            background: transparent;
+        }
+        .logistics-modal-close:hover { transform: scale(1.1); }
+        .logistics-modal-body { padding: 24px; }
+        .logistics-breakdown-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .logistics-breakdown-item {
+            text-align: center;
+            padding: 20px 16px;
+            border-radius: 12px;
+            transition: transform 0.2s;
+        }
+        .logistics-breakdown-item:hover { transform: translateY(-2px); }
+        .logistics-breakdown-item.freight { background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.25) 100%); }
+        .logistics-breakdown-item.warehousing { background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(139, 92, 246, 0.25) 100%); }
+        .logistics-breakdown-item.accessorial { background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(245, 158, 11, 0.25) 100%); }
+        .logistics-breakdown-item .value {
+            font-size: 1.5em;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .logistics-breakdown-item.freight .value { color: #2563eb; }
+        .logistics-breakdown-item.warehousing .value { color: #7c3aed; }
+        .logistics-breakdown-item.accessorial .value { color: #d97706; }
+        .logistics-breakdown-item .label {
+            font-size: 0.85em;
+            color: #6c757d;
+            font-weight: 500;
+        }
+        .logistics-chart-container { height: 200px; }
+
+        /* Module Cost Modal */
+        .module-breakdown-summary {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.15) 100%);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .module-summary-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+        }
+        .module-summary-row:last-child { border-bottom: none; }
+        .module-summary-row .label { color: #6c757d; font-size: 0.9em; }
+        .module-summary-row .value { font-weight: 600; color: #2563eb; font-size: 0.95em; }
+        .module-manufacturer-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .module-manufacturer-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+        .module-manufacturer-item:hover { background: #f8f9fa; }
+        .mfr-name { font-weight: 500; color: #293E4C; }
+        .mfr-cost { font-weight: 600; color: #488C9A; }
+
+        /* Manufacturer Breakdown Card Styles */
+        .manufacturer-breakdown-card { display: flex; flex-direction: column; }
+        .manufacturer-breakdown-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .manufacturer-breakdown-header h3 { margin: 0; }
+        .view-all-link {
+            color: #488C9A;
+            font-size: 0.85em;
+            font-weight: 600;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: color 0.2s;
+        }
+        .view-all-link:hover { color: #293E4C; }
+        .manufacturer-mini-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            flex: 1;
+        }
+        .manufacturer-mini-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid #e9ecef;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+        .manufacturer-mini-card:hover {
+            border-color: #488C9A;
+            box-shadow: 0 4px 16px rgba(72,140,154,0.15);
+            transform: translateY(-2px);
+        }
+        .mini-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+        .mini-mfr-name {
+            font-weight: 700;
+            color: #293E4C;
+            font-size: 1.05em;
+            line-height: 1.3;
+            flex: 1;
+            margin-right: 12px;
+        }
+        .mini-badge {
+            background: #488C9A;
+            color: #fff;
+            font-size: 0.75em;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: 6px;
+            white-space: nowrap;
+            flex-shrink: 0;
+            line-height: 1;
+        }
+        .mini-card-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .mini-stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .mini-stat-label {
+            font-size: 0.9em;
+            color: #488C9A;
+            font-weight: 500;
+        }
+        .mini-stat-value {
+            font-weight: 700;
+            color: #293E4C;
+            font-size: 1em;
+        }
+        .see-more-link {
+            display: block;
+            text-align: center;
+            color: #488C9A;
+            font-size: 0.85em;
+            font-weight: 500;
+            margin-top: 16px;
+            text-decoration: none;
+        }
+        .see-more-link:hover { color: #293E4C; }
+        .see-more-link:hover { text-decoration: underline; }
+        .empty-mini-state {
+            text-align: center;
+            color: #6c757d;
+            padding: 40px 20px;
+            font-size: 0.9em;
+        }
+
+        /* Charts Section */
+        .charts-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 40px;
+        }
+
+        .chart-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+
+        .chart-card h3 {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0 0 20px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .chart-card h3 i {
+            color: #488C9A;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 280px;
+        }
+
+        /* Manufacturer Breakdown Section */
+        .manufacturer-section {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            padding: 24px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(236, 72, 153, 0.08);
+        }
+
+        .manufacturer-section h2 {
+            font-size: 1.4em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 24px 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .manufacturer-section h2 i {
+            color: #488C9A;
+            -webkit-text-fill-color: #488C9A;
+        }
+
+        .manufacturer-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .manufacturer-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+            border: 1px solid #e9ecef;
+            transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .manufacturer-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+        }
+
+        .manufacturer-card-clickable {
+            cursor: pointer;
+        }
+
+        .manufacturer-card-clickable:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 28px rgba(72,140,154,0.15);
+        }
+
+        .manufacturer-card-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(45deg, rgba(72,140,154,0.95), rgba(41,62,76,0.95));
+            display: flex; align-items: center; justify-content: center;
+            opacity: 0;
+            transition: opacity 0.2s;
+            border-radius: 12px;
+        }
+
+        .manufacturer-card-clickable:hover .manufacturer-card-overlay { opacity: 1; }
+
+        .manufacturer-card-overlay span {
+            color: #fff;
+            font-size: 1em;
+            font-weight: 600;
+        }
+
+        .manufacturer-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #f1f3f4;
+        }
+
+        .manufacturer-name {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #293E4C;
+        }
+
+        .manufacturer-badge {
+            background: linear-gradient(135deg, #e8f4f6 0%, #d1e8ec 100%);
+            color: #293E4C;
+            font-size: 0.75em;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 20px;
+        }
+
+        .manufacturer-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .manufacturer-stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .manufacturer-stat-row .label {
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+
+        .manufacturer-stat-row .value {
+            font-size: 0.95em;
+            font-weight: 600;
+            color: #293E4C;
+        }
+
+        .manufacturer-stat-row .value.highlight {
+            color: #488C9A;
+            font-size: 1.1em;
+        }
+
+        /* Project Section */
         .section-header-row {
             display: flex;
             justify-content: space-between;
@@ -451,7 +807,6 @@ $conn->close();
             -webkit-text-fill-color: transparent;
             background-clip: text;
             margin: 0;
-            letter-spacing: -0.3px;
         }
         .section-subtitle { font-size: 0.85em; color: #6c757d; margin: 4px 0 0; }
         .view-toggle {
@@ -495,8 +850,8 @@ $conn->close();
         }
         .project-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.12); }
         .project-card-image {
-            width: 100%; height: 120px;
-            background: linear-gradient(135deg, #e8f4f7 0%, #d4eef3 100%);
+            width: 100%; height: 180px;
+            background: linear-gradient(135deg, #e8f4f6 0%, #d1e8ec 100%);
             position: relative;
             overflow: hidden;
         }
@@ -504,7 +859,7 @@ $conn->close();
         .project-card-overlay {
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: linear-gradient(45deg, rgba(72,140,154,0.9), rgba(58,110,127,0.9));
+            background: linear-gradient(45deg, rgba(72,140,154,0.9), rgba(41,62,76,0.9));
             display: flex; align-items: center; justify-content: center;
             opacity: 0;
             transition: opacity 0.2s;
@@ -527,12 +882,27 @@ $conn->close();
         .project-card-total {
             margin-top: 12px;
             padding: 14px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
             border-radius: 10px;
             text-align: center;
         }
         .project-card-total .value { font-size: 1.2em; font-weight: 700; color: #fff; }
         .project-card-total .label { font-size: 0.75em; color: rgba(255,255,255,0.85); margin-top: 2px; }
+        .no-cost-badge {
+            display: inline-block;
+            background: #f1f3f4;
+            color: #6c757d;
+            font-size: 0.8em;
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+        .project-logistics-breakdown {
+            background: #f0f7f8 !important;
+        }
+        .project-logistics-breakdown .label small {
+            color: #6c757d;
+            font-size: 0.85em;
+        }
 
         .table-container {
             background: #fff;
@@ -545,7 +915,7 @@ $conn->close();
         .table-container.active { display: block; }
         .data-table { width: 100%; border-collapse: collapse; }
         .data-table th {
-            background: #488C9A;
+            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
             padding: 14px 16px;
             text-align: left;
             font-weight: 600;
@@ -555,13 +925,13 @@ $conn->close();
         }
         .data-table td { padding: 14px 16px; border-bottom: 1px solid #f1f3f4; font-size: 0.9em; }
         .data-table tbody tr { cursor: pointer; transition: background 0.2s; }
-        .data-table tbody tr:hover { background: #f8f9fa; }
+        .data-table tbody tr:hover { background: #f0f7f8; }
         .data-table .project-name { font-weight: 600; color: #293E4C; }
         .data-table .cost-cell { font-weight: 600; color: #488C9A; }
         .data-table .total-cell {
             font-weight: 700;
             color: #fff;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
             border-radius: 6px;
             padding: 6px 12px;
             display: inline-block;
@@ -570,14 +940,18 @@ $conn->close();
         .empty-state { text-align: center; padding: 60px 20px; color: #6c757d; }
         .empty-state h3 { color: #293E4C; margin-bottom: 8px; }
 
-        @media (max-width: 992px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 992px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .charts-section { grid-template-columns: 1fr; }
+        }
         @media (max-width: 768px) {
             .page-header { padding: 24px; }
             .page-header h1 { font-size: 1.8em; }
             .stats-grid { grid-template-columns: 1fr; }
             .projects-grid { grid-template-columns: 1fr; }
+            .manufacturer-grid { grid-template-columns: 1fr; }
             .table-container { overflow-x: auto; }
-            .data-table { min-width: 700px; }
+            .data-table { min-width: 600px; }
             .controls-row { flex-direction: column; align-items: stretch; }
             .filter-pills, .view-mode-toggle { justify-content: center; }
         }
@@ -586,11 +960,15 @@ $conn->close();
 <body>
 <?php include 'header.php'; ?>
 <main>
-    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Cost Overview']); ?>
+    <?php require_once 'components/breadcrumbs.php'; echo slp_render_breadcrumbs(['current_label' => 'Module Cost Analysis']); ?>
 
     <div class="page-header">
-        <h1>Cost Overview</h1>
-        <p>Comprehensive logistics cost analysis across all your projects</p>
+        <div class="page-header-content">
+            <div>
+                <h1>Module Cost Analysis</h1>
+                <p>Analyze module costs across your portfolio based on cost per watt data</p>
+            </div>
+        </div>
     </div>
 
     <div class="controls-row">
@@ -605,65 +983,176 @@ $conn->close();
         </div>
     </div>
 
-    <?php if ($view_mode === 'dollars'): ?>
     <div class="stats-grid">
         <div class="stat-card primary">
-            <div class="stat-icon">$</div>
-            <div class="stat-value">$<?php echo number_format($disp_total, 0); ?></div>
-            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Total Cost' : ($filter === 'ytd' ? 'Total Cost (YTD)' : 'Total Logistics Cost'); ?></div>
+            <div class="stat-icon"><i class="fas fa-dollar-sign"></i></div>
+            <?php if ($view_mode === 'per_watt' && $total_wattage > 0): ?>
+            <div class="stat-value">$<?php echo number_format($total_combined_cost / $total_wattage, 4); ?>/W</div>
+            <div class="stat-label">Total Cost per Watt</div>
+            <?php else: ?>
+            <div class="stat-value">$<?php echo number_format($disp_combined_cost, 0); ?></div>
+            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Total Cost' : 'Total Cost'; ?></div>
+            <?php endif; ?>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon">🚛</div>
-            <div class="stat-value">$<?php echo number_format($disp_freight, 0); ?></div>
-            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Freight' : 'Freight Cost'; ?></div>
+        <div class="stat-card stat-card-clickable" onclick="openModuleCostModal()">
+            <div class="stat-icon blue"><i class="fas fa-solar-panel"></i></div>
+            <?php if ($view_mode === 'per_watt' && $total_wattage > 0): ?>
+            <div class="stat-value">$<?php echo number_format($avg_cost_per_watt, 4); ?>/W</div>
+            <div class="stat-label">Module Cost per Watt</div>
+            <?php else: ?>
+            <div class="stat-value">$<?php echo number_format($disp_module_cost, 0); ?></div>
+            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Module Cost' : 'Module Cost'; ?></div>
+            <?php endif; ?>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon">📋</div>
-            <div class="stat-value">$<?php echo number_format($disp_accessorial, 0); ?></div>
-            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Accessorial' : 'Accessorial Cost'; ?></div>
+        <div class="stat-card stat-card-clickable" onclick="openLogisticsModal()">
+            <div class="stat-icon purple"><i class="fas fa-truck"></i></div>
+            <?php if ($view_mode === 'per_watt' && $total_wattage > 0): ?>
+            <div class="stat-value">$<?php echo number_format($total_logistics_cost / $total_wattage, 4); ?>/W</div>
+            <div class="stat-label">Logistics Cost per Watt</div>
+            <?php else: ?>
+            <div class="stat-value">$<?php echo number_format($disp_logistics_cost, 0); ?></div>
+            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Logistics Cost' : 'Logistics Costs'; ?></div>
+            <?php endif; ?>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon">🏢</div>
-            <div class="stat-value">$<?php echo number_format($disp_warehousing, 0); ?></div>
-            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Warehousing' : 'Warehousing Cost'; ?></div>
-        </div>
-    </div>
-    <?php else: ?>
-    <div class="stats-grid">
-        <div class="stat-card primary">
-            <div class="stat-icon">$</div>
-            <div class="stat-value">$<?php echo number_format($disp_cost_per_watt, 4); ?>/W</div>
-            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Total Cost' : ($filter === 'ytd' ? 'Total Cost (YTD)' : 'Total Logistics Cost'); ?></div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon">🚛</div>
-            <div class="stat-value">$<?php echo number_format($disp_freight_per_watt, 4); ?>/W</div>
-            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Freight' : 'Freight Cost'; ?></div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon">📋</div>
-            <div class="stat-value">$<?php echo number_format($disp_accessorial_per_watt, 4); ?>/W</div>
-            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Accessorial' : 'Accessorial Cost'; ?></div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon">🏢</div>
-            <div class="stat-value">$<?php echo number_format($disp_warehousing_per_watt, 4); ?>/W</div>
-            <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Warehousing' : 'Warehousing Cost'; ?></div>
+        <div class="stat-card stat-card-clickable" onclick="scrollToProjects()">
+            <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
+            <div class="stat-value"><?php echo $projects_with_cost_data; ?></div>
+            <div class="stat-label">Projects with Cost Data</div>
         </div>
     </div>
-    <?php endif; ?>
 
+    <!-- Logistics Breakdown Modal -->
+    <div id="logisticsModal" class="logistics-modal">
+        <div class="logistics-modal-content">
+            <div class="logistics-modal-header">
+                <h2><i class="fas fa-truck"></i> Logistics Cost Breakdown</h2>
+                <button class="logistics-modal-close" onclick="closeLogisticsModal()">&times;</button>
+            </div>
+            <div class="logistics-modal-body">
+                <div class="logistics-breakdown-grid">
+                    <div class="logistics-breakdown-item freight">
+                        <div class="value">$<?php echo number_format($total_freight_cost, 2); ?></div>
+                        <div class="label"><i class="fas fa-shipping-fast"></i> Freight Costs</div>
+                    </div>
+                    <div class="logistics-breakdown-item warehousing">
+                        <div class="value">$<?php echo number_format($total_warehousing_cost, 2); ?></div>
+                        <div class="label"><i class="fas fa-warehouse"></i> Warehousing Costs</div>
+                    </div>
+                    <div class="logistics-breakdown-item accessorial">
+                        <div class="value">$<?php echo number_format($total_accessorial_cost, 2); ?></div>
+                        <div class="label"><i class="fas fa-plus-circle"></i> Accessorial Costs</div>
+                    </div>
+                </div>
+                <div class="logistics-chart-container">
+                    <canvas id="logisticsBreakdownChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Module Cost Breakdown Modal -->
+    <div id="moduleCostModal" class="logistics-modal">
+        <div class="logistics-modal-content">
+            <div class="logistics-modal-header" style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);">
+                <h2><i class="fas fa-solar-panel"></i> Module Cost Breakdown</h2>
+                <button class="logistics-modal-close" onclick="closeModuleCostModal()">&times;</button>
+            </div>
+            <div class="logistics-modal-body">
+                <div class="module-breakdown-summary">
+                    <div class="module-summary-row">
+                        <span class="label">Total Module Cost</span>
+                        <span class="value">$<?php echo number_format($total_module_cost, 2); ?></span>
+                    </div>
+                    <div class="module-summary-row">
+                        <span class="label">Total Wattage</span>
+                        <span class="value"><?php echo number_format($total_wattage / 1000000, 2); ?> MW</span>
+                    </div>
+                    <div class="module-summary-row">
+                        <span class="label">Average Cost per Watt</span>
+                        <span class="value">$<?php echo $avg_cost_per_watt ? number_format($avg_cost_per_watt, 4) : 'N/A'; ?></span>
+                    </div>
+                </div>
+                <h4 style="margin: 20px 0 12px; color: #293E4C; font-size: 1em;">By Manufacturer</h4>
+                <div class="module-manufacturer-list">
+                    <?php if (!empty($manufacturer_costs)): ?>
+                        <?php foreach ($manufacturer_costs as $mfr => $data): ?>
+                        <div class="module-manufacturer-item">
+                            <span class="mfr-name"><?php echo htmlspecialchars($mfr); ?></span>
+                            <span class="mfr-cost">$<?php echo number_format($data['total_cost'], 2); ?></span>
+                        </div>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <p style="color: #6c757d; text-align: center;">No manufacturer data available</p>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="charts-section">
+        <div class="chart-card">
+            <h3><i class="fas fa-chart-pie"></i> Portfolio Cost Breakdown</h3>
+            <div class="chart-container">
+                <canvas id="costBreakdownChart"></canvas>
+            </div>
+        </div>
+        <div class="chart-card manufacturer-breakdown-card">
+            <div class="manufacturer-breakdown-header">
+                <h3><i class="fas fa-industry"></i> Manufacturer Breakdown</h3>
+                <a href="manufacturer_overview" class="view-all-link">View Complete Breakdown <i class="fas fa-arrow-right"></i></a>
+            </div>
+            <?php if (!empty($manufacturer_costs)): ?>
+            <div class="manufacturer-mini-grid">
+                <?php
+                $mfr_count = 0;
+                foreach ($manufacturer_costs as $mfr => $data):
+                    if ($mfr_count >= 4) break; // Show max 4 in mini view
+                    $avg_cpw = $data['total_wattage'] > 0 ? $data['total_cost'] / $data['total_wattage'] : 0;
+                ?>
+                <div class="manufacturer-mini-card" onclick="window.location.href='manufacturer_details?manufacturer=<?php echo urlencode($mfr); ?>'">
+                    <div class="mini-card-header">
+                        <span class="mini-mfr-name"><?php echo htmlspecialchars($mfr); ?></span>
+                        <span class="mini-badge"><?php echo $data['project_count']; ?></span>
+                    </div>
+                    <div class="mini-card-stats">
+                        <div class="mini-stat-row">
+                            <span class="mini-stat-label">Total Cost</span>
+                            <span class="mini-stat-value">$<?php echo number_format($data['total_cost'], 2); ?></span>
+                        </div>
+                        <div class="mini-stat-row">
+                            <span class="mini-stat-label">Total Wattage</span>
+                            <span class="mini-stat-value"><?php echo number_format($data['total_wattage'] / 1000000, 2); ?> MW</span>
+                        </div>
+                        <div class="mini-stat-row">
+                            <span class="mini-stat-label">Avg Cost/Watt</span>
+                            <span class="mini-stat-value">$<?php echo number_format($avg_cpw, 4); ?></span>
+                        </div>
+                    </div>
+                </div>
+                <?php $mfr_count++; endforeach; ?>
+            </div>
+            <?php if (count($manufacturer_costs) > 4): ?>
+            <a href="manufacturer_overview" class="see-more-link">+ <?php echo count($manufacturer_costs) - 4; ?> more manufacturers</a>
+            <?php endif; ?>
+            <?php else: ?>
+            <div class="empty-mini-state">No manufacturer data available</div>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Project Section -->
     <?php if (!empty($projects)): ?>
     <div class="section-header-row">
         <div class="section-title-group">
             <div>
-                <h2 class="section-title">Project Cost Breakdown</h2>
-                <p class="section-subtitle"><?php echo $project_count; ?> active project<?php echo $project_count !== 1 ? 's' : ''; ?> with logistics data</p>
+                <h2 class="section-title">Project Module Costs</h2>
+                <p class="section-subtitle"><?php echo $project_count; ?> active project<?php echo $project_count !== 1 ? 's' : ''; ?></p>
             </div>
         </div>
         <div class="view-toggle">
-            <button type="button" class="active" id="btn-grid" title="Grid View">▦</button>
-            <button type="button" id="btn-table" title="Table View">☰</button>
+            <button type="button" class="active" id="btn-grid" title="Grid View"><i class="fas fa-th-large"></i></button>
+            <button type="button" id="btn-table" title="Table View"><i class="fas fa-list"></i></button>
         </div>
     </div>
 
@@ -680,25 +1169,21 @@ $conn->close();
                 <h3 class="project-card-title"><?php echo htmlspecialchars($proj['project_name']); ?></h3>
                 <div class="project-card-stats">
                     <div class="project-stat-row">
-                        <span class="label">Freight</span>
-                        <span class="value">$<?php echo number_format($proj['freight_cost'], 0); ?></span>
+                        <span class="label">Module Cost</span>
+                        <span class="value">$<?php echo number_format($proj['module_cost'], 0); ?></span>
                     </div>
                     <div class="project-stat-row">
-                        <span class="label">Accessorial</span>
-                        <span class="value">$<?php echo number_format($proj['accessorial_costs'], 0); ?></span>
-                    </div>
-                    <div class="project-stat-row">
-                        <span class="label">Warehousing</span>
-                        <span class="value">$<?php echo number_format($proj['warehousing_cost'], 0); ?></span>
+                        <span class="label">Logistics Cost</span>
+                        <span class="value">$<?php echo number_format($proj['logistics_cost'], 0); ?></span>
                     </div>
                 </div>
                 <div class="project-card-total">
-                    <?php if ($view_mode === 'per_watt'): ?>
-                    <div class="value">$<?php echo number_format($proj['cost_per_watt'], 4); ?>/W</div>
-                    <div class="label">Cost per Watt</div>
+                    <?php if ($view_mode === 'per_watt' && $proj['has_cost_data']): ?>
+                    <div class="value">$<?php echo number_format($proj['avg_cost_per_watt'], 4); ?>/W</div>
+                    <div class="label">Module Cost per Watt</div>
                     <?php else: ?>
-                    <div class="value">$<?php echo number_format($proj['total_logistics_cost'], 2); ?></div>
-                    <div class="label">Total Logistics Cost</div>
+                    <div class="value">$<?php echo number_format($proj['total_cost'], 0); ?></div>
+                    <div class="label">Total Project Cost</div>
                     <?php endif; ?>
                 </div>
             </div>
@@ -711,27 +1196,27 @@ $conn->close();
             <thead>
                 <tr>
                     <th>Project</th>
+                    <th>Module Cost</th>
                     <th>Freight</th>
-                    <th>Accessorial</th>
                     <th>Warehousing</th>
-                    <?php if ($view_mode === 'per_watt'): ?>
-                    <th>Cost/Watt</th>
-                    <?php else: ?>
-                    <th>Total Cost</th>
-                    <?php endif; ?>
+                    <th>Accessorial</th>
+                    <th>Logistics Total</th>
+                    <th><?php echo $view_mode === 'per_watt' ? 'Cost/Watt' : 'Total Cost'; ?></th>
                 </tr>
             </thead>
             <tbody>
                 <?php foreach ($projects as $proj): ?>
                 <tr data-href="project_cost_details?project_id=<?php echo $proj['id']; ?>">
                     <td class="project-name"><?php echo htmlspecialchars($proj['project_name']); ?></td>
-                    <td class="cost-cell">$<?php echo number_format($proj['freight_cost'], 2); ?></td>
-                    <td class="cost-cell">$<?php echo number_format($proj['accessorial_costs'], 2); ?></td>
-                    <td class="cost-cell">$<?php echo number_format($proj['warehousing_cost'], 2); ?></td>
-                    <?php if ($view_mode === 'per_watt'): ?>
-                    <td><span class="total-cell">$<?php echo number_format($proj['cost_per_watt'], 4); ?>/W</span></td>
+                    <td class="cost-cell">$<?php echo number_format($proj['module_cost'], 0); ?></td>
+                    <td>$<?php echo number_format($proj['freight_cost'], 0); ?></td>
+                    <td>$<?php echo number_format($proj['warehousing_cost'], 0); ?></td>
+                    <td>$<?php echo number_format($proj['accessorial_cost'], 0); ?></td>
+                    <td class="cost-cell">$<?php echo number_format($proj['logistics_cost'], 0); ?></td>
+                    <?php if ($view_mode === 'per_watt' && $proj['has_cost_data']): ?>
+                    <td><span class="total-cell">$<?php echo number_format($proj['avg_cost_per_watt'], 4); ?>/W</span></td>
                     <?php else: ?>
-                    <td><span class="total-cell">$<?php echo number_format($proj['total_logistics_cost'], 2); ?></span></td>
+                    <td><span class="total-cell">$<?php echo number_format($proj['total_cost'], 0); ?></span></td>
                     <?php endif; ?>
                 </tr>
                 <?php endforeach; ?>
@@ -741,12 +1226,101 @@ $conn->close();
     <?php else: ?>
     <div class="empty-state">
         <h3>No Projects Found</h3>
-        <p>No projects with logistics data are available.</p>
+        <p>No projects with module data are available.</p>
     </div>
     <?php endif; ?>
 </main>
 
 <script>
+// Logistics Modal Functions
+function openLogisticsModal() {
+    document.getElementById('logisticsModal').style.display = 'block';
+    initLogisticsChart();
+}
+
+function closeLogisticsModal() {
+    document.getElementById('logisticsModal').style.display = 'none';
+}
+
+// Module Cost Modal Functions
+function openModuleCostModal() {
+    document.getElementById('moduleCostModal').style.display = 'block';
+}
+
+function closeModuleCostModal() {
+    document.getElementById('moduleCostModal').style.display = 'none';
+}
+
+// Scroll to projects section
+function scrollToProjects() {
+    var projectSection = document.querySelector('.section-header-row');
+    if (projectSection) {
+        projectSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    var logisticsModal = document.getElementById('logisticsModal');
+    var moduleCostModal = document.getElementById('moduleCostModal');
+    if (event.target === logisticsModal) {
+        logisticsModal.style.display = 'none';
+    }
+    if (event.target === moduleCostModal) {
+        moduleCostModal.style.display = 'none';
+    }
+}
+
+let logisticsChartInstance = null;
+function initLogisticsChart() {
+    const ctx = document.getElementById('logisticsBreakdownChart');
+    if (!ctx) return;
+
+    if (logisticsChartInstance) {
+        logisticsChartInstance.destroy();
+    }
+
+    const freightCost = <?php echo $total_freight_cost; ?>;
+    const warehousingCost = <?php echo $total_warehousing_cost; ?>;
+    const accessorialCost = <?php echo $total_accessorial_cost; ?>;
+
+    logisticsChartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Freight', 'Warehousing', 'Accessorial'],
+            datasets: [{
+                data: [freightCost, warehousingCost, accessorialCost],
+                backgroundColor: ['#3b82f6', '#8b5cf6', '#f59e0b'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        padding: 20,
+                        usePointStyle: true
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const value = context.raw;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return `${context.label}: $${value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (${pct}%)`;
+                        }
+                    }
+                }
+            },
+            cutout: '60%'
+        }
+    });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     // Filter pills
     document.querySelectorAll('.filter-pill').forEach(function(btn) {
@@ -779,14 +1353,14 @@ document.addEventListener('DOMContentLoaded', function() {
         if (tableView) tableView.classList.toggle('active', view === 'table');
         if (btnGrid) btnGrid.classList.toggle('active', view === 'grid');
         if (btnTable) btnTable.classList.toggle('active', view === 'table');
-        localStorage.setItem('costOverviewView', view);
+        localStorage.setItem('moduleAnalysisView', view);
     }
 
     if (btnGrid) btnGrid.addEventListener('click', function() { setView('grid'); });
     if (btnTable) btnTable.addEventListener('click', function() { setView('table'); });
 
     // Restore saved view
-    var savedView = localStorage.getItem('costOverviewView') || 'grid';
+    var savedView = localStorage.getItem('moduleAnalysisView') || 'grid';
     setView(savedView);
 
     // Card and row clicks
@@ -795,7 +1369,57 @@ document.addEventListener('DOMContentLoaded', function() {
             window.location.href = this.getAttribute('data-href');
         });
     });
+
+    // Initialize charts
+    initCharts();
 });
+
+function initCharts() {
+    // Portfolio Cost Breakdown Chart
+    const costBreakdownCtx = document.getElementById('costBreakdownChart');
+    if (costBreakdownCtx) {
+        const moduleCost = <?php echo $total_module_cost; ?>;
+        const freightCost = <?php echo $total_freight_cost; ?>;
+        const warehousingCost = <?php echo $total_warehousing_cost; ?>;
+        const accessorialCost = <?php echo $total_accessorial_cost; ?>;
+
+        new Chart(costBreakdownCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Module Cost', 'Freight', 'Warehousing', 'Accessorial'],
+                datasets: [{
+                    data: [moduleCost, freightCost, warehousingCost, accessorialCost],
+                    backgroundColor: ['#488C9A', '#3b82f6', '#8b5cf6', '#f59e0b'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: {
+                            padding: 15,
+                            usePointStyle: true
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.raw;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                return `${context.label}: $${value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (${pct}%)`;
+                            }
+                        }
+                    }
+                },
+                cutout: '55%'
+            }
+        });
+    }
+}
 </script>
 </body>
 </html>
