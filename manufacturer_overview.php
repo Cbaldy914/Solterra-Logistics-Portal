@@ -125,16 +125,23 @@ while ($row = $completion_result->fetch_assoc()) {
 }
 $stmt_completion->close();
 
-// Calculate damaged modules per manufacturer from warranty claims (sum module quantity, not pallet count)
+// Calculate damaged modules per manufacturer from warranty claims (sum reported damaged quantity)
 $damage_sql = "
     SELECT
-        ip.manufacturer,
-        COALESCE(SUM(ip.quantity), 0) as damaged_count
-    FROM warranty_claim_replacements wcr
-    JOIN inventory_pallets ip ON wcr.pallet_id = ip.id
-    WHERE ip.manufacturer IS NOT NULL AND ip.manufacturer != ''
-    AND ip.assigned_project_id IN ($project_access_sql)
-    GROUP BY ip.manufacturer
+        TRIM(
+            CASE
+                WHEN d.supplier LIKE '%-%' THEN SUBSTRING_INDEX(d.supplier, '-', 1)
+                ELSE d.supplier
+            END
+        ) as manufacturer,
+        COALESCE(SUM(COALESCE(w.damaged_quantity, 0)), 0) as damaged_count
+    FROM warranty_claims w
+    JOIN site_scheduling ss ON ss.id = w.scheduling_id
+    JOIN deliveries d ON d.id = ss.delivery_id
+    WHERE d.supplier IS NOT NULL AND d.supplier != ''
+    AND w.issue_type IN ('damaged', 'both')
+    AND ss.project_id IN ($project_access_sql)
+    GROUP BY manufacturer
 ";
 $stmt_damage = $conn->prepare($damage_sql);
 if (!empty($access_types)) {
@@ -509,11 +516,13 @@ $conn->close();
 <main>
     <?php
     require_once 'components/breadcrumbs.php';
+    $breadcrumb_ref_map = [
+        'module_cost_analysis.php' => ['label' => 'Module Cost Analysis', 'url' => 'module_cost_analysis.php'],
+        'module_cost_analysis' => ['label' => 'Module Cost Analysis', 'url' => 'module_cost_analysis.php']
+    ];
     echo slp_render_breadcrumbs([
         'current_label' => 'Manufacturer Overview',
-        'parent_links' => [
-            ['label' => 'Dashboard', 'url' => 'dashboard']
-        ]
+        'ref_map' => $breadcrumb_ref_map
     ]);
     ?>
 

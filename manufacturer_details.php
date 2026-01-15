@@ -71,41 +71,16 @@ if (!$manufacturer_data) {
 $manufacturer_data['avg_cost_per_watt'] = $manufacturer_data['total_watts'] > 0
     ? $manufacturer_data['total_cost'] / $manufacturer_data['total_watts'] : 0;
 
-// Get delivery performance (using distinct deliveries, filtered by accessible projects)
-$delivery_perf_sql = "
-    SELECT
-        COUNT(DISTINCT d.id) as total_deliveries,
-        COUNT(DISTINCT CASE WHEN d.actual_delivery_date IS NOT NULL THEN d.id END) as completed_deliveries,
-        COUNT(DISTINCT CASE WHEN d.actual_delivery_date IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
-                 AND d.actual_delivery_date <= d.anticipated_delivery_date THEN d.id END) as on_time,
-        COUNT(DISTINCT CASE WHEN d.actual_delivery_date IS NOT NULL AND d.anticipated_delivery_date IS NOT NULL
-                 AND d.actual_delivery_date > d.anticipated_delivery_date THEN d.id END) as late
-    FROM deliveries d
-    JOIN delivery_pallets dp ON dp.delivery_id = d.id
-    JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
-    WHERE ip.manufacturer = ?
-    AND d.project_id IN ($project_access_sql)
-";
-$stmt_perf = $conn->prepare($delivery_perf_sql);
-if (!empty($access_types)) {
-    $stmt_perf->bind_param("s" . $access_types, $manufacturer, ...$access_params);
-} else {
-    $stmt_perf->bind_param("s", $manufacturer);
-}
-$stmt_perf->execute();
-$perf_data = $stmt_perf->get_result()->fetch_assoc();
-$stmt_perf->close();
-
-$on_time_rate = ($perf_data['completed_deliveries'] ?? 0) > 0
-    ? round(($perf_data['on_time'] / $perf_data['completed_deliveries']) * 100) : null;
-
-// Get damaged modules from warranty claims (sum module quantity, not pallet count)
+// Get damaged modules from warranty claims (sum reported damaged quantity)
+$manufacturer_case_sql = "TRIM(CASE WHEN d.supplier LIKE '%-%' THEN SUBSTRING_INDEX(d.supplier, '-', 1) ELSE d.supplier END)";
 $damage_sql = "
-    SELECT COALESCE(SUM(ip.quantity), 0) as damaged_count
-    FROM warranty_claim_replacements wcr
-    JOIN inventory_pallets ip ON wcr.pallet_id = ip.id
-    WHERE ip.manufacturer = ?
-    AND ip.assigned_project_id IN ($project_access_sql)
+    SELECT COALESCE(SUM(COALESCE(w.damaged_quantity, 0)), 0) as damaged_count
+    FROM warranty_claims w
+    JOIN site_scheduling ss ON ss.id = w.scheduling_id
+    JOIN deliveries d ON d.id = ss.delivery_id
+    WHERE $manufacturer_case_sql = ?
+    AND w.issue_type IN ('damaged', 'both')
+    AND ss.project_id IN ($project_access_sql)
 ";
 $stmt_damage = $conn->prepare($damage_sql);
 if (!empty($access_types)) {
@@ -117,6 +92,40 @@ $stmt_damage->execute();
 $damage_result = $stmt_damage->get_result()->fetch_assoc();
 $stmt_damage->close();
 $damaged_modules = (int)($damage_result['damaged_count'] ?? 0);
+
+$damaged_claims = [];
+$damaged_claims_sql = "
+    SELECT
+        w.id,
+        w.status,
+        w.issue_type,
+        w.damaged_quantity,
+        w.created_at,
+        p.project_name,
+        d.bol_number,
+        d.actual_delivery_date
+    FROM warranty_claims w
+    JOIN site_scheduling ss ON ss.id = w.scheduling_id
+    JOIN deliveries d ON d.id = ss.delivery_id
+    JOIN projects p ON p.id = ss.project_id
+    WHERE $manufacturer_case_sql = ?
+    AND w.issue_type IN ('damaged', 'both')
+    AND COALESCE(w.damaged_quantity, 0) > 0
+    AND ss.project_id IN ($project_access_sql)
+    ORDER BY w.created_at DESC
+";
+$stmt_claims = $conn->prepare($damaged_claims_sql);
+if (!empty($access_types)) {
+    $stmt_claims->bind_param("s" . $access_types, $manufacturer, ...$access_params);
+} else {
+    $stmt_claims->bind_param("s", $manufacturer);
+}
+$stmt_claims->execute();
+$claims_result = $stmt_claims->get_result();
+while ($claim = $claims_result->fetch_assoc()) {
+    $damaged_claims[] = $claim;
+}
+$stmt_claims->close();
 
 // Get projects for this manufacturer
 $projects_for_manufacturer = [];
@@ -260,6 +269,25 @@ while ($row = $completion_result->fetch_assoc()) {
 $stmt_completion->close();
 
 $avg_days_late_overall = $late_count > 0 ? round($total_days_late / $late_count, 1) : 0;
+$total_projects = count($project_completion);
+$completed_projects = $projects_on_time + $projects_late;
+$projects_pending = max($total_projects - $completed_projects, 0);
+$project_on_time_rate = $completed_projects > 0
+    ? round(($projects_on_time / $completed_projects) * 100) : null;
+
+if ($completed_projects === 0) {
+    $completion_rate_label = 'In Progress';
+    $completion_rate_class = 'neutral';
+} else {
+    $completion_rate_label = $project_on_time_rate . '%';
+    if ($project_on_time_rate >= 90) {
+        $completion_rate_class = 'good';
+    } elseif ($project_on_time_rate < 70) {
+        $completion_rate_class = 'poor';
+    } else {
+        $completion_rate_class = 'neutral';
+    }
+}
 
 // Get cumulative delivery data by week for the chart
 $delivery_timeline = [];
@@ -338,6 +366,30 @@ foreach ($all_weeks as $week) {
         $cumulative_actual[] = null;
     }
 }
+
+$alignment_week = null;
+$alignment_delta = null;
+for ($i = count($all_weeks) - 1; $i >= 0; $i--) {
+    if ($cumulative_actual[$i] !== null) {
+        $alignment_week = $all_weeks[$i];
+        $alignment_delta = $cumulative_actual[$i] - $cumulative_anticipated[$i];
+        break;
+    }
+}
+$alignment_week_label = $alignment_week ? date('M j, Y', strtotime($alignment_week)) : null;
+
+$peak_week = null;
+$peak_week_count = 0;
+foreach ($actual_by_week as $week => $count) {
+    if ($count > $peak_week_count) {
+        $peak_week = $week;
+        $peak_week_count = $count;
+    }
+}
+$total_actual_deliveries = array_sum($actual_by_week);
+$peak_week_share = $total_actual_deliveries > 0
+    ? round(($peak_week_count / $total_actual_deliveries) * 100) : null;
+$peak_week_label = $peak_week ? date('M j, Y', strtotime($peak_week)) : null;
 
 // Get delivery data for each project
 $project_delivery_data = [];
@@ -713,114 +765,107 @@ $conn->close();
         }
         .empty-state h3 { color: #293E4C; margin-bottom: 8px; }
 
-        /* Delivery Performance Styles */
-        .delivery-performance-grid {
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-            margin-bottom: 24px;
-        }
-        .delivery-stats-container {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-        .delivery-stat-row {
-            display: flex;
+        /* Delivery Story Styles */
+        .delivery-story-grid {
+            display: grid;
+            grid-template-columns: 1fr 1.6fr;
             gap: 24px;
         }
-        .delivery-stat {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 16px 24px;
-            background: #f8f9fa;
-            border-radius: 12px;
-            min-width: 100px;
+        .delivery-story-card {
+            background: #fff;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+            border: 1px solid #e9ecef;
         }
-        .delivery-stat-value {
-            font-size: 1.8em;
+        .story-label {
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #488C9A;
+            font-weight: 600;
+        }
+        .story-value {
+            font-size: 2.4em;
             font-weight: 700;
             color: #293E4C;
+            margin: 8px 0 6px;
         }
-        .delivery-stat-value.good { color: #059669; }
-        .delivery-stat-value.poor { color: #E4572E; }
-        .delivery-stat-label {
+        .story-value.good { color: #059669; }
+        .story-value.poor { color: #E4572E; }
+        .story-value.neutral { color: #fbb040; }
+        .story-subtitle {
+            font-size: 0.95em;
             color: #6c757d;
-            font-size: 0.85em;
-            font-weight: 500;
+            line-height: 1.4;
         }
-        .project-completion-summary {
+        .story-subtitle + .story-subtitle { margin-top: 6px; }
+        .story-details {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-top: 18px;
+        }
+        .story-detail {
             background: #f8f9fa;
             border-radius: 12px;
-            padding: 20px;
+            padding: 12px;
+            text-align: center;
         }
-        .project-completion-summary h4 {
-            margin: 0 0 16px 0;
-            color: #293E4C;
-            font-size: 1em;
-        }
-        .completion-bars {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-        .completion-item {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-        .completion-bar-wrapper {
-            height: 12px;
-            background: #e9ecef;
-            border-radius: 6px;
-            overflow: hidden;
-        }
-        .completion-bar {
-            height: 100%;
-            border-radius: 6px;
-            transition: width 0.5s ease;
-        }
-        .completion-bar.on-time { background: linear-gradient(90deg, #059669, #10b981); }
-        .completion-bar.late { background: linear-gradient(90deg, #E4572E, #f87171); }
-        .completion-label {
-            font-size: 0.9em;
+        .story-detail .label {
+            font-size: 0.7em;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
             color: #6c757d;
+            font-weight: 600;
         }
-        .completion-label strong { color: #293E4C; }
-        .avg-late-notice {
+        .story-detail .value {
+            font-size: 1.1em;
+            font-weight: 700;
+            color: #293E4C;
+            margin-top: 4px;
+        }
+        .story-note {
             display: flex;
             align-items: center;
             gap: 8px;
-            padding: 12px;
+            padding: 10px 12px;
             background: #fff3cd;
-            border-radius: 8px;
+            border-radius: 10px;
             color: #856404;
-            font-size: 0.9em;
-            margin-top: 8px;
+            font-size: 0.85em;
+            margin-top: 14px;
         }
-        .avg-late-notice i { color: #E4572E; }
-        .project-completion-table {
-            margin-top: 24px;
+        .story-note i { color: #E4572E; }
+        .story-chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 14px;
         }
-        .project-completion-table h4 {
-            margin: 0 0 16px 0;
-            color: #293E4C;
-        }
-        .text-danger { color: #E4572E; }
-        .text-success { color: #059669; }
-        .status-badge {
-            display: inline-flex;
+        .story-chart-empty {
+            height: 100%;
+            display: flex;
             align-items: center;
-            gap: 4px;
-            padding: 4px 10px;
-            border-radius: 16px;
-            font-size: 0.8em;
-            font-weight: 600;
+            justify-content: center;
+            background: #f8f9fa;
+            border-radius: 12px;
+            color: #6c757d;
+            font-size: 0.9em;
         }
-        .status-badge.status-success { background: #d1fae5; color: #059669; }
-        .status-badge.status-danger { background: #fee2e2; color: #E4572E; }
-        .status-badge.status-pending { background: #fef3c7; color: #d97706; }
+        .story-callouts {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .story-callout {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+        .story-callout strong { color: #293E4C; font-weight: 600; }
 
         @media (max-width: 1200px) {
             .stats-grid { grid-template-columns: repeat(3, 1fr); }
@@ -828,6 +873,7 @@ $conn->close();
         @media (max-width: 992px) {
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
             .charts-section { grid-template-columns: 1fr; }
+            .delivery-story-grid { grid-template-columns: 1fr; }
         }
         @media (max-width: 768px) {
             .page-header { padding: 24px; }
@@ -844,7 +890,7 @@ $conn->close();
     require_once 'components/breadcrumbs.php';
     echo slp_render_breadcrumbs([
         'current_label' => htmlspecialchars($manufacturer),
-        'parent_links' => [
+        'extra' => [
             ['label' => 'Manufacturer Overview', 'url' => 'manufacturer_overview']
         ]
     ]);
@@ -852,7 +898,7 @@ $conn->close();
 
     <div class="page-header">
         <h1><?php echo htmlspecialchars($manufacturer); ?></h1>
-        <p>Module manufacturer details, delivery performance, and project breakdown</p>
+        <p>Module manufacturer details with completion reliability and delivery cadence</p>
     </div>
 
     <div class="stats-grid">
@@ -872,11 +918,11 @@ $conn->close();
             <div class="stat-label">Projects</div>
         </div>
         <div class="stat-card stat-card-clickable" onclick="scrollToDelivery()">
-            <div class="stat-icon <?php echo $on_time_rate === null ? 'orange' : ($on_time_rate >= 90 ? 'green' : ($on_time_rate >= 70 ? 'orange' : 'red')); ?>"><i class="fas fa-clock"></i></div>
-            <div class="stat-value <?php echo $on_time_rate === null ? '' : ($on_time_rate >= 90 ? 'good' : ($on_time_rate >= 70 ? 'warning' : 'poor')); ?>">
-                <?php echo $on_time_rate !== null ? $on_time_rate . '%' : 'N/A'; ?>
+            <div class="stat-icon <?php echo $project_on_time_rate === null ? 'orange' : ($project_on_time_rate >= 90 ? 'green' : ($project_on_time_rate >= 70 ? 'orange' : 'red')); ?>"><i class="fas fa-calendar-check"></i></div>
+            <div class="stat-value <?php echo $project_on_time_rate === null ? '' : ($project_on_time_rate >= 90 ? 'good' : ($project_on_time_rate >= 70 ? 'warning' : 'poor')); ?>">
+                <?php echo $project_on_time_rate !== null ? $project_on_time_rate . '%' : 'N/A'; ?>
             </div>
-            <div class="stat-label">On-Time Delivery</div>
+            <div class="stat-label">Projects On-Time</div>
         </div>
         <div class="stat-card stat-card-clickable" onclick="openDamagedModal()">
             <div class="stat-icon <?php echo $damaged_modules === 0 ? 'green' : 'red'; ?>"><i class="fas fa-exclamation-triangle"></i></div>
@@ -942,17 +988,22 @@ $conn->close();
             </div>
             <div class="breakdown-modal-body">
                 <?php if ($damaged_modules > 0): ?>
-                <p style="color:#6c757d; margin-bottom:16px;">Modules from warranty claims that have been reported as damaged or replaced.</p>
+                <p style="color:#6c757d; margin-bottom:16px;">Reported damaged modules from warranty tickets. Click a ticket to view details.</p>
+                <?php if (!empty($damaged_claims)): ?>
                 <div class="breakdown-list">
-                    <?php foreach ($project_completion as $pc):
-                        // We'll show projects that may have warranty claims
-                    ?>
-                    <div class="breakdown-item">
-                        <span class="breakdown-item-name"><?php echo htmlspecialchars($pc['project_name']); ?></span>
-                        <span class="breakdown-item-value"><?php echo $pc['total_deliveries']; ?> deliveries</span>
+                    <?php foreach ($damaged_claims as $claim): ?>
+                    <div class="breakdown-item" onclick="window.location.href='warranty_detail.php?id=<?php echo (int)$claim['id']; ?>'">
+                        <span class="breakdown-item-name">
+                            Ticket #<?php echo (int)$claim['id']; ?> • <?php echo htmlspecialchars($claim['project_name']); ?>
+                            <small style="color:#6c757d;font-weight:400;">(<?php echo htmlspecialchars($claim['status']); ?>)</small>
+                        </span>
+                        <span class="breakdown-item-value"><?php echo number_format((int)$claim['damaged_quantity']); ?> modules</span>
                     </div>
                     <?php endforeach; ?>
                 </div>
+                <?php else: ?>
+                <p style="color:#fbb040; font-size:0.9em; margin-bottom:16px;">No matching warranty tickets found for this manufacturer.</p>
+                <?php endif; ?>
                 <div class="breakdown-total">
                     <span class="breakdown-total-label">Total Damaged Modules</span>
                     <span class="breakdown-total-value" style="color:#E4572E;"><?php echo number_format($damaged_modules); ?></span>
@@ -984,120 +1035,81 @@ $conn->close();
         </div>
     </div>
 
-    <!-- Delivery Performance Section -->
-    <?php if (($perf_data['total_deliveries'] ?? 0) > 0 || !empty($project_completion)): ?>
+    <!-- Delivery Story Section -->
+    <?php if (!empty($project_completion) || !empty($all_weeks)): ?>
     <div class="section-card" id="delivery-section">
-        <h2><i class="fas fa-truck"></i> Delivery Performance</h2>
+        <h2><i class="fas fa-truck"></i> Delivery Story</h2>
 
-        <!-- Cumulative Delivery Chart -->
-        <?php if (!empty($all_weeks)): ?>
-        <div style="margin-bottom: 32px;">
-            <h4 style="margin: 0 0 16px 0; color: #293E4C; font-size: 1em;">Anticipated vs Actual Deliveries (Cumulative)</h4>
-            <div style="position: relative; height: 300px;">
-                <canvas id="cumulativeDeliveryChart"></canvas>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <div class="delivery-performance-grid">
-            <div class="delivery-stats-container" style="flex-direction: row; flex-wrap: wrap; gap: 16px;">
-                <div class="delivery-stat-row" style="width: 100%;">
-                    <div class="delivery-stat">
-                        <span class="delivery-stat-value"><?php echo number_format($perf_data['total_deliveries'] ?? 0); ?></span>
-                        <span class="delivery-stat-label">Total Deliveries</span>
+        <div class="delivery-story-grid">
+            <div class="delivery-story-card">
+                <div class="story-label">Completion Reliability</div>
+                <div class="story-value <?php echo $completion_rate_class; ?>"><?php echo $completion_rate_label; ?></div>
+                <div class="story-subtitle">Completion reliability checks whether every project finishes all deliveries by its estimated completion date.</div>
+                <div class="story-subtitle">
+                    <?php if ($completed_projects > 0): ?>
+                        <?php echo $projects_on_time; ?> of <?php echo $completed_projects; ?> completed projects delivered by the estimated completion date.
+                    <?php else: ?>
+                        No completed projects yet.
+                    <?php endif; ?>
+                </div>
+                
+                <div class="story-details">
+                    <div class="story-detail">
+                        <div class="label">On Time</div>
+                        <div class="value"><?php echo $projects_on_time; ?></div>
                     </div>
-                    <div class="delivery-stat">
-                        <span class="delivery-stat-value"><?php echo number_format($perf_data['completed_deliveries'] ?? 0); ?></span>
-                        <span class="delivery-stat-label">Completed</span>
+                    <div class="story-detail">
+                        <div class="label">Late</div>
+                        <div class="value"><?php echo $projects_late; ?></div>
                     </div>
-                    <div class="delivery-stat">
-                        <span class="delivery-stat-value good"><?php echo number_format($perf_data['on_time'] ?? 0); ?></span>
-                        <span class="delivery-stat-label">On-Time</span>
-                    </div>
-                    <div class="delivery-stat">
-                        <span class="delivery-stat-value poor"><?php echo number_format($perf_data['late'] ?? 0); ?></span>
-                        <span class="delivery-stat-label">Late</span>
-                    </div>
-                    <div class="delivery-stat">
-                        <span class="delivery-stat-value <?php echo $on_time_rate >= 90 ? 'good' : ($on_time_rate >= 70 ? '' : 'poor'); ?>"><?php echo $on_time_rate !== null ? $on_time_rate . '%' : 'N/A'; ?></span>
-                        <span class="delivery-stat-label">On-Time Rate</span>
+                    <div class="story-detail">
+                        <div class="label">In Progress</div>
+                        <div class="value"><?php echo $projects_pending; ?></div>
                     </div>
                 </div>
 
-                <div class="project-completion-summary" style="width: 100%;">
-                    <h4>Project Completion Status</h4>
-                    <div class="completion-bars">
-                        <div class="completion-item">
-                            <div class="completion-bar-wrapper">
-                                <div class="completion-bar on-time" style="width: <?php echo count($project_completion) > 0 ? round(($projects_on_time / count($project_completion)) * 100) : 0; ?>%;"></div>
-                            </div>
-                            <span class="completion-label"><strong><?php echo $projects_on_time; ?></strong> completed on/before deadline</span>
-                        </div>
-                        <div class="completion-item">
-                            <div class="completion-bar-wrapper">
-                                <div class="completion-bar late" style="width: <?php echo count($project_completion) > 0 ? round(($projects_late / count($project_completion)) * 100) : 0; ?>%;"></div>
-                            </div>
-                            <span class="completion-label"><strong><?php echo $projects_late; ?></strong> completed after deadline</span>
-                        </div>
-                        <?php if ($avg_days_late_overall > 0): ?>
-                        <div class="avg-late-notice">
-                            <i class="fas fa-exclamation-circle"></i>
-                            Average <strong><?php echo $avg_days_late_overall; ?> days</strong> late when missing deadline
-                        </div>
+                <?php if ($avg_days_late_overall > 0): ?>
+                <div class="story-note">
+                    <i class="fas fa-exclamation-circle"></i>
+                    Average <strong><?php echo $avg_days_late_overall; ?> days</strong> late when deadlines are missed.
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <div class="delivery-story-card">
+                <div class="story-label">Delivery Cadence</div>
+                <div class="story-subtitle">Anticipated vs actual cumulative deliveries highlight pacing and spikes across active projects.</div>
+
+                <div class="story-chart-container">
+                    <?php if (!empty($all_weeks)): ?>
+                        <canvas id="cumulativeDeliveryChart"></canvas>
+                    <?php else: ?>
+                        <div class="story-chart-empty">No delivery timeline data yet.</div>
+                    <?php endif; ?>
+                </div>
+
+                <?php if ($alignment_delta !== null || $peak_week_label): ?>
+                <div class="story-callouts">
+                    <?php if ($alignment_delta !== null): ?>
+                    <div class="story-callout">
+                        <?php if ($alignment_delta > 0): ?>
+                            <strong><?php echo $alignment_delta; ?> deliveries ahead</strong> of forecast as of <?php echo $alignment_week_label; ?>.
+                        <?php elseif ($alignment_delta < 0): ?>
+                            <strong><?php echo abs($alignment_delta); ?> deliveries behind</strong> forecast as of <?php echo $alignment_week_label; ?>.
+                        <?php else: ?>
+                            <strong>On forecast</strong> as of <?php echo $alignment_week_label; ?>.
                         <?php endif; ?>
                     </div>
+                    <?php endif; ?>
+                    <?php if ($peak_week_label): ?>
+                    <div class="story-callout">
+                        <strong>Peak week:</strong> <?php echo $peak_week_label; ?> (<?php echo $peak_week_count; ?> deliveries<?php echo $peak_week_share !== null ? ', ' . $peak_week_share . '% of total' : ''; ?>).
+                    </div>
+                    <?php endif; ?>
                 </div>
+                <?php endif; ?>
             </div>
         </div>
-
-        <?php if (!empty($project_completion)): ?>
-        <div class="project-completion-table">
-            <h4>Project Delivery Details</h4>
-            <table class="data-table">
-                <thead>
-                    <tr>
-                        <th>Project</th>
-                        <th>Deliveries</th>
-                        <th>Late</th>
-                        <th>Avg Days Late</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($project_completion as $pc): ?>
-                    <tr>
-                        <td><?php echo htmlspecialchars($pc['project_name']); ?></td>
-                        <td><?php echo $pc['completed_deliveries']; ?> / <?php echo $pc['total_deliveries']; ?></td>
-                        <td class="<?php echo ($pc['late_deliveries'] ?? 0) > 0 ? 'text-danger' : 'text-success'; ?>">
-                            <?php echo $pc['late_deliveries'] ?? 0; ?>
-                        </td>
-                        <td>
-                            <?php if (($pc['avg_days_late'] ?? 0) > 0): ?>
-                                <span class="text-danger"><?php echo round($pc['avg_days_late'], 1); ?> days</span>
-                            <?php else: ?>
-                                -
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php if ($pc['status'] === 'on_time'): ?>
-                                <span class="status-badge status-success"><i class="fas fa-check"></i> On Time</span>
-                            <?php elseif ($pc['status'] === 'late'): ?>
-                                <span class="status-badge status-danger">
-                                    <i class="fas fa-clock"></i> Late
-                                    <?php if ($pc['days_difference'] !== null && $pc['days_difference'] > 0): ?>
-                                        (<?php echo $pc['days_difference']; ?> days)
-                                    <?php endif; ?>
-                                </span>
-                            <?php else: ?>
-                                <span class="status-badge status-pending"><i class="fas fa-hourglass-half"></i> In Progress</span>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-        <?php endif; ?>
     </div>
     <?php endif; ?>
 
