@@ -1368,17 +1368,131 @@ if ($action === 'close_project' && $project_id > 0 && $canCloseProject) {
         copy($zipPath, $permanentPath);
         $fileSize = filesize($permanentPath);
 
-        // Insert archive record
-        $stmtArchive = $conn->prepare('INSERT INTO archived_projects
-            (project_id, account_id, project_name, archive_path, archive_filename, file_size_bytes, closed_by, summary_text, delivery_percent, total_modules, delivered_modules)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        // Calculate comprehensive metrics for archiving
         $archivePath = 'uploads/archived_projects/' . $project_id . '/' . $archiveFilename;
         $accountId = $project_row['account_id'] ?? null;
         $projectName = $project_row['project_name'] ?? '';
         [$totalModules, $deliveredModules, $deliveryPercent] = $totals;
-        $stmtArchive->bind_param('iisssiisdii',
+
+        // Cost metrics
+        $moduleCostData = calculate_project_module_cost($project_id, $conn);
+        $totalModuleCost = $moduleCostData['total_cost'] ?? 0;
+        $totalWattage = $moduleCostData['total_watts'] ?? 0;
+
+        $stmtCosts = $conn->prepare('SELECT
+            COALESCE(SUM(freight_cost), 0) as freight,
+            COALESCE(SUM(accessorial_costs), 0) as accessorial
+            FROM deliveries WHERE project_id = ?');
+        $stmtCosts->bind_param('i', $project_id);
+        $stmtCosts->execute();
+        $costRow = $stmtCosts->get_result()->fetch_assoc();
+        $stmtCosts->close();
+        $totalFreightCost = (float)($costRow['freight'] ?? 0);
+        $totalAccessorialCost = (float)($costRow['accessorial'] ?? 0);
+        $totalWarehousingCost = calculate_project_warehousing_cost($project_id, $conn);
+
+        // Sustainability metrics (from sustainability report)
+        $totalMiles = (float)($sustainabilityReport['total_miles_driven'] ?? 0);
+        $totalFuelGallons = (float)($sustainabilityReport['total_fuel_consumption'] ?? ($totalMiles * 0.1667));
+        $totalCo2Kg = (float)($sustainabilityReport['total_emissions'] ?? ($totalFuelGallons * 10.21));
+        $totalTruckloads = (int)($sustainabilityReport['total_truckloads'] ?? 0);
+
+        // Manufacturer metrics
+        $stmtMfr = $conn->prepare('SELECT m.vendor_name, COUNT(DISTINCT ip.id) as pallet_count
+            FROM modules m
+            JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+            JOIN inventory_pallets ip ON ip.unassigned_module_item_id = umi.id
+            WHERE m.project_id = ?
+            GROUP BY m.vendor_name
+            ORDER BY pallet_count DESC');
+        $stmtMfr->bind_param('i', $project_id);
+        $stmtMfr->execute();
+        $mfrResult = $stmtMfr->get_result();
+        $primaryManufacturer = null;
+        $manufacturerCount = 0;
+        while ($mfrRow = $mfrResult->fetch_assoc()) {
+            $manufacturerCount++;
+            if ($primaryManufacturer === null) {
+                $primaryManufacturer = $mfrRow['vendor_name'];
+            }
+        }
+        $stmtMfr->close();
+
+        // Pallet count
+        $stmtPallets = $conn->prepare('SELECT COUNT(DISTINCT ip.id) as total_pallets
+            FROM inventory_pallets ip
+            JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+            JOIN modules m ON umi.unassigned_module_id = m.id
+            WHERE m.project_id = ?');
+        $stmtPallets->bind_param('i', $project_id);
+        $stmtPallets->execute();
+        $palletRow = $stmtPallets->get_result()->fetch_assoc();
+        $stmtPallets->close();
+        $totalPallets = (int)($palletRow['total_pallets'] ?? 0);
+
+        // Delivery performance metrics
+        $stmtDelPerf = $conn->prepare('SELECT
+            COUNT(DISTINCT id) as total_deliveries,
+            COUNT(DISTINCT CASE WHEN actual_delivery_date IS NOT NULL AND anticipated_delivery_date IS NOT NULL
+                AND actual_delivery_date <= anticipated_delivery_date THEN id END) as on_time,
+            COUNT(DISTINCT CASE WHEN actual_delivery_date IS NOT NULL AND anticipated_delivery_date IS NOT NULL
+                AND actual_delivery_date > anticipated_delivery_date THEN id END) as late,
+            AVG(CASE WHEN actual_delivery_date IS NOT NULL AND anticipated_delivery_date IS NOT NULL
+                AND actual_delivery_date > anticipated_delivery_date
+                THEN DATEDIFF(actual_delivery_date, anticipated_delivery_date) END) as avg_days_late,
+            MAX(actual_delivery_date) as last_delivery_date
+            FROM deliveries WHERE project_id = ?');
+        $stmtDelPerf->bind_param('i', $project_id);
+        $stmtDelPerf->execute();
+        $delPerfRow = $stmtDelPerf->get_result()->fetch_assoc();
+        $stmtDelPerf->close();
+        $totalDeliveries = (int)($delPerfRow['total_deliveries'] ?? 0);
+        $onTimeDeliveries = (int)($delPerfRow['on_time'] ?? 0);
+        $lateDeliveries = (int)($delPerfRow['late'] ?? 0);
+        $avgDaysLate = $delPerfRow['avg_days_late'] !== null ? round((float)$delPerfRow['avg_days_late'], 1) : null;
+
+        // Check if project completed on time (last delivery before estimated completion date)
+        $projectCompletedOnTime = null;
+        $projectEndDate = $project_row['estimated_completion_date'] ?? null;
+        $lastDeliveryDate = $delPerfRow['last_delivery_date'] ?? null;
+        if ($projectEndDate && $lastDeliveryDate) {
+            $projectCompletedOnTime = strtotime($lastDeliveryDate) <= strtotime($projectEndDate) ? 1 : 0;
+        }
+
+        // Damage metrics
+        $stmtDamage = $conn->prepare('SELECT
+            COALESCE(SUM(ip.quantity), 0) as damaged_modules,
+            COUNT(DISTINCT wc.id) as warranty_claims
+            FROM warranty_claims wc
+            JOIN site_scheduling ss ON wc.scheduling_id = ss.id
+            LEFT JOIN warranty_claim_replacements wcr ON wcr.claim_id = wc.id
+            LEFT JOIN inventory_pallets ip ON wcr.pallet_id = ip.id
+            WHERE ss.project_id = ?');
+        $stmtDamage->bind_param('i', $project_id);
+        $stmtDamage->execute();
+        $damageRow = $stmtDamage->get_result()->fetch_assoc();
+        $stmtDamage->close();
+        $damagedModulesCount = (int)($damageRow['damaged_modules'] ?? 0);
+        $warrantyClaimsCount = (int)($damageRow['warranty_claims'] ?? 0);
+
+        // Insert archive record with all metrics
+        $stmtArchive = $conn->prepare('INSERT INTO archived_projects
+            (project_id, account_id, project_name, archive_path, archive_filename, file_size_bytes,
+             closed_by, summary_text, delivery_percent, total_modules, delivered_modules,
+             total_module_cost, total_freight_cost, total_warehousing_cost, total_accessorial_cost,
+             total_miles, total_fuel_gallons, total_co2_kg, total_truckloads,
+             primary_manufacturer, manufacturer_count, total_wattage, total_pallets,
+             total_deliveries, on_time_deliveries, late_deliveries, avg_days_late, project_completed_on_time,
+             damaged_modules_count, warranty_claims_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        $stmtArchive->bind_param('iisssiisdiiddddddddsiiiiiidiiii',
             $project_id, $accountId, $projectName, $archivePath, $archiveFilename,
-            $fileSize, $user_id, $summary_text, $deliveryPercent, $totalModules, $deliveredModules);
+            $fileSize, $user_id, $summary_text, $deliveryPercent, $totalModules, $deliveredModules,
+            $totalModuleCost, $totalFreightCost, $totalWarehousingCost, $totalAccessorialCost,
+            $totalMiles, $totalFuelGallons, $totalCo2Kg, $totalTruckloads,
+            $primaryManufacturer, $manufacturerCount, $totalWattage, $totalPallets,
+            $totalDeliveries, $onTimeDeliveries, $lateDeliveries, $avgDaysLate, $projectCompletedOnTime,
+            $damagedModulesCount, $warrantyClaimsCount);
         $stmtArchive->execute();
         $stmtArchive->close();
 
