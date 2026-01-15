@@ -119,6 +119,8 @@ $conn->close();
     <link rel="stylesheet" href="portal.css">
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         .page-header {
             border-radius: 24px;
@@ -223,7 +225,7 @@ $conn->close();
             transition: transform 0.2s, box-shadow 0.2s;
         }
         .stat-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
-        .stat-card.primary { background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); border: none; }
+        .stat-card.primary { background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%); border: none; }
         .stat-card.primary .stat-label, .stat-card.primary .stat-value { color: #fff; }
         .stat-icon {
             width: 48px; height: 48px;
@@ -333,7 +335,7 @@ $conn->close();
         .project-card-highlight {
             margin-top: 12px;
             padding: 14px;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
             border-radius: 10px;
             text-align: center;
         }
@@ -367,7 +369,7 @@ $conn->close();
         .data-table .highlight-cell {
             font-weight: 700;
             color: #fff;
-            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
             border-radius: 6px;
             padding: 6px 12px;
             display: inline-block;
@@ -375,6 +377,45 @@ $conn->close();
 
         .empty-state { text-align: center; padding: 60px 20px; color: #6c757d; }
         .empty-state h3 { color: #293E4C; margin-bottom: 8px; }
+
+        /* Charts Section */
+        .charts-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 40px;
+        }
+
+        .chart-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+
+        .chart-card h3 {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0 0 20px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .chart-card h3 i {
+            color: #488C9A;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 280px;
+        }
+
+        @media (max-width: 992px) {
+            .charts-section { grid-template-columns: 1fr; }
+        }
 
         @media (max-width: 992px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 768px) {
@@ -440,6 +481,24 @@ $conn->close();
             <div class="stat-label"><?php echo $filter === 'per_project' ? 'Avg Fuel (gal)' : 'Total Fuel (gallons)'; ?></div>
         </div>
     </div>
+
+    <!-- Charts Section -->
+    <?php if (!empty($projects)): ?>
+    <div class="charts-section">
+        <div class="chart-card">
+            <h3><i class="fas fa-chart-pie"></i> Emissions by Project</h3>
+            <div class="chart-container">
+                <canvas id="emissionsPieChart"></canvas>
+            </div>
+        </div>
+        <div class="chart-card">
+            <h3><i class="fas fa-truck"></i> Truckloads by Project</h3>
+            <div class="chart-container">
+                <canvas id="truckloadsBarChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <?php if (!empty($projects)): ?>
     <div class="section-header-row">
@@ -560,7 +619,118 @@ document.addEventListener('DOMContentLoaded', function() {
             window.location.href = this.getAttribute('data-href');
         });
     });
+
+    // Initialize charts
+    initSustainabilityCharts();
 });
+
+function initSustainabilityCharts() {
+    const projectData = <?php echo json_encode(array_map(function($p) {
+        return [
+            'name' => $p['project_name'],
+            'emissions' => $p['total_emissions'],
+            'truckloads' => $p['total_truckloads'],
+            'miles' => $p['miles_driven']
+        ];
+    }, $projects)); ?>;
+
+    if (!projectData || projectData.length === 0) return;
+
+    const projectNames = projectData.map(p => p.name);
+    const emissions = projectData.map(p => p.emissions);
+    const truckloads = projectData.map(p => p.truckloads);
+
+    const colors = [
+        '#488C9A', '#10b981', '#3b82f6', '#8b5cf6', '#f59e0b',
+        '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#6366f1'
+    ];
+
+    // Emissions Pie Chart
+    const pieCtx = document.getElementById('emissionsPieChart');
+    if (pieCtx) {
+        new Chart(pieCtx, {
+            type: 'doughnut',
+            data: {
+                labels: projectNames,
+                datasets: [{
+                    data: emissions,
+                    backgroundColor: colors.slice(0, projectNames.length),
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: {
+                            padding: 12,
+                            usePointStyle: true,
+                            font: { size: 11 }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.raw;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const pct = ((value / total) * 100).toFixed(1);
+                                return `${context.label}: ${value.toLocaleString()} kg (${pct}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Truckloads Bar Chart
+    const barCtx = document.getElementById('truckloadsBarChart');
+    if (barCtx) {
+        new Chart(barCtx, {
+            type: 'bar',
+            data: {
+                labels: projectNames,
+                datasets: [{
+                    label: 'Truckloads',
+                    data: truckloads,
+                    backgroundColor: colors.slice(0, projectNames.length),
+                    borderRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: 'y',
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.raw} truckloads`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        grid: { display: false },
+                        ticks: {
+                            callback: function(value) {
+                                return value + ' loads';
+                            }
+                        }
+                    },
+                    y: {
+                        grid: { display: false }
+                    }
+                }
+            }
+        });
+    }
+}
 </script>
 </body>
 </html>
