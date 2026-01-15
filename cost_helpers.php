@@ -484,4 +484,94 @@ function get_portfolio_module_costs($conn, $user_id, $role) {
 
     return $result;
 }
+
+/**
+ * Calculate total warehousing cost for a project based on pallet data.
+ * Uses recorded warehouse_cost when available, or calculates from warehouse cost items.
+ *
+ * @param int $project_id The project ID
+ * @param mysqli $conn Database connection
+ * @return float Total warehousing cost
+ */
+function calculate_project_warehousing_cost($project_id, $conn) {
+    if (!$project_id || !$conn) {
+        return 0.0;
+    }
+
+    $total_cost = 0.0;
+
+    // Get all pallets for this project
+    $stmt = $conn->prepare("
+        SELECT ip.id, ip.warehouse_cost, ip.current_warehouse_id, ip.arrival_date, ip.status
+        FROM inventory_pallets ip
+        WHERE ip.assigned_project_id = ?
+    ");
+
+    if (!$stmt) {
+        return 0.0;
+    }
+
+    $stmt->bind_param("i", $project_id);
+    $stmt->execute();
+    $pallets_result = $stmt->get_result();
+    $pallets = $pallets_result->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    // Cache warehouse cost items to avoid repeated queries
+    $warehouse_rates = [];
+
+    foreach ($pallets as $pallet) {
+        $pallet_cost = 0.0;
+        $warehouse_id = (int)($pallet['current_warehouse_id'] ?? 0);
+
+        // First use recorded warehouse_cost if available
+        if (!empty($pallet['warehouse_cost']) && $pallet['warehouse_cost'] > 0) {
+            $pallet_cost = (float)$pallet['warehouse_cost'];
+
+            // For pallets still in warehouse, add pending storage cost
+            if ($pallet['status'] === 'In Warehouse' && $warehouse_id > 0 && !empty($pallet['arrival_date'])) {
+                // Get monthly rate (cached)
+                if (!isset($warehouse_rates[$warehouse_id])) {
+                    $warehouse_rates[$warehouse_id] = get_warehouse_rates($warehouse_id, $conn);
+                }
+                $monthly_fee = $warehouse_rates[$warehouse_id]['monthly_storage_fee'] ?? 0;
+
+                if ($monthly_fee > 0) {
+                    $arrival = strtotime($pallet['arrival_date']);
+                    $days = max(0, floor((time() - $arrival) / 86400));
+                    $estimated_storage = $days * ($monthly_fee / 30);
+                    if ($estimated_storage > $pallet_cost) {
+                        $pallet_cost = $estimated_storage;
+                    }
+                }
+            }
+        } else {
+            // No recorded cost - calculate from warehouse rates if pallet has warehouse history
+            if ($warehouse_id > 0 && !empty($pallet['arrival_date'])) {
+                if (!isset($warehouse_rates[$warehouse_id])) {
+                    $warehouse_rates[$warehouse_id] = get_warehouse_rates($warehouse_id, $conn);
+                }
+                $rates = $warehouse_rates[$warehouse_id];
+
+                $in_fee = $rates['in_fee'] ?? 0;
+                $out_fee = $rates['out_fee'] ?? 0;
+                $monthly_fee = $rates['monthly_storage_fee'] ?? 0;
+
+                $arrival = strtotime($pallet['arrival_date']);
+                $days = max(1, floor((time() - $arrival) / 86400));
+                $daily_fee = $monthly_fee / 30;
+
+                // Entry fee + storage + exit fee (if delivered)
+                $pallet_cost = $in_fee + ($days * $daily_fee);
+                if ($pallet['status'] === 'Delivered') {
+                    $pallet_cost += $out_fee;
+                }
+            }
+        }
+
+        $total_cost += $pallet_cost;
+    }
+
+    return $total_cost;
+}
 ?>
