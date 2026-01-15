@@ -34,7 +34,7 @@ $originBatchId = isset($_GET['origin_batch_id']) ? (int)$_GET['origin_batch_id']
 
 try {
     // 1. Fetch Pallet Master Data
-    $sql_pallet = "SELECT 
+    $sql_pallet = "SELECT
                         ip.id AS pallet_id,
                         ip.pallet_identifier,
                         ip.wattage,
@@ -50,6 +50,7 @@ try {
                         END AS origin_vendor,
                         w.name AS current_warehouse_name,
                         p.project_name AS current_project_name,
+                        m.cost_per_watt AS module_cost_per_watt,
                         CASE
                             WHEN ip.status = 'At Manufacturer' THEN 'At Manufacturer'
                             WHEN ip.status = 'In Warehouse' AND w.name IS NOT NULL THEN CONCAT('Warehouse: ', w.name)
@@ -306,8 +307,17 @@ try {
     }
     $stmt_warehouse->close();
     
-    // Calculate total pallet cost (deliveries + warehouse)
-    $total_pallet_cost = $total_delivery_cost + $total_warehouse_cost;
+    // Calculate module cost (wattage * quantity * cost_per_watt)
+    $module_cost_per_watt = $pallet_data['module_cost_per_watt'] ?? 0;
+    $pallet_wattage = (float)($pallet_data['wattage'] ?? 0);
+    $pallet_quantity = (int)($pallet_data['quantity'] ?? 0);
+    $total_module_cost = ($module_cost_per_watt > 0 && $pallet_wattage > 0 && $pallet_quantity > 0)
+        ? $module_cost_per_watt * $pallet_wattage * $pallet_quantity
+        : 0;
+    $has_module_cost = $module_cost_per_watt > 0;
+
+    // Calculate total pallet cost (deliveries + warehouse + module)
+    $total_pallet_cost = $total_delivery_cost + $total_warehouse_cost + $total_module_cost;
 
 } catch (Exception $e) {
     $errorMessage = $e->getMessage();
@@ -450,6 +460,116 @@ $conn->close();
             background-color: #f8d7da;
             color: #721c24;
         }
+        /* Clickable cost link */
+        .cost-link {
+            color: #488C9A;
+            text-decoration: none;
+            font-weight: 600;
+            cursor: pointer;
+            border-bottom: 1px dashed #488C9A;
+            transition: all 0.2s;
+        }
+        .cost-link:hover {
+            color: #293E4C;
+            border-bottom-color: #293E4C;
+        }
+
+        /* Module Cost Modal */
+        .module-cost-modal {
+            display: none;
+            position: fixed;
+            z-index: 10000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+        }
+        .module-cost-modal-content {
+            background: white;
+            margin: 10% auto;
+            padding: 0;
+            width: 90%;
+            max-width: 450px;
+            border-radius: 16px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+            animation: modalSlideIn 0.3s ease;
+        }
+        @keyframes modalSlideIn {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .module-cost-modal-header {
+            background: linear-gradient(135deg, #488C9A 0%, #293E4C 100%);
+            color: white;
+            padding: 20px 24px;
+            border-radius: 16px 16px 0 0;
+            position: relative;
+        }
+        .module-cost-modal-header h3 {
+            margin: 0;
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+        .module-cost-modal-close {
+            position: absolute;
+            top: 16px;
+            right: 20px;
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+            border: none;
+            background: transparent;
+        }
+        .module-cost-modal-close:hover {
+            transform: scale(1.1);
+        }
+        .module-cost-modal-body {
+            padding: 24px;
+        }
+        .calc-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #e6e6e6;
+        }
+        .calc-row:last-child {
+            border-bottom: none;
+        }
+        .calc-row.total {
+            border-top: 2px solid #488C9A;
+            margin-top: 8px;
+            padding-top: 16px;
+            font-weight: 700;
+        }
+        .calc-label {
+            color: #6c757d;
+        }
+        .calc-value {
+            font-weight: 600;
+            color: #293E4C;
+        }
+        .calc-row.total .calc-value {
+            color: #488C9A;
+            font-size: 1.2em;
+        }
+        .calc-formula {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-top: 16px;
+            font-size: 0.9em;
+            color: #6c757d;
+            text-align: center;
+        }
+        .calc-formula strong {
+            color: #293E4C;
+        }
+
         @media screen and (max-width: 768px) {
             .details-list dt {
                 width: 100%;
@@ -583,7 +703,7 @@ $conn->close();
                 </dl>
             </div>
 
-            <?php if ($total_pallet_cost > 0 || $total_delivery_cost > 0 || $total_warehouse_cost > 0): ?>
+            <?php if ($total_pallet_cost > 0 || $total_delivery_cost > 0 || $total_warehouse_cost > 0 || $total_module_cost > 0): ?>
             <div class="cost-summary">
                 <h3>Total Pallet Cost Breakdown</h3>
                 <div style="margin-bottom: 10px;">
@@ -592,9 +712,48 @@ $conn->close();
                 <div style="margin-bottom: 10px;">
                     <strong>Pallet Cost (Warehouse):</strong> $<?php echo number_format($total_warehouse_cost, 2); ?>
                 </div>
+                <?php if ($has_module_cost): ?>
+                <div style="margin-bottom: 10px;">
+                    <strong>Pallet Cost (Module):</strong>
+                    <a href="javascript:void(0)" onclick="openModuleCostModal()" class="cost-link">$<?php echo number_format($total_module_cost, 2); ?></a>
+                </div>
+                <?php endif; ?>
                 <hr style="margin: 10px 0; border: 1px solid #488C9A;">
                 <div class="cost-amount">
                     <strong>Total Pallet Cost:</strong> $<?php echo number_format($total_pallet_cost, 2); ?>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <!-- Module Cost Calculation Modal -->
+            <?php if ($has_module_cost): ?>
+            <div id="moduleCostModal" class="module-cost-modal">
+                <div class="module-cost-modal-content">
+                    <div class="module-cost-modal-header">
+                        <h3>Module Cost Calculation</h3>
+                        <button class="module-cost-modal-close" onclick="closeModuleCostModal()">&times;</button>
+                    </div>
+                    <div class="module-cost-modal-body">
+                        <div class="calc-row">
+                            <span class="calc-label">Cost per Watt</span>
+                            <span class="calc-value">$<?php echo number_format($module_cost_per_watt, 4); ?></span>
+                        </div>
+                        <div class="calc-row">
+                            <span class="calc-label">Wattage per Module</span>
+                            <span class="calc-value"><?php echo number_format($pallet_wattage); ?> W</span>
+                        </div>
+                        <div class="calc-row">
+                            <span class="calc-label">Number of Modules</span>
+                            <span class="calc-value"><?php echo number_format($pallet_quantity); ?></span>
+                        </div>
+                        <div class="calc-row total">
+                            <span class="calc-label">Total Module Cost</span>
+                            <span class="calc-value">$<?php echo number_format($total_module_cost, 2); ?></span>
+                        </div>
+                        <div class="calc-formula">
+                            <strong>Formula:</strong> Cost/Watt × Wattage × Modules
+                        </div>
+                    </div>
                 </div>
             </div>
             <?php endif; ?>
@@ -975,11 +1134,30 @@ function closeWarehouseCostModal() {
 
 // Close modal when clicking outside of it
 window.addEventListener('click', function(event) {
-    const modal = document.getElementById('warehouseCostModal');
-    if (event.target === modal) {
+    const warehouseModal = document.getElementById('warehouseCostModal');
+    if (event.target === warehouseModal) {
         closeWarehouseCostModal();
     }
+    const moduleModal = document.getElementById('moduleCostModal');
+    if (moduleModal && event.target === moduleModal) {
+        closeModuleCostModal();
+    }
 });
+
+// Module Cost Modal Functions
+function openModuleCostModal() {
+    const modal = document.getElementById('moduleCostModal');
+    if (modal) {
+        modal.style.display = 'block';
+    }
+}
+
+function closeModuleCostModal() {
+    const modal = document.getElementById('moduleCostModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
 </script>
 
 </body>
