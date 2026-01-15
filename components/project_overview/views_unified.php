@@ -805,23 +805,20 @@ document.addEventListener('keydown', function(e) {
             <div class="header-with-button">
                 <h2>Module Information</h2>
                 <?php if ($isGlobalAdmin): ?>
-                <div class="dropdown" style="display:inline-block;">
-                    <button class="dropdown-btn info-action-button" type="button" onclick="event.stopPropagation(); toggleDropdown('moduleActionsDropdown');" style="margin:0; padding:10px 16px;">
-                        Actions <span class="dropdown-arrow">▼</span>
-                    </button>
-                    <div class="dropdown-content" id="moduleActionsDropdown" style="right:0;left:auto;">
-                        <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>">+ Add New Module Batch</a>
-                        <?php foreach ($module_batches as $batch): ?>
-                            <a href="edit_module_batch.php?batch_id=<?php echo $batch['id']; ?>">Edit: <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Batch #'.$batch['id']); ?></a>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
+                <a href="add_module_batch.php?project_id=<?php echo $project_id; ?>" class="info-action-button" style="margin:0; padding:10px 16px; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                    <i class="fas fa-plus"></i> Add Module Batch
+                </a>
                 <?php endif; ?>
             </div>
 
             <?php if (!empty($module_batches)): ?>
                 <?php foreach ($module_batches as $batch): ?>
-                    <div class="module-batch-section">
+                    <div class="module-batch-section" style="position:relative;">
+                        <?php if ($isGlobalAdmin): ?>
+                        <a href="edit_module_batch.php?batch_id=<?php echo $batch['id']; ?>" class="batch-edit-btn" title="Edit <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Batch'); ?>" style="position:absolute; top:16px; right:16px; background:#488C9A; color:#fff; padding:6px 12px; border-radius:6px; font-size:0.85em; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
+                            <i class="fas fa-edit"></i> Edit
+                        </a>
+                        <?php endif; ?>
                         <h3 class="batch-title">
                             <?php echo htmlspecialchars($batch['vendor_name'] ?? 'Module Batch'); ?>
                             <?php if (!empty($batch['is_replacement_batch'])): ?>
@@ -1169,9 +1166,9 @@ document.addEventListener('keydown', function(e) {
                                     <?php foreach($weeks_financial as $ix=>$wf){
                                         $val = $anticipated_deliveries_financial[$ix] ?? 0;
                                         // Calculate per-unit values for weekly forecasts
-                                        $week_ppw = $total_watts > 0 ? $val / $total_watts : 0;
-                                        $week_ppm = $total_modules > 0 ? $val / $total_modules : 0;
-                                        $week_ppp = $total_pallets > 0 ? $val / $total_pallets : 0;
+                                        $week_ppw = ($total_watts ?? 0) > 0 ? $val / $total_watts : 0;
+                                        $week_ppm = ($total_modules ?? 0) > 0 ? $val / $total_modules : 0;
+                                        $week_ppp = ($total_pallets ?? 0) > 0 ? $val / $total_pallets : 0;
                                         echo "<td class=\"financial-value\" data-total=\"{$val}\" data-watt=\"{$week_ppw}\" data-module=\"{$week_ppm}\" data-pallet=\"{$week_ppp}\">$".number_format($val,2)."</td>";
                                     } ?>
                                 </tr>
