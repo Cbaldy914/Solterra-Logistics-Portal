@@ -251,8 +251,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     Reports <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
                 </button>
                 <div class="nav-dropdown-content" id="reportsDropdown">
-                    <a href="project_cost_details?project_id=<?php echo $project_id; ?>">Cost Report</a>
-                    <a href="project_sustainability_details?project_id=<?php echo $project_id; ?>">Sustainability Report</a>
+                    <a href="project_cost_details?project_id=<?php echo $project_id; ?>">Costs</a>
+                    <a href="project_sustainability_details?project_id=<?php echo $project_id; ?>">Sustainability</a>
+                    <a href="manufacturer_overview">Manufacturers</a>
                     <a href="warranty.php?project_id=<?php echo $project_id; ?>">Exceptions</a>
                     <a href="project_close.php?project_id=<?php echo $project_id; ?>">Export Data</a>
                 </div>
