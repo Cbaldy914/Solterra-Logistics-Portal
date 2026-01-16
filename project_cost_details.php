@@ -115,12 +115,12 @@ if ($time_filter === 'day') {
 
 // STATUS FILTER
 $status_filter   = $_GET['status_filter'] ?? '';
-$statusCondition = "";
-if (!empty($status_filter)) {
-    $statusCondition = " AND status_of_delivery = ?";
-    $paramTypes     .= "s";
-    $params[]        = $status_filter;
+$status_context  = $_GET['status_context'] ?? 'pallets';
+if (!in_array($status_context, ['deliveries', 'pallets'], true)) {
+    $status_context = 'pallets';
 }
+$statusConditionDeliveries = "";
+$statusConditionPallets = "";
 
 // NEW FILTER PARAMETERS
 $start_date = $_GET['start_date'] ?? '';
@@ -164,12 +164,31 @@ if ($search_query !== '') {
 // Additional "filter" logic (price_per_watt, ytd, etc.)
 $filter        = $_GET['filter'] ?? 'total';
 $current_year  = date('Y');
-$ytdCondition  = "";
+$ytdConditionDeliveries = "";
+$ytdConditionPallets = "";
 
 if ($filter === 'ytd') {
-    $ytdCondition = " AND YEAR(created_at) = ?";
+    $ytdConditionDeliveries = " AND YEAR(deliveries.created_at) = ?";
+    $ytdConditionPallets = " AND YEAR(del.created_at) = ?";
     $paramTypes  .= "i";
     $params[]     = $current_year;
+}
+
+$paramTypesDeliveries = $paramTypes;
+$paramsDeliveries = $params;
+$paramTypesPallets = $paramTypes;
+$paramsPallets = $params;
+
+if (!empty($status_filter)) {
+    if ($status_context === 'deliveries') {
+        $statusConditionDeliveries = " AND status_of_delivery = ?";
+        $paramTypesDeliveries .= "s";
+        $paramsDeliveries[] = $status_filter;
+    } else {
+        $statusConditionPallets = " AND ip.status = ?";
+        $paramTypesPallets .= "s";
+        $paramsPallets[] = $status_filter;
+    }
 }
 
 // Build final deliveries query
@@ -177,15 +196,15 @@ $sql_deliveries = "
     SELECT *
     FROM deliveries
     WHERE project_id = ?
-          $ytdCondition
+          $ytdConditionDeliveries
           $dateCondition
-          $statusCondition
+          $statusConditionDeliveries
           $manufacturerCondition
           $searchCondition
     ORDER BY $filterColumn DESC
 ";
 $stmt_deliveries = $conn->prepare($sql_deliveries);
-$stmt_deliveries->bind_param($paramTypes, ...$params);
+$stmt_deliveries->bind_param($paramTypesDeliveries, ...$paramsDeliveries);
 $stmt_deliveries->execute();
 $deliveries_result = $stmt_deliveries->get_result();
 $stmt_deliveries->close();
@@ -564,7 +583,13 @@ function enrichPalletCostData(array $row, $conn) {
     $row['display_warehouse_cost']  = $recorded_cost + $pending_cost;
     $row['freight_cost']            = $freight_cost;
     $row['accessorial_cost']        = $accessorial_cost;
-    $row['total_cost']              = $row['display_warehouse_cost'] + $freight_cost + $accessorial_cost;
+    $module_cost = null;
+    if (array_key_exists('module_cost', $row)) {
+        $module_cost = $row['module_cost'] !== null ? (float)$row['module_cost'] : null;
+    }
+
+    $row['module_cost']             = $module_cost;
+    $row['total_cost']              = $row['display_warehouse_cost'] + $freight_cost + $accessorial_cost + ($module_cost ?? 0);
 
     return $row;
 }
@@ -579,11 +604,13 @@ $total_logistics_cost    = 0.0;
 $total_quantity         = 0;
 $total_wattage_quantity = 0.0;
 $total_pallets_count    = 0;
+$filtered_module_cost   = 0.0;
+$filtered_has_module_cost = false;
 
 $deliveries = [];
 
 // Prepare statement for fetching pallets for efficiency
-$stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.arrival_date, ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id WHERE dp.delivery_id = ? ORDER BY ip.id");
+$stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.arrival_date, ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost, m.cost_per_watt, CASE WHEN m.cost_per_watt IS NOT NULL THEN (m.cost_per_watt * ip.wattage * ip.quantity) ELSE NULL END AS module_cost FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id LEFT JOIN modules m ON umi.unassigned_module_id = m.id WHERE dp.delivery_id = ? ORDER BY ip.id");
 
 while ($delivery = $deliveries_result->fetch_assoc()) {
     $quantity          = (int)($delivery['quantity'] ?? 0);
@@ -617,6 +644,8 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
 
     $fallback_freight_share = 0.0;
     $fallback_accessorial_share = 0.0;
+    $delivery_module_cost = 0.0;
+    $delivery_has_module_cost = false;
 
     if ($stmtPallets) {
         $stmtPallets->bind_param("i", $delivery['id']);
@@ -660,6 +689,11 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
 
             $delivery_warehousing_cost += $pallet_wh_cost;
 
+            if ($enriched['module_cost'] !== null) {
+                $delivery_module_cost += (float)$enriched['module_cost'];
+                $delivery_has_module_cost = true;
+            }
+
             // Track fallback shares only if base costs are missing
             if ($delivery_freight_cost <= 0) {
                 $fallback_freight_share += $enriched['freight_cost'] ?? 0;
@@ -683,6 +717,13 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
         $delivery_warehousing_cost = calculateDeliveryWarehousingCost($delivery, $conn);
     }
 
+    if ($delivery_has_module_cost) {
+        $filtered_has_module_cost = true;
+    }
+    $filtered_module_cost += $delivery_module_cost;
+    $delivery['module_cost'] = $delivery_has_module_cost ? $delivery_module_cost : null;
+    $total_warehousing_cost += $delivery_warehousing_cost;
+
     // Solterra fee only if actual_delivery_date
     if (!empty($delivery['actual_delivery_date'])) {
         $solterraFeeForThisDelivery = $solterra_fee * ($wattage * $quantity);
@@ -700,7 +741,7 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     // Totals rollup (freight/accessorial direct from deliveries table when present)
     $total_customer_cost     += $delivery_freight_cost;
     $total_accessorial_costs += $delivery_accessorial_cost;
-    // Warehousing total will be recomputed from pallets later
+    // Warehousing total tracked from delivery rollup
 
     // For display
     $delivery['warehousing_cost']     = $delivery_warehousing_cost;
@@ -725,6 +766,40 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
 }
 
 if ($stmtPallets) $stmtPallets->close();
+
+$pallet_statuses = [];
+$status_sql = "
+    SELECT DISTINCT ip.status
+    FROM inventory_pallets ip
+    JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
+    JOIN deliveries d ON dp.delivery_id = d.id
+    WHERE d.project_id = ?
+      AND ip.status IS NOT NULL
+      AND ip.status != ''
+    ORDER BY ip.status
+";
+$stmt_status = $conn->prepare($status_sql);
+if ($stmt_status) {
+    $stmt_status->bind_param('i', $project_id);
+    $stmt_status->execute();
+    $status_result = $stmt_status->get_result();
+    while ($status_row = $status_result->fetch_assoc()) {
+        $pallet_statuses[] = $status_row['status'];
+    }
+    $stmt_status->close();
+}
+
+$total_logistics_cost = $total_customer_cost + $total_accessorial_costs + $total_warehousing_cost + $total_solterra_fee;
+$filtered_total_cost = $total_logistics_cost + $filtered_module_cost;
+$filtered_logistics_per_watt = $total_wattage_quantity > 0 ? ($total_logistics_cost / $total_wattage_quantity) : null;
+$filtered_total_cost_per_watt = $total_wattage_quantity > 0 ? ($filtered_total_cost / $total_wattage_quantity) : null;
+$filtered_module_cost_per_watt = ($filtered_has_module_cost && $total_wattage_quantity > 0)
+    ? ($filtered_module_cost / $total_wattage_quantity)
+    : null;
+$filtered_freight_per_watt = $total_wattage_quantity > 0 ? ($total_customer_cost / $total_wattage_quantity) : null;
+$filtered_accessorial_per_watt = $total_wattage_quantity > 0 ? ($total_accessorial_costs / $total_wattage_quantity) : null;
+$filtered_warehousing_per_watt = $total_wattage_quantity > 0 ? ($total_warehousing_cost / $total_wattage_quantity) : null;
+$filtered_solterra_per_watt = $total_wattage_quantity > 0 ? ($total_solterra_fee / $total_wattage_quantity) : null;
 
 // --- Delivery Pagination (server-side slice to preserve totals) ---
 $delivery_page  = isset($_GET['delivery_page']) ? max(1, intval($_GET['delivery_page'])) : 1;
@@ -753,30 +828,37 @@ $pallet_base_sql = "
     SELECT 
         ip.id, ip.pallet_identifier, ip.status, ip.manufacturer, ip.quantity, ip.wattage,
         ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost,
+        m.cost_per_watt,
+        CASE
+            WHEN m.cost_per_watt IS NOT NULL THEN (m.cost_per_watt * ip.wattage * ip.quantity)
+            ELSE NULL
+        END AS module_cost,
         ip.current_warehouse_id, ip.arrival_date,
         AVG(del.customer_cost / NULLIF(dc.pallet_count, 0)) AS fallback_freight_share,
         AVG(del.accessorial_costs / NULLIF(dc.pallet_count, 0)) AS fallback_accessorial_share
     FROM inventory_pallets ip
     JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
     JOIN deliveries del ON dp.delivery_id = del.id
+    LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    LEFT JOIN modules m ON umi.unassigned_module_id = m.id
     JOIN (
         SELECT delivery_id, COUNT(DISTINCT inventory_pallet_id) AS pallet_count
         FROM delivery_pallets
         GROUP BY delivery_id
     ) dc ON dc.delivery_id = del.id
     WHERE del.project_id = ?
-          $ytdCondition
+          $ytdConditionPallets
           $dateCondition
-          $statusCondition
+          $statusConditionPallets
           $manufacturerCondition
           $searchCondition
     GROUP BY ip.id
 ";
 
-$pallet_params = $params;
+$pallet_params = $paramsPallets;
 $pallet_params[] = $pallet_offset;
 $pallet_params[] = $pallet_limit;
-$pallet_types = $paramTypes . "ii";
+$pallet_types = $paramTypesPallets . "ii";
 
 $pallet_paginated_sql = preg_replace('/^\s*SELECT/i', 'SELECT SQL_CALC_FOUND_ROWS', $pallet_base_sql, 1);
 
@@ -806,14 +888,14 @@ if ($stmt_pallets_page) {
                   JOIN delivery_pallets dp ON ip.id = dp.inventory_pallet_id
                   JOIN deliveries del ON dp.delivery_id = del.id
                   WHERE del.project_id = ?
-                        $ytdCondition
+                        $ytdConditionPallets
                         $dateCondition
-                        $statusCondition
+                        $statusConditionPallets
                         $manufacturerCondition
                         $searchCondition";
     $stmt_count = $conn->prepare($count_sql);
     if ($stmt_count) {
-        $stmt_count->bind_param($paramTypes, ...$params);
+        $stmt_count->bind_param($paramTypesPallets, ...$paramsPallets);
         $stmt_count->execute();
         $stmt_count->bind_result($total_pallets_found);
         $stmt_count->fetch();
@@ -833,22 +915,150 @@ if ($stmt_pallets_page) {
     error_log("Pallet query failed: " . $conn->error);
 }
 
-// Recompute totals from pallet set to align with filtered view
-$total_customer_cost     = 0.0;
-$total_accessorial_costs = 0.0;
-$total_warehousing_cost  = 0.0;
-$total_pallets_count     = !empty($pallets_data) ? count($pallets_data) : 0;
+$displayed_pallet_watts = 0.0;
+$displayed_freight_cost = 0.0;
+$displayed_accessorial_cost = 0.0;
+$displayed_warehousing_cost = 0.0;
+$displayed_module_cost = 0.0;
+$displayed_has_module_cost = false;
 
-if (!empty($pallets_data)) {
-    foreach ($pallets_data as $p_row) {
-        $total_customer_cost     += (float)($p_row['freight_cost'] ?? 0);
-        $total_accessorial_costs += (float)($p_row['accessorial_cost'] ?? 0);
-        $total_warehousing_cost  += (float)($p_row['display_warehouse_cost'] ?? 0);
+foreach ($pallets_data as $p_row) {
+    $pallet_watts = (float)($p_row['wattage'] ?? 0) * (float)($p_row['quantity'] ?? 0);
+    $displayed_pallet_watts += $pallet_watts;
+    $displayed_freight_cost += (float)($p_row['freight_cost'] ?? 0);
+    $displayed_accessorial_cost += (float)($p_row['accessorial_cost'] ?? 0);
+    $displayed_warehousing_cost += (float)($p_row['display_warehouse_cost'] ?? 0);
+    if ($p_row['module_cost'] !== null) {
+        $displayed_module_cost += (float)$p_row['module_cost'];
+        $displayed_has_module_cost = true;
     }
 }
 
-// Recompute overall total using summed categories
-$total_logistics_cost = $total_customer_cost + $total_accessorial_costs + $total_warehousing_cost + $total_solterra_fee;
+$displayed_total_cost = $displayed_freight_cost + $displayed_accessorial_cost + $displayed_warehousing_cost + $displayed_module_cost;
+$displayed_freight_per_watt = $displayed_pallet_watts > 0 ? ($displayed_freight_cost / $displayed_pallet_watts) : null;
+$displayed_accessorial_per_watt = $displayed_pallet_watts > 0 ? ($displayed_accessorial_cost / $displayed_pallet_watts) : null;
+$displayed_warehousing_per_watt = $displayed_pallet_watts > 0 ? ($displayed_warehousing_cost / $displayed_pallet_watts) : null;
+$displayed_module_per_watt = ($displayed_has_module_cost && $displayed_pallet_watts > 0)
+    ? ($displayed_module_cost / $displayed_pallet_watts)
+    : null;
+$displayed_total_per_watt = $displayed_pallet_watts > 0 ? ($displayed_total_cost / $displayed_pallet_watts) : null;
+
+// Calculate module costs from cost_per_watt
+$module_cost_data = calculate_project_module_cost($project_id, $conn);
+$total_module_cost = $module_cost_data['total_module_cost'];
+$module_cost_per_watt = $module_cost_data['avg_cost_per_watt'];
+$has_module_cost_data = $module_cost_data['has_cost_data'];
+$module_cost_breakdown = $module_cost_data['breakdown'];
+
+$module_cost_per_watt_display = $module_cost_per_watt !== null
+    ? (float)$module_cost_per_watt
+    : null;
+
+// Project totals for header (ignore filters)
+$project_total_freight_cost = 0.0;
+$project_total_accessorial_costs = 0.0;
+$project_total_watts = 0.0;
+$project_total_delivered_watts = 0.0;
+
+$project_totals_sql = "
+    SELECT
+        COALESCE(SUM(COALESCE(freight_cost, customer_cost, 0)), 0) as freight_total,
+        COALESCE(SUM(accessorial_costs), 0) as accessorial_total,
+        COALESCE(SUM(wattage * quantity), 0) as total_watts,
+        COALESCE(SUM(CASE WHEN actual_delivery_date IS NOT NULL THEN (wattage * quantity) ELSE 0 END), 0) as delivered_watts
+    FROM deliveries
+    WHERE project_id = ?
+";
+$stmt_project_totals = $conn->prepare($project_totals_sql);
+if ($stmt_project_totals) {
+    $stmt_project_totals->bind_param('i', $project_id);
+    $stmt_project_totals->execute();
+    $stmt_project_totals->bind_result(
+        $project_total_freight_cost,
+        $project_total_accessorial_costs,
+        $project_total_watts,
+        $project_total_delivered_watts
+    );
+    $stmt_project_totals->fetch();
+    $stmt_project_totals->close();
+}
+
+$project_total_warehousing_cost = calculate_project_warehousing_cost($project_id, $conn);
+$project_total_module_cost = 0.0;
+$project_total_module_watts = 0.0;
+$project_has_module_cost = false;
+
+$project_module_sql = "
+    SELECT
+        COALESCE(SUM(CASE WHEN m.cost_per_watt IS NOT NULL THEN (m.cost_per_watt * ip.wattage * ip.quantity) ELSE 0 END), 0) as module_cost,
+        COALESCE(SUM(CASE WHEN m.cost_per_watt IS NOT NULL THEN (ip.wattage * ip.quantity) ELSE 0 END), 0) as module_watts
+    FROM deliveries d
+    JOIN delivery_pallets dp ON d.id = dp.delivery_id
+    JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+    JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id
+    JOIN modules m ON umi.unassigned_module_id = m.id
+    WHERE d.project_id = ?
+";
+$stmt_project_module = $conn->prepare($project_module_sql);
+if ($stmt_project_module) {
+    $stmt_project_module->bind_param('i', $project_id);
+    $stmt_project_module->execute();
+    $stmt_project_module->bind_result($project_total_module_cost, $project_total_module_watts);
+    $stmt_project_module->fetch();
+    $stmt_project_module->close();
+}
+$project_has_module_cost = $project_total_module_cost > 0;
+$project_module_cost_per_watt = $project_total_module_watts > 0
+    ? ($project_total_module_cost / $project_total_module_watts)
+    : null;
+$project_total_solterra_fee = $project_total_delivered_watts > 0
+    ? ($project_total_delivered_watts * $solterra_fee)
+    : 0.0;
+$project_total_logistics_cost = $project_total_freight_cost + $project_total_accessorial_costs + $project_total_warehousing_cost + $project_total_solterra_fee;
+$project_total_cost = $project_total_logistics_cost + $project_total_module_cost;
+
+$project_logistics_cost_per_watt = $project_total_watts > 0
+    ? ($project_total_logistics_cost / $project_total_watts)
+    : null;
+$project_total_cost_per_watt = $project_total_watts > 0
+    ? ($project_total_cost / $project_total_watts)
+    : null;
+$project_freight_per_watt = $project_total_watts > 0
+    ? ($project_total_freight_cost / $project_total_watts)
+    : null;
+$project_accessorial_per_watt = $project_total_watts > 0
+    ? ($project_total_accessorial_costs / $project_total_watts)
+    : null;
+$project_warehousing_per_watt = $project_total_watts > 0
+    ? ($project_total_warehousing_cost / $project_total_watts)
+    : null;
+$project_solterra_per_watt = $project_total_watts > 0
+    ? ($project_total_solterra_fee / $project_total_watts)
+    : null;
+
+// Calculate costs by manufacturer for chart (project totals)
+$costs_by_manufacturer = [];
+$chart_delivery_sql = "SELECT * FROM deliveries WHERE project_id = ? ORDER BY id DESC";
+$stmt_chart = $conn->prepare($chart_delivery_sql);
+if ($stmt_chart) {
+    $stmt_chart->bind_param('i', $project_id);
+    $stmt_chart->execute();
+    $chart_result = $stmt_chart->get_result();
+    while ($d = $chart_result->fetch_assoc()) {
+        $mfr = $d['supplier'] ?? 'Unknown';
+        if (!isset($costs_by_manufacturer[$mfr])) {
+            $costs_by_manufacturer[$mfr] = ['freight' => 0, 'accessorial' => 0, 'warehousing' => 0, 'wattage' => 0];
+        }
+        $freight_cost = (float)($d['freight_cost'] ?? $d['customer_cost'] ?? 0);
+        $accessorial_cost = (float)($d['accessorial_costs'] ?? 0);
+        $warehousing_cost = calculateDeliveryWarehousingCost($d, $conn);
+        $costs_by_manufacturer[$mfr]['freight'] += $freight_cost;
+        $costs_by_manufacturer[$mfr]['accessorial'] += $accessorial_cost;
+        $costs_by_manufacturer[$mfr]['warehousing'] += $warehousing_cost;
+        $costs_by_manufacturer[$mfr]['wattage'] += (float)($d['wattage'] ?? 0) * (float)($d['quantity'] ?? 0);
+    }
+    $stmt_chart->close();
+}
 
 // Warehouse name lookup for status display
 $warehouse_name_map = [];
@@ -894,13 +1104,14 @@ if (isset($_GET['export_pallets']) && $_GET['export_pallets'] == 1) {
         'Warehousing Cost',
         'Freight Cost',
         'Accessorial Cost',
+        'Module Cost',
         'Total Cost'
     ]);
 
     $sql_pallets_export = $pallet_base_sql . " ORDER BY ip.id DESC";
     $stmt_export = $conn->prepare($sql_pallets_export);
     if ($stmt_export) {
-        $stmt_export->bind_param($paramTypes, ...$params);
+        $stmt_export->bind_param($paramTypesPallets, ...$paramsPallets);
         $stmt_export->execute();
         $result_export = $stmt_export->get_result();
         while ($row = $result_export->fetch_assoc()) {
@@ -914,6 +1125,7 @@ if (isset($_GET['export_pallets']) && $_GET['export_pallets'] == 1) {
                 number_format($row['display_warehouse_cost'] ?? 0, 2),
                 number_format($row['freight_cost'] ?? 0, 2),
                 number_format($row['accessorial_cost'] ?? 0, 2),
+                $row['module_cost'] !== null ? number_format($row['module_cost'], 2) : '',
                 number_format($row['total_cost'] ?? 0, 2)
             ]);
         }
@@ -976,6 +1188,7 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             background: #f8f9fa;
@@ -1029,6 +1242,7 @@ $conn->close();
             font-weight: 500;
             margin: 0;
         }
+
 
         .header-stats {
             display: flex;
@@ -1100,6 +1314,262 @@ $conn->close();
             margin: 4px 0 0 0;
             font-weight: 500;
         }
+
+        /* Clickable stat item for logistics breakdown */
+        .stat-item-clickable {
+            cursor: pointer;
+            position: relative;
+        }
+
+        .stat-item-clickable:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 20px rgba(72, 140, 154, 0.3);
+        }
+
+        .stat-item-clickable::after {
+            content: 'Click for breakdown';
+            position: absolute;
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.7em;
+            color: #488C9A;
+            opacity: 0;
+            transition: opacity 0.2s;
+            white-space: nowrap;
+        }
+
+        .stat-item-clickable:hover::after {
+            opacity: 1;
+        }
+
+        .stat-item-module {
+            background: linear-gradient(135deg, rgba(251, 176, 64, 0.15) 0%, rgba(251, 176, 64, 0.25) 100%);
+        }
+
+        .stat-item-module .stat-number {
+            color: #fbb040;
+        }
+
+        /* Filter Pills */
+        .filter-pills-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .filter-pills {
+            display: inline-flex;
+            background: #f1f3f4;
+            border-radius: 10px;
+            padding: 4px;
+            gap: 4px;
+        }
+
+        .filter-pill {
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: none;
+            background: transparent;
+            color: #6c757d;
+            font-weight: 600;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .filter-pill:hover {
+            background: rgba(255,255,255,0.5);
+            color: #293E4C;
+        }
+
+        .filter-pill.active {
+            background: #fff;
+            color: #293E4C;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .view-mode-toggle {
+            display: inline-flex;
+            background: #f1f3f4;
+            border-radius: 10px;
+            padding: 4px;
+            gap: 4px;
+        }
+
+        .view-mode-btn {
+            padding: 10px 16px;
+            border-radius: 8px;
+            border: none;
+            background: transparent;
+            color: #6c757d;
+            font-weight: 600;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .view-mode-btn:hover {
+            background: rgba(255,255,255,0.5);
+            color: #293E4C;
+        }
+
+        .view-mode-btn.active {
+            background: #fff;
+            color: #488C9A;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        /* Logistics Breakdown Modal */
+        .logistics-modal {
+            display: none;
+            position: fixed;
+            z-index: 10000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+        }
+
+        .logistics-modal-content {
+            background: white;
+            margin: 5% auto;
+            padding: 0;
+            width: 90%;
+            max-width: 700px;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+            animation: modalSlideIn 0.3s ease;
+        }
+
+        @keyframes modalSlideIn {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .logistics-modal-header {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+            color: white;
+            padding: 24px;
+            border-radius: 20px 20px 0 0;
+            position: relative;
+        }
+
+        .logistics-modal-header h2 {
+            margin: 0;
+            font-size: 1.5em;
+            font-weight: 600;
+        }
+
+        .logistics-modal-close {
+            position: absolute;
+            top: 20px;
+            right: 24px;
+            font-size: 28px;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+            border: none;
+            background: transparent;
+        }
+
+        .logistics-modal-close:hover {
+            transform: scale(1.1);
+        }
+
+        .logistics-modal-body {
+            padding: 24px;
+        }
+
+        .logistics-breakdown-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+
+        .logistics-breakdown-item {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .logistics-breakdown-item .value {
+            font-size: 1.5em;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .logistics-breakdown-item .label {
+            font-size: 0.9em;
+            color: #6c757d;
+        }
+
+        .logistics-breakdown-item.freight .value { color: #2563eb; }
+        .logistics-breakdown-item.warehousing .value { color: #7c3aed; }
+        .logistics-breakdown-item.accessorial .value { color: #d97706; }
+        .logistics-breakdown-item.solterra .value { color: #16a34a; }
+
+        .logistics-chart-container {
+            width: 100%;
+            max-width: 300px;
+            margin: 0 auto;
+        }
+
+        /* Charts Section */
+        .charts-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .chart-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+
+        .chart-card h3 {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0 0 20px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .chart-card h3 i {
+            color: #488C9A;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 250px;
+        }
+
+        @media (max-width: 992px) {
+            .charts-section {
+                grid-template-columns: 1fr;
+            }
+            .logistics-breakdown-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
         /* Filter Section */
         .filter-section {
             background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
@@ -1138,6 +1608,57 @@ $conn->close();
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
             align-items: start;
+        }
+
+        .table-header-center {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .filtered-summary-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 0.85em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .filtered-summary-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .filtered-summary-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.18);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            color: #fff;
+            font-size: 0.8em;
+        }
+
+        .filtered-summary-chip .label {
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.65em;
+            color: rgba(255, 255, 255, 0.7);
+            font-weight: 600;
+        }
+
+        .filtered-summary-chip .value {
+            font-weight: 700;
+            color: #fff;
         }
 
         .filter-group {
@@ -1952,25 +2473,114 @@ $conn->close();
         <div class="header-content">
             <div class="header-info">
                 <h1>Cost Details: <?php echo htmlspecialchars($project_name); ?></h1>
-                <p class="header-subtitle">Comprehensive cost breakdown and logistics analysis</p>
+                <p class="header-subtitle">Project totals across all deliveries</p>
             </div>
             <div class="header-stats">
+                <div class="stat-item stat-item-freight stat-item-clickable" onclick="openLogisticsModal()">
+                    <p class="stat-number">
+                        <span class="cost-display" data-cost="<?php echo $project_total_logistics_cost; ?>" data-per-watt="<?php echo $project_logistics_cost_per_watt !== null ? $project_logistics_cost_per_watt : ''; ?>">
+                            $<?php echo number_format($project_total_logistics_cost, 2); ?>
+                        </span>
+                    </p>
+                    <p class="stat-label"><i class="fas fa-truck"></i> Logistics Costs</p>
+                </div>
+                <?php if ($project_has_module_cost): ?>
+                <div class="stat-item stat-item-module">
+                    <p class="stat-number">
+                        <span class="cost-display" data-cost="<?php echo $project_total_module_cost; ?>" data-per-watt="<?php echo $project_module_cost_per_watt !== null ? $project_module_cost_per_watt : ''; ?>">
+                            $<?php echo number_format($project_total_module_cost, 2); ?>
+                        </span>
+                    </p>
+                    <p class="stat-label"><i class="fas fa-solar-panel"></i> Module Costs</p>
+                </div>
+                <?php endif; ?>
                 <div class="stat-item stat-item-total">
-                    <p class="stat-number">$<?php echo number_format($total_logistics_cost, 2); ?></p>
-                    <p class="stat-label">Total Cost</p>
+                    <p class="stat-number">
+                        <span class="cost-display" data-cost="<?php echo $project_total_cost; ?>" data-per-watt="<?php echo $project_total_cost_per_watt !== null ? $project_total_cost_per_watt : ''; ?>">
+                            $<?php echo number_format($project_total_cost, 2); ?>
+                        </span>
+                    </p>
+                    <p class="stat-label"><i class="fas fa-calculator"></i> Total Costs</p>
                 </div>
-                <div class="stat-item stat-item-freight">
-                    <p class="stat-number">$<?php echo number_format($total_customer_cost, 2); ?></p>
-                    <p class="stat-label">Freight</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logistics Breakdown Modal -->
+    <div id="logisticsModal" class="logistics-modal">
+        <div class="logistics-modal-content">
+            <div class="logistics-modal-header">
+                <h2><i class="fas fa-truck-loading"></i> Logistics Cost Breakdown</h2>
+                <button class="logistics-modal-close" onclick="closeLogisticsModal()">&times;</button>
+            </div>
+            <div class="logistics-modal-body">
+                <div class="logistics-breakdown-grid">
+                    <div class="logistics-breakdown-item freight">
+                        <div class="value">
+                            <span class="cost-display" data-cost="<?php echo $project_total_freight_cost; ?>" data-per-watt="<?php echo $project_freight_per_watt !== null ? $project_freight_per_watt : ''; ?>">
+                                $<?php echo number_format($project_total_freight_cost, 2); ?>
+                            </span>
+                        </div>
+                        <div class="label"><i class="fas fa-shipping-fast"></i> Freight Costs</div>
+                    </div>
+                    <div class="logistics-breakdown-item warehousing">
+                        <div class="value">
+                            <span class="cost-display" data-cost="<?php echo $project_total_warehousing_cost; ?>" data-per-watt="<?php echo $project_warehousing_per_watt !== null ? $project_warehousing_per_watt : ''; ?>">
+                                $<?php echo number_format($project_total_warehousing_cost, 2); ?>
+                            </span>
+                        </div>
+                        <div class="label"><i class="fas fa-warehouse"></i> Warehousing Costs</div>
+                    </div>
+                    <div class="logistics-breakdown-item accessorial">
+                        <div class="value">
+                            <span class="cost-display" data-cost="<?php echo $project_total_accessorial_costs; ?>" data-per-watt="<?php echo $project_accessorial_per_watt !== null ? $project_accessorial_per_watt : ''; ?>">
+                                $<?php echo number_format($project_total_accessorial_costs, 2); ?>
+                            </span>
+                        </div>
+                        <div class="label"><i class="fas fa-plus-circle"></i> Accessorial Costs</div>
+                    </div>
+                    <?php if ($project_total_solterra_fee > 0): ?>
+                    <div class="logistics-breakdown-item solterra">
+                        <div class="value">
+                            <span class="cost-display" data-cost="<?php echo $project_total_solterra_fee; ?>" data-per-watt="<?php echo $project_solterra_per_watt !== null ? $project_solterra_per_watt : ''; ?>">
+                                $<?php echo number_format($project_total_solterra_fee, 2); ?>
+                            </span>
+                        </div>
+                        <div class="label"><i class="fas fa-hand-holding-usd"></i> Solterra Fee</div>
+                    </div>
+                    <?php endif; ?>
                 </div>
-                <div class="stat-item stat-item-accessorial">
-                    <p class="stat-number">$<?php echo number_format($total_accessorial_costs, 2); ?></p>
-                    <p class="stat-label">Accessorial</p>
+                <div class="logistics-chart-container">
+                    <canvas id="logisticsBreakdownChart"></canvas>
                 </div>
-                <div class="stat-item stat-item-warehousing">
-                    <p class="stat-number">$<?php echo number_format($total_warehousing_cost, 2); ?></p>
-                    <p class="stat-label">Warehousing</p>
-                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Pills -->
+    <div class="filter-pills-container">
+        <div class="filter-pills">
+            <button type="button" class="filter-pill <?php echo ($filter === 'total' || empty($filter)) ? 'active' : ''; ?>" onclick="setFilter('total')">All Time</button>
+            <button type="button" class="filter-pill <?php echo $filter === 'ytd' ? 'active' : ''; ?>" onclick="setFilter('ytd')">YTD</button>
+        </div>
+        <div class="view-mode-toggle">
+            <button type="button" class="view-mode-btn active" data-mode="dollars" onclick="setViewMode('dollars')">$ Dollars</button>
+            <button type="button" class="view-mode-btn" data-mode="per_watt" onclick="setViewMode('per_watt')">$/Watt</button>
+        </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="charts-section">
+        <div class="chart-card">
+            <h3><i class="fas fa-chart-pie"></i> Cost Breakdown</h3>
+            <div class="chart-container">
+                <canvas id="costBreakdownChart"></canvas>
+            </div>
+        </div>
+        <div class="chart-card">
+            <h3><i class="fas fa-chart-bar"></i> Costs by Manufacturer</h3>
+            <div class="chart-container">
+                <canvas id="manufacturerCostChart"></canvas>
             </div>
         </div>
     </div>
@@ -2030,16 +2640,10 @@ $conn->close();
 
                 <div class="filter-group">
                     <label class="filter-label" for="statusFilter">Status</label>
-                    <select name="status_filter" id="statusFilter" class="filter-select">
+                    <select name="status_filter" id="statusFilter" class="filter-select" data-selected="<?php echo htmlspecialchars($status_filter); ?>">
                         <option value="">All Statuses</option>
-                        <option value="On Water" <?php echo $status_filter == 'On Water' ? 'selected' : ''; ?>>On Water</option>
-                        <option value="Cleared Customs" <?php echo $status_filter == 'Cleared Customs' ? 'selected' : ''; ?>>Cleared Customs</option>
-                        <option value="In Transit to Warehouse" <?php echo $status_filter == 'In Transit to Warehouse' ? 'selected' : ''; ?>>In Transit to Warehouse</option>
-                        <option value="Delivered to Warehouse" <?php echo $status_filter == 'Delivered to Warehouse' ? 'selected' : ''; ?>>Delivered to Warehouse</option>
-                        <option value="In Transit to Project" <?php echo $status_filter == 'In Transit to Project' ? 'selected' : ''; ?>>In Transit to Project</option>
-                        <option value="Delivered to Project" <?php echo $status_filter == 'Delivered to Project' ? 'selected' : ''; ?>>Delivered to Project</option>
-                        <option value="Canceled" <?php echo $status_filter == 'Canceled' ? 'selected' : ''; ?>>Canceled</option>
                     </select>
+                    <input type="hidden" name="status_context" id="statusContext" value="<?php echo htmlspecialchars($status_context); ?>">
                 </div>
 
                 <div class="filter-group">
@@ -2204,9 +2808,30 @@ $conn->close();
                                 </div>
                             </td>
                             <td class="col-delivery-date"><?php echo $d['actual_delivery_date_formatted']; ?></td>
-                            <td class="col-freight-cost" style="text-align: right;">$<?php echo number_format($d['customer_cost'] ?? 0, 2); ?></td>
-                            <td class="col-accessorial-cost" style="text-align: right;">$<?php echo number_format($d['accessorial_costs'] ?? 0, 2); ?></td>
-                            <td class="col-total-cost" style="text-align: right; font-weight: bold; background-color: #f8f9fa;">$<?php echo number_format($d['display_total_freight_only'] ?? ($d['customer_cost'] ?? 0) + ($d['accessorial_costs'] ?? 0), 2); ?></td>
+                            <?php
+                                $delivery_watts = (float)($d['wattage'] ?? 0) * (float)($d['quantity'] ?? 0);
+                                $delivery_freight = (float)($d['customer_cost'] ?? 0);
+                                $delivery_accessorial = (float)($d['accessorial_costs'] ?? 0);
+                                $delivery_total_cost = (float)($d['display_total_freight_only'] ?? ($delivery_freight + $delivery_accessorial));
+                                $delivery_freight_per_watt = $delivery_watts > 0 ? ($delivery_freight / $delivery_watts) : null;
+                                $delivery_accessorial_per_watt = $delivery_watts > 0 ? ($delivery_accessorial / $delivery_watts) : null;
+                                $delivery_total_per_watt = $delivery_watts > 0 ? ($delivery_total_cost / $delivery_watts) : null;
+                            ?>
+                            <td class="col-freight-cost" style="text-align: right;">
+                                <span class="cost-display" data-cost="<?php echo $delivery_freight; ?>" data-per-watt="<?php echo $delivery_freight_per_watt !== null ? $delivery_freight_per_watt : ''; ?>">
+                                    $<?php echo number_format($delivery_freight, 2); ?>
+                                </span>
+                            </td>
+                            <td class="col-accessorial-cost" style="text-align: right;">
+                                <span class="cost-display" data-cost="<?php echo $delivery_accessorial; ?>" data-per-watt="<?php echo $delivery_accessorial_per_watt !== null ? $delivery_accessorial_per_watt : ''; ?>">
+                                    $<?php echo number_format($delivery_accessorial, 2); ?>
+                                </span>
+                            </td>
+                            <td class="col-total-cost" style="text-align: right; font-weight: bold; background-color: #f8f9fa;">
+                                <span class="cost-display" data-cost="<?php echo $delivery_total_cost; ?>" data-per-watt="<?php echo $delivery_total_per_watt !== null ? $delivery_total_per_watt : ''; ?>">
+                                    $<?php echo number_format($delivery_total_cost, 2); ?>
+                                </span>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
@@ -2275,6 +2900,53 @@ $conn->close();
                     <i class="fas fa-pallet"></i>
                     Individual Pallet Costs
                 </h2>
+                <div class="table-header-center">
+                <div class="filtered-summary-header">Totals:</div>
+                    <div class="filtered-summary-chips">
+                        <div class="filtered-summary-chip">
+                            <span class="label">Freight</span>
+                            <span class="value">
+                                <span class="cost-display" data-cost="<?php echo $displayed_freight_cost; ?>" data-per-watt="<?php echo $displayed_freight_per_watt !== null ? $displayed_freight_per_watt : ''; ?>">
+                                    $<?php echo number_format($displayed_freight_cost, 2); ?>
+                                </span>
+                            </span>
+                        </div>
+                        <div class="filtered-summary-chip">
+                            <span class="label">Warehousing</span>
+                            <span class="value">
+                                <span class="cost-display" data-cost="<?php echo $displayed_warehousing_cost; ?>" data-per-watt="<?php echo $displayed_warehousing_per_watt !== null ? $displayed_warehousing_per_watt : ''; ?>">
+                                    $<?php echo number_format($displayed_warehousing_cost, 2); ?>
+                                </span>
+                            </span>
+                        </div>
+                        <div class="filtered-summary-chip">
+                            <span class="label">Accessorial</span>
+                            <span class="value">
+                                <span class="cost-display" data-cost="<?php echo $displayed_accessorial_cost; ?>" data-per-watt="<?php echo $displayed_accessorial_per_watt !== null ? $displayed_accessorial_per_watt : ''; ?>">
+                                    $<?php echo number_format($displayed_accessorial_cost, 2); ?>
+                                </span>
+                            </span>
+                        </div>
+                        <?php if ($displayed_has_module_cost): ?>
+                        <div class="filtered-summary-chip">
+                            <span class="label">Module</span>
+                            <span class="value">
+                                <span class="cost-display" data-cost="<?php echo $displayed_module_cost; ?>" data-per-watt="<?php echo $displayed_module_per_watt !== null ? $displayed_module_per_watt : ''; ?>">
+                                    $<?php echo number_format($displayed_module_cost, 2); ?>
+                                </span>
+                            </span>
+                        </div>
+                        <?php endif; ?>
+                        <div class="filtered-summary-chip">
+                            <span class="label">Total</span>
+                            <span class="value">
+                                <span class="cost-display" data-cost="<?php echo $displayed_total_cost; ?>" data-per-watt="<?php echo $displayed_total_per_watt !== null ? $displayed_total_per_watt : ''; ?>">
+                                    $<?php echo number_format($displayed_total_cost, 2); ?>
+                                </span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
                 <div class="table-header-actions">
                     <button type="submit" form="filterForm" name="export_pallets" value="1" class="btn-export-header">
                         <i class="fas fa-download"></i>
@@ -2294,6 +2966,7 @@ $conn->close();
                             <th>Warehouse Cost</th>
                             <th>Freight Cost</th>
                             <th>Accessorial Cost</th>
+                            <th>Module Cost</th>
                             <th>Total Cost</th>
                             <th>Actions</th>
                         </tr>
@@ -2327,17 +3000,53 @@ $conn->close();
                                             <?php endif; ?>
                                         </div>
                                     </td>
+                                    <?php
+                                        $pallet_watts = (float)($p['wattage'] ?? 0) * (float)($p['quantity'] ?? 0);
+                                        $warehouse_cost = (float)($p['display_warehouse_cost'] ?? 0);
+                                        $freight_cost = (float)($p['freight_cost'] ?? 0);
+                                        $accessorial_cost = (float)($p['accessorial_cost'] ?? 0);
+                                        $module_cost = $p['module_cost'] !== null ? (float)$p['module_cost'] : null;
+                                        $total_cost = (float)($p['total_cost'] ?? 0);
+                                        $warehouse_per_watt = $pallet_watts > 0 ? ($warehouse_cost / $pallet_watts) : null;
+                                        $freight_per_watt = $pallet_watts > 0 ? ($freight_cost / $pallet_watts) : null;
+                                        $accessorial_per_watt = $pallet_watts > 0 ? ($accessorial_cost / $pallet_watts) : null;
+                                        $module_per_watt = ($pallet_watts > 0 && $module_cost !== null) ? ($module_cost / $pallet_watts) : null;
+                                        $total_per_watt = $pallet_watts > 0 ? ($total_cost / $pallet_watts) : null;
+                                    ?>
                                     <td>
-                                        $<?php echo number_format($p['display_warehouse_cost'] ?? 0, 2); ?>
+                                        <span class="cost-display" data-cost="<?php echo $warehouse_cost; ?>" data-per-watt="<?php echo $warehouse_per_watt !== null ? $warehouse_per_watt : ''; ?>">
+                                            $<?php echo number_format($warehouse_cost, 2); ?>
+                                        </span>
                                         <?php if (!empty($p['pending_warehouse_cost'])): ?>
                                             <span style="font-size:0.8em; color:#d97706;" title="Pending/Accruing cost included">
                                                 incl. $<?php echo number_format($p['pending_warehouse_cost'], 2); ?> pending
                                             </span>
                                         <?php endif; ?>
                                     </td>
-                                    <td>$<?php echo number_format($p['freight_cost'] ?? 0, 2); ?></td>
-                                    <td>$<?php echo number_format($p['accessorial_cost'] ?? 0, 2); ?></td>
-                                    <td style="font-weight: 600; color: #488C9A;">$<?php echo number_format($p['total_cost'] ?? 0, 2); ?></td>
+                                    <td>
+                                        <span class="cost-display" data-cost="<?php echo $freight_cost; ?>" data-per-watt="<?php echo $freight_per_watt !== null ? $freight_per_watt : ''; ?>">
+                                            $<?php echo number_format($freight_cost, 2); ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="cost-display" data-cost="<?php echo $accessorial_cost; ?>" data-per-watt="<?php echo $accessorial_per_watt !== null ? $accessorial_per_watt : ''; ?>">
+                                            $<?php echo number_format($accessorial_cost, 2); ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <?php if ($module_cost !== null): ?>
+                                            <span class="cost-display" data-cost="<?php echo $module_cost; ?>" data-per-watt="<?php echo $module_per_watt !== null ? $module_per_watt : ''; ?>">
+                                                $<?php echo number_format($module_cost, 2); ?>
+                                            </span>
+                                        <?php else: ?>
+                                            <span style="color:#6c757d;">—</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td style="font-weight: 600; color: #488C9A;">
+                                        <span class="cost-display" data-cost="<?php echo $total_cost; ?>" data-per-watt="<?php echo $total_per_watt !== null ? $total_per_watt : ''; ?>">
+                                            $<?php echo number_format($total_cost, 2); ?>
+                                        </span>
+                                    </td>
                                     <td>
                                         <a class="action-btn action-btn-primary" href="pallet_details.php?pallet_id=<?php echo (int)$p['id']; ?>&project_id=<?php echo (int)$project_id; ?>&from=cost_details">
                                             <i class="fas fa-eye"></i>
@@ -2348,7 +3057,7 @@ $conn->close();
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="9" style="text-align: center; padding: 40px; color: #6c757d;">
+                                <td colspan="11" style="text-align: center; padding: 40px; color: #6c757d;">
                                     <p>No pallets found matching criteria.</p>
                                 </td>
                             </tr>
@@ -2375,6 +3084,16 @@ $conn->close();
 
 <script>
     const projectIdForLinks = <?php echo (int)$project_id; ?>;
+    const deliveryStatusOptions = [
+        'On Water',
+        'Cleared Customs',
+        'In Transit to Warehouse',
+        'Delivered to Warehouse',
+        'In Transit to Project',
+        'Delivered to Project',
+        'Canceled'
+    ];
+    const palletStatusOptions = <?php echo json_encode($pallet_statuses); ?>;
 
     function showPalletModal(button) {
         const modal = document.getElementById('associatedPalletsModal');
@@ -2454,6 +3173,34 @@ $conn->close();
         }
     });
 
+    function populateStatusOptions(context) {
+        const select = document.getElementById('statusFilter');
+        if (!select) return;
+        const currentValue = select.value || select.dataset.selected || '';
+        const statuses = context === 'deliveries' ? deliveryStatusOptions : palletStatusOptions;
+        select.innerHTML = '<option value="">All Statuses</option>';
+        statuses.forEach(status => {
+            if (!status) return;
+            const opt = document.createElement('option');
+            opt.value = status;
+            opt.textContent = status;
+            select.appendChild(opt);
+        });
+        if (currentValue && statuses.includes(currentValue)) {
+            select.value = currentValue;
+        } else {
+            select.value = '';
+        }
+    }
+
+    function setStatusContext(context) {
+        const input = document.getElementById('statusContext');
+        if (input) {
+            input.value = context;
+        }
+        populateStatusOptions(context);
+    }
+
     function switchTab(tabName) {
         // Hide all tabs
         document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -2472,13 +3219,332 @@ $conn->close();
         
         // Store preference
         localStorage.setItem('cost_details_tab', tabName);
+
+        const statusContext = tabName === 'deliveries' ? 'deliveries' : 'pallets';
+        setStatusContext(statusContext);
     }
     
     // Restore tab on load
     document.addEventListener('DOMContentLoaded', () => {
         const savedTab = localStorage.getItem('cost_details_tab');
         switchTab(savedTab || 'pallets');
+        const savedMode = localStorage.getItem('cost_view_mode') || 'dollars';
+        setViewMode(savedMode);
     });
+
+    // Logistics Modal Functions
+    function openLogisticsModal() {
+        const modal = document.getElementById('logisticsModal');
+        if (modal) {
+            modal.style.display = 'block';
+            const mode = localStorage.getItem('cost_view_mode') || 'dollars';
+            initLogisticsChart(mode);
+        }
+    }
+
+    function closeLogisticsModal() {
+        const modal = document.getElementById('logisticsModal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+    }
+
+    // Close modal when clicking outside
+    window.addEventListener('click', function(event) {
+        const logisticsModal = document.getElementById('logisticsModal');
+        if (logisticsModal && event.target === logisticsModal) {
+            closeLogisticsModal();
+        }
+    });
+
+    // Filter functions
+    function setFilter(filterValue) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('filter', filterValue);
+        window.location.href = url.toString();
+    }
+
+    function formatCurrency(value) {
+        return '$' + value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function formatPerWatt(value) {
+        return '$' + value.toFixed(4) + '/W';
+    }
+
+    function applyViewMode(mode) {
+        const isPerWatt = mode === 'per_watt';
+        document.querySelectorAll('.cost-display').forEach(el => {
+            const rawCost = parseFloat(el.dataset.cost || '0');
+            const rawPerWatt = el.dataset.perWatt;
+            const perWattVal = rawPerWatt !== undefined && rawPerWatt !== '' ? parseFloat(rawPerWatt) : null;
+            if (isPerWatt) {
+                if (perWattVal === null || Number.isNaN(perWattVal)) {
+                    el.textContent = '—';
+                } else {
+                    el.textContent = formatPerWatt(perWattVal);
+                }
+            } else {
+                el.textContent = formatCurrency(rawCost);
+            }
+        });
+    }
+
+    function setViewMode(mode) {
+        const buttons = document.querySelectorAll('.view-mode-btn');
+        buttons.forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.dataset.mode === mode) {
+                btn.classList.add('active');
+            }
+        });
+        localStorage.setItem('cost_view_mode', mode);
+        applyViewMode(mode);
+        renderCharts(mode);
+        const logisticsModal = document.getElementById('logisticsModal');
+        if (logisticsModal && logisticsModal.style.display === 'block') {
+            initLogisticsChart(mode);
+        }
+    }
+
+    // Chart data from PHP
+    const chartData = {
+        freight: <?php echo $project_total_freight_cost; ?>,
+        warehousing: <?php echo $project_total_warehousing_cost; ?>,
+        accessorial: <?php echo $project_total_accessorial_costs; ?>,
+        solterra: <?php echo $project_total_solterra_fee; ?>,
+        module: <?php echo $project_total_module_cost; ?>,
+        hasModuleCost: <?php echo $project_has_module_cost ? 'true' : 'false'; ?>,
+        freightPerWatt: <?php echo $project_freight_per_watt !== null ? $project_freight_per_watt : 'null'; ?>,
+        warehousingPerWatt: <?php echo $project_warehousing_per_watt !== null ? $project_warehousing_per_watt : 'null'; ?>,
+        accessorialPerWatt: <?php echo $project_accessorial_per_watt !== null ? $project_accessorial_per_watt : 'null'; ?>,
+        solterraPerWatt: <?php echo $project_solterra_per_watt !== null ? $project_solterra_per_watt : 'null'; ?>,
+        modulePerWatt: <?php echo $project_module_cost_per_watt !== null ? $project_module_cost_per_watt : 'null'; ?>,
+        hasWattage: <?php echo $project_total_watts > 0 ? 'true' : 'false'; ?>,
+        manufacturerCosts: <?php echo json_encode($costs_by_manufacturer); ?>
+    };
+
+    let costBreakdownChart = null;
+    let manufacturerChart = null;
+    let logisticsChart = null;
+
+    function buildBreakdownData(source, isPerWatt) {
+        const labels = ['Freight', 'Warehousing', 'Accessorial'];
+        const colors = ['#488C9A', '#293E4C', '#fbb040'];
+        const data = [
+            isPerWatt ? source.freightPerWatt : source.freight,
+            isPerWatt ? source.warehousingPerWatt : source.warehousing,
+            isPerWatt ? source.accessorialPerWatt : source.accessorial
+        ].map(v => (v === null || Number.isNaN(v) ? 0 : v));
+
+        if ((source.solterra ?? 0) > 0) {
+            labels.push('Solterra Fee');
+            data.push(isPerWatt ? (source.solterraPerWatt ?? 0) : source.solterra);
+            colors.push('#5ba3b1');
+        }
+
+        if (source.hasModuleCost && source.module > 0) {
+            labels.push('Module Costs');
+            data.push(isPerWatt ? (source.modulePerWatt ?? 0) : source.module);
+            colors.push('#E4572E');
+        }
+
+        return { labels, data, colors };
+    }
+
+    function renderCharts(mode) {
+        const isPerWatt = mode === 'per_watt';
+
+        if (costBreakdownChart) {
+            costBreakdownChart.destroy();
+        }
+        if (manufacturerChart) {
+            manufacturerChart.destroy();
+        }
+
+        const breakdownCtx = document.getElementById('costBreakdownChart');
+        if (breakdownCtx) {
+            const moduleCost = isPerWatt ? (chartData.modulePerWatt ?? 0) : chartData.module;
+            const freightCost = isPerWatt ? (chartData.freightPerWatt ?? 0) : chartData.freight;
+            const warehousingCost = isPerWatt ? (chartData.warehousingPerWatt ?? 0) : chartData.warehousing;
+            const accessorialCost = isPerWatt ? (chartData.accessorialPerWatt ?? 0) : chartData.accessorial;
+            const breakdownLabels = ['Module Cost', 'Freight', 'Warehousing', 'Accessorial'];
+            const breakdownData = [moduleCost, freightCost, warehousingCost, accessorialCost].map(v => (v === null || Number.isNaN(v) ? 0 : v));
+            const breakdownColors = ['#488C9A', '#3b82f6', '#8b5cf6', '#f59e0b'];
+
+            costBreakdownChart = new Chart(breakdownCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: breakdownLabels,
+                    datasets: [{
+                        data: breakdownData,
+                        backgroundColor: breakdownColors,
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                padding: 15,
+                                usePointStyle: true
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const value = context.raw;
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                    if (isPerWatt) {
+                                        if (!chartData.hasWattage) {
+                                            return `${context.label}: N/A`;
+                                        }
+                                        return `${context.label}: ${formatPerWatt(value)} (${pct}%)`;
+                                    }
+                                    return `${context.label}: ${formatCurrency(value)} (${pct}%)`;
+                                }
+                            }
+                        }
+                    }
+                },
+                cutout: '55%'
+            });
+        }
+
+        const mfrCtx = document.getElementById('manufacturerCostChart');
+        if (mfrCtx && Object.keys(chartData.manufacturerCosts).length > 0) {
+            const mfrLabels = Object.keys(chartData.manufacturerCosts);
+            const getPerWatt = (m, value) => {
+                const watts = chartData.manufacturerCosts[m].wattage || 0;
+                return watts > 0 ? (value / watts) : 0;
+            };
+            const freightData = mfrLabels.map(m => isPerWatt
+                ? getPerWatt(m, chartData.manufacturerCosts[m].freight)
+                : chartData.manufacturerCosts[m].freight
+            );
+            const warehouseData = mfrLabels.map(m => isPerWatt
+                ? getPerWatt(m, chartData.manufacturerCosts[m].warehousing)
+                : chartData.manufacturerCosts[m].warehousing
+            );
+            const accessorialData = mfrLabels.map(m => isPerWatt
+                ? getPerWatt(m, chartData.manufacturerCosts[m].accessorial)
+                : chartData.manufacturerCosts[m].accessorial
+            );
+
+            manufacturerChart = new Chart(mfrCtx, {
+                type: 'bar',
+                data: {
+                    labels: mfrLabels,
+                    datasets: [
+                        {
+                            label: 'Freight',
+                            data: freightData,
+                            backgroundColor: '#488C9A'
+                        },
+                        {
+                            label: 'Warehousing',
+                            data: warehouseData,
+                            backgroundColor: '#293E4C'
+                        },
+                        {
+                            label: 'Accessorial',
+                            data: accessorialData,
+                            backgroundColor: '#fbb040'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            stacked: true,
+                            grid: { display: false }
+                        },
+                        y: {
+                            stacked: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return isPerWatt ? formatPerWatt(value) : ('$' + value.toLocaleString());
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return isPerWatt
+                                        ? `${context.dataset.label}: ${formatPerWatt(context.raw)}`
+                                        : `${context.dataset.label}: ${formatCurrency(context.raw)}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    function initLogisticsChart(mode) {
+        const ctx = document.getElementById('logisticsBreakdownChart');
+        if (!ctx) return;
+
+        // Destroy existing chart if any
+        if (logisticsChart) {
+            logisticsChart.destroy();
+        }
+        const isPerWatt = mode === 'per_watt';
+        const breakdown = buildBreakdownData(chartData, isPerWatt);
+
+        logisticsChart = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: breakdown.labels,
+                datasets: [{
+                    data: breakdown.data,
+                    backgroundColor: breakdown.colors,
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 15,
+                            usePointStyle: true
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.raw;
+                                if (isPerWatt) {
+                                if (!chartData.hasWattage) {
+                                    return `${context.label}: N/A`;
+                                }
+                                    return `${context.label}: ${formatPerWatt(value)}`;
+                                }
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                return `${context.label}: ${formatCurrency(value)} (${pct}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 </script>
 </body>
 </html>

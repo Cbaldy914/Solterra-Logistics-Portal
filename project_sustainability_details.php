@@ -58,6 +58,52 @@ if (!$project_name) {
     die("You do not have access to this project or it does not exist.");
 }
 
+$project_totals = [
+    'deliveries' => 0,
+    'emissions' => 0.0,
+    'miles' => 0.0,
+    'fuel' => 0.0,
+    'mws' => 0.0,
+    'truckloads' => 0
+];
+$project_chart_deliveries = [];
+
+$project_delivery_sql = "SELECT status_of_delivery, supplier, quantity, wattage, miles FROM deliveries WHERE project_id = ?";
+$stmt_project = $conn->prepare($project_delivery_sql);
+if ($stmt_project) {
+    $stmt_project->bind_param('i', $project_id);
+    $stmt_project->execute();
+    $project_result = $stmt_project->get_result();
+    while ($row = $project_result->fetch_assoc()) {
+        $quantity = (int)($row['quantity'] ?? 0);
+        $wattage = (float)($row['wattage'] ?? 0);
+        $miles_driven = (float)($row['miles'] ?? 0);
+
+        if (in_array($row['status_of_delivery'] ?? '', ['Delivered to Project', 'Delivered to Warehouse']) && $miles_driven > 0) {
+            $project_totals['truckloads'] += 1;
+        }
+
+        $fuel_consumption = $miles_driven * 0.1667;
+        $emissions = $fuel_consumption * 10.21;
+        $mws_delivered = ($quantity * $wattage) / 1_000_000;
+
+        $project_totals['deliveries'] += 1;
+        $project_totals['miles'] += $miles_driven;
+        $project_totals['fuel'] += $fuel_consumption;
+        $project_totals['emissions'] += $emissions;
+        $project_totals['mws'] += $mws_delivered;
+
+        $project_chart_deliveries[] = [
+            'status' => $row['status_of_delivery'] ?? 'Unknown',
+            'supplier' => $row['supplier'] ?? 'Unknown',
+            'emissions' => $emissions,
+            'miles' => $miles_driven,
+            'fuel' => $fuel_consumption
+        ];
+    }
+    $stmt_project->close();
+}
+
 // --------------------------------------------------------------------------
 // NEW FILTER PARAMETERS - Modern approach like view_project.php
 // --------------------------------------------------------------------------
@@ -176,6 +222,7 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $delivery['miles_driven']     = $miles_driven;
     $delivery['fuel_consumption'] = $fuel_consumption;
     $delivery['emissions']        = $emissions;
+    $delivery['mws_delivered']     = $mws_delivered;
 
     $supplier_values[]   = $delivery['supplier'];
     $wattage_values[]    = $delivery['wattage'];
@@ -292,6 +339,7 @@ $conn->close();
     <link rel="icon" href="pictures/favicon.png" type="image/x-icon">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             background: #f8f9fa;
@@ -409,6 +457,90 @@ $conn->close();
             margin: 0;
         }
 
+        .filter-pills-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .filter-pills {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .filter-pill {
+            background: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 999px;
+            padding: 8px 18px;
+            font-weight: 600;
+            color: #6c757d;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .filter-pill.active,
+        .filter-pill:hover {
+            background: #488C9A;
+            color: #fff;
+            border-color: #488C9A;
+        }
+
+        .table-header-center {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .filtered-summary-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 0.85em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .filtered-summary-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .filtered-summary-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.18);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            color: #fff;
+            font-size: 0.8em;
+        }
+
+        .filtered-summary-chip .label {
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.65em;
+            color: rgba(255, 255, 255, 0.7);
+            font-weight: 600;
+        }
+
+        .filtered-summary-chip .value {
+            font-weight: 700;
+            color: #fff;
+        }
+
         .header-stats {
             display: flex;
             gap: 16px;
@@ -463,6 +595,47 @@ $conn->close();
 
         .stat-item-truckloads .stat-number {
             color: #7c3aed;
+        }
+
+        /* Charts Section */
+        .charts-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .chart-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+        }
+
+        .chart-card h3 {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0 0 20px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .chart-card h3 i {
+            color: #488C9A;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 250px;
+        }
+
+        @media (max-width: 992px) {
+            .charts-section {
+                grid-template-columns: 1fr;
+            }
         }
 
         .stat-number {
@@ -1162,6 +1335,12 @@ $conn->close();
             window.location.href = '?project_id=<?php echo $project_id; ?>';
         }
 
+        function setFilter(filterValue) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('filter', filterValue);
+            window.location.href = url.toString();
+        }
+
         // Toggle column chooser
         function toggleColumnChooser() {
             const dropdown = document.getElementById('columnChooser');
@@ -1245,28 +1424,53 @@ $conn->close();
                         </span>
                     </span>
                 </div>
-                <p class="header-subtitle">Environmental impact analysis and carbon footprint tracking</p>
+                <p class="header-subtitle">Project totals across all deliveries</p>
             </div>
             <div class="header-stats">
                 <div class="stat-item stat-item-total">
-                    <p class="stat-number"><?php echo count($deliveries); ?></p>
+                    <p class="stat-number"><?php echo number_format($project_totals['deliveries']); ?></p>
                     <p class="stat-label">Total Deliveries</p>
                 </div>
                 <div class="stat-item stat-item-emissions">
-                    <p class="stat-number"><?php echo number_format($total_emissions, 2); ?></p>
+                    <p class="stat-number"><?php echo number_format($project_totals['emissions'], 2); ?></p>
                     <p class="stat-label">Total Emissions (kg CO₂)</p>
                 </div>
                 <div class="stat-item stat-item-miles">
-                    <p class="stat-number"><?php echo number_format($total_miles_driven, 2); ?></p>
+                    <p class="stat-number"><?php echo number_format($project_totals['miles'], 2); ?></p>
                     <p class="stat-label">Miles Driven</p>
                 </div>
                 <div class="stat-item stat-item-fuel">
-                    <p class="stat-number"><?php echo number_format($total_fuel_consumption, 2); ?></p>
+                    <p class="stat-number"><?php echo number_format($project_totals['fuel'], 2); ?></p>
                     <p class="stat-label">Fuel (gal)</p>
                 </div>
             </div>
         </div>
     </div>
+
+    <div class="filter-pills-container">
+        <div class="filter-pills">
+            <button type="button" class="filter-pill <?php echo ($filter === 'total' || empty($filter)) ? 'active' : ''; ?>" onclick="setFilter('total')">All Time</button>
+            <button type="button" class="filter-pill <?php echo $filter === 'ytd' ? 'active' : ''; ?>" onclick="setFilter('ytd')">YTD</button>
+        </div>
+    </div>
+
+    <!-- Charts Section -->
+    <?php if (!empty($project_chart_deliveries)): ?>
+    <div class="charts-section">
+        <div class="chart-card">
+            <h3><i class="fas fa-chart-pie"></i> Emissions by Status</h3>
+            <div class="chart-container">
+                <canvas id="statusPieChart"></canvas>
+            </div>
+        </div>
+        <div class="chart-card">
+            <h3><i class="fas fa-chart-bar"></i> Miles by Manufacturer</h3>
+            <div class="chart-container">
+                <canvas id="manufacturerBarChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <!-- Filter Section -->
     <div class="filter-section">
@@ -1365,6 +1569,27 @@ $conn->close();
                 <i class="fas fa-leaf"></i>
                 Environmental Impact
             </h3>
+            <div class="table-header-center">
+                <div class="filtered-summary-header">Totals:</div>
+                <div class="filtered-summary-chips">
+                    <div class="filtered-summary-chip">
+                        <span class="label">Emissions</span>
+                        <span class="value" id="pageEmissionsTotal"><?php echo number_format($total_emissions, 2); ?> kg</span>
+                    </div>
+                    <div class="filtered-summary-chip">
+                        <span class="label">Miles</span>
+                        <span class="value" id="pageMilesTotal"><?php echo number_format($total_miles_driven, 2); ?> mi</span>
+                    </div>
+                    <div class="filtered-summary-chip">
+                        <span class="label">Fuel</span>
+                        <span class="value" id="pageFuelTotal"><?php echo number_format($total_fuel_consumption, 2); ?> gal</span>
+                    </div>
+                    <div class="filtered-summary-chip">
+                        <span class="label">MW Delivered</span>
+                        <span class="value" id="pageMwTotal"><?php echo number_format($total_mws_delivered, 2); ?> MW</span>
+                    </div>
+                </div>
+            </div>
             <div class="table-header-actions">
                 <button type="submit" form="filterForm" name="export" value="1" class="btn-export-header">
                     <i class="fas fa-download"></i>
@@ -1426,7 +1651,10 @@ $conn->close();
             <tbody>
             <?php if (!empty($deliveries)): ?>
                 <?php foreach ($deliveries as $del): ?>
-                    <tr>
+                    <tr data-emissions="<?php echo htmlspecialchars($del['emissions'] ?? 0); ?>"
+                        data-miles="<?php echo htmlspecialchars($del['miles_driven'] ?? 0); ?>"
+                        data-fuel="<?php echo htmlspecialchars($del['fuel_consumption'] ?? 0); ?>"
+                        data-mws="<?php echo htmlspecialchars($del['mws_delivered'] ?? 0); ?>">
                         <td class="col-supplier"><?php echo htmlspecialchars($del['supplier'] ?? ''); ?></td>
                         <td class="col-wattage"><?php echo htmlspecialchars($del['wattage'] ?? ''); ?></td>
                         <td class="col-quantity"><?php echo htmlspecialchars($del['quantity'] ?? ''); ?></td>
@@ -1607,7 +1835,8 @@ $conn->close();
         });
         
         // Show only current page rows
-        allDeliveryRows.slice(startIndex, endIndex).forEach(row => {
+        const visibleRows = allDeliveryRows.slice(startIndex, endIndex);
+        visibleRows.forEach(row => {
             row.style.display = '';
         });
         
@@ -1634,7 +1863,156 @@ $conn->close();
         if (nextButton) {
             nextButton.disabled = currentPage >= maxPages || totalItems === 0;
         }
+
+        updatePageTotals(visibleRows);
     }
+
+    function updatePageTotals(rows) {
+        let emissions = 0;
+        let miles = 0;
+        let fuel = 0;
+        let mws = 0;
+
+        rows.forEach(row => {
+            emissions += parseFloat(row.dataset.emissions || 0);
+            miles += parseFloat(row.dataset.miles || 0);
+            fuel += parseFloat(row.dataset.fuel || 0);
+            mws += parseFloat(row.dataset.mws || 0);
+        });
+
+        const formatValue = (value) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const emissionsEl = document.getElementById('pageEmissionsTotal');
+        const milesEl = document.getElementById('pageMilesTotal');
+        const fuelEl = document.getElementById('pageFuelTotal');
+        const mwEl = document.getElementById('pageMwTotal');
+
+        if (emissionsEl) emissionsEl.textContent = `${formatValue(emissions)} kg`;
+        if (milesEl) milesEl.textContent = `${formatValue(miles)} mi`;
+        if (fuelEl) fuelEl.textContent = `${formatValue(fuel)} gal`;
+        if (mwEl) mwEl.textContent = `${formatValue(mws)} MW`;
+    }
+
+    // Initialize sustainability charts
+    function initSustainabilityCharts() {
+        const deliveryData = <?php echo json_encode($project_chart_deliveries); ?>;
+
+        if (!deliveryData || deliveryData.length === 0) return;
+
+        // Aggregate by status
+        const statusData = {};
+        deliveryData.forEach(d => {
+            const status = d.status || 'Unknown';
+            if (!statusData[status]) statusData[status] = 0;
+            statusData[status] += d.emissions;
+        });
+
+        // Aggregate by manufacturer
+        const mfrData = {};
+        deliveryData.forEach(d => {
+            const mfr = d.supplier || 'Unknown';
+            if (!mfrData[mfr]) mfrData[mfr] = { miles: 0, emissions: 0 };
+            mfrData[mfr].miles += d.miles;
+            mfrData[mfr].emissions += d.emissions;
+        });
+
+        const colors = [
+            '#488C9A', '#10b981', '#3b82f6', '#8b5cf6', '#f59e0b',
+            '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#6366f1'
+        ];
+
+        // Status Pie Chart
+        const statusLabels = Object.keys(statusData);
+        const statusValues = Object.values(statusData);
+        const statusCtx = document.getElementById('statusPieChart');
+        if (statusCtx && statusLabels.length > 0) {
+            new Chart(statusCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: statusLabels,
+                    datasets: [{
+                        data: statusValues,
+                        backgroundColor: colors.slice(0, statusLabels.length),
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                padding: 12,
+                                usePointStyle: true,
+                                font: { size: 11 }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const value = context.raw;
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const pct = ((value / total) * 100).toFixed(1);
+                                    return `${context.label}: ${value.toFixed(1)} kg (${pct}%)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Manufacturer Bar Chart
+        const mfrLabels = Object.keys(mfrData);
+        const mfrMiles = mfrLabels.map(m => mfrData[m].miles);
+        const mfrCtx = document.getElementById('manufacturerBarChart');
+        if (mfrCtx && mfrLabels.length > 0) {
+            new Chart(mfrCtx, {
+                type: 'bar',
+                data: {
+                    labels: mfrLabels,
+                    datasets: [{
+                        label: 'Miles Driven',
+                        data: mfrMiles,
+                        backgroundColor: colors.slice(0, mfrLabels.length),
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.raw.toLocaleString()} miles`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString() + ' mi';
+                                }
+                            }
+                        },
+                        x: {
+                            grid: { display: false }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    // Call init on page load
+    document.addEventListener('DOMContentLoaded', initSustainabilityCharts);
     </script>
 </main>
 </body>
