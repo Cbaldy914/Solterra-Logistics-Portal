@@ -26,6 +26,7 @@ if (!$is_admin && !$is_user) {
 require_once '../config.php';
 require_once 'document_helpers.php';
 require_once 'delivery_notification_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
@@ -1020,7 +1021,12 @@ if ($action) {
                                     notify_delivery_status_change($delivery_id_notif, $old_delivery_statuses_scheduling[$delivery_id_notif], 'Delivered to Project');
                                 }
                             }
-                            
+
+                            // Trigger project delivery payment milestones
+                            foreach ($delivery_ids_to_update as $delivery_id_milestone) {
+                                trigger_delivery_milestone($delivery_id_milestone, 'project_delivery', $conn, $user_id);
+                            }
+
                             // Update associated pallet statuses to "Delivered to Project" for ALL deliveries
                             $pallet_status_update_count = 0;
                             $new_pallet_status = 'Delivered to Project';

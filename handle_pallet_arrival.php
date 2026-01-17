@@ -12,6 +12,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 require_once '../config.php';
 require_once 'document_helpers.php';
 require_once 'delivery_notification_helpers.php';
+require_once 'milestone_helpers.php';
 
 // Check the action to determine what type of receiving we're doing
 $action = $_POST['action'] ?? '';
@@ -223,7 +224,12 @@ if ($action === 'receive_truckload') {
         if ($old_delivery_status !== $delivery_status) {
             notify_delivery_status_change($delivery_id, $old_delivery_status, $delivery_status);
         }
-        
+
+        // Trigger customs_cleared payment milestone (only for ports)
+        if ($is_port) {
+            trigger_delivery_milestone($delivery_id, 'customs_cleared', $conn, $_SESSION['user_id']);
+        }
+
         $_SESSION['move_pallet_message'] = "Successfully received truckload with $updated_count pallets. Delivery updated with arrival date: $actual_arrival_date.";
         
     } catch (Exception $e) {
@@ -304,6 +310,7 @@ if ($action === 'receive_truckload') {
         
         $total_pallets_updated = 0;
         $successful_deliveries = [];
+        $successful_delivery_ids = [];
         $errors = [];
         $old_delivery_statuses = []; // Store old statuses for notifications
         
@@ -445,7 +452,8 @@ if ($action === 'receive_truckload') {
                 }
                 
                 $successful_deliveries[] = "Delivery $delivery_id ($delivery_pallet_count pallets)";
-                
+                $successful_delivery_ids[] = $delivery_id;
+
             } catch (Exception $e) {
                 $errors[] = "Delivery $delivery_id: " . $e->getMessage();
             }
@@ -460,7 +468,14 @@ if ($action === 'receive_truckload') {
                     notify_delivery_status_change($delivery_id_success, $old_delivery_statuses[$delivery_id_success], $delivery_status);
                 }
             }
-            
+
+            // Trigger customs_cleared payment milestones (only for ports)
+            if ($is_port) {
+                foreach ($successful_delivery_ids as $success_delivery_id) {
+                    trigger_delivery_milestone($success_delivery_id, 'customs_cleared', $conn, $_SESSION['user_id']);
+                }
+            }
+
             $success_message = "Successfully received " . count($successful_deliveries) . " truckload(s) with $total_pallets_updated total pallets. ";
             $success_message .= "Deliveries: " . implode(", ", $successful_deliveries) . ". ";
             $success_message .= "Arrival date: $actual_arrival_date.";
@@ -589,7 +604,14 @@ if ($action === 'receive_truckload') {
                 notify_delivery_status_change($updated_delivery_id, $old_delivery_statuses_pallets[$updated_delivery_id], $new_delivery_status);
             }
         }
-        
+
+        // Trigger customs_cleared payment milestones (only for ports)
+        if ($is_port) {
+            foreach ($updated_deliveries as $updated_delivery_id) {
+                trigger_delivery_milestone($updated_delivery_id, 'customs_cleared', $conn, $_SESSION['user_id']);
+            }
+        }
+
         $msg = '';
         if (!empty($successes)) {
             $msg .= "Successfully received Pallet ID(s): " . implode(", ", $successes) . ". ";

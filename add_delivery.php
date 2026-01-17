@@ -14,6 +14,7 @@ $user_id = $_SESSION['user_id'];
 
 /* ─────────────────────────────────────  DB CONNECTION  ─────────────────────────────────────── */
 require_once '../config.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) die("Unable to connect to database.");
 
@@ -265,6 +266,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_delivery'])) {
                 $stmt->close(); // Close statement before throwing
                 throw new Exception("Error executing insert for wattage {$w}: " . $exec_error);
             }
+
+            // Trigger shipping milestone for this delivery (modules shipping from manufacturer)
+            $delivery_id = $conn->insert_id;
+            if ($delivery_id > 0) {
+                trigger_delivery_milestone($delivery_id, 'shipping', $conn, $user_id);
+            }
+
             $created_count++;
         }
 

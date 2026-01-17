@@ -13,6 +13,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
 // Database connection
 require_once '../config.php';
 require_once 'document_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -148,6 +149,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $module_docs_description   = trim($_POST['module_docs_description'] ?? '');
         $module_docs_url           = null; // Legacy column (now stored in project_documents)
         $cost_per_watt             = isset($_POST['cost_per_watt']) && $_POST['cost_per_watt'] !== '' ? floatval($_POST['cost_per_watt']) : null;
+
+        // Payment milestones (optional)
+        $milestones = isset($_POST['milestones']) && is_array($_POST['milestones']) ? $_POST['milestones'] : [];
 
         if ($project_name === '') {
             throw new Exception("Project Name is required.");
@@ -551,6 +555,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $module_batch_id = $stmt_module->insert_id;
             $stmt_module->close();
+
+            // Save payment milestones if configured
+            if (!empty($milestones)) {
+                save_module_milestones($module_batch_id, $milestones, $conn);
+
+                // Trigger PO execution milestone now that batch is created
+                trigger_batch_milestone($module_batch_id, 'po_execution', $conn, $_SESSION['user_id']);
+            }
 
             // Insert items into unassigned_module_items
             $stmt_item = $conn->prepare("
@@ -2397,15 +2409,16 @@ function setModuleMode(mode) {
         try {
             const res = await fetch('upload_temp_photo.php', { method: 'POST', body: fd });
             const data = await res.json();
-            if (data.success) {
-                uploadedPhotos.push({ name: data.name, path: data.path });
+            if (data.success && data.file) {
+                const fileData = data.file;
+                uploadedPhotos.push({ name: fileData.name, path: fileData.path });
 
                 if (isFirst) {
                     // Update profile preview with first photo
-                    updateProfileImage(data.path);
+                    updateProfileImage(fileData.path);
                 } else {
                     // Replace loading tile with actual photo
-                    replaceLoadingTile(tileId, data);
+                    replaceLoadingTile(tileId, fileData);
                 }
 
                 updatePhotoOrder();

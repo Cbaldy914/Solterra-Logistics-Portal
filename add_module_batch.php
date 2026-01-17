@@ -10,6 +10,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 
 require_once '../config.php';
 require_once 'document_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
@@ -151,6 +152,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $module_notes = trim($_POST['module_notes'] ?? '');
     $cost_per_watt = isset($_POST['cost_per_watt']) && $_POST['cost_per_watt'] !== '' ? floatval($_POST['cost_per_watt']) : null;
 
+    // Payment milestones (optional)
+    $milestones = isset($_POST['milestones']) && is_array($_POST['milestones']) ? $_POST['milestones'] : [];
+
     // Build vendor/location defaults
     if ($manufacturer_id) {
         if ($stmtM = $conn->prepare("SELECT name FROM manufacturers WHERE id = ?")) {
@@ -263,6 +267,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $module_id = $conn->insert_id;
             $stmtInsert->close();
+
+            // Save payment milestones if configured
+            if (!empty($milestones)) {
+                save_module_milestones($module_id, $milestones, $conn);
+
+                // Trigger PO execution milestone now that batch is created
+                trigger_batch_milestone($module_id, 'po_execution', $conn, $_SESSION['user_id']);
+            }
 
             // Ensure logistics specs are stored (including derived values)
             $mpp_val = $modules_per_pallet ?? 0;

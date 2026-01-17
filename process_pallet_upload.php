@@ -27,6 +27,7 @@ if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])) {
 require_once '../config.php';
 require_once 'schedule_parser.php';
 require_once 'document_helpers.php';
+require_once 'milestone_helpers.php';
 
 $conn = getDBConnection();
 if (!$conn) {
@@ -664,12 +665,23 @@ function handleImport($conn, $user_id) {
         'cost_per_watt' => !empty($_POST['cost_per_watt']) ? floatval($_POST['cost_per_watt']) : null
     ];
 
+    // Payment milestones (optional)
+    $milestones = isset($_POST['milestones']) && is_array($_POST['milestones']) ? $_POST['milestones'] : [];
+
     // Start transaction
     $conn->begin_transaction();
 
     try {
         // Find or create module batch for this manufacturer + project
         $moduleBatchId = findOrCreateModuleBatch($conn, $account_id, $project_id, $manufacturer_id, $manufacturerName, $initial_location, $logistics);
+
+        // Save payment milestones if configured
+        if (!empty($milestones)) {
+            save_module_milestones($moduleBatchId, $milestones, $conn);
+
+            // Trigger PO execution milestone now that batch is created
+            trigger_batch_milestone($moduleBatchId, 'po_execution', $conn, $_SESSION['user_id']);
+        }
 
         $palletsCreated = 0;
         $palletsUpdated = 0;

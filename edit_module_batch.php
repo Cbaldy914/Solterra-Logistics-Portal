@@ -9,6 +9,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
 }
 
 require_once '../config.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) { die('Database connection failed.'); }
 
@@ -261,6 +262,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $module_notes = trim($_POST['module_notes'] ?? '');
     $cost_per_watt = isset($_POST['cost_per_watt']) && $_POST['cost_per_watt'] !== '' ? floatval($_POST['cost_per_watt']) : null;
 
+    // Payment milestones (optional)
+    $milestones = isset($_POST['milestones']) && is_array($_POST['milestones']) ? $_POST['milestones'] : [];
+
     $posted_watts = $_POST['wattages'] ?? [];
     $posted_qtys = $_POST['quantities'] ?? [];
 
@@ -322,6 +326,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
             if (!$stmtU->execute()) { throw new Exception('Failed updating module: '.$stmtU->error); }
             $stmtU->close();
+
+            // Save payment milestones (replaces existing)
+            save_module_milestones($batch_id, $milestones, $conn);
 
             // Map existing items by wattage
             $existing_items = [];
@@ -523,6 +530,9 @@ foreach ($current_wattages as $w) {
         ];
     }
 }
+
+// Load existing payment milestones for this batch
+$existingMilestones = get_module_milestones($batch_id, $conn);
 
 ?>
 <!DOCTYPE html>
