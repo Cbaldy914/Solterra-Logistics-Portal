@@ -20,6 +20,7 @@ $project_id = intval($_GET['project_id']);
 // Database connection
 require_once '../config.php';
 require_once 'cost_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -162,7 +163,7 @@ if ($search_query !== '') {
 }
 
 // Additional "filter" logic (price_per_watt, ytd, etc.)
-$filter        = $_GET['filter'] ?? 'total';
+$filter        = 'total';
 $current_year  = date('Y');
 $ytdConditionDeliveries = "";
 $ytdConditionPallets = "";
@@ -1036,30 +1037,6 @@ $project_solterra_per_watt = $project_total_watts > 0
     ? ($project_total_solterra_fee / $project_total_watts)
     : null;
 
-// Calculate costs by manufacturer for chart (project totals)
-$costs_by_manufacturer = [];
-$chart_delivery_sql = "SELECT * FROM deliveries WHERE project_id = ? ORDER BY id DESC";
-$stmt_chart = $conn->prepare($chart_delivery_sql);
-if ($stmt_chart) {
-    $stmt_chart->bind_param('i', $project_id);
-    $stmt_chart->execute();
-    $chart_result = $stmt_chart->get_result();
-    while ($d = $chart_result->fetch_assoc()) {
-        $mfr = $d['supplier'] ?? 'Unknown';
-        if (!isset($costs_by_manufacturer[$mfr])) {
-            $costs_by_manufacturer[$mfr] = ['freight' => 0, 'accessorial' => 0, 'warehousing' => 0, 'wattage' => 0];
-        }
-        $freight_cost = (float)($d['freight_cost'] ?? $d['customer_cost'] ?? 0);
-        $accessorial_cost = (float)($d['accessorial_costs'] ?? 0);
-        $warehousing_cost = calculateDeliveryWarehousingCost($d, $conn);
-        $costs_by_manufacturer[$mfr]['freight'] += $freight_cost;
-        $costs_by_manufacturer[$mfr]['accessorial'] += $accessorial_cost;
-        $costs_by_manufacturer[$mfr]['warehousing'] += $warehousing_cost;
-        $costs_by_manufacturer[$mfr]['wattage'] += (float)($d['wattage'] ?? 0) * (float)($d['quantity'] ?? 0);
-    }
-    $stmt_chart->close();
-}
-
 // Warehouse name lookup for status display
 $warehouse_name_map = [];
 if (!empty($warehouse_ids_for_lookup)) {
@@ -1177,7 +1154,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
     exit();
 }
 
-$conn->close();
+// Note: $conn->close() moved to after milestone component to avoid "mysqli already closed" error
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -2506,6 +2483,29 @@ $conn->close();
         </div>
     </div>
 
+    <div class="milestone-cost-layout" style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap;">
+        <div style="flex: 1 1 0; min-width: 320px;">
+            <!-- Module Payment Milestones Section -->
+            <?php
+            // Include the milestone detail table component
+            $section_title = 'Module Payment Milestones';
+            $collapsible = false;
+            include 'components/milestone_detail_table.php';
+
+            // Close the database connection after milestone component is done
+            $conn->close();
+            ?>
+        </div>
+        <div style="flex: 1 1 0; min-width: 320px;">
+            <div class="chart-card" style="margin-top: 0;">
+                <h3><i class="fas fa-chart-pie"></i> Cost Breakdown</h3>
+                <div class="chart-container">
+                    <canvas id="costBreakdownChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Logistics Breakdown Modal -->
     <div id="logisticsModal" class="logistics-modal">
         <div class="logistics-modal-content">
@@ -2553,34 +2553,6 @@ $conn->close();
                 <div class="logistics-chart-container">
                     <canvas id="logisticsBreakdownChart"></canvas>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Filter Pills -->
-    <div class="filter-pills-container">
-        <div class="filter-pills">
-            <button type="button" class="filter-pill <?php echo ($filter === 'total' || empty($filter)) ? 'active' : ''; ?>" onclick="setFilter('total')">All Time</button>
-            <button type="button" class="filter-pill <?php echo $filter === 'ytd' ? 'active' : ''; ?>" onclick="setFilter('ytd')">YTD</button>
-        </div>
-        <div class="view-mode-toggle">
-            <button type="button" class="view-mode-btn active" data-mode="dollars" onclick="setViewMode('dollars')">$ Dollars</button>
-            <button type="button" class="view-mode-btn" data-mode="per_watt" onclick="setViewMode('per_watt')">$/Watt</button>
-        </div>
-    </div>
-
-    <!-- Charts Section -->
-    <div class="charts-section">
-        <div class="chart-card">
-            <h3><i class="fas fa-chart-pie"></i> Cost Breakdown</h3>
-            <div class="chart-container">
-                <canvas id="costBreakdownChart"></canvas>
-            </div>
-        </div>
-        <div class="chart-card">
-            <h3><i class="fas fa-chart-bar"></i> Costs by Manufacturer</h3>
-            <div class="chart-container">
-                <canvas id="manufacturerCostChart"></canvas>
             </div>
         </div>
     </div>
@@ -3228,8 +3200,7 @@ $conn->close();
     document.addEventListener('DOMContentLoaded', () => {
         const savedTab = localStorage.getItem('cost_details_tab');
         switchTab(savedTab || 'pallets');
-        const savedMode = localStorage.getItem('cost_view_mode') || 'dollars';
-        setViewMode(savedMode);
+        setViewMode('dollars');
     });
 
     // Logistics Modal Functions
@@ -3237,8 +3208,7 @@ $conn->close();
         const modal = document.getElementById('logisticsModal');
         if (modal) {
             modal.style.display = 'block';
-            const mode = localStorage.getItem('cost_view_mode') || 'dollars';
-            initLogisticsChart(mode);
+            initLogisticsChart('dollars');
         }
     }
 
@@ -3320,12 +3290,10 @@ $conn->close();
         accessorialPerWatt: <?php echo $project_accessorial_per_watt !== null ? $project_accessorial_per_watt : 'null'; ?>,
         solterraPerWatt: <?php echo $project_solterra_per_watt !== null ? $project_solterra_per_watt : 'null'; ?>,
         modulePerWatt: <?php echo $project_module_cost_per_watt !== null ? $project_module_cost_per_watt : 'null'; ?>,
-        hasWattage: <?php echo $project_total_watts > 0 ? 'true' : 'false'; ?>,
-        manufacturerCosts: <?php echo json_encode($costs_by_manufacturer); ?>
+        hasWattage: <?php echo $project_total_watts > 0 ? 'true' : 'false'; ?>
     };
 
     let costBreakdownChart = null;
-    let manufacturerChart = null;
     let logisticsChart = null;
 
     function buildBreakdownData(source, isPerWatt) {
@@ -3358,18 +3326,16 @@ $conn->close();
         if (costBreakdownChart) {
             costBreakdownChart.destroy();
         }
-        if (manufacturerChart) {
-            manufacturerChart.destroy();
-        }
 
         const breakdownCtx = document.getElementById('costBreakdownChart');
         if (breakdownCtx) {
-            const moduleCost = isPerWatt ? (chartData.modulePerWatt ?? 0) : chartData.module;
-            const freightCost = isPerWatt ? (chartData.freightPerWatt ?? 0) : chartData.freight;
-            const warehousingCost = isPerWatt ? (chartData.warehousingPerWatt ?? 0) : chartData.warehousing;
-            const accessorialCost = isPerWatt ? (chartData.accessorialPerWatt ?? 0) : chartData.accessorial;
             const breakdownLabels = ['Module Cost', 'Freight', 'Warehousing', 'Accessorial'];
-            const breakdownData = [moduleCost, freightCost, warehousingCost, accessorialCost].map(v => (v === null || Number.isNaN(v) ? 0 : v));
+            const breakdownData = [
+                chartData.module,
+                chartData.freight,
+                chartData.warehousing,
+                chartData.accessorial
+            ];
             const breakdownColors = ['#488C9A', '#3b82f6', '#8b5cf6', '#f59e0b'];
 
             costBreakdownChart = new Chart(breakdownCtx, {
@@ -3399,12 +3365,6 @@ $conn->close();
                                     const value = context.raw;
                                     const total = context.dataset.data.reduce((a, b) => a + b, 0);
                                     const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
-                                    if (isPerWatt) {
-                                        if (!chartData.hasWattage) {
-                                            return `${context.label}: N/A`;
-                                        }
-                                        return `${context.label}: ${formatPerWatt(value)} (${pct}%)`;
-                                    }
                                     return `${context.label}: ${formatCurrency(value)} (${pct}%)`;
                                 }
                             }
@@ -3415,82 +3375,6 @@ $conn->close();
             });
         }
 
-        const mfrCtx = document.getElementById('manufacturerCostChart');
-        if (mfrCtx && Object.keys(chartData.manufacturerCosts).length > 0) {
-            const mfrLabels = Object.keys(chartData.manufacturerCosts);
-            const getPerWatt = (m, value) => {
-                const watts = chartData.manufacturerCosts[m].wattage || 0;
-                return watts > 0 ? (value / watts) : 0;
-            };
-            const freightData = mfrLabels.map(m => isPerWatt
-                ? getPerWatt(m, chartData.manufacturerCosts[m].freight)
-                : chartData.manufacturerCosts[m].freight
-            );
-            const warehouseData = mfrLabels.map(m => isPerWatt
-                ? getPerWatt(m, chartData.manufacturerCosts[m].warehousing)
-                : chartData.manufacturerCosts[m].warehousing
-            );
-            const accessorialData = mfrLabels.map(m => isPerWatt
-                ? getPerWatt(m, chartData.manufacturerCosts[m].accessorial)
-                : chartData.manufacturerCosts[m].accessorial
-            );
-
-            manufacturerChart = new Chart(mfrCtx, {
-                type: 'bar',
-                data: {
-                    labels: mfrLabels,
-                    datasets: [
-                        {
-                            label: 'Freight',
-                            data: freightData,
-                            backgroundColor: '#488C9A'
-                        },
-                        {
-                            label: 'Warehousing',
-                            data: warehouseData,
-                            backgroundColor: '#293E4C'
-                        },
-                        {
-                            label: 'Accessorial',
-                            data: accessorialData,
-                            backgroundColor: '#fbb040'
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            stacked: true,
-                            grid: { display: false }
-                        },
-                        y: {
-                            stacked: true,
-                            ticks: {
-                                callback: function(value) {
-                                    return isPerWatt ? formatPerWatt(value) : ('$' + value.toLocaleString());
-                                }
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            position: 'top'
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    return isPerWatt
-                                        ? `${context.dataset.label}: ${formatPerWatt(context.raw)}`
-                                        : `${context.dataset.label}: ${formatCurrency(context.raw)}`;
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
     }
 
     function initLogisticsChart(mode) {

@@ -23,6 +23,7 @@ $project_id = intval($_GET['project_id']);
 require_once '../config.php';
 require_once 'anticipated_schedule_helpers.php';
 require_once 'cost_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -1030,6 +1031,11 @@ $logistics_percentage_of_module = ($total_module_cost > 0) ? ($total_logistics_c
 
 // Total project cost (modules + logistics)
 $total_project_cost = $total_module_cost + $total_logistics_cost;
+
+// Get milestone payment data
+$milestone_completion = get_milestone_completion_status($project_id, $conn);
+$milestone_timeline = get_milestone_payment_timeline($project_id, $conn);
+$has_milestone_data = $milestone_completion['total_contract_value'] > 0;
 
 // Build cost_data
 $cost_data = [];

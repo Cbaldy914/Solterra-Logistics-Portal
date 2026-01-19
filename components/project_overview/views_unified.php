@@ -1130,6 +1130,19 @@ document.addEventListener('keydown', function(e) {
 
     <!-- Financial Sub-tab -->
     <div id="subtab-financial" class="sub-tab-content" style="display:none;">
+        <?php if ($has_milestone_data): ?>
+        <!-- Module Payment Progress Card -->
+        <div style="margin-bottom: 24px;">
+            <?php
+            $milestone_status = $milestone_completion;
+            $card_title = 'Module Payment Progress';
+            $show_batches = false;
+            $compact = false;
+            include __DIR__ . '/../milestone_summary_card.php';
+            ?>
+        </div>
+        <?php endif; ?>
+
         <!-- Unit Filters (inside content) -->
         <div class="unit-filter-bar">
             <span class="filter-label">View as:</span>
@@ -1143,6 +1156,18 @@ document.addEventListener('keydown', function(e) {
 
         <div class="tables-and-charts">
                 <div class="left-side">
+                    <?php if ($has_milestone_data && !empty($milestone_timeline)): ?>
+                    <!-- Payment Timeline -->
+                    <div style="margin-bottom: 24px;">
+                        <?php
+                        $table_title = 'Payment Timeline';
+                        $show_cumulative = true;
+                        $max_rows = 8;
+                        include __DIR__ . '/../milestone_timeline_table.php';
+                        ?>
+                    </div>
+                    <?php endif; ?>
+
                     <h2>Invoices and Cashflow Forecast</h2>
                     <div class="table-responsive">
                         <table id="invoices-forecast-table">
@@ -1166,9 +1191,9 @@ document.addEventListener('keydown', function(e) {
                                     <?php foreach($weeks_financial as $ix=>$wf){
                                         $val = $anticipated_deliveries_financial[$ix] ?? 0;
                                         // Calculate per-unit values for weekly forecasts
-                                        $week_ppw = ($total_watts ?? 0) > 0 ? $val / $total_watts : 0;
-                                        $week_ppm = ($total_modules ?? 0) > 0 ? $val / $total_modules : 0;
-                                        $week_ppp = ($total_pallets ?? 0) > 0 ? $val / $total_pallets : 0;
+                                        $week_ppw = ($total_watts ?? 0) > 0 ? $val / ($total_watts ?? 1) : 0;
+                                        $week_ppm = ($total_modules ?? 0) > 0 ? $val / ($total_modules ?? 1) : 0;
+                                        $week_ppp = ($total_pallets ?? 0) > 0 ? $val / ($total_pallets ?? 1) : 0;
                                         echo "<td class=\"financial-value\" data-total=\"{$val}\" data-watt=\"{$week_ppw}\" data-module=\"{$week_ppm}\" data-pallet=\"{$week_ppp}\">$".number_format($val,2)."</td>";
                                     } ?>
                                 </tr>

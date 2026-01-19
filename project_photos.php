@@ -74,27 +74,42 @@ foreach ($photos as $ph) { if (isset($photos_map[$ph['id']])) { $ordered_photos[
   <link rel="icon" href="pictures/favicon.png" type="image/x-icon" />
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <style>
-    .global-documents-header { background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 24px; padding: 32px; margin-bottom: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.06); border: 1px solid rgba(72,140,154,0.08); position: relative; overflow:hidden; }
-    .global-documents-header::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
+    .page-header { background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border-radius: 24px; padding: 32px; margin-bottom: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.06); border: 1px solid rgba(72,140,154,0.08); position: relative; overflow:hidden; }
+    .page-header::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background: linear-gradient(90deg, #488C9A 0%, #293E4C 100%); }
     .header-content { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:24px; }
     .header-left { display:flex; align-items:center; gap:24px; }
-    .cover-block { width: 180px; height: 120px; background:#eaeff2; border-radius: 16px; overflow:hidden; box-shadow: 0 10px 20px rgba(72,140,154,0.2); border:1px solid rgba(72,140,154,0.15); }
-    .cover-block img { width:100%; height:100%; object-fit:cover; display:block; }
     .header-info h1 { font-size: 2.5em; font-weight: 700; background: linear-gradient(135deg, #293E4C 0%, #488C9A 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0 0 8px 0; line-height: 1.2; }
     .header-subtitle { color: #6c757d; font-size: 1.05em; font-weight: 500; margin: 0; }
+    .cover-preview { width: 200px; height: 130px; background:#eaeff2; border-radius: 16px; overflow:hidden; box-shadow: 0 10px 20px rgba(72,140,154,0.2); border:1px solid rgba(72,140,154,0.15); }
+    .cover-preview img { width:100%; height:100%; object-fit:cover; display:block; }
 
-    .dropzone { border: 2px dashed rgba(72,140,154,0.35); border-radius: 16px; padding: 28px; text-align:center; color:#537786; background: linear-gradient(135deg,#f8fbfc,#f3f8fa); margin-bottom: 16px; cursor:pointer; }
-    .dropzone.dragover { background: #eef7fb; border-color: #488C9A; }
+    .photo-toolbar { display:flex; justify-content:flex-end; margin: 8px 0 20px; }
 
-    .grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
-    .tile { position:relative; border-radius:14px; overflow:hidden; background:#0f2532; box-shadow: 0 10px 20px rgba(0,0,0,0.15); }
-    .tile img { display:block; width:100%; height:180px; object-fit:cover; }
-    .tile .meta { position:absolute; left:0; right:0; bottom:0; display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 80%); color:#fff; }
-    .tile .actions { position:absolute; top:8px; right:8px; display:flex; gap:8px; }
-    .chip { background: rgba(255,255,255,0.14); padding:4px 8px; border-radius: 999px; font-size: .8rem; }
-    .icon-btn { background: rgba(0,0,0,0.5); color:#fff; border:none; border-radius:8px; width:36px; height:36px; display:flex; align-items:center; justify-content:center; cursor:pointer; }
-    .icon-btn:hover { background: rgba(0,0,0,0.7); }
-    .drag-handle { cursor:grab; }
+    .photo-grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
+    .photo-card { position:relative; border-radius:16px; overflow:hidden; background:#fff; box-shadow: 0 10px 20px rgba(0,0,0,0.12); border: 1px solid rgba(72,140,154,0.1); min-height: 180px; cursor: grab; transition: transform 0.18s ease, box-shadow 0.18s ease; }
+    .photo-card img { display:block; width:100%; height:100%; object-fit:cover; min-height: 180px; }
+    .photo-card.cover { grid-column: span 2; grid-row: span 2; min-height: 260px; }
+    .photo-card.cover img { min-height: 260px; }
+    .photo-actions { position:absolute; top:10px; right:10px; display:flex; gap:8px; }
+    .photo-order { position:absolute; bottom:12px; left:12px; background: rgba(0,0,0,0.6); color:#fff; padding:4px 10px; border-radius:999px; font-size:0.8rem; }
+    .photo-badge { position:absolute; bottom:12px; right:12px; background: #488C9A; color:#fff; padding:4px 10px; border-radius:999px; font-size:0.75rem; font-weight:600; }
+    .photo-card:hover { transform: translateY(-2px); box-shadow: 0 14px 26px rgba(0,0,0,0.18); }
+    .photo-card.dragging { opacity: 0.4; cursor: grabbing; transform: scale(0.98); }
+
+    .add-card { display:flex; align-items:center; justify-content:center; flex-direction:column; gap:8px; border:2px dashed rgba(72,140,154,0.35); background: linear-gradient(135deg,#f8fbfc,#f3f8fa); color:#537786; cursor:pointer; box-shadow:none; }
+    .add-card i { font-size: 28px; color: #488C9A; }
+    .add-card:hover { border-color: #488C9A; background: #eef7fb; }
+
+    .placeholder-card { display:flex; align-items:center; justify-content:center; flex-direction:column; gap:8px; border:2px dashed rgba(72,140,154,0.25); background: #f8fbfc; color:#537786; box-shadow:none; }
+
+    .icon-btn { background: rgba(0,0,0,0.55); color:#fff; border:none; border-radius:8px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+    .icon-btn:hover { background: rgba(0,0,0,0.75); }
+    .photo-card img { pointer-events: none; }
+
+    .upload-modal { display:none; position: fixed; inset: 0; background: rgba(15,28,36,0.55); align-items:center; justify-content:center; z-index:1100; }
+    .upload-modal-content { background:#fff; border-radius:16px; padding:20px 28px; display:flex; align-items:center; gap:12px; box-shadow: 0 15px 40px rgba(0,0,0,0.3); color:#293E4C; font-weight:600; }
+    .upload-spinner { width:24px; height:24px; border:3px solid #e6e6e6; border-top-color:#488C9A; border-radius:50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     .modal { display:none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:1000; }
     .modal .modal-content { background:#0b1f2a; border-radius:16px; padding:0; width:min(900px,95%); color:#e6f1f5; box-shadow: 0 15px 40px rgba(0,0,0,0.4); overflow:hidden; }
@@ -114,55 +129,59 @@ foreach ($photos as $ph) { if (isset($photos_map[$ph['id']])) { $ordered_photos[
     ]);
   ?>
 
-  <div class="global-documents-header">
+  <div class="page-header">
     <div class="header-content">
       <div class="header-left">
-        <div class="cover-block" id="coverPreview"><img src="<?php echo htmlspecialchars($cover_image_url); ?>" alt="Project Cover"/></div>
+        <div class="cover-preview" id="coverPreview"><img src="<?php echo htmlspecialchars($cover_image_url); ?>" alt="Project Cover"/></div>
         <div class="header-info">
-          <h1>Project Photos</h1>
-          <p class="header-subtitle"><?php echo htmlspecialchars($project_name); ?> — drag to reorder, first photo is the cover</p>
+          <h1>Project Photos: <?php echo htmlspecialchars($project_name); ?></h1>
+          <p class="header-subtitle">Drag to reorder — the first photo becomes the cover image.</p>
         </div>
       </div>
     </div>
   </div>
 
   <?php if ($can_upload): ?>
-  <input type="hidden" id="tempToken" value="<?php echo htmlspecialchars(uniqid('pp_', true)); ?>" />
-  <div id="dropzone" class="dropzone" onclick="openFilePicker()">
-    <i class="fas fa-images" style="font-size:22px; color:#488C9A;"></i>
-    <div>Drop images here or click to browse</div>
-  </div>
-  <input type="file" id="fileInput" accept="image/*" multiple style="display:none;" />
+    <input type="hidden" id="tempToken" value="<?php echo htmlspecialchars(uniqid('pp_', true)); ?>" />
+    <input type="file" id="fileInput" accept="image/*" multiple style="display:none;" />
+    <div class="photo-toolbar">
+      <button id="saveBtn" type="button" class="document-button" style="width:auto; padding:12px 18px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:#fff; box-shadow: 0 4px 15px rgba(72,140,154,0.3); cursor:pointer; transition: transform 0.06s ease, box-shadow 0.2s ease;" onclick="saveAll()" disabled>
+        <i class="fas fa-save"></i> Save Changes
+      </button>
+    </div>
   <?php endif; ?>
 
-  <?php if ($can_upload): ?>
-  <div class="save-actions" style="display:flex; justify-content:flex-end; margin: 8px 0 16px;">
-    <button id="saveBtn" type="button" class="document-button" style="width:auto; padding:12px 18px; background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%); color:#fff; box-shadow: 0 4px 15px rgba(72,140,154,0.3); cursor:pointer; transition: transform 0.06s ease, box-shadow 0.2s ease;" onclick="saveAll()" disabled>
-      <i class="fas fa-save"></i> Save
-    </button>
-  </div>
-  <?php endif; ?>
-
-  <div class="grid" id="photoGrid">
+  <div class="photo-grid" id="photoGrid">
     <?php if (empty($ordered_photos)): ?>
-      <div class="empty-state" style="grid-column: 1 / -1; text-align:center; padding: 40px; border:2px dashed rgba(72,140,154,0.25); border-radius:16px; color:#537786; background:linear-gradient(135deg,#f8fbfc,#f3f8fa)">
-        <i class="fas fa-camera" style="font-size:32px; color:#f59e0b;"></i>
-        <div style="margin-top:8px;">No photos yet — upload to get started</div>
+      <div class="photo-card placeholder-card">
+        <i class="fas fa-image" style="font-size:28px; color:#488C9A;"></i>
+        <div>Cover photo will appear here</div>
       </div>
+      <?php if ($can_upload): ?>
+        <div class="photo-card add-card" id="addPhotoCard" onclick="openFilePicker()">
+          <i class="fas fa-plus-circle"></i>
+          <div>Add Photo</div>
+        </div>
+      <?php endif; ?>
     <?php else: foreach ($ordered_photos as $idx => $ph): ?>
-      <div class="tile" <?php echo $can_upload ? 'draggable="true"' : ''; ?> data-id="<?php echo $ph['id']; ?>" data-path="<?php echo htmlspecialchars($ph['file_path']); ?>">
+      <div class="photo-card <?php echo $idx === 0 ? 'cover' : ''; ?>" <?php echo $can_upload ? 'draggable="true"' : ''; ?> data-id="<?php echo $ph['id']; ?>" data-path="<?php echo htmlspecialchars($ph['file_path']); ?>">
         <img src="<?php echo htmlspecialchars($ph['file_path']); ?>" alt="Project Photo"/>
-        <div class="actions">
+        <div class="photo-actions">
           <button class="icon-btn" title="View" onclick="openPreview('<?php echo htmlspecialchars($ph['file_path']); ?>')"><i class="fas fa-eye"></i></button>
           <?php if ($can_upload): ?>
-            <button class="icon-btn" title="Set as Cover" onclick="setAsCover(this)"><i class="fas fa-image"></i></button>
             <button class="icon-btn" title="Delete" onclick="deletePhoto(<?php echo $ph['id']; ?>)"><i class="fas fa-trash"></i></button>
-            <button class="icon-btn drag-handle" title="Drag to reorder"><i class="fas fa-up-down-left-right"></i></button>
           <?php endif; ?>
         </div>
-        <div class="meta"><span class="chip">#<?php echo $idx+1; ?></span><span class="chip">ID: <?php echo $ph['id']; ?></span></div>
+        <span class="photo-order"><?php echo $idx + 1; ?></span>
+        <span class="photo-badge" style="<?php echo $idx === 0 ? '' : 'display:none;'; ?>">Cover</span>
       </div>
     <?php endforeach; endif; ?>
+    <?php if (!empty($ordered_photos) && $can_upload): ?>
+      <div class="photo-card add-card" id="addPhotoCard" onclick="openFilePicker()">
+        <i class="fas fa-plus-circle"></i>
+        <div>Add Photo</div>
+      </div>
+    <?php endif; ?>
   </div>
 
   <div id="previewModal" class="modal" onclick="closePreview(event)">
@@ -172,9 +191,12 @@ foreach ($photos as $ph) { if (isset($photos_map[$ph['id']])) { $ordered_photos[
     </div>
   </div>
 
-  <?php if ($can_upload): ?>
-  <div class="save-actions" style="margin-top:16px; display:flex; justify-content:flex-end;"></div>
-  <?php endif; ?>
+  <div id="uploadModal" class="upload-modal">
+    <div class="upload-modal-content">
+      <div class="upload-spinner"></div>
+      <div id="uploadModalText">Uploading photos...</div>
+    </div>
+  </div>
 
 </main>
 
@@ -182,70 +204,114 @@ foreach ($photos as $ph) { if (isset($photos_map[$ph['id']])) { $ordered_photos[
 const projectId = <?php echo $project_id; ?>;
 const grid = document.getElementById('photoGrid');
 const fileInput = document.getElementById('fileInput');
-const dropzone = document.getElementById('dropzone');
 const saveBtn = document.getElementById('saveBtn');
 const tempTokenEl = document.getElementById('tempToken');
 const tempToken = tempTokenEl ? tempTokenEl.value : '';
+const addCard = document.getElementById('addPhotoCard');
+const uploadModal = document.getElementById('uploadModal');
+const uploadModalText = document.getElementById('uploadModalText');
 
 function markDirty(){ if (saveBtn) saveBtn.disabled = false; }
+function showUploadModal(total){ if (!uploadModal) return; uploadModal.style.display = 'flex'; updateUploadModal(0, total); }
+function updateUploadModal(done, total){ if (uploadModalText) uploadModalText.textContent = total ? `Uploading ${done} of ${total} photos...` : 'Uploading photos...'; }
+function hideUploadModal(){ if (uploadModal) uploadModal.style.display = 'none'; }
 function openFilePicker(){ if (fileInput) fileInput.click(); }
 
 if (fileInput) fileInput.addEventListener('change', async ()=>{ if (fileInput.files?.length){ await uploadTemp(fileInput.files); fileInput.value=''; } });
-if (dropzone) {
-  ['dragenter','dragover'].forEach(evt => dropzone.addEventListener(evt, (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); }));
-  ['dragleave','drop'].forEach(evt => dropzone.addEventListener(evt, (e)=>{ e.preventDefault(); dropzone.classList.remove('dragover'); }));
-  dropzone.addEventListener('drop', async (e)=>{ const files=e.dataTransfer?.files; if (files?.length) await uploadTemp(files); });
-}
 
 async function uploadTemp(files){
-  for (const f of Array.from(files)){
-    const form = new FormData();
-    form.append('token', tempToken);
-    form.append('file', f);
-    try {
+  const fileList = Array.from(files);
+  showUploadModal(fileList.length);
+  let index = 0;
+  try {
+    for (const f of fileList){
+      index += 1;
+      updateUploadModal(index, fileList.length);
+      const form = new FormData();
+      form.append('token', tempToken);
+      form.append('file', f);
       const res = await fetch('upload_temp_photo.php', { method:'POST', body: form });
       const data = await res.json();
       if (data.success){ addStagedTile(data.file.name, data.file.path); markDirty(); }
       else { alert(data.message || 'Upload failed'); }
-    } catch(e){ alert('Network error during upload'); }
-  }
+    }
+  } catch(e){ alert('Network error during upload'); }
+  hideUploadModal();
 }
 
 function enableDrag() {
   if (!<?php echo $can_upload ? 'true' : 'false'; ?>) return;
-  Array.from(grid.children).forEach(tile => {
-    tile.addEventListener('dragstart', (e)=>{ e.dataTransfer.setData('text/plain', tile.dataset.id); tile.classList.add('dragging'); });
+  Array.from(grid.querySelectorAll('.photo-card:not(.add-card):not(.placeholder-card)')).forEach(tile => {
+    if (tile.dataset.dragInit) return;
+    tile.dataset.dragInit = 'true';
+    tile.querySelectorAll('button').forEach(btn => { btn.draggable = false; });
+    tile.addEventListener('dragstart', (e)=>{ e.dataTransfer.setData('text/plain', tile.dataset.id || ''); tile.classList.add('dragging'); });
     tile.addEventListener('dragend', ()=>{ tile.classList.remove('dragging'); updateIndices(); markDirty(); });
   });
-  grid.addEventListener('dragover', (e)=>{
-    e.preventDefault();
-    const dragging = grid.querySelector('.dragging');
-    const after = getDragAfterElement(grid, e.clientY);
-    if (!dragging) return;
-    if (after == null) { grid.appendChild(dragging); } else { grid.insertBefore(dragging, after); }
-  });
+  if (!grid.dataset.dragInit) {
+    grid.dataset.dragInit = 'true';
+    grid.addEventListener('dragover', (e)=>{
+      e.preventDefault();
+      const dragging = grid.querySelector('.dragging');
+      if (!dragging) return;
+      const target = getDragAfterElement(grid, e.clientX, e.clientY);
+      if (!target || !target.element) {
+        if (addCard && addCard.parentNode === grid) {
+          grid.insertBefore(dragging, addCard);
+        } else {
+          grid.appendChild(dragging);
+        }
+      } else if (target.offset > 0) {
+        grid.insertBefore(dragging, target.element.nextSibling);
+      } else {
+        grid.insertBefore(dragging, target.element);
+      }
+    });
+  }
 }
 
-function getDragAfterElement(container, y) {
-  const els = [...container.querySelectorAll('.tile:not(.dragging)')];
-  return els.reduce((closest, child) => {
-    const box = child.getBoundingClientRect();
-    const offset = y - box.top - box.height / 2;
-    if (offset < 0 && offset > closest.offset) { return { offset, element: child }; } else { return closest; }
-  }, { offset: Number.NEGATIVE_INFINITY }).element;
+function getDragAfterElement(container, x, y) {
+  const element = document.elementFromPoint(x, y)?.closest('.photo-card:not(.add-card):not(.placeholder-card)');
+  if (!element || element.classList.contains('dragging')) {
+    return null;
+  }
+  const box = element.getBoundingClientRect();
+  const offset = y - box.top - box.height / 2;
+  return { element, offset };
 }
 
 function updateIndices() {
-  Array.from(grid.children).forEach((tile, idx) => {
-    const chip = tile.querySelector('.meta .chip');
-    if (chip) chip.textContent = `#${idx+1}`;
+  const tiles = Array.from(grid.querySelectorAll('.photo-card:not(.add-card):not(.placeholder-card)'));
+  tiles.forEach((tile, idx) => {
+    const order = tile.querySelector('.photo-order');
+    if (order) order.textContent = `${idx + 1}`;
+    const badge = tile.querySelector('.photo-badge');
+    if (idx === 0) {
+      tile.classList.add('cover');
+      if (badge) {
+        badge.textContent = 'Cover';
+        badge.style.display = 'inline-flex';
+      }
+    } else {
+      tile.classList.remove('cover');
+      if (badge) badge.style.display = 'none';
+    }
   });
-  // Update cover preview instantly
-  const first = grid.querySelector('.tile');
+  positionAddCard();
+  const first = tiles[0];
   if (first) {
     const src = first.getAttribute('data-path') || first.getAttribute('data-staged-path');
     const img = document.querySelector('#coverPreview img');
     if (img && src) img.src = src;
+  }
+}
+
+function positionAddCard() {
+  if (!addCard) return;
+  if (!grid.contains(addCard)) {
+    grid.appendChild(addCard);
+  } else {
+    grid.appendChild(addCard);
   }
 }
 
@@ -258,11 +324,13 @@ async function saveAll(){
   saveBtn.style.transform = 'translateY(-1px)';
   saveBtn.disabled = true;
 
-  const mixed = Array.from(grid.children).map(el => {
-    if (el.dataset.id) return 'id:' + el.dataset.id;
-    if (el.dataset.temp) return 'temp:' + el.dataset.temp;
-    return null;
-  }).filter(Boolean);
+  const mixed = Array.from(grid.querySelectorAll('.photo-card[data-id], .photo-card[data-temp]'))
+    .map(el => {
+      if (el.dataset.id) return 'id:' + el.dataset.id;
+      if (el.dataset.temp) return 'temp:' + el.dataset.temp;
+      return null;
+    })
+    .filter(Boolean);
   try {
     const res = await fetch('commit_project_photos.php', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ project_id: projectId, token: tempToken, order: mixed }) });
     const data = await res.json();
@@ -278,15 +346,31 @@ async function saveAll(){
 
 function addStagedTile(name, path){
   const tile = document.createElement('div');
-  tile.className = 'tile'; tile.setAttribute('draggable','true'); tile.dataset.temp = name; tile.setAttribute('data-staged-path', path);
+  tile.className = 'photo-card';
+  tile.setAttribute('draggable','true');
+  tile.dataset.temp = name;
+  tile.setAttribute('data-staged-path', path);
   tile.innerHTML = `<img src="${path}" alt="staged"/>
-    <div class=\"actions\">
+    <div class=\"photo-actions\">
       <button class=\"icon-btn\" title=\"View\" onclick=\"openPreview('${path}')\"><i class=\"fas fa-eye\"></i></button>
       <button class=\"icon-btn\" title=\"Remove\" onclick=\"removeStaged('${name}', this)\"><i class=\"fas fa-trash\"></i></button>
-      <button class=\"icon-btn drag-handle\" title=\"Drag to reorder\"><i class=\"fas fa-up-down-left-right\"></i></button>
     </div>
-    <div class=\"meta\"><span class=\"chip\">New</span></div>`;
-  grid.insertBefore(tile, grid.firstChild);
+    <span class=\"photo-order\">New</span>
+    <span class=\"photo-badge\" style=\"display:none;\">Cover</span>`;
+  const placeholder = grid.querySelector('.placeholder-card');
+  if (placeholder) {
+    placeholder.remove();
+  }
+
+  if (addCard && addCard.parentNode === grid) {
+    if (addCard.nextSibling) {
+      grid.insertBefore(tile, addCard.nextSibling);
+    } else {
+      grid.appendChild(tile);
+    }
+  } else {
+    grid.appendChild(tile);
+  }
   enableDrag(); updateIndices();
 }
 
@@ -294,12 +378,6 @@ async function removeStaged(name, btn){
   if (!confirm('Remove this photo?')) return;
   try { await fetch('delete_temp_photo.php', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: tempToken, name }) }); } catch(e){}
   const tile = btn.closest('.tile'); if (tile) tile.remove(); updateIndices();
-}
-
-function setAsCover(btn) {
-  const tile = btn.closest('.tile'); if (!tile) return;
-  grid.insertBefore(tile, grid.firstChild);
-  updateIndices(); markDirty();
 }
 
 async function deletePhoto(id) {
@@ -315,6 +393,10 @@ async function deletePhoto(id) {
   } catch (e) { alert('Network error while deleting'); }
 }
 
+async function reloadGrid() {
+  window.location.reload();
+}
+
 function openPreview(path) {
   const modal = document.getElementById('previewModal');
   document.getElementById('previewImg').src = path;
@@ -324,6 +406,7 @@ function hidePreview() { document.getElementById('previewModal').style.display =
 function closePreview(e) { if (e.target.id === 'previewModal') hidePreview(); }
 
 enableDrag();
+updateIndices();
 </script>
 </body>
 </html>

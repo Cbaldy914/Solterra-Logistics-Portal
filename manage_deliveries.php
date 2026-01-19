@@ -30,6 +30,7 @@ $highlight_delivery_id = isset($_GET['delivery_id']) ? intval($_GET['delivery_id
 // Database connection
 require_once '../config.php';
 require_once 'document_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -522,6 +523,20 @@ if (isset($_POST['bulk_edit_submit'])) {
                     }
                 }
 
+                if ($new_delivery_status) {
+                    $actual_delivery_date = $_POST['actual_delivery_date'] ?? null;
+                    foreach ($selected_ids as $delivery_id) {
+                        trigger_delivery_milestones_for_status(
+                            $delivery_id,
+                            $new_delivery_status,
+                            $conn,
+                            $_SESSION['user_id'] ?? null,
+                            null,
+                            $actual_delivery_date
+                        );
+                    }
+                }
+
                 $conn->commit();
                 
                 $success_msg = "Bulk update successful.";
@@ -698,6 +713,17 @@ if (isset($_POST['receive_to_project_submit'])) {
                     $total_scheduling_updates = $stmt_update_scheduling->affected_rows;
                 }
                 $stmt_update_scheduling->close();
+            }
+
+            foreach ($selected_ids as $delivery_id) {
+                trigger_delivery_milestones_for_status(
+                    $delivery_id,
+                    'Delivered to Project',
+                    $conn,
+                    $_SESSION['user_id'] ?? null,
+                    null,
+                    $actual_delivery_date
+                );
             }
 
             $conn->commit();

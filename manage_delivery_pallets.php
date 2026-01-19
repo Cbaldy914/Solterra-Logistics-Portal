@@ -22,6 +22,7 @@ $delivery_id = (int)$_GET['delivery_id'];
 $required_wattage = $_GET['wattage']; // Keep as string for comparison
 
 require_once '../config.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) die("Connection failed");
 
@@ -261,6 +262,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_pallet_associati
         $stmt_link->close();
         $stmt_update_status_add->close();
         $stmt_unlink->close();
+
+        if ($added_count > 0) {
+            trigger_delivery_milestones_for_status($delivery_id, $delivery_status, $conn, $_SESSION['user_id'] ?? null);
+        }
 
         $conn->commit();
         $_SESSION['edit_delivery_success'] = 

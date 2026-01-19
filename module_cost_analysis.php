@@ -9,6 +9,7 @@ if (!isset($_SESSION['user_id'])) {
 
 require_once '../config.php';
 require_once 'cost_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -202,6 +203,20 @@ uasort($manufacturer_costs, function($a, $b) {
 $project_count = count($projects);
 $avg_cost_per_watt = $total_wattage > 0 ? $total_module_cost / $total_wattage : 0;
 $total_combined_cost = $total_module_cost + $total_logistics_cost;
+
+// Get portfolio milestone summary
+$account_id = null;
+if ($role !== 'global_admin') {
+    // Get account_id for this user
+    $stmt_acc = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ? LIMIT 1");
+    $stmt_acc->bind_param("i", $user_id);
+    $stmt_acc->execute();
+    $stmt_acc->bind_result($account_id);
+    $stmt_acc->fetch();
+    $stmt_acc->close();
+}
+$milestone_summary = get_portfolio_milestone_summary($conn, $account_id);
+$has_milestone_data = $milestone_summary['total_contract_value'] > 0;
 
 // Apply filter for display
 if ($filter === 'per_project' && $project_count > 0) {
@@ -620,6 +635,126 @@ $conn->close();
             color: #6c757d;
             padding: 40px 20px;
             font-size: 0.9em;
+        }
+
+        /* Milestone Summary Section */
+        .milestone-portfolio-section {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 20px;
+            padding: 24px;
+            margin-bottom: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(23, 162, 184, 0.15);
+        }
+        .milestone-portfolio-section h2 {
+            font-size: 1.4em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 24px 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .milestone-portfolio-section h2 i {
+            color: #17a2b8;
+            -webkit-text-fill-color: #17a2b8;
+        }
+        .milestone-overview-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+        .milestone-overview-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            border: 1px solid #e9ecef;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+        .milestone-overview-card.primary {
+            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+            border: none;
+        }
+        .milestone-overview-card.primary .milestone-value,
+        .milestone-overview-card.primary .milestone-label {
+            color: #fff;
+        }
+        .milestone-value {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #293E4C;
+            margin-bottom: 4px;
+        }
+        .milestone-label {
+            color: #6c757d;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+        .milestone-progress-bar {
+            height: 12px;
+            background: #e9ecef;
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 16px 0;
+        }
+        .milestone-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #17a2b8, #28a745);
+            border-radius: 6px;
+            transition: width 0.3s ease;
+        }
+        .milestone-trigger-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+        }
+        .milestone-trigger-card {
+            background: #fff;
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+            border: 1px solid #e9ecef;
+            transition: all 0.2s;
+        }
+        .milestone-trigger-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        .trigger-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 12px;
+            font-size: 1.1em;
+        }
+        .trigger-icon.po { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #2563eb; }
+        .trigger-icon.shipping { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #d97706; }
+        .trigger-icon.customs { background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%); color: #7c3aed; }
+        .trigger-icon.delivery { background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); color: #059669; }
+        .trigger-value {
+            font-size: 1.2em;
+            font-weight: 700;
+            color: #293E4C;
+        }
+        .trigger-label {
+            font-size: 0.75em;
+            color: #6c757d;
+            margin-top: 4px;
+        }
+        @media (max-width: 992px) {
+            .milestone-overview-grid { grid-template-columns: 1fr; }
+            .milestone-trigger-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 576px) {
+            .milestone-trigger-grid { grid-template-columns: 1fr; }
         }
 
         /* Charts Section */
@@ -1140,6 +1275,65 @@ $conn->close();
             <?php endif; ?>
         </div>
     </div>
+
+    <!-- Payment Milestones Portfolio Summary -->
+    <?php if ($has_milestone_data): ?>
+    <div class="milestone-portfolio-section">
+        <h2><i class="fas fa-money-check-alt"></i> Portfolio Payment Milestones</h2>
+
+        <div class="milestone-overview-grid">
+            <div class="milestone-overview-card">
+                <div class="milestone-value">$<?php echo number_format($milestone_summary['total_contract_value'], 0); ?></div>
+                <div class="milestone-label">Total Contract Value</div>
+            </div>
+            <div class="milestone-overview-card primary">
+                <div class="milestone-value">$<?php echo number_format($milestone_summary['total_triggered'], 0); ?></div>
+                <div class="milestone-label">Total Triggered / Paid</div>
+            </div>
+            <div class="milestone-overview-card">
+                <div class="milestone-value">$<?php echo number_format($milestone_summary['total_remaining'], 0); ?></div>
+                <div class="milestone-label">Remaining to Trigger</div>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-bottom: 8px;">
+            <span style="font-size: 0.9em; color: #6c757d;">
+                <?php echo number_format($milestone_summary['completion_percent'], 1); ?>% Complete
+                (<?php echo $milestone_summary['projects_with_milestones']; ?> project<?php echo $milestone_summary['projects_with_milestones'] !== 1 ? 's' : ''; ?> with milestones)
+            </span>
+        </div>
+        <div class="milestone-progress-bar">
+            <div class="milestone-progress-fill" style="width: <?php echo min(100, $milestone_summary['completion_percent']); ?>%;"></div>
+        </div>
+
+        <?php if (!empty($milestone_summary['by_trigger_event'])): ?>
+        <h4 style="margin: 24px 0 16px; color: #293E4C; font-size: 1em; font-weight: 600;">Triggered by Event Type</h4>
+        <div class="milestone-trigger-grid">
+            <?php
+            $trigger_config = [
+                'po_execution' => ['icon' => 'fas fa-file-signature', 'label' => 'PO Execution', 'class' => 'po'],
+                'shipping' => ['icon' => 'fas fa-ship', 'label' => 'Shipping', 'class' => 'shipping'],
+                'customs_cleared' => ['icon' => 'fas fa-stamp', 'label' => 'Customs Cleared', 'class' => 'customs'],
+                'project_delivery' => ['icon' => 'fas fa-truck-loading', 'label' => 'Project Delivery', 'class' => 'delivery']
+            ];
+            foreach ($trigger_config as $event => $config):
+                $event_data = $milestone_summary['by_trigger_event'][$event] ?? ['total' => 0, 'count' => 0];
+            ?>
+            <div class="milestone-trigger-card">
+                <div class="trigger-icon <?php echo $config['class']; ?>">
+                    <i class="<?php echo $config['icon']; ?>"></i>
+                </div>
+                <div class="trigger-value">$<?php echo number_format($event_data['total'], 0); ?></div>
+                <div class="trigger-label"><?php echo $config['label']; ?></div>
+                <div style="font-size: 0.7em; color: #adb5bd; margin-top: 2px;">
+                    <?php echo $event_data['count']; ?> instance<?php echo $event_data['count'] !== 1 ? 's' : ''; ?>
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
 
     <!-- Project Section -->
     <?php if (!empty($projects)): ?>

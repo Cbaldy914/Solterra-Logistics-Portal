@@ -10,6 +10,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 
 require_once '../config.php';
 require_once 'delivery_notification_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
@@ -696,6 +697,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
                         throw new Exception('Failed to update pallet ID ' . $pallet['id'] . ': ' . $stmtUp->error);
                     }
                 }
+
+                // Trigger milestones now that pallets are linked
+                trigger_delivery_milestones_for_status($deliveryId, $statusOfDelivery, $conn, $user_id);
             }
             $groupIndex++;
         }

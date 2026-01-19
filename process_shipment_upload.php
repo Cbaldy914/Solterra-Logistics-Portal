@@ -28,6 +28,7 @@ if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])) {
 }
 
 require_once '../config.php';
+require_once 'milestone_helpers.php';
 require_once 'schedule_parser.php';
 
 $conn = getDBConnection();
@@ -805,6 +806,9 @@ function handleImport($conn, $user_id) {
 
                     $palletsLinked++;
                 }
+
+                // Trigger milestones now that pallets are linked
+                trigger_delivery_milestones_for_status($deliveryId, $deliveryStatus, $conn, $user_id);
             }
         }
 
