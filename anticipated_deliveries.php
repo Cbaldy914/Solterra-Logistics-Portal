@@ -11,12 +11,6 @@ if (!isset($_SESSION['user_id'])) {
 $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'] ?? 'user';
 
-// Get project ID
-if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
-    die("Project ID is missing.");
-}
-$project_id = intval($_GET['project_id']);
-
 // Database connection
 require_once '../config.php';
 require_once 'anticipated_schedule_helpers.php';
@@ -25,6 +19,72 @@ $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
 }
+
+// ========== PORTFOLIO MODE (No project_id) ==========
+// If no project_id provided, show project selector
+if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
+    // Only admin, global_admin, customer_admin can access portfolio view
+    if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])) {
+        header("Location: dashboard");
+        exit();
+    }
+
+    // Get user's accounts
+    $accountIds = [];
+    if ($role === 'global_admin') {
+        $resultAccts = $conn->query("SELECT id FROM customer_accounts");
+        if ($resultAccts) {
+            while ($row = $resultAccts->fetch_assoc()) {
+                $accountIds[] = (int)$row['id'];
+            }
+        }
+    } else {
+        $stmtAccts = $conn->prepare("SELECT account_id FROM customer_account_users WHERE user_id = ?");
+        $stmtAccts->bind_param("i", $user_id);
+        $stmtAccts->execute();
+        $resultAccts = $stmtAccts->get_result();
+        while ($row = $resultAccts->fetch_assoc()) {
+            $accountIds[] = (int)$row['account_id'];
+        }
+        $stmtAccts->close();
+    }
+
+    // Get projects
+    $projects = [];
+    if (count($accountIds) > 0) {
+        $placeholders = implode(',', array_fill(0, count($accountIds), '?'));
+        $stmt = $conn->prepare("
+            SELECT p.id, p.project_name, p.project_address, p.image_url, p.estimated_completion_date,
+                   ca.name as account_name
+            FROM projects p
+            JOIN customer_accounts ca ON p.account_id = ca.id
+            WHERE p.account_id IN ($placeholders)
+            AND (p.status IS NULL OR p.status = 'active')
+            ORDER BY p.project_name ASC
+        ");
+        $stmt->bind_param(str_repeat('i', count($accountIds)), ...$accountIds);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            // Check if schedule exists
+            $scheduleCheck = $conn->prepare("SELECT id FROM anticipated_delivery_schedules WHERE project_id = ? AND is_active = 1 LIMIT 1");
+            $scheduleCheck->bind_param("i", $row['id']);
+            $scheduleCheck->execute();
+            $row['has_schedule'] = $scheduleCheck->get_result()->num_rows > 0;
+            $scheduleCheck->close();
+            $projects[] = $row;
+        }
+        $stmt->close();
+    }
+
+    $conn->close();
+
+    // Include the portfolio view
+    include 'components/anticipated_deliveries_portfolio.php';
+    exit();
+}
+
+$project_id = intval($_GET['project_id']);
 
 // ========== ACCESS CONTROL ==========
 // Verify user has access to this project

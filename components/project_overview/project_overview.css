@@ -1647,6 +1647,54 @@
     margin-top: 5px;
 }
 
+/* Forecast Badge on Shipping Step */
+.forecast-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.forecast-badge i {
+    font-size: 12px;
+}
+
+/* State: No forecast set - use accent orange to draw attention */
+.forecast-badge.no-forecast {
+    background: linear-gradient(135deg, #fbb040 0%, #f5a623 100%);
+    color: #293E4C;
+    box-shadow: 0 2px 8px rgba(251, 176, 64, 0.4);
+}
+
+.forecast-badge.no-forecast:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(251, 176, 64, 0.5);
+    background: linear-gradient(135deg, #f5a623 0%, #e6991a 100%);
+    color: #293E4C;
+    text-decoration: none;
+}
+
+/* State: Forecast set - use Solterra blue for confirmed state */
+.forecast-badge.has-forecast {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(72, 140, 154, 0.3);
+}
+
+.forecast-badge.has-forecast:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4);
+    background: linear-gradient(135deg, #3A6E7F 0%, #2d5a66 100%);
+    color: #fff;
+    text-decoration: none;
+}
+
 /* Enhanced Shipping Statuses */
 .shipping-statuses {
     display: grid;
