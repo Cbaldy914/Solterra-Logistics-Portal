@@ -440,6 +440,23 @@ document.addEventListener('keydown', function(e) {
                     </span>
                     <div class="description"><a href="module_movements.php?project_id=<?php echo $project_id; ?>" class="description-link">View Supply Chain Map</a></div>
 
+                    <!-- Forecast Badge -->
+                    <?php if ($isAdmin || $role === 'customer_admin'):
+                        $has_schedule = !empty($schedule_data) && !empty($schedule_data['dates']);
+                    ?>
+                    <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>"
+                       class="forecast-badge <?php echo $has_schedule ? 'has-forecast' : 'no-forecast'; ?>"
+                       title="<?php echo $has_schedule ? 'View or edit delivery plan' : 'Create a delivery plan'; ?>">
+                        <?php if ($has_schedule): ?>
+                            <i class="fas fa-check-circle"></i>
+                            <span>Plan Set</span>
+                        <?php else: ?>
+                            <i class="fas fa-plus-circle"></i>
+                            <span>Add Plan</span>
+                        <?php endif; ?>
+                    </a>
+                    <?php endif; ?>
+
                     <?php if ($current_step >= 4): ?>
                     <div class="shipping-connector"></div>
                     <div class="shipping-boxes-container">
