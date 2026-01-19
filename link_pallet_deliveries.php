@@ -6,6 +6,7 @@ session_start();
 ini_set('memory_limit', '512M');
 
 require_once '../config.php'; // Placed early for CSV processing too
+require_once 'milestone_helpers.php';
 
 // Initialize messages array if not already set
 if (!isset($_SESSION['messages'])) {
@@ -45,6 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                         $linked_count = 0;
                         $error_count = 0;
                         $line_number = 1; // For error reporting, header is line 1
+                        $milestone_triggered_deliveries = [];
 
                         $stmt_check_delivery = $conn_csv->prepare("SELECT id, wattage, status_of_delivery, project_id, warehouse_id, anticipated_delivery_date FROM deliveries WHERE id = ?");
                         $stmt_check_pallet = $conn_csv->prepare("SELECT id, wattage, status FROM inventory_pallets WHERE pallet_identifier = ?");
@@ -159,6 +161,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['upload_link_csv'])) {
                                     }
                                     $stmt_update_origin->close();
                                 }
+
+                                if (!isset($milestone_triggered_deliveries[$delivery_id_csv])) {
+                                    trigger_delivery_milestones_for_status($delivery_id_csv, $delivery_status, $conn_csv, $_SESSION['user_id'] ?? null);
+                                    $milestone_triggered_deliveries[$delivery_id_csv] = true;
+                                }
                                 
                                 $linked_count++;
                             } else {
@@ -226,6 +233,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         
         $linked_pairs = [];
         $linked_count = 0;
+        $milestone_triggered_deliveries = [];
         
         // Fetch delivery and pallet details - now with comprehensive delivery info
         $delivery_placeholders = implode(',', array_fill(0, count($delivery_ids), '?'));
@@ -308,6 +316,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     'pallet_id' => $pallet['id'],
                                     'pallet_identifier' => $pallet['pallet_identifier']
                                 ];
+                                if (!isset($milestone_triggered_deliveries[$delivery['id']])) {
+                                    trigger_delivery_milestones_for_status($delivery['id'], $delivery['status_of_delivery'], $conn_bulk, $_SESSION['user_id'] ?? null);
+                                    $milestone_triggered_deliveries[$delivery['id']] = true;
+                                }
                                 $linked_count++;
                                 $modules_assigned += $pallet['quantity'];
                                 
@@ -354,6 +366,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 'pallet_id' => $pallet['id'],
                                 'pallet_identifier' => $pallet['pallet_identifier']
                             ];
+                            if (!isset($milestone_triggered_deliveries[$delivery['id']])) {
+                                trigger_delivery_milestones_for_status($delivery['id'], $delivery['status_of_delivery'], $conn_bulk, $_SESSION['user_id'] ?? null);
+                                $milestone_triggered_deliveries[$delivery['id']] = true;
+                            }
                             $linked_count++;
                             $pallets_assigned_to_this_delivery++;
                         }
@@ -399,6 +415,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             'pallet_id' => $pallet['id'],
                             'pallet_identifier' => $pallet['pallet_identifier']
                         ];
+                        if (!isset($milestone_triggered_deliveries[$delivery['id']])) {
+                            trigger_delivery_milestones_for_status($delivery['id'], $delivery['status_of_delivery'], $conn_bulk, $_SESSION['user_id'] ?? null);
+                            $milestone_triggered_deliveries[$delivery['id']] = true;
+                        }
                         $linked_count++;
                     }
                 }

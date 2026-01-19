@@ -25,6 +25,7 @@ require_once '../config.php';
 require_once 'document_helpers.php';
 require_once 'delivery_notification_helpers.php';
 require_once 'cost_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) die("Connection failed");
 
@@ -209,6 +210,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_delivery'])) {
             throw new Exception("Update delivery failed: " . $stmt_update->error);
         }
         $stmt_update->close();
+
+        trigger_delivery_milestones_for_status(
+            $delivery_id,
+            $status,
+            $conn,
+            $_SESSION['user_id'] ?? null,
+            null,
+            $actual_date
+        );
 
         /* Update Associated Pallet Statuses to Match Delivery Status */
         $pallet_status_update_count = 0;
