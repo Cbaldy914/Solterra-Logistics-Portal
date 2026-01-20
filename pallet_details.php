@@ -12,6 +12,7 @@ $user_id = $_SESSION['user_id'];
 $role = $_SESSION['role'] ?? 'user';
 
 require_once '../config.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 
 // Validate pallet_id
@@ -50,6 +51,7 @@ try {
                         END AS origin_vendor,
                         w.name AS current_warehouse_name,
                         p.project_name AS current_project_name,
+                        m.id AS module_batch_id,
                         m.cost_per_watt AS module_cost_per_watt,
                         CASE
                             WHEN ip.status = 'At Manufacturer' THEN 'At Manufacturer'
@@ -307,14 +309,131 @@ try {
     }
     $stmt_warehouse->close();
     
-    // Calculate module cost (wattage * quantity * cost_per_watt)
+    // Calculate module cost (full and milestone-accrued)
     $module_cost_per_watt = $pallet_data['module_cost_per_watt'] ?? 0;
     $pallet_wattage = (float)($pallet_data['wattage'] ?? 0);
     $pallet_quantity = (int)($pallet_data['quantity'] ?? 0);
-    $total_module_cost = ($module_cost_per_watt > 0 && $pallet_wattage > 0 && $pallet_quantity > 0)
-        ? $module_cost_per_watt * $pallet_wattage * $pallet_quantity
+    $pallet_total_watts = $pallet_wattage * $pallet_quantity;
+    $full_module_cost = ($module_cost_per_watt > 0 && $pallet_total_watts > 0)
+        ? $module_cost_per_watt * $pallet_total_watts
         : 0;
     $has_module_cost = $module_cost_per_watt > 0;
+
+    $module_milestone_breakdown = [
+        'po_execution' => 0.0,
+        'shipping' => 0.0,
+        'customs_cleared' => 0.0,
+        'project_delivery' => 0.0
+    ];
+    $has_milestones = false;
+    $accrued_module_cost = 0.0;
+
+    $module_batch_id = $pallet_data['module_batch_id'] ?? null;
+    if ($module_batch_id && $has_module_cost) {
+        $stmt_milestones = $conn->prepare("SELECT COUNT(*) FROM module_batch_milestones WHERE module_id = ? AND is_active = 1");
+        if ($stmt_milestones) {
+            $stmt_milestones->bind_param("i", $module_batch_id);
+            $stmt_milestones->execute();
+            $stmt_milestones->bind_result($milestone_count);
+            if ($stmt_milestones->fetch()) {
+                $has_milestones = $milestone_count > 0;
+            }
+            $stmt_milestones->close();
+        }
+    }
+
+    if ($has_milestones && $pallet_total_watts > 0) {
+        $batch_total_watts = 0.0;
+        $stmt_batch_watts = $conn->prepare("SELECT COALESCE(SUM(wattage * quantity), 0) FROM unassigned_module_items WHERE unassigned_module_id = ?");
+        if ($stmt_batch_watts) {
+            $stmt_batch_watts->bind_param("i", $module_batch_id);
+            $stmt_batch_watts->execute();
+            $stmt_batch_watts->bind_result($batch_total_watts);
+            $stmt_batch_watts->fetch();
+            $stmt_batch_watts->close();
+        }
+
+        $stmt_batch_triggered = $conn->prepare("
+            SELECT mbm.trigger_event, COALESCE(SUM(dmi.payment_amount), 0) as total_amount
+            FROM delivery_milestone_instances dmi
+            JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
+            WHERE dmi.module_batch_id = ? AND dmi.delivery_id IS NULL
+            GROUP BY mbm.trigger_event
+        ");
+        if ($stmt_batch_triggered) {
+            $stmt_batch_triggered->bind_param("i", $module_batch_id);
+            $stmt_batch_triggered->execute();
+            $batch_triggered = $stmt_batch_triggered->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmt_batch_triggered->close();
+            foreach ($batch_triggered as $row) {
+                $trigger = $row['trigger_event'] ?? '';
+                if ($batch_total_watts > 0 && isset($module_milestone_breakdown[$trigger])) {
+                    $share = ($pallet_total_watts / $batch_total_watts) * (float)$row['total_amount'];
+                    $module_milestone_breakdown[$trigger] += $share;
+                }
+            }
+        }
+
+        $delivery_ids = array_values(array_unique(array_filter(array_column($associated_deliveries, 'delivery_id'))));
+        if (!empty($delivery_ids)) {
+            $placeholders = implode(',', array_fill(0, count($delivery_ids), '?'));
+            $types = str_repeat('i', count($delivery_ids));
+            $delivery_watts = [];
+
+            $stmt_delivery_watts = $conn->prepare("
+                SELECT dp.delivery_id, COALESCE(SUM(ip.wattage * ip.quantity), 0) as total_watts
+                FROM delivery_pallets dp
+                JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
+                WHERE dp.delivery_id IN ($placeholders)
+                GROUP BY dp.delivery_id
+            ");
+            if ($stmt_delivery_watts) {
+                $stmt_delivery_watts->bind_param($types, ...$delivery_ids);
+                $stmt_delivery_watts->execute();
+                $delivery_watt_rows = $stmt_delivery_watts->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmt_delivery_watts->close();
+                foreach ($delivery_watt_rows as $row) {
+                    $delivery_watts[(int)$row['delivery_id']] = (float)$row['total_watts'];
+                }
+            }
+
+            $stmt_delivery_triggered = $conn->prepare("
+                SELECT
+                    dmi.delivery_id,
+                    mbm.trigger_event,
+                    COALESCE(SUM(
+                        CASE
+                            WHEN mbm.trigger_event = 'shipping' AND d.origin_type = 'warehouse' THEN 0
+                            ELSE dmi.payment_amount
+                        END
+                    ), 0) as total_amount
+                FROM delivery_milestone_instances dmi
+                JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
+                JOIN deliveries d ON dmi.delivery_id = d.id
+                WHERE dmi.delivery_id IN ($placeholders)
+                GROUP BY dmi.delivery_id, mbm.trigger_event
+            ");
+            if ($stmt_delivery_triggered) {
+                $stmt_delivery_triggered->bind_param($types, ...$delivery_ids);
+                $stmt_delivery_triggered->execute();
+                $delivery_triggered_rows = $stmt_delivery_triggered->get_result()->fetch_all(MYSQLI_ASSOC);
+                $stmt_delivery_triggered->close();
+                foreach ($delivery_triggered_rows as $row) {
+                    $delivery_id = (int)$row['delivery_id'];
+                    $trigger = $row['trigger_event'] ?? '';
+                    $delivery_total_watts = $delivery_watts[$delivery_id] ?? 0.0;
+                    if ($delivery_total_watts > 0 && isset($module_milestone_breakdown[$trigger])) {
+                        $share = ($pallet_total_watts / $delivery_total_watts) * (float)$row['total_amount'];
+                        $module_milestone_breakdown[$trigger] += $share;
+                    }
+                }
+            }
+        }
+
+        $accrued_module_cost = array_sum($module_milestone_breakdown);
+    }
+
+    $total_module_cost = $has_milestones ? $accrued_module_cost : $full_module_cost;
 
     // Calculate total pallet cost (deliveries + warehouse + module)
     $total_pallet_cost = $total_delivery_cost + $total_warehouse_cost + $total_module_cost;
@@ -714,7 +833,7 @@ $conn->close();
                 </div>
                 <?php if ($has_module_cost): ?>
                 <div style="margin-bottom: 10px;">
-                    <strong>Pallet Cost (Module):</strong>
+                    <strong>Pallet Cost (Module<?php echo $has_milestones ? ' - Accrued' : ''; ?>):</strong>
                     <a href="javascript:void(0)" onclick="openModuleCostModal()" class="cost-link">$<?php echo number_format($total_module_cost, 2); ?></a>
                 </div>
                 <?php endif; ?>
@@ -730,7 +849,7 @@ $conn->close();
             <div id="moduleCostModal" class="module-cost-modal">
                 <div class="module-cost-modal-content">
                     <div class="module-cost-modal-header">
-                        <h3>Module Cost Calculation</h3>
+                        <h3>Module Cost Breakdown</h3>
                         <button class="module-cost-modal-close" onclick="closeModuleCostModal()">&times;</button>
                     </div>
                     <div class="module-cost-modal-body">
@@ -746,13 +865,43 @@ $conn->close();
                             <span class="calc-label">Number of Modules</span>
                             <span class="calc-value"><?php echo number_format($pallet_quantity); ?></span>
                         </div>
-                        <div class="calc-row total">
-                            <span class="calc-label">Total Module Cost</span>
-                            <span class="calc-value">$<?php echo number_format($total_module_cost, 2); ?></span>
-                        </div>
-                        <div class="calc-formula">
-                            <strong>Formula:</strong> Cost/Watt × Wattage × Modules
-                        </div>
+                        <?php if ($has_milestones): ?>
+                            <div class="calc-row">
+                                <span class="calc-label">PO Execution (Accrued)</span>
+                                <span class="calc-value">$<?php echo number_format($module_milestone_breakdown['po_execution'], 2); ?></span>
+                            </div>
+                            <div class="calc-row">
+                                <span class="calc-label">Shipping (Accrued)</span>
+                                <span class="calc-value">$<?php echo number_format($module_milestone_breakdown['shipping'], 2); ?></span>
+                            </div>
+                            <div class="calc-row">
+                                <span class="calc-label">Customs Cleared (Accrued)</span>
+                                <span class="calc-value">$<?php echo number_format($module_milestone_breakdown['customs_cleared'], 2); ?></span>
+                            </div>
+                            <div class="calc-row">
+                                <span class="calc-label">Project Delivery (Accrued)</span>
+                                <span class="calc-value">$<?php echo number_format($module_milestone_breakdown['project_delivery'], 2); ?></span>
+                            </div>
+                            <div class="calc-row total">
+                                <span class="calc-label">Accrued Module Cost</span>
+                                <span class="calc-value">$<?php echo number_format($total_module_cost, 2); ?></span>
+                            </div>
+                            <div class="calc-formula">
+                                <strong>Note:</strong> Accrued totals reflect triggered milestones.
+                            </div>
+                        <?php else: ?>
+                            <div class="calc-row">
+                                <span class="calc-label">Full Module Value</span>
+                                <span class="calc-value">$<?php echo number_format($full_module_cost, 2); ?></span>
+                            </div>
+                            <div class="calc-row total">
+                                <span class="calc-label">Total Module Cost</span>
+                                <span class="calc-value">$<?php echo number_format($total_module_cost, 2); ?></span>
+                            </div>
+                            <div class="calc-formula">
+                                <strong>Formula:</strong> Cost/Watt × Wattage × Modules
+                            </div>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
