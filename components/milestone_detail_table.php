@@ -93,7 +93,7 @@ foreach ($completion_status['batches'] as $batch) {
 
     // Get triggered instances for this batch
     $stmt = $conn->prepare("
-        SELECT dmi.*, mbm.trigger_event, mbm.milestone_name, d.bol_number, d.status_of_delivery
+        SELECT dmi.*, mbm.trigger_event, mbm.milestone_name, d.bol_number, d.status_of_delivery, d.origin_type
         FROM delivery_milestone_instances dmi
         JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
         LEFT JOIN deliveries d ON dmi.delivery_id = d.id
@@ -109,6 +109,10 @@ foreach ($completion_status['batches'] as $batch) {
         $stmt->close();
 
         foreach ($triggered as $t) {
+            $origin_type = strtolower(trim((string)($t['origin_type'] ?? '')));
+            if (($t['trigger_event'] ?? '') === 'shipping' && $origin_type === 'warehouse') {
+                continue;
+            }
             $milestone_id = $t['milestone_id'];
             if (!isset($triggered_map[$milestone_id])) {
                 $triggered_map[$milestone_id] = [
