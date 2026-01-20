@@ -608,10 +608,180 @@ $total_pallets_count    = 0;
 $filtered_module_cost   = 0.0;
 $filtered_has_module_cost = false;
 
+$project_milestone_status = get_milestone_completion_status($project_id, $conn);
+$project_has_milestones = $project_milestone_status['total_contract_value'] > 0;
+
+$module_milestone_breakdown = [
+    'po_execution' => 0.0,
+    'shipping' => 0.0,
+    'customs_cleared' => 0.0,
+    'project_delivery' => 0.0
+];
+
+if ($project_has_milestones) {
+    $stmt_breakdown = $conn->prepare("
+        SELECT
+            mbm.trigger_event,
+            COALESCE(SUM(
+                CASE
+                    WHEN mbm.trigger_event = 'shipping' AND d.origin_type = 'warehouse' THEN 0
+                    ELSE dmi.payment_amount
+                END
+            ), 0) as total_amount
+        FROM delivery_milestone_instances dmi
+        JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
+        JOIN modules m ON mbm.module_id = m.id
+        LEFT JOIN deliveries d ON dmi.delivery_id = d.id
+        WHERE m.project_id = ?
+        GROUP BY mbm.trigger_event
+    ");
+    if ($stmt_breakdown) {
+        $stmt_breakdown->bind_param('i', $project_id);
+        $stmt_breakdown->execute();
+        $breakdown_result = $stmt_breakdown->get_result();
+        while ($row = $breakdown_result->fetch_assoc()) {
+            $trigger = $row['trigger_event'] ?? '';
+            if (isset($module_milestone_breakdown[$trigger])) {
+                $module_milestone_breakdown[$trigger] = (float)$row['total_amount'];
+            }
+        }
+        $stmt_breakdown->close();
+    }
+}
+
+$module_trigger_labels = [
+    'po_execution' => 'PO Execution',
+    'shipping' => 'Shipping',
+    'customs_cleared' => 'Customs Cleared',
+    'project_delivery' => 'Project Delivery'
+];
+
+$module_configured_triggers = [];
+$stmt_configured = $conn->prepare("
+    SELECT DISTINCT mbm.trigger_event
+    FROM module_batch_milestones mbm
+    JOIN modules m ON mbm.module_id = m.id
+    WHERE m.project_id = ? AND mbm.is_active = 1
+");
+if ($stmt_configured) {
+    $stmt_configured->bind_param('i', $project_id);
+    $stmt_configured->execute();
+    $configured_result = $stmt_configured->get_result();
+    while ($row = $configured_result->fetch_assoc()) {
+        $trigger = $row['trigger_event'] ?? '';
+        if ($trigger !== '') {
+            $module_configured_triggers[$trigger] = true;
+        }
+    }
+    $stmt_configured->close();
+}
+
+$module_milestone_rows = [];
+foreach ($module_trigger_labels as $trigger => $label) {
+    if (!empty($module_configured_triggers[$trigger])) {
+        $module_milestone_rows[] = [
+            'trigger' => $trigger,
+            'label' => $label,
+            'amount' => $module_milestone_breakdown[$trigger] ?? 0.0
+        ];
+    }
+}
+
+$module_batch_has_milestones = [];
+$module_batch_watts = [];
+$module_batch_triggered_totals = [];
+$delivery_milestone_totals = [];
+
+$stmt_milestone_batches = $conn->prepare("
+    SELECT DISTINCT mbm.module_id
+    FROM module_batch_milestones mbm
+    JOIN modules m ON mbm.module_id = m.id
+    WHERE m.project_id = ? AND mbm.is_active = 1
+");
+if ($stmt_milestone_batches) {
+    $stmt_milestone_batches->bind_param('i', $project_id);
+    $stmt_milestone_batches->execute();
+    $batch_result = $stmt_milestone_batches->get_result();
+    while ($row = $batch_result->fetch_assoc()) {
+        $module_batch_has_milestones[(int)$row['module_id']] = true;
+    }
+    $stmt_milestone_batches->close();
+}
+
+$stmt_batch_watts = $conn->prepare("
+    SELECT m.id as module_id, COALESCE(SUM(umi.wattage * umi.quantity), 0) as total_watts
+    FROM modules m
+    JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+    WHERE m.project_id = ?
+    GROUP BY m.id
+");
+if ($stmt_batch_watts) {
+    $stmt_batch_watts->bind_param('i', $project_id);
+    $stmt_batch_watts->execute();
+    $watts_result = $stmt_batch_watts->get_result();
+    while ($row = $watts_result->fetch_assoc()) {
+        $module_batch_watts[(int)$row['module_id']] = (float)$row['total_watts'];
+    }
+    $stmt_batch_watts->close();
+}
+
+$stmt_batch_triggered = $conn->prepare("
+    SELECT dmi.module_batch_id, mbm.trigger_event, COALESCE(SUM(dmi.payment_amount), 0) as total_amount
+    FROM delivery_milestone_instances dmi
+    JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
+    JOIN modules m ON mbm.module_id = m.id
+    WHERE m.project_id = ? AND dmi.module_batch_id IS NOT NULL AND dmi.delivery_id IS NULL
+    GROUP BY dmi.module_batch_id, mbm.trigger_event
+");
+if ($stmt_batch_triggered) {
+    $stmt_batch_triggered->bind_param('i', $project_id);
+    $stmt_batch_triggered->execute();
+    $triggered_result = $stmt_batch_triggered->get_result();
+    while ($row = $triggered_result->fetch_assoc()) {
+        $batch_id = (int)$row['module_batch_id'];
+        $trigger = $row['trigger_event'] ?? '';
+        if (!isset($module_batch_triggered_totals[$batch_id])) {
+            $module_batch_triggered_totals[$batch_id] = [];
+        }
+        $module_batch_triggered_totals[$batch_id][$trigger] = (float)$row['total_amount'];
+    }
+    $stmt_batch_triggered->close();
+}
+
+$stmt_delivery_triggered = $conn->prepare("
+    SELECT
+        dmi.delivery_id,
+        COALESCE(SUM(
+            CASE
+                WHEN mbm.trigger_event = 'shipping' AND d.origin_type = 'warehouse' THEN 0
+                ELSE dmi.payment_amount
+            END
+        ), 0) as total_amount
+    FROM delivery_milestone_instances dmi
+    JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
+    JOIN deliveries d ON dmi.delivery_id = d.id
+    WHERE d.project_id = ?
+    GROUP BY dmi.delivery_id
+");
+if ($stmt_delivery_triggered) {
+    $stmt_delivery_triggered->bind_param('i', $project_id);
+    $stmt_delivery_triggered->execute();
+    $delivery_result = $stmt_delivery_triggered->get_result();
+    while ($row = $delivery_result->fetch_assoc()) {
+        $delivery_milestone_totals[(int)$row['delivery_id']] = (float)$row['total_amount'];
+    }
+    $stmt_delivery_triggered->close();
+}
+
+$pallet_accrued_module_costs = [];
+$pallet_watts_map = [];
+$pallet_batch_map = [];
+$pallet_has_milestones_map = [];
+
 $deliveries = [];
 
 // Prepare statement for fetching pallets for efficiency
-$stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.arrival_date, ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost, m.cost_per_watt, CASE WHEN m.cost_per_watt IS NOT NULL THEN (m.cost_per_watt * ip.wattage * ip.quantity) ELSE NULL END AS module_cost FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id LEFT JOIN modules m ON umi.unassigned_module_id = m.id WHERE dp.delivery_id = ? ORDER BY ip.id");
+$stmtPallets = $conn->prepare("SELECT ip.id, ip.pallet_identifier, ip.wattage, ip.quantity, ip.status, ip.current_warehouse_id, ip.arrival_date, ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost, m.id AS module_batch_id, m.cost_per_watt, CASE WHEN m.cost_per_watt IS NOT NULL THEN (m.cost_per_watt * ip.wattage * ip.quantity) ELSE NULL END AS module_cost FROM delivery_pallets dp JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id LEFT JOIN unassigned_module_items umi ON ip.unassigned_module_item_id = umi.id LEFT JOIN modules m ON umi.unassigned_module_id = m.id WHERE dp.delivery_id = ? ORDER BY ip.id");
 
 while ($delivery = $deliveries_result->fetch_assoc()) {
     $quantity          = (int)($delivery['quantity'] ?? 0);
@@ -647,6 +817,9 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
     $fallback_accessorial_share = 0.0;
     $delivery_module_cost = 0.0;
     $delivery_has_module_cost = false;
+    $delivery_full_milestone_cost = 0.0;
+    $pallet_full_module_costs = [];
+    $pallet_has_milestones = [];
 
     if ($stmtPallets) {
         $stmtPallets->bind_param("i", $delivery['id']);
@@ -667,6 +840,17 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
 
             $associatedPallets[] = $palletRow;
             $enriched = enrichPalletCostData($palletRow, $conn);
+            $module_batch_id = $palletRow['module_batch_id'] ?? null;
+            $batch_has_milestones = $module_batch_id && isset($module_batch_has_milestones[(int)$module_batch_id]);
+
+            if ($palletId && !isset($pallet_batch_map[$palletId])) {
+                $pallet_batch_map[$palletId] = $module_batch_id ? (int)$module_batch_id : null;
+                $pallet_watts_map[$palletId] = (float)($palletRow['wattage'] ?? 0) * (float)($palletRow['quantity'] ?? 0);
+            }
+
+            if ($palletId && !isset($pallet_has_milestones_map[$palletId])) {
+                $pallet_has_milestones_map[$palletId] = $batch_has_milestones;
+            }
 
             // Warehousing split: outbound shows storage+exit, inbound shows entry, active storage shows accrual
             $pallet_wh_cost = 0.0;
@@ -691,8 +875,12 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
             $delivery_warehousing_cost += $pallet_wh_cost;
 
             if ($enriched['module_cost'] !== null) {
-                $delivery_module_cost += (float)$enriched['module_cost'];
                 $delivery_has_module_cost = true;
+                $pallet_full_module_costs[$palletId] = (float)$enriched['module_cost'];
+                $pallet_has_milestones[$palletId] = $batch_has_milestones;
+                if ($batch_has_milestones) {
+                    $delivery_full_milestone_cost += (float)$enriched['module_cost'];
+                }
             }
 
             // Track fallback shares only if base costs are missing
@@ -707,6 +895,20 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
         $total_pallets_count += $palletCount;
     }
 
+    $delivery_triggered_total = $delivery_milestone_totals[(int)$delivery['id']] ?? 0.0;
+    $delivery_ratio = $delivery_full_milestone_cost > 0
+        ? min(1.0, max(0.0, $delivery_triggered_total / $delivery_full_milestone_cost))
+        : 0.0;
+
+    foreach ($pallet_full_module_costs as $palletId => $full_cost) {
+        $uses_milestones = $pallet_has_milestones[$palletId] ?? false;
+        $accrued_cost = $uses_milestones ? ($full_cost * $delivery_ratio) : $full_cost;
+        if ($full_cost !== null) {
+            $pallet_accrued_module_costs[$palletId] = ($pallet_accrued_module_costs[$palletId] ?? 0.0) + $accrued_cost;
+            $delivery_module_cost += $accrued_cost;
+        }
+    }
+
     // Fallbacks when delivery record lacks costs
     if ($delivery_freight_cost <= 0 && $palletCount > 0) {
         $delivery_freight_cost = $fallback_freight_share;
@@ -718,10 +920,6 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
         $delivery_warehousing_cost = calculateDeliveryWarehousingCost($delivery, $conn);
     }
 
-    if ($delivery_has_module_cost) {
-        $filtered_has_module_cost = true;
-    }
-    $filtered_module_cost += $delivery_module_cost;
     $delivery['module_cost'] = $delivery_has_module_cost ? $delivery_module_cost : null;
     $total_warehousing_cost += $delivery_warehousing_cost;
 
@@ -767,6 +965,32 @@ while ($delivery = $deliveries_result->fetch_assoc()) {
 }
 
 if ($stmtPallets) $stmtPallets->close();
+
+foreach ($pallet_batch_map as $pallet_id => $batch_id) {
+    if (!$batch_id || empty($module_batch_triggered_totals[$batch_id])) {
+        continue;
+    }
+    $batch_total_triggered = array_sum($module_batch_triggered_totals[$batch_id]);
+    if ($batch_total_triggered <= 0) {
+        continue;
+    }
+    $batch_total_watts = $module_batch_watts[$batch_id] ?? 0.0;
+    $pallet_watts = $pallet_watts_map[$pallet_id] ?? 0.0;
+    if ($batch_total_watts <= 0 || $pallet_watts <= 0) {
+        continue;
+    }
+    $pallet_share = ($pallet_watts / $batch_total_watts) * $batch_total_triggered;
+    $pallet_accrued_module_costs[$pallet_id] = ($pallet_accrued_module_costs[$pallet_id] ?? 0.0) + $pallet_share;
+}
+
+$filtered_module_cost = 0.0;
+$filtered_has_module_cost = false;
+foreach ($pallet_accrued_module_costs as $accrued_cost) {
+    if ($accrued_cost !== null) {
+        $filtered_module_cost += $accrued_cost;
+        $filtered_has_module_cost = true;
+    }
+}
 
 $pallet_statuses = [];
 $status_sql = "
@@ -829,6 +1053,7 @@ $pallet_base_sql = "
     SELECT 
         ip.id, ip.pallet_identifier, ip.status, ip.manufacturer, ip.quantity, ip.wattage,
         ip.warehouse_cost, ip.freight_cost, ip.accessorial_cost,
+        m.id AS module_batch_id,
         m.cost_per_watt,
         CASE
             WHEN m.cost_per_watt IS NOT NULL THEN (m.cost_per_watt * ip.wattage * ip.quantity)
@@ -876,6 +1101,14 @@ if ($stmt_pallets_page) {
     
     $pallets_data = [];
     while ($p_row = $result_pallets_page->fetch_assoc()) {
+        $pallet_id = (int)($p_row['id'] ?? 0);
+        if ($pallet_id && array_key_exists($pallet_id, $pallet_accrued_module_costs)) {
+            $p_row['module_cost'] = $pallet_accrued_module_costs[$pallet_id];
+        } elseif ($p_row['module_cost'] !== null && !empty($p_row['module_batch_id'])
+            && isset($module_batch_has_milestones[(int)$p_row['module_batch_id']])) {
+            $p_row['module_cost'] = 0.0;
+        }
+
         $pallets_data[] = enrichPalletCostData($p_row, $conn);
         if (!empty($p_row['current_warehouse_id'])) {
             $warehouse_ids_for_lookup[(int)$p_row['current_warehouse_id']] = true;
@@ -985,7 +1218,7 @@ if ($stmt_project_totals) {
 }
 
 $project_total_warehousing_cost = calculate_project_warehousing_cost($project_id, $conn);
-$project_total_module_cost = 0.0;
+$project_total_module_cost_full = 0.0;
 $project_total_module_watts = 0.0;
 $project_has_module_cost = false;
 
@@ -1004,11 +1237,14 @@ $stmt_project_module = $conn->prepare($project_module_sql);
 if ($stmt_project_module) {
     $stmt_project_module->bind_param('i', $project_id);
     $stmt_project_module->execute();
-    $stmt_project_module->bind_result($project_total_module_cost, $project_total_module_watts);
+    $stmt_project_module->bind_result($project_total_module_cost_full, $project_total_module_watts);
     $stmt_project_module->fetch();
     $stmt_project_module->close();
 }
-$project_has_module_cost = $project_total_module_cost > 0;
+$project_has_module_cost = $project_total_module_cost_full > 0;
+$project_total_module_cost = $project_has_milestones
+    ? (float)($project_milestone_status['total_triggered'] ?? 0.0)
+    : $project_total_module_cost_full;
 $project_module_cost_per_watt = $project_total_module_watts > 0
     ? ($project_total_module_cost / $project_total_module_watts)
     : null;
@@ -1017,6 +1253,9 @@ $project_total_solterra_fee = $project_total_delivered_watts > 0
     : 0.0;
 $project_total_logistics_cost = $project_total_freight_cost + $project_total_accessorial_costs + $project_total_warehousing_cost + $project_total_solterra_fee;
 $project_total_cost = $project_total_logistics_cost + $project_total_module_cost;
+$project_module_contract_value = $project_has_milestones
+    ? (float)($project_milestone_status['total_contract_value'] ?? 0.0)
+    : $project_total_module_cost_full;
 
 $project_logistics_cost_per_watt = $project_total_watts > 0
     ? ($project_total_logistics_cost / $project_total_watts)
@@ -1036,6 +1275,13 @@ $project_warehousing_per_watt = $project_total_watts > 0
 $project_solterra_per_watt = $project_total_watts > 0
     ? ($project_total_solterra_fee / $project_total_watts)
     : null;
+
+$module_breakdown_per_watt = [];
+foreach ($module_milestone_breakdown as $event => $amount) {
+    $module_breakdown_per_watt[$event] = $project_total_watts > 0
+        ? ($amount / $project_total_watts)
+        : null;
+}
 
 // Warehouse name lookup for status display
 $warehouse_name_map = [];
@@ -1092,6 +1338,14 @@ if (isset($_GET['export_pallets']) && $_GET['export_pallets'] == 1) {
         $stmt_export->execute();
         $result_export = $stmt_export->get_result();
         while ($row = $result_export->fetch_assoc()) {
+            $pallet_id = (int)($row['id'] ?? 0);
+            if ($pallet_id && array_key_exists($pallet_id, $pallet_accrued_module_costs)) {
+                $row['module_cost'] = $pallet_accrued_module_costs[$pallet_id];
+            } elseif ($row['module_cost'] !== null && !empty($row['module_batch_id'])
+                && isset($module_batch_has_milestones[(int)$row['module_batch_id']])) {
+                $row['module_cost'] = 0.0;
+            }
+
             $row = enrichPalletCostData($row, $conn);
             fputcsv($output, [
                 $row['pallet_identifier'] ?? '',
@@ -1242,7 +1496,11 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         }
 
         .stat-item-total {
-            background: linear-gradient(135deg, rgba(72, 140, 154, 0.15) 0%, rgba(72, 140, 154, 0.2) 100%);
+            background: linear-gradient(135deg, rgba(41, 62, 76, 0.15) 0%, rgba(41, 62, 76, 0.2) 100%);
+        }
+
+        .stat-item-total .stat-number {
+            color: #293E4C;
         }
 
         .stat-item-freight {
@@ -1321,11 +1579,11 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         }
 
         .stat-item-module {
-            background: linear-gradient(135deg, rgba(251, 176, 64, 0.15) 0%, rgba(251, 176, 64, 0.25) 100%);
+            background: linear-gradient(135deg, rgba(72, 140, 154, 0.15) 0%, rgba(72, 140, 154, 0.25) 100%);
         }
 
         .stat-item-module .stat-number {
-            color: #fbb040;
+            color: #488C9A;
         }
 
         /* Filter Pills */
@@ -1479,6 +1737,63 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             padding: 20px;
             border-radius: 12px;
             text-align: center;
+        }
+
+        .module-modal-header {
+            background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+        }
+
+        .module-breakdown-item {
+            background: rgba(72, 140, 154, 0.08);
+        }
+
+        .module-breakdown-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 16px;
+            font-size: 0.95em;
+        }
+
+        .module-breakdown-table th,
+        .module-breakdown-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(72, 140, 154, 0.15);
+        }
+
+        .module-breakdown-table th {
+            text-align: left;
+            color: #293E4C;
+            font-weight: 600;
+        }
+
+        .module-breakdown-summary {
+            border-top: 1px solid rgba(72, 140, 154, 0.15);
+            padding-top: 16px;
+            margin-top: 8px;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #293E4C;
+        }
+
+        .summary-label {
+            font-size: 0.9em;
+            color: #6c757d;
+            font-weight: 500;
+        }
+
+        .summary-value {
+            font-size: 1.1em;
+        }
+
+        .module-breakdown-note {
+            font-size: 0.85em;
+            color: #6c757d;
         }
 
         .logistics-breakdown-item .value {
@@ -2462,13 +2777,13 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
                     <p class="stat-label"><i class="fas fa-truck"></i> Logistics Costs</p>
                 </div>
                 <?php if ($project_has_module_cost): ?>
-                <div class="stat-item stat-item-module">
+                <div class="stat-item stat-item-module stat-item-clickable" onclick="openModuleModal()">
                     <p class="stat-number">
                         <span class="cost-display" data-cost="<?php echo $project_total_module_cost; ?>" data-per-watt="<?php echo $project_module_cost_per_watt !== null ? $project_module_cost_per_watt : ''; ?>">
                             $<?php echo number_format($project_total_module_cost, 2); ?>
                         </span>
                     </p>
-                    <p class="stat-label"><i class="fas fa-solar-panel"></i> Module Costs</p>
+                    <p class="stat-label"><i class="fas fa-solar-panel"></i> Module Costs (Accrued)</p>
                 </div>
                 <?php endif; ?>
                 <div class="stat-item stat-item-total">
@@ -2556,6 +2871,58 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
             </div>
         </div>
     </div>
+
+    <?php if ($project_has_module_cost): ?>
+    <!-- Module Cost Breakdown Modal -->
+    <div id="moduleModal" class="logistics-modal">
+        <div class="logistics-modal-content">
+            <div class="logistics-modal-header module-modal-header">
+                <h2><i class="fas fa-solar-panel"></i> Module Cost Breakdown</h2>
+                <button class="logistics-modal-close" onclick="closeModuleModal()">&times;</button>
+            </div>
+            <div class="logistics-modal-body">
+                <?php if (!empty($module_milestone_rows)): ?>
+                    <table class="module-breakdown-table">
+                        <thead>
+                            <tr>
+                                <th>Milestone</th>
+                                <th style="text-align: right;">Accrued</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($module_milestone_rows as $row): ?>
+                                <tr>
+                                    <td><?php echo htmlspecialchars($row['label']); ?></td>
+                                    <td style="text-align: right;">
+                                        <span class="cost-display" data-cost="<?php echo $row['amount']; ?>" data-per-watt="<?php echo $module_breakdown_per_watt[$row['trigger']] ?? ''; ?>">
+                                            $<?php echo number_format($row['amount'], 2); ?>
+                                        </span>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php else: ?>
+                    <div class="module-breakdown-note">No milestones configured. Showing full module value.</div>
+                <?php endif; ?>
+                <div class="module-breakdown-summary">
+                    <div class="summary-row">
+                        <span class="summary-label">Accrued Module Cost</span>
+                        <span class="summary-value cost-display" data-cost="<?php echo $project_total_module_cost; ?>" data-per-watt="<?php echo $project_module_cost_per_watt !== null ? $project_module_cost_per_watt : ''; ?>">
+                            $<?php echo number_format($project_total_module_cost, 2); ?>
+                        </span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Full Module Value</span>
+                        <span class="summary-value">
+                            $<?php echo number_format($project_module_contract_value, 2); ?>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <!-- Filter Section -->
     <div class="filter-section">
@@ -2938,7 +3305,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
                             <th>Warehouse Cost</th>
                             <th>Freight Cost</th>
                             <th>Accessorial Cost</th>
-                            <th>Module Cost</th>
+                            <th>Module Cost (Accrued)</th>
                             <th>Total Cost</th>
                             <th>Actions</th>
                         </tr>
@@ -3219,11 +3586,29 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         }
     }
 
+    function openModuleModal() {
+        const modal = document.getElementById('moduleModal');
+        if (modal) {
+            modal.style.display = 'block';
+        }
+    }
+
+    function closeModuleModal() {
+        const modal = document.getElementById('moduleModal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+    }
+
     // Close modal when clicking outside
     window.addEventListener('click', function(event) {
         const logisticsModal = document.getElementById('logisticsModal');
         if (logisticsModal && event.target === logisticsModal) {
             closeLogisticsModal();
+        }
+        const moduleModal = document.getElementById('moduleModal');
+        if (moduleModal && event.target === moduleModal) {
+            closeModuleModal();
         }
     });
 
@@ -3312,7 +3697,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         }
 
         if (source.hasModuleCost && source.module > 0) {
-            labels.push('Module Costs');
+            labels.push('Module Costs (Accrued)');
             data.push(isPerWatt ? (source.modulePerWatt ?? 0) : source.module);
             colors.push('#E4572E');
         }
@@ -3329,7 +3714,7 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
 
         const breakdownCtx = document.getElementById('costBreakdownChart');
         if (breakdownCtx) {
-            const breakdownLabels = ['Module Cost', 'Freight', 'Warehousing', 'Accessorial'];
+            const breakdownLabels = ['Module Cost (Accrued)', 'Freight', 'Warehousing', 'Accessorial'];
             const breakdownData = [
                 chartData.module,
                 chartData.freight,

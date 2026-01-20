@@ -60,9 +60,10 @@ function get_module_milestones($module_id, $conn) {
  * @param int $module_id Module batch ID
  * @param array $milestones Array of milestone data: [['trigger_event' => 'po_execution', 'percentage' => 30], ...]
  * @param mysqli $conn Database connection
+ * @param int|null $user_id User who triggered the change
  * @return bool Success status
  */
-function save_module_milestones($module_id, $milestones, $conn) {
+function save_module_milestones($module_id, $milestones, $conn, $user_id = null) {
     if (!$module_id || !$conn) {
         return false;
     }
@@ -114,6 +115,14 @@ function save_module_milestones($module_id, $milestones, $conn) {
     }
 
     $stmt->close();
+
+    $trigger_events = array_values(array_unique(array_filter(array_column($milestones, 'trigger_event'))));
+    if (in_array('po_execution', $trigger_events, true)) {
+        trigger_batch_milestone($module_id, 'po_execution', $conn, $user_id);
+    }
+
+    backfill_delivery_milestones_for_batch($module_id, $conn, $user_id);
+
     return true;
 }
 
@@ -349,15 +358,23 @@ function trigger_delivery_milestone($delivery_id, $trigger_event, $conn, $user_i
  * @param string|null $delivery_status
  * @param string|null $customs_cleared_date
  * @param string|null $actual_delivery_date
+ * @param string|null $origin_type
  * @return array Array of trigger_event strings
  */
-function get_delivery_milestone_events($delivery_status, $customs_cleared_date = null, $actual_delivery_date = null) {
+function get_delivery_milestone_events(
+    $delivery_status,
+    $customs_cleared_date = null,
+    $actual_delivery_date = null,
+    $origin_type = null
+) {
     $events = [];
 
     $status = trim((string)$delivery_status);
     $non_shipping_statuses = ['Pending', 'At Manufacturer', 'Canceled', 'Cancelled', ''];
+    $origin = strtolower(trim((string)$origin_type));
+    $shipping_allowed = ($origin === '' || $origin !== 'warehouse');
 
-    if ($status !== '' && !in_array($status, $non_shipping_statuses, true)) {
+    if ($shipping_allowed && $status !== '' && !in_array($status, $non_shipping_statuses, true)) {
         $events[] = 'shipping';
     }
 
@@ -387,6 +404,7 @@ function get_delivery_milestone_events($delivery_status, $customs_cleared_date =
  * @param int|null $user_id User who triggered the change
  * @param string|null $customs_cleared_date Customs cleared date if available
  * @param string|null $actual_delivery_date Actual delivery date if available
+ * @param string|null $origin_type Origin type if available
  * @return array Trigger results keyed by event
  */
 function trigger_delivery_milestones_for_status(
@@ -395,7 +413,8 @@ function trigger_delivery_milestones_for_status(
     $conn,
     $user_id = null,
     $customs_cleared_date = null,
-    $actual_delivery_date = null
+    $actual_delivery_date = null,
+    $origin_type = null
 ) {
     $results = [];
 
@@ -403,7 +422,28 @@ function trigger_delivery_milestones_for_status(
         return $results;
     }
 
-    $events = get_delivery_milestone_events($delivery_status, $customs_cleared_date, $actual_delivery_date);
+    if ($origin_type === null || $customs_cleared_date === null || $actual_delivery_date === null) {
+        $stmt_delivery = $conn->prepare("SELECT origin_type, customs_cleared_date, actual_delivery_date FROM deliveries WHERE id = ? LIMIT 1");
+        if ($stmt_delivery) {
+            $stmt_delivery->bind_param("i", $delivery_id);
+            $stmt_delivery->execute();
+            $stmt_delivery->bind_result($db_origin_type, $db_customs_cleared_date, $db_actual_delivery_date);
+            if ($stmt_delivery->fetch()) {
+                if ($origin_type === null) {
+                    $origin_type = $db_origin_type;
+                }
+                if ($customs_cleared_date === null) {
+                    $customs_cleared_date = $db_customs_cleared_date;
+                }
+                if ($actual_delivery_date === null) {
+                    $actual_delivery_date = $db_actual_delivery_date;
+                }
+            }
+            $stmt_delivery->close();
+        }
+    }
+
+    $events = get_delivery_milestone_events($delivery_status, $customs_cleared_date, $actual_delivery_date, $origin_type);
     foreach ($events as $event) {
         $results[$event] = trigger_delivery_milestone($delivery_id, $event, $conn, $user_id);
     }
@@ -451,6 +491,18 @@ function get_delivery_milestone_status($delivery_id, $conn) {
     $result['has_milestones'] = true;
     $result['configured'] = $milestones;
 
+    $origin_type = '';
+    $stmt_origin = $conn->prepare("SELECT origin_type FROM deliveries WHERE id = ? LIMIT 1");
+    if ($stmt_origin) {
+        $stmt_origin->bind_param("i", $delivery_id);
+        $stmt_origin->execute();
+        $stmt_origin->bind_result($origin_type);
+        $stmt_origin->fetch();
+        $stmt_origin->close();
+    }
+    $origin_type = strtolower(trim((string)$origin_type));
+    $shipping_allowed = ($origin_type === '' || $origin_type !== 'warehouse');
+
     // Get delivery details for calculating pending amounts
     $delivery_details = get_delivery_details_for_milestone($delivery_id, $conn);
     $wattage = $delivery_details['wattage'];
@@ -472,6 +524,9 @@ function get_delivery_milestone_status($delivery_id, $conn) {
 
         $triggered_ids = [];
         foreach ($triggered as $t) {
+            if (($t['trigger_event'] ?? '') === 'shipping' && !$shipping_allowed) {
+                continue;
+            }
             $result['triggered'][] = $t;
             $result['total_triggered'] += floatval($t['payment_amount']);
             $triggered_ids[] = $t['milestone_id'];
@@ -479,6 +534,9 @@ function get_delivery_milestone_status($delivery_id, $conn) {
 
         // Calculate pending milestones
         foreach ($milestones as $m) {
+            if (($m['trigger_event'] ?? '') === 'shipping' && !$shipping_allowed) {
+                continue;
+            }
             if (!in_array($m['id'], $triggered_ids)) {
                 $pending_amount = calculate_milestone_payment($cost_per_watt, $wattage, $quantity, $m['percentage']);
                 $result['pending'][] = array_merge($m, ['estimated_amount' => $pending_amount]);
@@ -707,10 +765,16 @@ function get_milestone_completion_status($project_id, $conn) {
 
     // Get total triggered amount
     $stmt = $conn->prepare("
-        SELECT COALESCE(SUM(dmi.payment_amount), 0) as total_triggered
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN mbm.trigger_event = 'shipping' AND d.origin_type = 'warehouse' THEN 0
+                ELSE dmi.payment_amount
+            END
+        ), 0) as total_triggered
         FROM delivery_milestone_instances dmi
         JOIN module_batch_milestones mbm ON dmi.milestone_id = mbm.id
         JOIN modules m ON mbm.module_id = m.id
+        LEFT JOIN deliveries d ON dmi.delivery_id = d.id
         WHERE m.project_id = ?
     ");
 
@@ -1090,7 +1154,7 @@ function backfill_delivery_milestones_for_batch($module_batch_id, $conn, $user_i
     }
 
     $stmt = $conn->prepare("
-        SELECT DISTINCT d.id, d.status_of_delivery, d.customs_cleared_date, d.actual_delivery_date
+        SELECT DISTINCT d.id, d.status_of_delivery, d.customs_cleared_date, d.actual_delivery_date, d.origin_type
         FROM deliveries d
         JOIN delivery_pallets dp ON dp.delivery_id = d.id
         JOIN inventory_pallets ip ON dp.inventory_pallet_id = ip.id
@@ -1115,11 +1179,14 @@ function backfill_delivery_milestones_for_batch($module_batch_id, $conn, $user_i
             continue;
         }
 
+        $origin_type = strtolower(trim((string)($delivery['origin_type'] ?? '')));
+        $shipping_allowed = ($origin_type === '' || $origin_type !== 'warehouse');
+
         foreach ($events as $event) {
             $should_trigger = false;
 
             if ($event === 'shipping') {
-                $should_trigger = true;
+                $should_trigger = $shipping_allowed;
             } elseif ($event === 'customs_cleared') {
                 if (!empty($delivery['customs_cleared_date'])) {
                     $should_trigger = true;
