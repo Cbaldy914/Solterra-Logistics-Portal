@@ -172,7 +172,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
     $google_maps_key = getenv('GOOGLE_MAPS_API_KEY') ?: '';
     if (!empty($google_maps_key)):
     ?>
-    <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo $google_maps_key; ?>&libraries=geometry"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo $google_maps_key; ?>&libraries=geometry,places"></script>
     <?php endif; ?>
     <style>
         /* ==================== BASE STYLES ==================== */
@@ -369,6 +369,120 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             padding: 24px;
         }
 
+        /* ==================== COLLAPSIBLE SECTIONS ==================== */
+        .collapsible-section {
+            margin-bottom: 24px;
+        }
+
+        .collapsible-header {
+            background: white;
+            border-radius: 18px;
+            box-shadow: 0 4px 24px rgba(41, 62, 76, 0.06);
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            padding: 20px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            user-select: none;
+        }
+
+        .collapsible-header:hover {
+            border-color: rgba(72, 140, 154, 0.2);
+            box-shadow: 0 6px 28px rgba(41, 62, 76, 0.1);
+        }
+
+        .collapsible-header.collapsed {
+            border-radius: 18px;
+        }
+
+        .collapsible-header:not(.collapsed) {
+            border-radius: 18px 18px 0 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .collapsible-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0;
+        }
+
+        .collapsible-title svg {
+            color: #488C9A;
+            flex-shrink: 0;
+        }
+
+        .collapsible-meta {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .collapsible-badge {
+            background: linear-gradient(135deg, rgba(72, 140, 154, 0.1) 0%, rgba(58, 110, 127, 0.1) 100%);
+            color: #488C9A;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+
+        .collapsible-toggle {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #6c757d;
+            transition: all 0.3s ease;
+        }
+
+        .collapsible-header:hover .collapsible-toggle {
+            background: linear-gradient(135deg, rgba(72, 140, 154, 0.1) 0%, rgba(58, 110, 127, 0.1) 100%);
+            border-color: rgba(72, 140, 154, 0.2);
+            color: #488C9A;
+        }
+
+        .collapsible-toggle svg {
+            transition: transform 0.3s ease;
+        }
+
+        .collapsible-header.collapsed .collapsible-toggle svg {
+            transform: rotate(-90deg);
+        }
+
+        .collapsible-content {
+            background: white;
+            border: 1px solid rgba(72, 140, 154, 0.08);
+            border-top: none;
+            border-radius: 0 0 18px 18px;
+            box-shadow: 0 4px 24px rgba(41, 62, 76, 0.06);
+            overflow: hidden;
+            max-height: 5000px;
+            transition: max-height 0.5s ease, opacity 0.3s ease, padding 0.3s ease;
+            opacity: 1;
+        }
+
+        .collapsible-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+            border: none;
+        }
+
+        .collapsible-inner {
+            padding: 24px;
+        }
+
         /* ==================== LOGISTICS PLAN ==================== */
         .logistics-plan .card-header {
             align-items: flex-start;
@@ -545,6 +659,327 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             .fee-row {
                 grid-template-columns: 1fr 1fr;
             }
+        }
+
+        /* ==================== JOURNEY PLANNER VISUAL ==================== */
+        .journey-planner {
+            padding: 24px;
+        }
+
+        .journey-intro {
+            background: linear-gradient(135deg, rgba(72, 140, 154, 0.08) 0%, rgba(58, 110, 127, 0.05) 100%);
+            border-radius: 14px;
+            padding: 16px 20px;
+            margin-bottom: 24px;
+            color: #495057;
+            font-size: 0.95em;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .journey-intro svg {
+            color: #488C9A;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .journey-flow {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            position: relative;
+        }
+
+        .journey-node {
+            display: flex;
+            align-items: flex-start;
+            gap: 20px;
+            position: relative;
+        }
+
+        .journey-node-indicator {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex-shrink: 0;
+            width: 50px;
+        }
+
+        .journey-node-dot {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 700;
+            font-size: 0.9em;
+            z-index: 2;
+            position: relative;
+        }
+
+        .journey-node-dot.origin {
+            background: linear-gradient(135deg, #28a745 0%, #20883a 100%);
+            box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+        }
+
+        .journey-node-dot.warehouse {
+            background: linear-gradient(135deg, #E07F3A 0%, #c76a2e 100%);
+            box-shadow: 0 4px 12px rgba(224, 127, 58, 0.3);
+        }
+
+        .journey-node-dot.port {
+            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+            box-shadow: 0 4px 12px rgba(23, 162, 184, 0.3);
+        }
+
+        .journey-node-dot.destination {
+            background: linear-gradient(135deg, #dc3545 0%, #b02a37 100%);
+            box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+        }
+
+        .journey-connector {
+            width: 4px;
+            flex-grow: 1;
+            background: linear-gradient(180deg, #488C9A 0%, rgba(72, 140, 154, 0.3) 100%);
+            min-height: 20px;
+            margin: 4px 0;
+        }
+
+        .journey-node-content {
+            flex: 1;
+            padding-bottom: 20px;
+        }
+
+        .journey-node-card {
+            background: white;
+            border: 1px solid #e3e7ea;
+            border-radius: 16px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .journey-node-card:hover {
+            border-color: #488C9A;
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.12);
+        }
+
+        .journey-node-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .journey-node-title {
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 1.1em;
+            margin: 0;
+        }
+
+        .journey-node-type {
+            font-size: 0.8em;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 4px;
+        }
+
+        .journey-node-badges {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .journey-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .journey-badge.milestone {
+            background: rgba(72, 140, 154, 0.12);
+            color: #488C9A;
+        }
+
+        .journey-badge.customs {
+            background: rgba(255, 193, 7, 0.15);
+            color: #856404;
+        }
+
+        .journey-node-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .journey-leg-card {
+            background: linear-gradient(135deg, #f8f9fa 0%, #f1f5f7 100%);
+            border: 1px dashed #ccd5d9;
+            border-radius: 14px;
+            padding: 16px 20px;
+            margin: -10px 0 10px 70px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .journey-leg-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: white;
+            border: 1px solid #e3e7ea;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #488C9A;
+        }
+
+        .journey-leg-details {
+            flex: 1;
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .journey-leg-field {
+            min-width: 120px;
+        }
+
+        .journey-leg-field label {
+            font-size: 0.7em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: #6c757d;
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .journey-leg-field .value {
+            font-weight: 500;
+            color: #293E4C;
+        }
+
+        .journey-add-stop {
+            margin: 10px 0 10px 70px;
+        }
+
+        .journey-add-stop-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 20px;
+            background: linear-gradient(135deg, rgba(72, 140, 154, 0.08) 0%, rgba(72, 140, 154, 0.04) 100%);
+            border: 2px dashed rgba(72, 140, 154, 0.3);
+            border-radius: 12px;
+            color: #488C9A;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            justify-content: center;
+        }
+
+        .journey-add-stop-btn:hover {
+            background: linear-gradient(135deg, rgba(72, 140, 154, 0.15) 0%, rgba(72, 140, 154, 0.1) 100%);
+            border-color: rgba(72, 140, 154, 0.5);
+        }
+
+        /* ==================== GOOGLE PLACES AUTOCOMPLETE ==================== */
+        .address-input-wrapper {
+            position: relative;
+        }
+
+        .address-input-wrapper input {
+            width: 100%;
+            padding-right: 36px;
+        }
+
+        .address-input-wrapper .address-loading {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 18px;
+            height: 18px;
+            border: 2px solid #e9ecef;
+            border-top-color: #488C9A;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            display: none;
+        }
+
+        .address-input-wrapper.loading .address-loading {
+            display: block;
+        }
+
+        .address-verified {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #28a745;
+            display: none;
+        }
+
+        .address-input-wrapper.verified .address-verified {
+            display: block;
+        }
+
+        .pac-container {
+            font-family: 'Poppins', sans-serif;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+            border: 1px solid #e9ecef;
+            margin-top: 4px;
+            z-index: 10000;
+        }
+
+        .pac-item {
+            padding: 10px 14px;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .pac-item:hover {
+            background: rgba(72, 140, 154, 0.08);
+        }
+
+        .pac-item-selected {
+            background: rgba(72, 140, 154, 0.12);
+        }
+
+        .pac-icon {
+            margin-right: 10px;
+        }
+
+        .pac-item-query {
+            font-weight: 500;
+            color: #293E4C;
+        }
+
+        .address-error {
+            color: #dc3545;
+            font-size: 0.85em;
+            margin-top: 4px;
+            display: none;
+        }
+
+        .address-input-wrapper.error .address-error {
+            display: block;
+        }
+
+        .address-input-wrapper.error input {
+            border-color: #dc3545;
         }
 
         /* ==================== READ-ONLY MESSAGE ==================== */
@@ -1688,30 +2123,99 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         <!-- Main Content Layout -->
         <div class="planner-layout">
             <div class="planner-main">
-                <div class="module-cost-grid">
-                    <!-- Module Selector Component -->
-                    <?php include 'components/projection_module_selector.php'; ?>
+                <!-- Collapsible: Modules & Costs -->
+                <div class="collapsible-section" data-section="modules-costs">
+                    <div class="collapsible-header" onclick="toggleSection('modules-costs')">
+                        <div class="collapsible-title">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                                <line x1="8" y1="21" x2="16" y2="21"/>
+                                <line x1="12" y1="17" x2="12" y2="21"/>
+                            </svg>
+                            Modules & Costs
+                        </div>
+                        <div class="collapsible-meta">
+                            <span class="collapsible-badge" id="modulesBadge"><?php echo number_format($total_pallets); ?> pallets</span>
+                            <div class="collapsible-toggle">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="collapsible-content" id="modules-costs-content">
+                        <div class="collapsible-inner">
+                            <div class="module-cost-grid">
+                                <!-- Module Selector Component -->
+                                <?php include 'components/projection_module_selector.php'; ?>
 
-                    <!-- Cost Summary Component -->
-                    <?php include 'components/projection_cost_summary.php'; ?>
+                                <!-- Cost Summary Component -->
+                                <?php include 'components/projection_cost_summary.php'; ?>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="planner-split">
-                    <!-- Logistics Plan Component -->
-                    <?php include 'components/projection_journey_planner.php'; ?>
-
-                    <!-- Route Map -->
-                    <div class="route-map-card">
-                        <div class="route-map-header">
-                            <h3 class="route-map-title">
+                <!-- Collapsible: Logistics Plan -->
+                <div class="collapsible-section" data-section="logistics-plan">
+                    <div class="collapsible-header" onclick="toggleSection('logistics-plan')">
+                        <div class="collapsible-title">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <path d="M12 2a10 10 0 0 1 0 20"/>
+                                <path d="M12 8v4l3 3"/>
+                            </svg>
+                            Logistics Plan
+                        </div>
+                        <div class="collapsible-meta">
+                            <span class="collapsible-badge" id="stopsBadge"><?php echo count($stops); ?> stops</span>
+                            <div class="collapsible-toggle">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
-                                    <line x1="8" y1="2" x2="8" y2="18"/>
-                                    <line x1="16" y1="6" x2="16" y2="22"/>
+                                    <polyline points="6 9 12 15 18 9"/>
                                 </svg>
-                                Route Map
-                            </h3>
-                            <button type="button" class="btn btn-sm btn-secondary" onclick="toggleMapFullscreen()">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="collapsible-content" id="logistics-plan-content">
+                        <div class="journey-planner">
+                            <div class="journey-intro">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <path d="M12 16v-4"/>
+                                    <path d="M12 8h.01"/>
+                                </svg>
+                                <div>
+                                    <strong>Plan your delivery journey step by step</strong><br>
+                                    Define the route from manufacturer through warehouses/ports to the final destination. Each stop can have fees, and each leg can have transport details and costs.
+                                </div>
+                            </div>
+                            <div id="journeyFlow" class="journey-flow">
+                                <!-- Journey nodes rendered by JavaScript -->
+                            </div>
+                            <div id="journeyEmpty" class="empty-state" style="display: none;">
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5">
+                                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                    <path d="M7 12h10"/>
+                                </svg>
+                                <p>Your delivery journey will appear here.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Collapsible: Route Map -->
+                <div class="collapsible-section" data-section="route-map">
+                    <div class="collapsible-header" onclick="toggleSection('route-map')">
+                        <div class="collapsible-title">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                                <line x1="8" y1="2" x2="8" y2="18"/>
+                                <line x1="16" y1="6" x2="16" y2="22"/>
+                            </svg>
+                            Route Map
+                        </div>
+                        <div class="collapsible-meta">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); toggleMapFullscreen()">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="15 3 21 3 21 9"/>
                                     <polyline points="9 21 3 21 3 15"/>
@@ -1719,7 +2223,14 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                                     <line x1="3" y1="21" x2="10" y2="14"/>
                                 </svg>
                             </button>
+                            <div class="collapsible-toggle">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
                         </div>
+                    </div>
+                    <div class="collapsible-content" id="route-map-content">
                         <div class="route-map-container">
                             <div id="routeMap"></div>
                             <div class="map-placeholder" id="mapPlaceholder">
@@ -1793,38 +2304,48 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             </div>
         </div>
 
-        <!-- Projected Timeline -->
-        <div class="timeline-card">
-            <div class="timeline-header">
-                <h3 class="timeline-title">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <!-- Collapsible: Timeline & Costs -->
+        <div class="collapsible-section" data-section="timeline">
+            <div class="collapsible-header" onclick="toggleSection('timeline')">
+                <div class="collapsible-title">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"/>
                         <polyline points="12 6 12 12 16 14"/>
                     </svg>
                     Projected Timeline & Costs
-                </h3>
-            </div>
-            <div class="timeline-container">
-                <div class="timeline-chart" id="timelineChart">
-                    <!-- Timeline bars generated by JavaScript -->
+                </div>
+                <div class="collapsible-meta">
+                    <span class="collapsible-badge" id="grandTotalBadge">$0</span>
+                    <div class="collapsible-toggle">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                    </div>
                 </div>
             </div>
-            <div class="timeline-cumulative">
-                <div class="cumulative-item">
-                    <div class="cumulative-label">Total Freight</div>
-                    <div class="cumulative-value" id="totalFreightDisplay">$0</div>
+            <div class="collapsible-content" id="timeline-content">
+                <div class="timeline-container">
+                    <div class="timeline-chart" id="timelineChart">
+                        <!-- Timeline bars generated by JavaScript -->
+                    </div>
                 </div>
-                <div class="cumulative-item">
-                    <div class="cumulative-label">Total Warehousing</div>
-                    <div class="cumulative-value" id="totalWarehousingDisplay">$0</div>
-                </div>
-                <div class="cumulative-item">
-                    <div class="cumulative-label">Total Milestones</div>
-                    <div class="cumulative-value" id="totalMilestonesDisplay">$0</div>
-                </div>
-                <div class="cumulative-item">
-                    <div class="cumulative-label">Grand Total</div>
-                    <div class="cumulative-value" id="grandTotalDisplay" style="color: #E07F3A; font-size: 1.3em;">$0</div>
+                <div class="timeline-cumulative">
+                    <div class="cumulative-item">
+                        <div class="cumulative-label">Total Freight</div>
+                        <div class="cumulative-value" id="totalFreightDisplay">$0</div>
+                    </div>
+                    <div class="cumulative-item">
+                        <div class="cumulative-label">Total Warehousing</div>
+                        <div class="cumulative-value" id="totalWarehousingDisplay">$0</div>
+                    </div>
+                    <div class="cumulative-item">
+                        <div class="cumulative-label">Total Milestones</div>
+                        <div class="cumulative-value" id="totalMilestonesDisplay">$0</div>
+                    </div>
+                    <div class="cumulative-item">
+                        <div class="cumulative-label">Grand Total</div>
+                        <div class="cumulative-value" id="grandTotalDisplay" style="color: #E07F3A; font-size: 1.3em;">$0</div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1912,12 +2433,129 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         // Flatpickr instances
         let datePickerInstances = [];
 
+        // Google Places autocomplete instances
+        let autocompleteInstances = [];
+
         // ==================== INITIALIZATION ====================
         document.addEventListener('DOMContentLoaded', function() {
             initializeDatePickers();
             updateUIFromState();
-            renderDeliveryPlan();
+            renderJourneyPlan();
+            initializeMap();
+            updateTimelineChart();
+            loadCollapsibleStates();
         });
+
+        // ==================== COLLAPSIBLE SECTIONS ====================
+        function toggleSection(sectionId) {
+            const header = document.querySelector(`[data-section="${sectionId}"] .collapsible-header`);
+            const content = document.getElementById(`${sectionId}-content`);
+
+            if (!header || !content) return;
+
+            const isCollapsed = header.classList.contains('collapsed');
+
+            if (isCollapsed) {
+                header.classList.remove('collapsed');
+                content.classList.remove('collapsed');
+            } else {
+                header.classList.add('collapsed');
+                content.classList.add('collapsed');
+            }
+
+            // Save state to localStorage
+            saveCollapsibleStates();
+
+            // If opening the map section, trigger a resize
+            if (sectionId === 'route-map' && isCollapsed && map) {
+                setTimeout(() => {
+                    google.maps.event.trigger(map, 'resize');
+                    updateMapFromState();
+                }, 350);
+            }
+        }
+
+        function saveCollapsibleStates() {
+            const states = {};
+            document.querySelectorAll('.collapsible-section').forEach(section => {
+                const sectionId = section.dataset.section;
+                const header = section.querySelector('.collapsible-header');
+                states[sectionId] = header.classList.contains('collapsed');
+            });
+            localStorage.setItem(`projection_collapsed_${projectId}`, JSON.stringify(states));
+        }
+
+        function loadCollapsibleStates() {
+            try {
+                const saved = localStorage.getItem(`projection_collapsed_${projectId}`);
+                if (saved) {
+                    const states = JSON.parse(saved);
+                    Object.keys(states).forEach(sectionId => {
+                        if (states[sectionId]) {
+                            const header = document.querySelector(`[data-section="${sectionId}"] .collapsible-header`);
+                            const content = document.getElementById(`${sectionId}-content`);
+                            if (header && content) {
+                                header.classList.add('collapsed');
+                                content.classList.add('collapsed');
+                            }
+                        }
+                    });
+                }
+            } catch (e) {
+                console.log('Could not load collapsible states');
+            }
+        }
+
+        // ==================== GOOGLE PLACES AUTOCOMPLETE ====================
+        function initializeAddressAutocomplete(inputElement, onPlaceSelected) {
+            if (typeof google === 'undefined' || !google.maps || !google.maps.places) {
+                console.log('Google Places API not available');
+                return null;
+            }
+
+            const autocomplete = new google.maps.places.Autocomplete(inputElement, {
+                types: ['address'],
+                fields: ['formatted_address', 'geometry', 'address_components', 'name']
+            });
+
+            autocomplete.addListener('place_changed', function() {
+                const place = autocomplete.getPlace();
+
+                if (!place.geometry) {
+                    // User entered text that is not a place
+                    inputElement.parentElement.classList.add('error');
+                    inputElement.parentElement.classList.remove('verified');
+                    return;
+                }
+
+                inputElement.parentElement.classList.remove('error');
+                inputElement.parentElement.classList.add('verified');
+
+                const placeData = {
+                    address: place.formatted_address || inputElement.value,
+                    latitude: place.geometry.location.lat(),
+                    longitude: place.geometry.location.lng(),
+                    name: place.name || ''
+                };
+
+                if (onPlaceSelected) {
+                    onPlaceSelected(placeData);
+                }
+            });
+
+            autocompleteInstances.push(autocomplete);
+            return autocomplete;
+        }
+
+        function cleanupAutocompleteInstances() {
+            // Remove pac-container elements that are orphaned
+            document.querySelectorAll('.pac-container').forEach(el => {
+                if (!document.body.contains(el.closest('.address-input-wrapper'))) {
+                    el.remove();
+                }
+            });
+            autocompleteInstances = [];
+        }
 
         function initializeDatePickers() {
             // Clean up existing instances
@@ -2656,6 +3294,502 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             });
         }
 
+        // ==================== JOURNEY PLAN (NEW VISUAL) ====================
+        function renderJourneyPlan() {
+            syncPlanState();
+            cleanupAutocompleteInstances();
+
+            const container = document.getElementById('journeyFlow');
+            const emptyState = document.getElementById('journeyEmpty');
+            if (!container) return;
+
+            const disabledAttr = canEdit ? '' : 'disabled';
+            const stops = workingState.stops || [];
+
+            if (stops.length < 2) {
+                container.innerHTML = '';
+                if (emptyState) emptyState.style.display = 'block';
+                return;
+            }
+
+            if (emptyState) emptyState.style.display = 'none';
+
+            let html = '';
+
+            stops.forEach((stop, index) => {
+                const isFirst = index === 0;
+                const isLast = index === stops.length - 1;
+                const isOrigin = stop.stop_type === 'origin';
+                const isDestination = stop.stop_type === 'destination';
+                const isWarehouse = !isOrigin && !isDestination;
+
+                const dotClass = isOrigin ? 'origin' : (isDestination ? 'destination' : (stop.stop_type === 'port' ? 'port' : 'warehouse'));
+                const stepNumber = index + 1;
+
+                const milestone = getMilestoneForStop(stop);
+                const totalFees = (stop.fees || []).reduce((sum, f) => sum + (f.estimated_cost || 0), 0);
+
+                // Build badges
+                let badges = '';
+                if (isOrigin) {
+                    badges += '<span class="journey-badge milestone">Start</span>';
+                }
+                if (isDestination) {
+                    badges += '<span class="journey-badge milestone">Final Delivery</span>';
+                }
+                if (stop.is_customs_clearance) {
+                    badges += '<span class="journey-badge customs">Customs</span>';
+                }
+                if (!isOrigin && !isDestination && milestone.value) {
+                    badges += `<span class="journey-badge milestone">${milestone.label}</span>`;
+                }
+
+                // Build fees section for warehouses
+                let feesHtml = '';
+                if (isWarehouse) {
+                    const feeRows = (stop.fees || []).map((fee, feeIndex) => `
+                        <div class="fee-row" style="display: grid; grid-template-columns: 1fr 1fr 100px 100px 32px; gap: 8px; margin-bottom: 8px; align-items: end;">
+                            <div>
+                                <label style="font-size: 0.7em; color: #6c757d; display: block; margin-bottom: 4px;">Type</label>
+                                <select class="delivery-select" data-fee-field="fee_type" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" style="padding: 8px; font-size: 0.9em;" ${disabledAttr}>
+                                    <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>Receiving</option>
+                                    <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Storage</option>
+                                    <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>Outbound</option>
+                                    <option value="customs" ${fee.fee_type === 'customs' ? 'selected' : ''}>Customs</option>
+                                    <option value="handling" ${fee.fee_type === 'handling' ? 'selected' : ''}>Handling</option>
+                                    <option value="other" ${fee.fee_type === 'other' ? 'selected' : ''}>Other</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="font-size: 0.7em; color: #6c757d; display: block; margin-bottom: 4px;">Description</label>
+                                <input type="text" class="delivery-input" data-fee-field="fee_name" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" value="${escapeHtml(fee.fee_name || '')}" placeholder="Fee name" style="padding: 8px; font-size: 0.9em;" ${disabledAttr}>
+                            </div>
+                            <div>
+                                <label style="font-size: 0.7em; color: #6c757d; display: block; margin-bottom: 4px;">Rate</label>
+                                <input type="number" class="delivery-input" data-fee-field="rate" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" value="${fee.rate || ''}" placeholder="$0" step="0.01" style="padding: 8px; font-size: 0.9em;" ${disabledAttr}>
+                            </div>
+                            <div>
+                                <label style="font-size: 0.7em; color: #6c757d; display: block; margin-bottom: 4px;">Per</label>
+                                <select class="delivery-select" data-fee-field="rate_unit" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" style="padding: 8px; font-size: 0.9em;" ${disabledAttr}>
+                                    <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>Pallet</option>
+                                    <option value="per_module" ${fee.rate_unit === 'per_module' ? 'selected' : ''}>Module</option>
+                                    <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>Truck</option>
+                                    <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>Flat</option>
+                                </select>
+                            </div>
+                            ${canEdit ? `<button type="button" class="btn btn-sm btn-danger" data-action="remove-fee" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" style="padding: 8px;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>` : ''}
+                        </div>
+                    `).join('');
+
+                    feesHtml = `
+                        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e3e7ea;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <strong style="font-size: 0.9em; color: #293E4C;">Warehouse Fees</strong>
+                                ${canEdit ? `<button type="button" class="btn btn-sm btn-secondary" data-action="add-fee" data-stop-id="${stop.id}">+ Add Fee</button>` : ''}
+                            </div>
+                            ${feeRows || '<p style="margin: 0; color: #6c757d; font-size: 0.9em;">No fees added yet.</p>'}
+                            <div style="margin-top: 12px;">
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                                    <input type="checkbox" data-stop-id="${stop.id}" data-stop-field="is_customs_clearance" ${stop.is_customs_clearance ? 'checked' : ''} ${disabledAttr}>
+                                    <span style="font-size: 0.9em;">Customs clearance at this location</span>
+                                </label>
+                            </div>
+                            ${totalFees > 0 ? `<div style="margin-top: 8px; text-align: right; font-weight: 600; color: #488C9A;">Est. Total: $${totalFees.toLocaleString()}</div>` : ''}
+                        </div>
+                    `;
+                }
+
+                // Build address input with autocomplete
+                const addressInput = isOrigin || isDestination
+                    ? `<input class="delivery-input" value="${escapeHtml(stop.location_address || (isOrigin ? 'From manufacturer location' : 'Project address'))}" readonly style="background: #f8f9fa;">`
+                    : `<div class="address-input-wrapper" id="address-wrapper-${stop.id}">
+                        <input type="text" class="delivery-input address-autocomplete" data-stop-id="${stop.id}" data-stop-field="location_address" value="${escapeHtml(stop.location_address || '')}" placeholder="Start typing to search for address..." ${disabledAttr}>
+                        <div class="address-loading"></div>
+                        <svg class="address-verified" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                        <div class="address-error">Please select a valid address from the suggestions</div>
+                    </div>`;
+
+                // Build node card content
+                let nodeContent = '';
+
+                if (isOrigin) {
+                    nodeContent = `
+                        <div class="journey-node-header">
+                            <div>
+                                <h4 class="journey-node-title">${escapeHtml(stop.location_name || 'Manufacturer')}</h4>
+                                <div class="journey-node-type">Origin / Manufacturer</div>
+                            </div>
+                            <div class="journey-node-badges">${badges}</div>
+                        </div>
+                        <div class="journey-node-details">
+                            <div class="delivery-field">
+                                <label>Location</label>
+                                ${addressInput}
+                            </div>
+                        </div>
+                    `;
+                } else if (isDestination) {
+                    nodeContent = `
+                        <div class="journey-node-header">
+                            <div>
+                                <h4 class="journey-node-title">${escapeHtml(stop.location_name || 'Project Site')}</h4>
+                                <div class="journey-node-type">Final Destination</div>
+                            </div>
+                            <div class="journey-node-badges">${badges}</div>
+                        </div>
+                        <div class="journey-node-details">
+                            <div class="delivery-field">
+                                <label>Location</label>
+                                ${addressInput}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    // Warehouse/Port stop
+                    nodeContent = `
+                        <div class="journey-node-header">
+                            <div>
+                                <h4 class="journey-node-title">${escapeHtml(stop.location_name || 'Warehouse/Port')}</h4>
+                                <div class="journey-node-type">${stop.stop_type === 'port' ? 'Port' : (stop.stop_type === 'customs' ? 'Customs Facility' : 'Warehouse')}</div>
+                            </div>
+                            <div class="journey-node-badges">${badges}</div>
+                        </div>
+                        <div class="journey-node-details">
+                            <div class="delivery-field">
+                                <label>Stop Type</label>
+                                <select class="delivery-select" data-stop-id="${stop.id}" data-stop-field="stop_type" ${disabledAttr}>
+                                    <option value="warehouse" ${stop.stop_type === 'warehouse' ? 'selected' : ''}>Warehouse</option>
+                                    <option value="port" ${stop.stop_type === 'port' ? 'selected' : ''}>Port</option>
+                                    <option value="customs" ${stop.stop_type === 'customs' ? 'selected' : ''}>Customs Facility</option>
+                                </select>
+                            </div>
+                            <div class="delivery-field">
+                                <label>Location Name</label>
+                                <input type="text" class="delivery-input" data-stop-id="${stop.id}" data-stop-field="location_name" value="${escapeHtml(stop.location_name || '')}" placeholder="e.g., Houston Distribution Center" ${disabledAttr}>
+                            </div>
+                            <div class="delivery-field" style="grid-column: 1 / -1;">
+                                <label>Address</label>
+                                ${addressInput}
+                            </div>
+                        </div>
+                        ${feesHtml}
+                        ${canEdit ? `<div style="margin-top: 12px; display: flex; justify-content: flex-end;"><button type="button" class="btn btn-sm btn-danger" data-action="remove-stop" data-stop-id="${stop.id}">Remove This Stop</button></div>` : ''}
+                    `;
+                }
+
+                // Build the node HTML
+                html += `
+                    <div class="journey-node" data-stop-id="${stop.id}">
+                        <div class="journey-node-indicator">
+                            <div class="journey-node-dot ${dotClass}">${stepNumber}</div>
+                            ${!isLast ? '<div class="journey-connector"></div>' : ''}
+                        </div>
+                        <div class="journey-node-content">
+                            <div class="journey-node-card">
+                                ${nodeContent}
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                // Add leg card between stops (except after last stop)
+                if (!isLast) {
+                    const nextStop = stops[index + 1];
+                    const leg = getLegForStops(stop.id, nextStop.id);
+                    const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                    const totalFreight = leg.total_freight_cost || 0;
+
+                    const transportIcon = getTransportIcon(leg.transport_mode);
+
+                    html += `
+                        <div class="journey-leg-card" data-leg-id="${leg.id}">
+                            <div class="journey-leg-icon">${transportIcon}</div>
+                            <div class="journey-leg-details">
+                                <div class="journey-leg-field">
+                                    <label>Transport</label>
+                                    <select class="delivery-select" data-leg-id="${leg.id}" data-leg-field="transport_mode" style="padding: 6px 10px; font-size: 0.9em;" ${disabledAttr}>
+                                        <option value="truck" ${leg.transport_mode === 'truck' ? 'selected' : ''}>Truck</option>
+                                        <option value="ocean" ${leg.transport_mode === 'ocean' ? 'selected' : ''}>Ocean</option>
+                                        <option value="rail" ${leg.transport_mode === 'rail' ? 'selected' : ''}>Rail</option>
+                                        <option value="air" ${leg.transport_mode === 'air' ? 'selected' : ''}>Air</option>
+                                    </select>
+                                </div>
+                                <div class="journey-leg-field">
+                                    <label>Start Date</label>
+                                    <input type="text" class="delivery-input flatpickr-date" data-leg-id="${leg.id}" data-leg-field="start_date" value="${leg.start_date || ''}" placeholder="Select date" style="padding: 6px 10px; font-size: 0.9em;" ${disabledAttr}>
+                                </div>
+                                <div class="journey-leg-field">
+                                    <label>Trucks</label>
+                                    <input type="number" class="delivery-input" data-leg-id="${leg.id}" data-leg-field="trucks_required" value="${leg.trucks_required || ''}" placeholder="${trucks}" min="1" style="padding: 6px 10px; font-size: 0.9em; width: 70px;" ${disabledAttr}>
+                                </div>
+                                <div class="journey-leg-field">
+                                    <label>Freight/Truck</label>
+                                    <input type="number" class="delivery-input" data-leg-id="${leg.id}" data-leg-field="freight_cost_per_truck" value="${leg.freight_cost_per_truck || ''}" placeholder="$0" step="0.01" style="padding: 6px 10px; font-size: 0.9em; width: 100px;" ${disabledAttr}>
+                                </div>
+                                <div class="journey-leg-field">
+                                    <label>Total Freight</label>
+                                    <div class="value" style="font-weight: 600; color: #488C9A;">$${totalFreight.toLocaleString()}</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+
+                    // Add "Add Stop" button between intermediate stops
+                    if (canEdit && index < stops.length - 2) {
+                        html += `
+                            <div class="journey-add-stop">
+                                <button type="button" class="journey-add-stop-btn" data-action="add-warehouse-after" data-stop-id="${stop.id}">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    Add Stop Here
+                                </button>
+                            </div>
+                        `;
+                    }
+                }
+            });
+
+            // Add final "Add Stop" button before destination if there are no intermediate stops
+            if (canEdit && stops.length === 2) {
+                html += `
+                    <div class="journey-add-stop" style="margin-left: 70px; margin-top: -10px; margin-bottom: 10px;">
+                        <button type="button" class="journey-add-stop-btn" data-action="add-warehouse">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Add Warehouse/Port Stop
+                        </button>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+
+            // Initialize date pickers and autocomplete
+            initializeDatePickers();
+            initializeAddressAutocompletes();
+            bindJourneyPlanListeners();
+
+            // Update badges
+            updateBadges();
+        }
+
+        function getTransportIcon(mode) {
+            switch (mode) {
+                case 'ocean':
+                    return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.6 2 5 2 2.4 0 2.4-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-9-4-9 4c0 2.9.94 5.34 2.81 7.76"/><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6"/><path d="M12 10v4"/></svg>';
+                case 'rail':
+                    return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="16" rx="2"/><path d="M4 11h16"/><path d="M12 3v8"/><path d="m8 19-2 3"/><path d="m18 22-2-3"/><path d="M8 15h0"/><path d="M16 15h0"/></svg>';
+                case 'air':
+                    return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>';
+                default: // truck
+                    return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>';
+            }
+        }
+
+        function initializeAddressAutocompletes() {
+            document.querySelectorAll('.address-autocomplete').forEach(input => {
+                const stopId = input.dataset.stopId;
+
+                initializeAddressAutocomplete(input, (placeData) => {
+                    const stop = workingState.stops.find(s => s.id == stopId);
+                    if (stop) {
+                        stop.location_address = placeData.address;
+                        stop.latitude = placeData.latitude;
+                        stop.longitude = placeData.longitude;
+
+                        markAsUnsaved();
+                        updateMapFromState();
+                    }
+                });
+            });
+        }
+
+        function bindJourneyPlanListeners() {
+            const container = document.getElementById('journeyFlow');
+            if (!container) return;
+
+            container.onchange = function(event) {
+                const target = event.target;
+                if (target.dataset.stopField) {
+                    updateJourneyStopField(target);
+                } else if (target.dataset.legField) {
+                    updateJourneyLegField(target);
+                } else if (target.dataset.feeField) {
+                    updateJourneyFeeField(target);
+                }
+            };
+
+            container.onclick = function(event) {
+                const actionButton = event.target.closest('[data-action]');
+                if (!actionButton) return;
+                const action = actionButton.dataset.action;
+                if (action === 'add-fee') {
+                    addJourneyFee(actionButton.dataset.stopId);
+                } else if (action === 'remove-fee') {
+                    removeJourneyFee(actionButton.dataset.stopId, parseInt(actionButton.dataset.feeIndex, 10));
+                } else if (action === 'remove-stop') {
+                    removeJourneyStop(actionButton.dataset.stopId);
+                } else if (action === 'add-warehouse' || action === 'add-warehouse-after') {
+                    addJourneyStop(actionButton.dataset.stopId);
+                }
+            };
+        }
+
+        function updateJourneyStopField(element) {
+            const stop = workingState.stops.find(s => s.id == element.dataset.stopId);
+            if (!stop) return;
+
+            const field = element.dataset.stopField;
+            const value = element.type === 'checkbox' ? (element.checked ? 1 : 0) : element.value;
+            stop[field] = value;
+
+            markAsUnsaved();
+            renderJourneyPlan();
+            updateMapFromState();
+            updateTimelineChart();
+        }
+
+        function updateJourneyLegField(element) {
+            const leg = workingState.legs.find(l => l.id == element.dataset.legId);
+            if (!leg) return;
+
+            const field = element.dataset.legField;
+            let value = element.value;
+            if (['delivery_rate', 'freight_cost_per_truck', 'accessorial_cost_per_truck', 'trucks_required'].includes(field)) {
+                value = value === '' ? '' : parseFloat(value);
+            }
+            leg[field] = value;
+
+            markAsUnsaved();
+            syncPlanState();
+            renderJourneyPlan();
+            updateTimelineChart();
+        }
+
+        function updateJourneyFeeField(element) {
+            const stop = workingState.stops.find(s => s.id == element.dataset.stopId);
+            if (!stop || !stop.fees) return;
+            const index = parseInt(element.dataset.feeIndex, 10);
+            const fee = stop.fees[index];
+            if (!fee) return;
+
+            fee[element.dataset.feeField] = element.value;
+            fee.estimated_cost = calculateFeeEstimate(fee);
+
+            markAsUnsaved();
+            renderJourneyPlan();
+            updateTimelineChart();
+        }
+
+        function addJourneyFee(stopId) {
+            const stop = workingState.stops.find(s => s.id == stopId);
+            if (!stop) return;
+            if (!Array.isArray(stop.fees)) stop.fees = [];
+
+            stop.fees.push({
+                fee_type: 'storage',
+                fee_name: '',
+                rate: '',
+                rate_unit: 'per_pallet',
+                estimated_cost: 0
+            });
+
+            markAsUnsaved();
+            renderJourneyPlan();
+        }
+
+        function removeJourneyFee(stopId, feeIndex) {
+            const stop = workingState.stops.find(s => s.id == stopId);
+            if (!stop || !stop.fees) return;
+            stop.fees.splice(feeIndex, 1);
+            markAsUnsaved();
+            renderJourneyPlan();
+        }
+
+        function removeJourneyStop(stopId) {
+            const stopIndex = workingState.stops.findIndex(s => s.id == stopId);
+            if (stopIndex <= 0 || stopIndex >= workingState.stops.length - 1) return;
+
+            const prevStop = workingState.stops[stopIndex - 1];
+            const nextStop = workingState.stops[stopIndex + 1];
+            workingState.stops.splice(stopIndex, 1);
+
+            workingState.legs = workingState.legs.filter(leg => leg.from_stop_id != stopId && leg.to_stop_id != stopId);
+            if (prevStop && nextStop) {
+                getLegForStops(prevStop.id, nextStop.id);
+            }
+
+            markAsUnsaved();
+            renderJourneyPlan();
+            updateMapFromState();
+            updateTimelineChart();
+        }
+
+        function addJourneyStop(afterStopId) {
+            if (!canEdit) return;
+            ensureStops();
+
+            const stops = workingState.stops;
+            let insertIndex;
+
+            if (afterStopId) {
+                insertIndex = stops.findIndex(s => s.id == afterStopId) + 1;
+            } else {
+                insertIndex = stops.findIndex(stop => stop.stop_type === 'destination');
+            }
+
+            if (insertIndex <= 0 || insertIndex >= stops.length) {
+                insertIndex = stops.length - 1;
+            }
+
+            const newStop = {
+                id: `warehouse_${Date.now()}`,
+                stop_type: 'warehouse',
+                location_name: '',
+                location_address: '',
+                latitude: null,
+                longitude: null,
+                fees: []
+            };
+
+            const prevStop = stops[insertIndex - 1];
+            const nextStop = stops[insertIndex];
+
+            stops.splice(insertIndex, 0, newStop);
+
+            // Remove the old leg between prev and next
+            workingState.legs = workingState.legs.filter(leg => !(leg.from_stop_id == prevStop?.id && leg.to_stop_id == nextStop?.id));
+
+            // Create new legs
+            if (prevStop) {
+                getLegForStops(prevStop.id, newStop.id);
+            }
+            if (nextStop) {
+                getLegForStops(newStop.id, nextStop.id);
+            }
+
+            markAsUnsaved();
+            renderJourneyPlan();
+            updateMapFromState();
+            updateTimelineChart();
+        }
+
+        function updateBadges() {
+            const pallets = getTotalPallets();
+            const stopsCount = workingState.stops.length;
+
+            const modulesBadge = document.getElementById('modulesBadge');
+            const stopsBadge = document.getElementById('stopsBadge');
+
+            if (modulesBadge) {
+                modulesBadge.textContent = `${pallets.toLocaleString()} pallets`;
+            }
+            if (stopsBadge) {
+                stopsBadge.textContent = `${stopsCount} stops`;
+            }
+        }
+
+        // Keep renderDeliveryPlan for backwards compatibility
         function renderDeliveryPlan() {
             syncPlanState();
 
@@ -2899,7 +4033,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             stop[field] = value;
 
             markAsUnsaved();
-            renderDeliveryPlan();
+            renderJourneyPlan();
             updateMapFromState();
             updateTimelineChart();
         }
@@ -2916,7 +4050,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             leg[field] = value;
 
             markAsUnsaved();
-            renderDeliveryPlan();
+            renderJourneyPlan();
             updateTimelineChart();
         }
 
@@ -2931,7 +4065,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             fee.estimated_cost = calculateFeeEstimate(fee);
 
             markAsUnsaved();
-            renderDeliveryPlan();
+            renderJourneyPlan();
             updateTimelineChart();
         }
 
@@ -2949,7 +4083,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             });
 
             markAsUnsaved();
-            renderDeliveryPlan();
+            renderJourneyPlan();
         }
 
         function removePlanFee(stopId, feeIndex) {
@@ -2957,7 +4091,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             if (!stop || !stop.fees) return;
             stop.fees.splice(feeIndex, 1);
             markAsUnsaved();
-            renderDeliveryPlan();
+            renderJourneyPlan();
         }
 
         function removeWarehouseStop(stopId) {
@@ -2974,7 +4108,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             }
 
             markAsUnsaved();
-            renderDeliveryPlan();
+            renderJourneyPlan();
             updateMapFromState();
             updateTimelineChart();
         }
@@ -3010,7 +4144,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             }
 
             markAsUnsaved();
-            renderDeliveryPlan();
+            renderJourneyPlan();
             updateMapFromState();
             updateTimelineChart();
         }
@@ -3305,6 +4439,12 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             document.getElementById('totalWarehousingDisplay').textContent = '$' + totalWarehousing.toLocaleString();
             document.getElementById('totalMilestonesDisplay').textContent = '$' + totalMilestones.toLocaleString();
             document.getElementById('grandTotalDisplay').textContent = '$' + grandTotal.toLocaleString();
+
+            // Also update the badge in the collapsible header
+            const grandTotalBadge = document.getElementById('grandTotalBadge');
+            if (grandTotalBadge) {
+                grandTotalBadge.textContent = '$' + grandTotal.toLocaleString();
+            }
         }
 
         function getTransportModeLabel(mode) {
@@ -3456,7 +4596,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                         showToast('Template loaded! Configure your stops and save.', 'success');
 
                         // Refresh UI
-                        renderDeliveryPlan();
+                        renderJourneyPlan();
                         updateMapFromState();
                         updateTimelineChart();
                     } else {
