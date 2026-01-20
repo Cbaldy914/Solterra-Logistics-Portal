@@ -304,10 +304,9 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
 
         /* ==================== MAIN LAYOUT ==================== */
         .planner-layout {
-            display: grid;
-            grid-template-columns: 1fr 380px;
+            display: flex;
+            flex-direction: column;
             gap: 24px;
-            align-items: start;
         }
 
         .planner-main {
@@ -316,20 +315,22 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             gap: 24px;
         }
 
-        .planner-sidebar {
-            display: flex;
-            flex-direction: column;
+        .module-cost-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
             gap: 24px;
-            position: sticky;
-            top: 24px;
+        }
+
+        .planner-split {
+            display: grid;
+            grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+            gap: 24px;
+            align-items: start;
         }
 
         @media (max-width: 1200px) {
-            .planner-layout {
+            .planner-split {
                 grid-template-columns: 1fr;
-            }
-            .planner-sidebar {
-                position: static;
             }
         }
 
@@ -366,6 +367,184 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
 
         .card-body {
             padding: 24px;
+        }
+
+        /* ==================== LOGISTICS PLAN ==================== */
+        .logistics-plan .card-header {
+            align-items: flex-start;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .plan-meta {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .plan-chip {
+            background: #f1f5f7;
+            border: 1px solid #dfe7ea;
+            border-radius: 20px;
+            padding: 6px 12px;
+            font-size: 0.75em;
+            font-weight: 600;
+            color: #425866;
+        }
+
+        .plan-intro {
+            margin: 0 0 20px;
+            color: #6c757d;
+            font-size: 0.95em;
+        }
+
+        .delivery-plan {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .delivery-step {
+            background: #f9fbfc;
+            border: 1px solid #e3e7ea;
+            border-radius: 16px;
+            padding: 18px;
+        }
+
+        .delivery-step-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+
+        .delivery-step-title {
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 1.05em;
+        }
+
+        .delivery-badge {
+            background: #ffffff;
+            border: 1px solid #dce3e6;
+            color: #6c757d;
+            border-radius: 20px;
+            padding: 6px 12px;
+            font-size: 0.7em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+
+        .delivery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+        }
+
+        .delivery-field label {
+            font-size: 0.75em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: #6c757d;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .delivery-input,
+        .delivery-select,
+        .delivery-textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #dfe3e8;
+            border-radius: 10px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 0.95em;
+            background: #fff;
+        }
+
+        .delivery-input[readonly] {
+            background: #f0f4f6;
+            color: #6c757d;
+        }
+
+        .delivery-location {
+            background: #ffffff;
+            border: 1px dashed #ccd5d9;
+            border-radius: 12px;
+            padding: 12px;
+        }
+
+        .delivery-location strong {
+            display: block;
+            color: #293E4C;
+        }
+
+        .delivery-location small {
+            color: #6c757d;
+        }
+
+        .delivery-schedule,
+        .delivery-fees {
+            margin-top: 16px;
+            background: #ffffff;
+            border: 1px solid #e4e8eb;
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        .delivery-fees-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .delivery-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+        }
+
+        .delivery-summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85em;
+            color: #6c757d;
+            margin-top: 10px;
+        }
+
+        .delivery-milestone {
+            background: rgba(72, 140, 154, 0.12);
+            color: #488C9A;
+            padding: 6px 10px;
+            border-radius: 12px;
+            font-size: 0.7em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .delivery-plan-empty {
+            display: none;
+        }
+
+        .fee-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 120px 120px 40px;
+            gap: 10px;
+            align-items: end;
+            margin-bottom: 10px;
+        }
+
+        @media (max-width: 900px) {
+            .fee-row {
+                grid-template-columns: 1fr 1fr;
+            }
         }
 
         /* ==================== READ-ONLY MESSAGE ==================== */
@@ -1506,84 +1685,85 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         </div>
         <?php endif; ?>
 
-        <!-- Route Map -->
-        <div class="route-map-card">
-            <div class="route-map-header">
-                <h3 class="route-map-title">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
-                        <line x1="8" y1="2" x2="8" y2="18"/>
-                        <line x1="16" y1="6" x2="16" y2="22"/>
-                    </svg>
-                    Route Map
-                </h3>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="toggleMapFullscreen()">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="15 3 21 3 21 9"/>
-                        <polyline points="9 21 3 21 3 15"/>
-                        <line x1="21" y1="3" x2="14" y2="10"/>
-                        <line x1="3" y1="21" x2="10" y2="14"/>
-                    </svg>
-                </button>
-            </div>
-            <div class="route-map-container">
-                <div id="routeMap"></div>
-                <div class="map-placeholder" id="mapPlaceholder">
-                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
-                        <line x1="8" y1="2" x2="8" y2="18"/>
-                        <line x1="16" y1="6" x2="16" y2="22"/>
-                    </svg>
-                    <p>Add stops to see the route</p>
-                </div>
-            </div>
-            <div class="map-legend">
-                <div class="legend-item">
-                    <span class="legend-dot origin"></span>
-                    <span>Origin (Manufacturer)</span>
-                </div>
-                <div class="legend-item">
-                    <span class="legend-dot warehouse"></span>
-                    <span>Warehouse/Port</span>
-                </div>
-                <div class="legend-item">
-                    <span class="legend-dot destination"></span>
-                    <span>Destination (Jobsite)</span>
-                </div>
-                <div class="legend-item">
-                    <span class="legend-line"></span>
-                    <span>Shipping Route</span>
-                </div>
-            </div>
-        </div>
-
         <!-- Main Content Layout -->
         <div class="planner-layout">
             <div class="planner-main">
-                <!-- Module Selector Component -->
-                <?php include 'components/projection_module_selector.php'; ?>
+                <div class="module-cost-grid">
+                    <!-- Module Selector Component -->
+                    <?php include 'components/projection_module_selector.php'; ?>
 
-                <!-- Journey Planner Component -->
-                <?php include 'components/projection_journey_planner.php'; ?>
-            </div>
+                    <!-- Cost Summary Component -->
+                    <?php include 'components/projection_cost_summary.php'; ?>
+                </div>
 
-            <div class="planner-sidebar">
-                <!-- Cost Summary Component -->
-                <?php include 'components/projection_cost_summary.php'; ?>
+                <div class="planner-split">
+                    <!-- Logistics Plan Component -->
+                    <?php include 'components/projection_journey_planner.php'; ?>
 
-                <!-- Quick Actions Card -->
+                    <!-- Route Map -->
+                    <div class="route-map-card">
+                        <div class="route-map-header">
+                            <h3 class="route-map-title">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                                    <line x1="8" y1="2" x2="8" y2="18"/>
+                                    <line x1="16" y1="6" x2="16" y2="22"/>
+                                </svg>
+                                Route Map
+                            </h3>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="toggleMapFullscreen()">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="15 3 21 3 21 9"/>
+                                    <polyline points="9 21 3 21 3 15"/>
+                                    <line x1="21" y1="3" x2="14" y2="10"/>
+                                    <line x1="3" y1="21" x2="10" y2="14"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="route-map-container">
+                            <div id="routeMap"></div>
+                            <div class="map-placeholder" id="mapPlaceholder">
+                                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                                    <line x1="8" y1="2" x2="8" y2="18"/>
+                                    <line x1="16" y1="6" x2="16" y2="22"/>
+                                </svg>
+                                <p>Add delivery steps to see the route</p>
+                            </div>
+                        </div>
+                        <div class="map-legend">
+                            <div class="legend-item">
+                                <span class="legend-dot origin"></span>
+                                <span>Origin (Manufacturer)</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-dot warehouse"></span>
+                                <span>Warehouse/Port</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-dot destination"></span>
+                                <span>Destination (Jobsite)</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-line"></span>
+                                <span>Shipping Route</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <?php if ($can_edit): ?>
-                <div class="card">
+                <div class="card plan-actions-card">
                     <div class="card-header">
                         <h3 class="card-title">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                             </svg>
-                            Quick Actions
+                            Plan Actions
                         </h3>
                     </div>
                     <div class="card-body">
-                        <div class="btn-group" style="flex-direction: column;">
+                        <div class="btn-group" style="flex-wrap: wrap;">
                             <button type="button" class="btn btn-primary" onclick="saveProjection()">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
@@ -1599,12 +1779,12 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                                 </svg>
                                 Recalculate Costs
                             </button>
-                            <button type="button" class="btn btn-orange" onclick="openAddStopModal()">
+                            <button type="button" class="btn btn-orange" onclick="addWarehouseDelivery()">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="12" y1="5" x2="12" y2="19"/>
                                     <line x1="5" y1="12" x2="19" y2="12"/>
                                 </svg>
-                                Add Warehouse Stop
+                                Add Warehouse Delivery
                             </button>
                         </div>
                     </div>
@@ -1695,183 +1875,6 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         </div>
     </main>
 
-    <!-- Stop Editor Modal -->
-    <div id="stopEditorModal" class="modal">
-        <div class="modal-backdrop" onclick="closeStopEditorModal()"></div>
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 id="stopModalTitle">Add Warehouse Stop</h3>
-                <button type="button" class="modal-close" onclick="closeStopEditorModal()">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                </button>
-            </div>
-            <div class="modal-body">
-                <input type="hidden" id="editStopId" value="">
-
-                <div class="form-group">
-                    <label class="form-label">Stop Type</label>
-                    <select id="stopType" class="form-input">
-                        <option value="warehouse">Warehouse</option>
-                        <option value="port">Port</option>
-                        <option value="customs">Customs Facility</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Location Name</label>
-                    <input type="text" id="stopName" class="form-input" placeholder="e.g., LA Port Warehouse">
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Address</label>
-                    <input type="text" id="stopAddress" class="form-input" placeholder="Full address">
-                </div>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Estimated Arrival</label>
-                        <input type="text" id="stopArrival" class="form-input flatpickr-date" placeholder="Select date">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Estimated Departure</label>
-                        <input type="text" id="stopDeparture" class="form-input flatpickr-date" placeholder="Select date">
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-                        <input type="checkbox" id="stopIsCustoms" style="width: 20px; height: 20px; accent-color: #488C9A;">
-                        <span>Customs Clearance Point</span>
-                    </label>
-                    <p class="form-help">Check if customs clearance happens at this stop (triggers Customs Cleared milestone)</p>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Notes</label>
-                    <textarea id="stopNotes" class="form-input" rows="2" placeholder="Optional notes about this stop"></textarea>
-                </div>
-
-                <!-- Fees Section -->
-                <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #e9ecef;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                        <h4 style="margin: 0; color: #293E4C;">Fees at This Stop</h4>
-                        <button type="button" class="btn btn-sm btn-secondary" onclick="addFeeRow()">+ Add Fee</button>
-                    </div>
-                    <div id="feesContainer">
-                        <!-- Fee rows added dynamically -->
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="closeStopEditorModal()">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="saveStop()">Save Stop</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Leg Editor Modal -->
-    <div id="legEditorModal" class="modal">
-        <div class="modal-backdrop" onclick="closeLegEditorModal()"></div>
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 id="legModalTitle">Edit Shipping Leg</h3>
-                <button type="button" class="modal-close" onclick="closeLegEditorModal()">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                </button>
-            </div>
-            <div class="modal-body">
-                <input type="hidden" id="editLegId" value="">
-                <input type="hidden" id="legFromStopId" value="">
-                <input type="hidden" id="legToStopId" value="">
-
-                <div class="form-group">
-                    <label class="form-label">Transport Mode</label>
-                    <select id="legTransportMode" class="form-input">
-                        <option value="truck">Truck</option>
-                        <option value="ocean">Ocean Freight</option>
-                        <option value="rail">Rail</option>
-                        <option value="air">Air</option>
-                    </select>
-                </div>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Start Date</label>
-                        <input type="text" id="legStartDate" class="form-input flatpickr-date" placeholder="Select date">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">End Date</label>
-                        <input type="text" id="legEndDate" class="form-input flatpickr-date" placeholder="Select date">
-                    </div>
-                </div>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Delivery Rate</label>
-                        <input type="number" id="legDeliveryRate" class="form-input" placeholder="e.g., 4" step="0.1" min="0">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Rate Unit</label>
-                        <select id="legRateUnit" class="form-input">
-                            <option value="per_week">Per Week</option>
-                            <option value="per_day">Per Day</option>
-                            <option value="per_month">Per Month</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Trucks Required</label>
-                    <input type="number" id="legTrucksRequired" class="form-input" placeholder="Auto-calculated or manual" min="1">
-                    <p class="form-help">Leave blank to auto-calculate from pallet count</p>
-                </div>
-
-                <div style="padding: 16px; background: #f8f9fa; border-radius: 12px; margin: 20px 0;">
-                    <h4 style="margin: 0 0 12px; font-size: 0.95em; color: #293E4C;">Freight Costs</h4>
-                    <div class="form-row">
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label class="form-label">Cost Per Truck</label>
-                            <input type="number" id="legFreightCost" class="form-input" placeholder="$0.00" step="0.01" min="0" onchange="calculateLegTotal()">
-                        </div>
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label class="form-label">Accessorial Per Truck</label>
-                            <input type="number" id="legAccessorialCost" class="form-input" placeholder="$0.00" step="0.01" min="0" onchange="calculateLegTotal()">
-                        </div>
-                    </div>
-                    <div style="margin-top: 16px; padding-top: 12px; border-top: 1px dashed #dee2e6; display: flex; justify-content: space-between; align-items: center;">
-                        <span style="font-weight: 600; color: #293E4C;">Total Freight Cost</span>
-                        <span id="legTotalDisplay" style="font-size: 1.3em; font-weight: 700; color: #488C9A;">$0.00</span>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Triggers Milestone</label>
-                    <select id="legTriggersMilestone" class="form-input">
-                        <option value="">None</option>
-                        <option value="shipping">Shipping</option>
-                        <option value="customs_cleared">Customs Cleared</option>
-                        <option value="project_delivery">Project Delivery</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Notes</label>
-                    <textarea id="legNotes" class="form-input" rows="2" placeholder="Optional notes about this leg"></textarea>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="closeLegEditorModal()">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="saveLeg()">Save Leg</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Toast Container -->
     <div id="toastContainer" class="toast-container"></div>
 
@@ -1885,6 +1888,10 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         // ==================== GLOBAL STATE ====================
         const projectId = <?php echo $project_id; ?>;
         const canEdit = <?php echo $can_edit ? 'true' : 'false'; ?>;
+        const projectInfo = {
+            name: <?php echo json_encode($project['project_name']); ?>,
+            address: <?php echo json_encode($project['project_address']); ?>
+        };
 
         let currentProjection = <?php echo $current_projection ? json_encode($current_projection) : 'null'; ?>;
         let projections = <?php echo json_encode($projections); ?>;
@@ -1909,6 +1916,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         document.addEventListener('DOMContentLoaded', function() {
             initializeDatePickers();
             updateUIFromState();
+            renderDeliveryPlan();
         });
 
         function initializeDatePickers() {
@@ -2021,6 +2029,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 return;
             }
 
+            syncPlanState();
             showLoading('Saving projection...');
 
             const payload = {
@@ -2267,7 +2276,10 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         }
 
         function closeStopEditorModal() {
-            document.getElementById('stopEditorModal').classList.remove('active');
+            const modal = document.getElementById('stopEditorModal');
+            if (modal) {
+                modal.classList.remove('active');
+            }
         }
 
         function addFeeRow(feeData = null) {
@@ -2419,7 +2431,10 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         }
 
         function closeLegEditorModal() {
-            document.getElementById('legEditorModal').classList.remove('active');
+            const modal = document.getElementById('legEditorModal');
+            if (modal) {
+                modal.classList.remove('active');
+            }
         }
 
         function calculateLegTotal() {
@@ -2469,6 +2484,535 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             closeLegEditorModal();
             showToast('Leg saved. Remember to save projection!', 'success');
             saveProjection();
+        }
+
+        // ==================== LOGISTICS PLAN (INLINE) ====================
+        function ensureStops() {
+            const stops = workingState.stops || [];
+            let origin = stops.find(stop => stop.stop_type === 'origin');
+            let destination = stops.find(stop => stop.stop_type === 'destination');
+
+            if (!origin) {
+                const manufacturer = workingState.moduleAllocations[0]?.manufacturer_name || 'Manufacturer';
+                origin = {
+                    id: `origin_${Date.now()}`,
+                    stop_type: 'origin',
+                    location_name: manufacturer,
+                    location_address: '',
+                    fees: []
+                };
+            }
+
+            if (!destination) {
+                destination = {
+                    id: `destination_${Date.now()}`,
+                    stop_type: 'destination',
+                    location_name: projectInfo.name || 'Project Site',
+                    location_address: projectInfo.address || '',
+                    fees: []
+                };
+            }
+
+            const intermediates = stops.filter(stop => stop.stop_type !== 'origin' && stop.stop_type !== 'destination');
+            const orderedStops = [];
+            if (origin) orderedStops.push(origin);
+            orderedStops.push(...intermediates);
+            if (destination) orderedStops.push(destination);
+
+            orderedStops.forEach((stop, index) => {
+                if (!stop.id) {
+                    stop.id = `stop_${Date.now()}_${index}`;
+                }
+                if (!Array.isArray(stop.fees)) {
+                    stop.fees = [];
+                }
+            });
+
+            workingState.stops = orderedStops;
+        }
+
+        function escapeHtml(value) {
+            if (value === null || value === undefined) return '';
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function getMilestoneForStop(stop) {
+            if (!stop) return { value: '', label: 'Milestone' };
+            if (stop.stop_type === 'destination') {
+                return { value: 'project_delivery', label: 'Project Delivery' };
+            }
+            if (stop.is_customs_clearance || stop.stop_type === 'customs') {
+                return { value: 'customs_cleared', label: 'Customs Cleared' };
+            }
+            return { value: 'shipping', label: 'Shipping' };
+        }
+
+        function getLegForStops(fromId, toId) {
+            let leg = workingState.legs.find(l => l.from_stop_id == fromId && l.to_stop_id == toId);
+            if (!leg) {
+                leg = {
+                    id: `leg_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+                    from_stop_id: fromId,
+                    to_stop_id: toId,
+                    transport_mode: 'truck',
+                    delivery_rate_unit: 'per_week'
+                };
+                workingState.legs.push(leg);
+            }
+            return leg;
+        }
+
+        function calculateEndDate(startDate, deliveryRate, rateUnit, trucks) {
+            if (!startDate || !deliveryRate || deliveryRate <= 0) return '';
+            const rate = parseFloat(deliveryRate);
+            const totalTrucks = parseInt(trucks, 10) || 1;
+            let daysPerDelivery = 1;
+
+            if (rateUnit === 'per_week') {
+                daysPerDelivery = 7 / rate;
+            } else if (rateUnit === 'per_month') {
+                daysPerDelivery = 30 / rate;
+            } else {
+                daysPerDelivery = 1 / rate;
+            }
+
+            const totalDays = Math.ceil(totalTrucks * daysPerDelivery);
+            const start = new Date(startDate);
+            if (Number.isNaN(start.getTime())) return '';
+            start.setDate(start.getDate() + totalDays);
+            return start.toISOString().split('T')[0];
+        }
+
+        function calculateFeeEstimate(fee) {
+            const rate = parseFloat(fee.rate) || 0;
+            if (!rate) return 0;
+            const pallets = getTotalPallets() || 1;
+            const modules = workingState.moduleAllocations.reduce((sum, alloc) => sum + (alloc.quantity || 0), 0) || 1;
+            const trucks = getTotalTrucks();
+
+            switch (fee.rate_unit) {
+                case 'per_module':
+                    return rate * modules;
+                case 'per_truck':
+                    return rate * trucks;
+                case 'flat':
+                    return rate;
+                case 'per_pallet':
+                default:
+                    return rate * pallets;
+            }
+        }
+
+        function syncPlanState() {
+            ensureStops();
+
+            const stops = workingState.stops || [];
+            const legPairs = new Set();
+            for (let i = 0; i < stops.length - 1; i++) {
+                const fromStop = stops[i];
+                const toStop = stops[i + 1];
+                if (!fromStop || !toStop) continue;
+                legPairs.add(`${fromStop.id}__${toStop.id}`);
+                getLegForStops(fromStop.id, toStop.id);
+            }
+
+            workingState.legs = workingState.legs.filter(leg => legPairs.has(`${leg.from_stop_id}__${leg.to_stop_id}`));
+
+            workingState.legs.forEach(leg => {
+                const toStop = workingState.stops.find(stop => stop.id == leg.to_stop_id);
+                const milestone = getMilestoneForStop(toStop);
+                leg.triggers_milestone = milestone.value;
+
+                const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                leg.trucks_required = trucks;
+
+                const endDate = calculateEndDate(leg.start_date, leg.delivery_rate, leg.delivery_rate_unit, trucks);
+                if (endDate) {
+                    leg.end_date = endDate;
+                }
+
+                const freight = parseFloat(leg.freight_cost_per_truck) || 0;
+                const accessorial = parseFloat(leg.accessorial_cost_per_truck) || 0;
+                leg.total_freight_cost = trucks * (freight + accessorial);
+
+                if (toStop && leg.end_date) {
+                    toStop.estimated_arrival_date = leg.end_date;
+                }
+            });
+
+            workingState.stops.forEach(stop => {
+                if (!Array.isArray(stop.fees)) {
+                    stop.fees = [];
+                }
+                stop.fees = stop.fees.map(fee => ({
+                    ...fee,
+                    estimated_cost: calculateFeeEstimate(fee)
+                }));
+            });
+        }
+
+        function renderDeliveryPlan() {
+            syncPlanState();
+
+            const container = document.getElementById('deliveryPlan');
+            const emptyState = document.getElementById('deliveryPlanEmpty');
+            if (!container) return;
+
+            const disabledAttr = canEdit ? '' : 'disabled';
+            const stops = workingState.stops || [];
+            const segments = [];
+            for (let i = 0; i < stops.length - 1; i++) {
+                const fromStop = stops[i];
+                const toStop = stops[i + 1];
+                if (!fromStop || !toStop) continue;
+
+                const leg = getLegForStops(fromStop.id, toStop.id);
+                const milestone = getMilestoneForStop(toStop);
+                const isDestination = toStop.stop_type === 'destination';
+                const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                const totalFreight = leg.total_freight_cost || 0;
+                const endDate = leg.end_date || '';
+                const feeRows = (toStop.fees || []).map((fee, feeIndex) => {
+                    return `
+                        <div class="fee-row" data-stop-id="${toStop.id}" data-fee-index="${feeIndex}">
+                            <div>
+                                <label class="form-label" style="font-size: 0.8em;">Fee Type</label>
+                                <select class="delivery-select" data-fee-field="fee_type" data-stop-id="${toStop.id}" data-fee-index="${feeIndex}" ${disabledAttr}>
+                                    <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>Receiving</option>
+                                    <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Storage</option>
+                                    <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>Outbound</option>
+                                    <option value="customs" ${fee.fee_type === 'customs' ? 'selected' : ''}>Customs</option>
+                                    <option value="handling" ${fee.fee_type === 'handling' ? 'selected' : ''}>Handling</option>
+                                    <option value="other" ${fee.fee_type === 'other' ? 'selected' : ''}>Other</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="form-label" style="font-size: 0.8em;">Description</label>
+                                <input type="text" class="delivery-input" data-fee-field="fee_name" data-stop-id="${toStop.id}" data-fee-index="${feeIndex}" value="${escapeHtml(fee.fee_name || '')}" placeholder="Fee description" ${disabledAttr}>
+                            </div>
+                            <div>
+                                <label class="form-label" style="font-size: 0.8em;">Rate</label>
+                                <input type="number" class="delivery-input" data-fee-field="rate" data-stop-id="${toStop.id}" data-fee-index="${feeIndex}" value="${fee.rate || ''}" placeholder="$0" step="0.01" min="0" ${disabledAttr}>
+                            </div>
+                            <div>
+                                <label class="form-label" style="font-size: 0.8em;">Per</label>
+                                <select class="delivery-select" data-fee-field="rate_unit" data-stop-id="${toStop.id}" data-fee-index="${feeIndex}" ${disabledAttr}>
+                                    <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>Pallet</option>
+                                    <option value="per_module" ${fee.rate_unit === 'per_module' ? 'selected' : ''}>Module</option>
+                                    <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>Truck</option>
+                                    <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>Flat</option>
+                                </select>
+                            </div>
+                            ${canEdit ? `
+                            <button type="button" class="btn btn-sm btn-danger" data-action="remove-fee" data-stop-id="${toStop.id}" data-fee-index="${feeIndex}">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18"/>
+                                    <line x1="6" y1="6" x2="18" y2="18"/>
+                                </svg>
+                            </button>
+                            ` : ''}
+                        </div>
+                    `;
+                }).join('');
+
+                const showActions = canEdit && !isDestination && toStop.id === stops[stops.length - 2]?.id;
+                const removeButton = canEdit && !isDestination
+                    ? `<button type="button" class="btn btn-sm btn-danger" data-action="remove-stop" data-stop-id="${toStop.id}">Remove Warehouse</button>`
+                    : '';
+
+                const destinationTypeInput = isDestination
+                    ? `<input class="delivery-input" value="Project Site" readonly>`
+                    : `
+                        <select class="delivery-select" data-stop-id="${toStop.id}" data-stop-field="stop_type" ${disabledAttr}>
+                            <option value="warehouse" ${toStop.stop_type === 'warehouse' ? 'selected' : ''}>Warehouse</option>
+                            <option value="port" ${toStop.stop_type === 'port' ? 'selected' : ''}>Port</option>
+                            <option value="customs" ${toStop.stop_type === 'customs' ? 'selected' : ''}>Customs Facility</option>
+                        </select>
+                    `;
+
+                const locationNameInput = isDestination
+                    ? `<input class="delivery-input" value="${escapeHtml(toStop.location_name || 'Project Site')}" readonly>`
+                    : `<input class="delivery-input" data-stop-id="${toStop.id}" data-stop-field="location_name" value="${escapeHtml(toStop.location_name || '')}" placeholder="Warehouse name" ${disabledAttr}>`;
+
+                const locationAddressInput = isDestination
+                    ? `<input class="delivery-input" value="${escapeHtml(toStop.location_address || '')}" readonly>`
+                    : `<input class="delivery-input" data-stop-id="${toStop.id}" data-stop-field="location_address" value="${escapeHtml(toStop.location_address || '')}" placeholder="Street, city, state" ${disabledAttr}>`;
+
+                segments.push(`
+                    <div class="delivery-step" data-from-stop-id="${fromStop.id}" data-to-stop-id="${toStop.id}">
+                        <div class="delivery-step-header">
+                            <div class="delivery-step-title">Delivery ${i + 1}</div>
+                            <div class="delivery-badge">${milestone.label}</div>
+                            ${removeButton}
+                        </div>
+                        <div class="delivery-grid">
+                            <div class="delivery-field">
+                                <label>From</label>
+                                <div class="delivery-location">
+                                    <strong>${escapeHtml(fromStop.location_name || 'Manufacturer')}</strong>
+                                    <small>${escapeHtml(fromStop.location_address || 'Set from module manufacturer')}</small>
+                                </div>
+                            </div>
+                            <div class="delivery-field">
+                                <label>Destination Type</label>
+                                ${destinationTypeInput}
+                            </div>
+                            <div class="delivery-field">
+                                <label>Destination Name</label>
+                                ${locationNameInput}
+                            </div>
+                            <div class="delivery-field">
+                                <label>Destination Address</label>
+                                ${locationAddressInput}
+                            </div>
+                        </div>
+                        <div class="delivery-schedule">
+                            <div class="delivery-grid">
+                                <div class="delivery-field">
+                                    <label>Transport Mode</label>
+                                    <select class="delivery-select" data-leg-id="${leg.id}" data-leg-field="transport_mode" ${disabledAttr}>
+                                        <option value="truck" ${leg.transport_mode === 'truck' ? 'selected' : ''}>Truck</option>
+                                        <option value="ocean" ${leg.transport_mode === 'ocean' ? 'selected' : ''}>Ocean</option>
+                                        <option value="rail" ${leg.transport_mode === 'rail' ? 'selected' : ''}>Rail</option>
+                                        <option value="air" ${leg.transport_mode === 'air' ? 'selected' : ''}>Air</option>
+                                    </select>
+                                </div>
+                                <div class="delivery-field">
+                                    <label>Start Date</label>
+                                    <input type="text" class="delivery-input flatpickr-date" data-leg-id="${leg.id}" data-leg-field="start_date" value="${leg.start_date || ''}" placeholder="Select date" ${disabledAttr}>
+                                </div>
+                                <div class="delivery-field">
+                                    <label>Cadence</label>
+                                    <div class="delivery-grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
+                                        <input type="number" class="delivery-input" data-leg-id="${leg.id}" data-leg-field="delivery_rate" value="${leg.delivery_rate || ''}" placeholder="Rate" min="0" step="0.1" ${disabledAttr}>
+                                        <select class="delivery-select" data-leg-id="${leg.id}" data-leg-field="delivery_rate_unit" ${disabledAttr}>
+                                            <option value="per_week" ${leg.delivery_rate_unit === 'per_week' ? 'selected' : ''}>Per Week</option>
+                                            <option value="per_day" ${leg.delivery_rate_unit === 'per_day' ? 'selected' : ''}>Per Day</option>
+                                            <option value="per_month" ${leg.delivery_rate_unit === 'per_month' ? 'selected' : ''}>Per Month</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="delivery-field">
+                                    <label>End Date (Auto)</label>
+                                    <input type="text" class="delivery-input" value="${endDate}" readonly>
+                                </div>
+                            </div>
+                            <div class="delivery-grid" style="margin-top: 16px;">
+                                <div class="delivery-field">
+                                    <label>Trucks Required</label>
+                                    <input type="number" class="delivery-input" data-leg-id="${leg.id}" data-leg-field="trucks_required" value="${leg.trucks_required || ''}" placeholder="${trucks}" min="1" ${disabledAttr}>
+                                </div>
+                                <div class="delivery-field">
+                                    <label>Freight Per Truck</label>
+                                    <input type="number" class="delivery-input" data-leg-id="${leg.id}" data-leg-field="freight_cost_per_truck" value="${leg.freight_cost_per_truck || ''}" placeholder="$0" step="0.01" min="0" ${disabledAttr}>
+                                </div>
+                                <div class="delivery-field">
+                                    <label>Accessorial Per Truck</label>
+                                    <input type="number" class="delivery-input" data-leg-id="${leg.id}" data-leg-field="accessorial_cost_per_truck" value="${leg.accessorial_cost_per_truck || ''}" placeholder="$0" step="0.01" min="0" ${disabledAttr}>
+                                </div>
+                                <div class="delivery-field">
+                                    <label>Total Freight</label>
+                                    <input type="text" class="delivery-input" value="$${totalFreight.toFixed(2)}" readonly>
+                                </div>
+                            </div>
+                            <div class="delivery-summary">
+                                <span>Estimated deliveries: ${trucks}</span>
+                                <span class="delivery-milestone">${milestone.label}</span>
+                            </div>
+                        </div>
+                        ${!isDestination ? `
+                            <div class="delivery-fees">
+                                <div class="delivery-fees-header">
+                                    <strong>Warehouse Fees</strong>
+                                    ${canEdit ? `<button type="button" class="btn btn-sm btn-secondary" data-action="add-fee" data-stop-id="${toStop.id}">Add Fee</button>` : ''}
+                                </div>
+                                ${feeRows || '<p style="margin:0;color:#6c757d;">No fees added yet.</p>'}
+                                <div class="delivery-field" style="margin-top: 12px;">
+                                    <label style="display:flex; align-items:center; gap:10px;">
+                                        <input type="checkbox" data-stop-id="${toStop.id}" data-stop-field="is_customs_clearance" ${toStop.is_customs_clearance ? 'checked' : ''} ${disabledAttr}>
+                                        <span>Customs clearance at this stop</span>
+                                    </label>
+                                </div>
+                            </div>
+                        ` : ''}
+                        ${showActions ? `
+                            <div class="delivery-actions">
+                                <button type="button" class="btn btn-secondary" data-action="add-warehouse" data-stop-id="${toStop.id}">Add another warehouse delivery</button>
+                                <span style="color:#6c757d; font-size:0.85em;">Next leg delivers to project site.</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                `);
+            }
+
+            container.innerHTML = segments.join('');
+            if (emptyState) {
+                emptyState.style.display = segments.length ? 'none' : 'block';
+            }
+
+            initializeDatePickers();
+            bindDeliveryPlanListeners();
+        }
+
+        function bindDeliveryPlanListeners() {
+            const container = document.getElementById('deliveryPlan');
+            if (!container) return;
+
+            container.onchange = function(event) {
+                const target = event.target;
+                if (target.dataset.stopField) {
+                    updateStopField(target);
+                } else if (target.dataset.legField) {
+                    updateLegField(target);
+                } else if (target.dataset.feeField) {
+                    updateFeeField(target);
+                }
+            };
+
+            container.onclick = function(event) {
+                const actionButton = event.target.closest('[data-action]');
+                if (!actionButton) return;
+                const action = actionButton.dataset.action;
+                if (action === 'add-fee') {
+                    addPlanFee(actionButton.dataset.stopId);
+                } else if (action === 'remove-fee') {
+                    removePlanFee(actionButton.dataset.stopId, parseInt(actionButton.dataset.feeIndex, 10));
+                } else if (action === 'remove-stop') {
+                    removeWarehouseStop(actionButton.dataset.stopId);
+                } else if (action === 'add-warehouse') {
+                    addWarehouseDelivery();
+                }
+            };
+        }
+
+        function updateStopField(element) {
+            const stop = workingState.stops.find(s => s.id == element.dataset.stopId);
+            if (!stop) return;
+
+            const field = element.dataset.stopField;
+            const value = element.type === 'checkbox' ? (element.checked ? 1 : 0) : element.value;
+            stop[field] = value;
+
+            markAsUnsaved();
+            renderDeliveryPlan();
+            updateMapFromState();
+            updateTimelineChart();
+        }
+
+        function updateLegField(element) {
+            const leg = workingState.legs.find(l => l.id == element.dataset.legId);
+            if (!leg) return;
+
+            const field = element.dataset.legField;
+            let value = element.value;
+            if (['delivery_rate', 'freight_cost_per_truck', 'accessorial_cost_per_truck', 'trucks_required'].includes(field)) {
+                value = value === '' ? '' : parseFloat(value);
+            }
+            leg[field] = value;
+
+            markAsUnsaved();
+            renderDeliveryPlan();
+            updateTimelineChart();
+        }
+
+        function updateFeeField(element) {
+            const stop = workingState.stops.find(s => s.id == element.dataset.stopId);
+            if (!stop || !stop.fees) return;
+            const index = parseInt(element.dataset.feeIndex, 10);
+            const fee = stop.fees[index];
+            if (!fee) return;
+
+            fee[element.dataset.feeField] = element.value;
+            fee.estimated_cost = calculateFeeEstimate(fee);
+
+            markAsUnsaved();
+            renderDeliveryPlan();
+            updateTimelineChart();
+        }
+
+        function addPlanFee(stopId) {
+            const stop = workingState.stops.find(s => s.id == stopId);
+            if (!stop) return;
+            if (!Array.isArray(stop.fees)) stop.fees = [];
+
+            stop.fees.push({
+                fee_type: 'storage',
+                fee_name: '',
+                rate: '',
+                rate_unit: 'per_pallet',
+                estimated_cost: 0
+            });
+
+            markAsUnsaved();
+            renderDeliveryPlan();
+        }
+
+        function removePlanFee(stopId, feeIndex) {
+            const stop = workingState.stops.find(s => s.id == stopId);
+            if (!stop || !stop.fees) return;
+            stop.fees.splice(feeIndex, 1);
+            markAsUnsaved();
+            renderDeliveryPlan();
+        }
+
+        function removeWarehouseStop(stopId) {
+            const stopIndex = workingState.stops.findIndex(s => s.id == stopId);
+            if (stopIndex <= 0 || stopIndex >= workingState.stops.length - 1) return;
+
+            const prevStop = workingState.stops[stopIndex - 1];
+            const nextStop = workingState.stops[stopIndex + 1];
+            workingState.stops.splice(stopIndex, 1);
+
+            workingState.legs = workingState.legs.filter(leg => leg.from_stop_id != stopId && leg.to_stop_id != stopId);
+            if (prevStop && nextStop) {
+                getLegForStops(prevStop.id, nextStop.id);
+            }
+
+            markAsUnsaved();
+            renderDeliveryPlan();
+            updateMapFromState();
+            updateTimelineChart();
+        }
+
+        function addWarehouseDelivery() {
+            if (!canEdit) return;
+            ensureStops();
+
+            const stops = workingState.stops;
+            const destinationIndex = stops.findIndex(stop => stop.stop_type === 'destination');
+            if (destinationIndex === -1) return;
+
+            const newStop = {
+                id: `warehouse_${Date.now()}`,
+                stop_type: 'warehouse',
+                location_name: '',
+                location_address: '',
+                fees: []
+            };
+
+            stops.splice(destinationIndex, 0, newStop);
+
+            const prevStop = stops[destinationIndex - 1];
+            const destinationStop = stops[destinationIndex + 1];
+
+            workingState.legs = workingState.legs.filter(leg => !(leg.from_stop_id == prevStop?.id && leg.to_stop_id == destinationStop?.id));
+
+            if (prevStop) {
+                getLegForStops(prevStop.id, newStop.id);
+            }
+            if (destinationStop) {
+                getLegForStops(newStop.id, destinationStop.id);
+            }
+
+            markAsUnsaved();
+            renderDeliveryPlan();
+            updateMapFromState();
+            updateTimelineChart();
         }
 
         // ==================== UTILITY FUNCTIONS ====================
@@ -2563,6 +3107,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         }
 
         function updateMapFromState() {
+            syncPlanState();
             if (!map) return;
 
             // Clear existing markers and polylines
@@ -2572,12 +3117,13 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             mapPolylines = [];
 
             const stops = workingState.stops || [];
+            const placeholder = document.getElementById('mapPlaceholder');
             if (stops.length === 0) {
-                document.getElementById('mapPlaceholder').style.display = 'block';
+                if (placeholder) {
+                    placeholder.style.display = 'block';
+                }
                 return;
             }
-
-            document.getElementById('mapPlaceholder').style.display = 'none';
 
             const bounds = new google.maps.LatLngBounds();
             const pathCoordinates = [];
@@ -2626,6 +3172,17 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 mapMarkers.push(marker);
             });
 
+            if (pathCoordinates.length === 0) {
+                if (placeholder) {
+                    placeholder.style.display = 'block';
+                }
+                return;
+            }
+
+            if (placeholder) {
+                placeholder.style.display = 'none';
+            }
+
             // Draw route polyline
             if (pathCoordinates.length > 1) {
                 const routePath = new google.maps.Polyline({
@@ -2672,6 +3229,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
 
         // ==================== TIMELINE CHART ====================
         function updateTimelineChart() {
+            syncPlanState();
             const container = document.getElementById('timelineChart');
             if (!container) return;
 
@@ -2792,6 +3350,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
 
         // ==================== COMPARISON TABLE ====================
         function updateComparisonTable() {
+            syncPlanState();
             const tbody = document.getElementById('comparisonTableBody');
             if (!tbody) return;
 
@@ -2897,6 +3456,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                         showToast('Template loaded! Configure your stops and save.', 'success');
 
                         // Refresh UI
+                        renderDeliveryPlan();
                         updateMapFromState();
                         updateTimelineChart();
                     } else {
@@ -2933,6 +3493,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         function autoSave() {
             if (!canEdit || !workingState.projectionId) return;
 
+            syncPlanState();
             const indicator = document.getElementById('autosaveIndicator');
             indicator.classList.add('visible', 'saving');
             indicator.querySelector('span').textContent = 'Saving...';
@@ -2998,7 +3559,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             // Ctrl+W for new warehouse stop
             if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
                 e.preventDefault();
-                if (canEdit) openAddStopModal();
+                if (canEdit) addWarehouseDelivery();
             }
         });
 
