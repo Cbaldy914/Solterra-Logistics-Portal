@@ -168,6 +168,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <?php
     $google_maps_key = getenv('GOOGLE_MAPS_API_KEY') ?: '';
     if (!empty($google_maps_key)):
@@ -894,6 +895,150 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             border-color: rgba(72, 140, 154, 0.5);
         }
 
+        /* ==================== COLLAPSIBLE WAREHOUSE/PORT CARD ==================== */
+        .warehouse-stop-card {
+            background: white;
+            border: 1px solid #e3e7ea;
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .warehouse-stop-card:hover {
+            border-color: #488C9A;
+            box-shadow: 0 6px 20px rgba(72, 140, 154, 0.12);
+        }
+
+        .warehouse-stop-header {
+            padding: 16px 20px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            transition: background 0.2s ease;
+        }
+
+        .warehouse-stop-header:hover {
+            background: #f8f9fa;
+        }
+
+        .warehouse-stop-info {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .warehouse-stop-title-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .warehouse-stop-title {
+            font-weight: 600;
+            color: #293E4C;
+            font-size: 1.05em;
+            margin: 0;
+        }
+
+        .warehouse-stop-type-badge {
+            font-size: 0.7em;
+            padding: 3px 10px;
+            border-radius: 10px;
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+
+        .warehouse-stop-type-badge.warehouse {
+            background: rgba(224, 127, 58, 0.15);
+            color: #c76a2e;
+        }
+
+        .warehouse-stop-type-badge.port {
+            background: rgba(23, 162, 184, 0.15);
+            color: #138496;
+        }
+
+        .warehouse-stop-type-badge.customs {
+            background: rgba(111, 66, 193, 0.15);
+            color: #5a33a1;
+        }
+
+        .warehouse-stop-summary {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+
+        .warehouse-stop-summary-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .warehouse-stop-summary-item svg {
+            width: 14px;
+            height: 14px;
+            color: #488C9A;
+        }
+
+        .warehouse-stop-summary-item strong {
+            color: #293E4C;
+        }
+
+        .warehouse-stop-toggle {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: #f1f5f7;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #6c757d;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .warehouse-stop-toggle:hover {
+            background: #488C9A;
+            color: white;
+        }
+
+        .warehouse-stop-toggle svg {
+            transition: transform 0.3s ease;
+        }
+
+        .warehouse-stop-card.collapsed .warehouse-stop-toggle svg {
+            transform: rotate(-90deg);
+        }
+
+        .warehouse-stop-body {
+            padding: 20px;
+            border-top: 1px solid #e9ecef;
+            transition: all 0.3s ease;
+        }
+
+        .warehouse-stop-card.collapsed .warehouse-stop-body {
+            display: none;
+        }
+
+        /* Override portal.css .warehouse-card styles for this page */
+        .journey-flow .warehouse-card,
+        .journey-planner .warehouse-card {
+            width: auto;
+            border: none;
+            border-radius: 0;
+        }
+
         /* ==================== GOOGLE PLACES AUTOCOMPLETE ==================== */
         .address-input-wrapper {
             position: relative;
@@ -1592,6 +1737,186 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             font-size: 1.1em;
             font-weight: 700;
             color: #488C9A;
+        }
+
+        /* ==================== TIMELINE CHARTS TABS ==================== */
+        .timeline-tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid #e9ecef;
+            padding: 0 24px;
+            background: #f8f9fa;
+        }
+
+        .timeline-tab {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: #6c757d;
+            font-weight: 600;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .timeline-tab:hover {
+            color: #488C9A;
+            background: rgba(72, 140, 154, 0.05);
+        }
+
+        .timeline-tab.active {
+            color: #488C9A;
+            border-bottom-color: #488C9A;
+            background: white;
+        }
+
+        .timeline-panel {
+            display: none;
+        }
+
+        .timeline-panel.active {
+            display: block;
+        }
+
+        /* Monthly Forecast Line Chart */
+        .monthly-forecast-container {
+            padding: 24px;
+        }
+
+        .monthly-chart-wrapper {
+            position: relative;
+            height: 280px;
+            margin-bottom: 20px;
+        }
+
+        .monthly-chart-legend {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            flex-wrap: wrap;
+            padding: 12px 0;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .legend-item-chart {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85em;
+            color: #495057;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 4px;
+            border-radius: 2px;
+        }
+
+        .legend-color.freight { background: #488C9A; }
+        .legend-color.warehousing { background: #E07F3A; }
+        .legend-color.milestone { background: #28a745; }
+        .legend-color.total { background: #293E4C; }
+
+        /* Fee Table Styles for Journey */
+        .fee-table-journey {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+        }
+
+        .fee-table-journey th {
+            background: linear-gradient(135deg, #f8f9fa 0%, #f1f5f7 100%);
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.8em;
+            color: #495057;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .fee-table-journey td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f0f0f0;
+            vertical-align: middle;
+        }
+
+        .fee-table-journey tr:last-child td {
+            border-bottom: none;
+        }
+
+        .fee-table-journey input,
+        .fee-table-journey select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #e3e7ea;
+            border-radius: 8px;
+            font-size: 0.9em;
+            transition: all 0.2s ease;
+        }
+
+        .fee-table-journey input:focus,
+        .fee-table-journey select:focus {
+            outline: none;
+            border-color: #488C9A;
+            box-shadow: 0 0 0 3px rgba(72, 140, 154, 0.1);
+        }
+
+        .fee-table-journey .fee-amount-col {
+            width: 100px;
+        }
+
+        .fee-table-journey .fee-action-col {
+            width: 40px;
+            text-align: center;
+        }
+
+        .fee-remove-btn {
+            background: none;
+            border: none;
+            color: #dc3545;
+            cursor: pointer;
+            padding: 6px;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .fee-remove-btn:hover {
+            background: rgba(220, 53, 69, 0.1);
+        }
+
+        /* Cadence Field Styles */
+        .cadence-field {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .cadence-field input {
+            width: 60px !important;
+        }
+
+        .cadence-field span {
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+
+        .truck-info-badge {
+            font-size: 0.75em;
+            padding: 4px 10px;
+            background: rgba(72, 140, 154, 0.1);
+            color: #488C9A;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+
+        .end-date-display {
+            font-size: 0.85em;
+            color: #28a745;
+            font-weight: 600;
         }
 
         /* ==================== COMPARISON PANEL ==================== */
@@ -2324,11 +2649,60 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 </div>
             </div>
             <div class="collapsible-content" id="timeline-content">
-                <div class="timeline-container">
-                    <div class="timeline-chart" id="timelineChart">
-                        <!-- Timeline bars generated by JavaScript -->
+                <!-- Chart Type Tabs -->
+                <div class="timeline-tabs">
+                    <button type="button" class="timeline-tab active" data-tab="bar-chart" onclick="switchTimelineTab('bar-chart')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px; vertical-align: middle;">
+                            <line x1="18" y1="20" x2="18" y2="10"/>
+                            <line x1="12" y1="20" x2="12" y2="4"/>
+                            <line x1="6" y1="20" x2="6" y2="14"/>
+                        </svg>
+                        Event Timeline
+                    </button>
+                    <button type="button" class="timeline-tab" data-tab="line-chart" onclick="switchTimelineTab('line-chart')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px; vertical-align: middle;">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                        </svg>
+                        Monthly Forecast
+                    </button>
+                </div>
+
+                <!-- Bar Chart Panel -->
+                <div class="timeline-panel active" id="bar-chart-panel">
+                    <div class="timeline-container">
+                        <div class="timeline-chart" id="timelineChart">
+                            <!-- Timeline bars generated by JavaScript -->
+                        </div>
                     </div>
                 </div>
+
+                <!-- Line Chart Panel -->
+                <div class="timeline-panel" id="line-chart-panel">
+                    <div class="monthly-forecast-container">
+                        <div class="monthly-chart-wrapper">
+                            <canvas id="monthlyForecastChart"></canvas>
+                        </div>
+                        <div class="monthly-chart-legend">
+                            <div class="legend-item-chart">
+                                <span class="legend-color freight"></span>
+                                <span>Freight Costs</span>
+                            </div>
+                            <div class="legend-item-chart">
+                                <span class="legend-color warehousing"></span>
+                                <span>Warehousing Costs</span>
+                            </div>
+                            <div class="legend-item-chart">
+                                <span class="legend-color milestone"></span>
+                                <span>Milestone Payments</span>
+                            </div>
+                            <div class="legend-item-chart">
+                                <span class="legend-color total"></span>
+                                <span>Cumulative Total</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="timeline-cumulative">
                     <div class="cumulative-item">
                         <div class="cumulative-label">Total Freight</div>
@@ -3132,13 +3506,26 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
 
             if (!origin) {
                 const manufacturer = workingState.moduleAllocations[0]?.manufacturer_name || 'Manufacturer';
+                const manufacturerAddress = workingState.moduleAllocations[0]?.manufacturer_address || '';
                 origin = {
                     id: `origin_${Date.now()}`,
                     stop_type: 'origin',
                     location_name: manufacturer,
-                    location_address: '',
+                    location_address: manufacturerAddress,
+                    latitude: null,
+                    longitude: null,
                     fees: []
                 };
+                // Geocode manufacturer address if available
+                if (manufacturerAddress && !origin.latitude) {
+                    geocodeAddress(manufacturerAddress, (coords) => {
+                        if (coords) {
+                            origin.latitude = coords.lat;
+                            origin.longitude = coords.lng;
+                            updateMapFromState();
+                        }
+                    });
+                }
             }
 
             if (!destination) {
@@ -3147,8 +3534,21 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                     stop_type: 'destination',
                     location_name: projectInfo.name || 'Project Site',
                     location_address: projectInfo.address || '',
+                    latitude: null,
+                    longitude: null,
                     fees: []
                 };
+            }
+
+            // Geocode destination address if not already geocoded
+            if (destination.location_address && !destination.latitude) {
+                geocodeAddress(destination.location_address, (coords) => {
+                    if (coords) {
+                        destination.latitude = coords.lat;
+                        destination.longitude = coords.lng;
+                        updateMapFromState();
+                    }
+                });
             }
 
             const intermediates = stops.filter(stop => stop.stop_type !== 'origin' && stop.stop_type !== 'destination');
@@ -3177,6 +3577,12 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#039;');
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         }
 
         function getMilestoneForStop(stop) {
@@ -3226,24 +3632,53 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             return start.toISOString().split('T')[0];
         }
 
-        function calculateFeeEstimate(fee) {
+        function calculateFeeEstimate(fee, stop) {
             const rate = parseFloat(fee.rate) || 0;
             if (!rate) return 0;
             const pallets = getTotalPallets() || 1;
             const modules = workingState.moduleAllocations.reduce((sum, alloc) => sum + (alloc.quantity || 0), 0) || 1;
             const trucks = getTotalTrucks();
 
+            // Calculate base cost based on unit
+            let baseCost = 0;
             switch (fee.rate_unit) {
                 case 'per_module':
-                    return rate * modules;
+                    baseCost = rate * modules;
+                    break;
                 case 'per_truck':
-                    return rate * trucks;
+                    baseCost = rate * trucks;
+                    break;
+                case 'per_sqft':
+                    // Assume 13.33 sqft per pallet default
+                    const sqftPerPallet = 13.33;
+                    baseCost = rate * pallets * sqftPerPallet;
+                    break;
                 case 'flat':
-                    return rate;
+                    baseCost = rate;
+                    break;
                 case 'per_pallet':
                 default:
-                    return rate * pallets;
+                    baseCost = rate * pallets;
+                    break;
             }
+
+            // For monthly (storage) fees, multiply by number of months in storage
+            if (fee.fee_type === 'storage' && stop) {
+                const stopIndex = workingState.stops.indexOf(stop);
+                if (stopIndex === -1) return baseCost;
+
+                const nextStop = workingState.stops[stopIndex + 1];
+
+                if (stop.estimated_arrival_date && nextStop?.estimated_arrival_date) {
+                    const entryDate = new Date(stop.estimated_arrival_date);
+                    const exitDate = new Date(nextStop.estimated_arrival_date);
+                    const daysInStorage = Math.ceil((exitDate - entryDate) / (1000 * 60 * 60 * 24));
+                    const monthsInStorage = Math.max(1, Math.ceil(daysInStorage / 30));
+                    return baseCost * monthsInStorage;
+                }
+            }
+
+            return baseCost;
         }
 
         function syncPlanState() {
@@ -3289,7 +3724,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 }
                 stop.fees = stop.fees.map(fee => ({
                     ...fee,
-                    estimated_cost: calculateFeeEstimate(fee)
+                    estimated_cost: calculateFeeEstimate(fee, stop)
                 }));
             });
         }
@@ -3344,44 +3779,60 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                     badges += `<span class="journey-badge milestone">${milestone.label}</span>`;
                 }
 
-                // Build fees section for warehouses
+                // Build fees section for warehouses - Updated format to match add_warehouse.php
+                // Order: Fee Name → When Charged (trigger) → Rate → Per (unit)
                 let feesHtml = '';
                 if (isWarehouse) {
                     const feeRows = (stop.fees || []).map((fee, feeIndex) => `
-                        <div class="fee-row" style="display: grid; grid-template-columns: 1fr 1fr 100px 100px 32px; gap: 8px; margin-bottom: 8px; align-items: end;">
-                            <div>
-                                <label style="font-size: 0.7em; color: #6c757d; display: block; margin-bottom: 4px;">Type</label>
-                                <select class="delivery-select" data-fee-field="fee_type" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" style="padding: 8px; font-size: 0.9em;" ${disabledAttr}>
-                                    <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>Receiving</option>
-                                    <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Storage</option>
-                                    <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>Outbound</option>
-                                    <option value="customs" ${fee.fee_type === 'customs' ? 'selected' : ''}>Customs</option>
-                                    <option value="handling" ${fee.fee_type === 'handling' ? 'selected' : ''}>Handling</option>
+                        <tr>
+                            <td>
+                                <input type="text" class="delivery-input" data-fee-field="fee_name" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" value="${escapeHtml(fee.fee_name || '')}" placeholder="Fee name" ${disabledAttr}>
+                            </td>
+                            <td>
+                                <select class="delivery-select" data-fee-field="fee_type" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" ${disabledAttr}>
+                                    <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>On Entry</option>
+                                    <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Monthly</option>
+                                    <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>On Exit</option>
+                                    <option value="customs" ${fee.fee_type === 'customs' ? 'selected' : ''}>Customs Clearance</option>
+                                    <option value="handling" ${fee.fee_type === 'handling' ? 'selected' : ''}>Drayage</option>
                                     <option value="other" ${fee.fee_type === 'other' ? 'selected' : ''}>Other</option>
                                 </select>
-                            </div>
-                            <div>
-                                <label style="font-size: 0.7em; color: #6c757d; display: block; margin-bottom: 4px;">Description</label>
-                                <input type="text" class="delivery-input" data-fee-field="fee_name" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" value="${escapeHtml(fee.fee_name || '')}" placeholder="Fee name" style="padding: 8px; font-size: 0.9em;" ${disabledAttr}>
-                            </div>
-                            <div>
-                                <label style="font-size: 0.7em; color: #6c757d; display: block; margin-bottom: 4px;">Rate</label>
-                                <input type="number" class="delivery-input" data-fee-field="rate" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" value="${fee.rate || ''}" placeholder="$0" step="0.01" style="padding: 8px; font-size: 0.9em;" ${disabledAttr}>
-                            </div>
-                            <div>
-                                <label style="font-size: 0.7em; color: #6c757d; display: block; margin-bottom: 4px;">Per</label>
-                                <select class="delivery-select" data-fee-field="rate_unit" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" style="padding: 8px; font-size: 0.9em;" ${disabledAttr}>
-                                    <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>Pallet</option>
-                                    <option value="per_module" ${fee.rate_unit === 'per_module' ? 'selected' : ''}>Module</option>
-                                    <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>Truck</option>
-                                    <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>Flat</option>
+                            </td>
+                            <td class="fee-amount-col">
+                                <input type="number" class="delivery-input" data-fee-field="rate" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" value="${fee.rate || ''}" placeholder="$0" step="0.01" ${disabledAttr}>
+                            </td>
+                            <td>
+                                <select class="delivery-select" data-fee-field="rate_unit" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" ${disabledAttr}>
+                                    <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>Per Pallet</option>
+                                    <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>Per Truck</option>
+                                    <option value="per_sqft" ${fee.rate_unit === 'per_sqft' ? 'selected' : ''}>Per Sq. Ft.</option>
+                                    <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>Flat Rate</option>
                                 </select>
-                            </div>
-                            ${canEdit ? `<button type="button" class="btn btn-sm btn-danger" data-action="remove-fee" data-stop-id="${stop.id}" data-fee-index="${feeIndex}" style="padding: 8px;">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                            </button>` : ''}
-                        </div>
+                            </td>
+                            <td class="fee-action-col">
+                                ${canEdit ? `<button type="button" class="fee-remove-btn" data-action="remove-fee" data-stop-id="${stop.id}" data-fee-index="${feeIndex}">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>` : ''}
+                            </td>
+                        </tr>
                     `).join('');
+
+                    const feeTableHtml = feeRows ? `
+                        <table class="fee-table-journey">
+                            <thead>
+                                <tr>
+                                    <th>Fee Name</th>
+                                    <th>When Charged</th>
+                                    <th>Rate ($)</th>
+                                    <th>Per</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${feeRows}
+                            </tbody>
+                        </table>
+                    ` : '<p style="margin: 0; color: #6c757d; font-size: 0.9em;">No fees added yet.</p>';
 
                     feesHtml = `
                         <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e3e7ea;">
@@ -3389,7 +3840,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                                 <strong style="font-size: 0.9em; color: #293E4C;">Warehouse Fees</strong>
                                 ${canEdit ? `<button type="button" class="btn btn-sm btn-secondary" data-action="add-fee" data-stop-id="${stop.id}">+ Add Fee</button>` : ''}
                             </div>
-                            ${feeRows || '<p style="margin: 0; color: #6c757d; font-size: 0.9em;">No fees added yet.</p>'}
+                            ${feeTableHtml}
                             <div style="margin-top: 12px;">
                                 <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
                                     <input type="checkbox" data-stop-id="${stop.id}" data-stop-field="is_customs_clearance" ${stop.is_customs_clearance ? 'checked' : ''} ${disabledAttr}>
@@ -3447,59 +3898,130 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                         </div>
                     `;
                 } else {
-                    // Warehouse/Port stop
+                    // Warehouse/Port stop - Now collapsible
+                    const stopTypeBadge = stop.stop_type === 'port' ? 'port' : (stop.stop_type === 'customs' ? 'customs' : 'warehouse');
+                    const stopTypeLabel = stop.stop_type === 'port' ? 'Port' : (stop.stop_type === 'customs' ? 'Customs Facility' : 'Warehouse');
+                    const feeCount = (stop.fees || []).length;
+
+                    // Calculate estimated duration if arrival dates are available
+                    const nextStopIdx = stops.indexOf(stop) + 1;
+                    const nextStop = stops[nextStopIdx];
+                    let durationDisplay = '';
+                    if (stop.estimated_arrival_date && nextStop?.estimated_arrival_date) {
+                        const arrival = new Date(stop.estimated_arrival_date);
+                        const departure = new Date(nextStop.estimated_arrival_date);
+                        const daysStored = Math.ceil((departure - arrival) / (1000 * 60 * 60 * 24));
+                        if (daysStored > 0) {
+                            durationDisplay = daysStored > 30 ? `${Math.round(daysStored / 30)} months` : `${daysStored} days`;
+                        }
+                    }
+
                     nodeContent = `
-                        <div class="journey-node-header">
-                            <div>
-                                <h4 class="journey-node-title">${escapeHtml(stop.location_name || 'Warehouse/Port')}</h4>
-                                <div class="journey-node-type">${stop.stop_type === 'port' ? 'Port' : (stop.stop_type === 'customs' ? 'Customs Facility' : 'Warehouse')}</div>
+                        <div class="warehouse-stop-card" data-stop-id="${stop.id}">
+                            <div class="warehouse-stop-header" onclick="toggleWarehouseCard('${stop.id}')">
+                                <div class="warehouse-stop-info">
+                                    <div class="warehouse-stop-title-row">
+                                        <h4 class="warehouse-stop-title">${escapeHtml(stop.location_name || 'Unnamed ' + stopTypeLabel)}</h4>
+                                        <span class="warehouse-stop-type-badge ${stopTypeBadge}">${stopTypeLabel}</span>
+                                        ${badges}
+                                    </div>
+                                    <div class="warehouse-stop-summary">
+                                        <div class="warehouse-stop-summary-item">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                                            <span>${feeCount} fee${feeCount !== 1 ? 's' : ''}</span>
+                                        </div>
+                                        ${totalFees > 0 ? `<div class="warehouse-stop-summary-item">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                                            <strong>$${totalFees.toLocaleString()}</strong>
+                                        </div>` : ''}
+                                        ${durationDisplay ? `<div class="warehouse-stop-summary-item">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                            <span>${durationDisplay}</span>
+                                        </div>` : ''}
+                                        ${stop.location_address ? `<div class="warehouse-stop-summary-item">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                                            <span style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(stop.location_address)}</span>
+                                        </div>` : ''}
+                                    </div>
+                                </div>
+                                <button type="button" class="warehouse-stop-toggle">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                                </button>
                             </div>
-                            <div class="journey-node-badges">${badges}</div>
+                            <div class="warehouse-stop-body">
+                                <div class="journey-node-details">
+                                    <div class="delivery-field">
+                                        <label>Stop Type</label>
+                                        <select class="delivery-select" data-stop-id="${stop.id}" data-stop-field="stop_type" ${disabledAttr}>
+                                            <option value="warehouse" ${stop.stop_type === 'warehouse' ? 'selected' : ''}>Warehouse</option>
+                                            <option value="port" ${stop.stop_type === 'port' ? 'selected' : ''}>Port</option>
+                                            <option value="customs" ${stop.stop_type === 'customs' ? 'selected' : ''}>Customs Facility</option>
+                                        </select>
+                                    </div>
+                                    <div class="delivery-field">
+                                        <label>Location Name</label>
+                                        <input type="text" class="delivery-input" data-stop-id="${stop.id}" data-stop-field="location_name" value="${escapeHtml(stop.location_name || '')}" placeholder="e.g., Houston Distribution Center" ${disabledAttr}>
+                                    </div>
+                                    <div class="delivery-field" style="grid-column: 1 / -1;">
+                                        <label>Address</label>
+                                        ${addressInput}
+                                    </div>
+                                </div>
+                                ${feesHtml}
+                                ${canEdit ? `<div style="margin-top: 12px; display: flex; justify-content: flex-end;"><button type="button" class="btn btn-sm btn-danger" data-action="remove-stop" data-stop-id="${stop.id}">Remove This Stop</button></div>` : ''}
+                            </div>
                         </div>
-                        <div class="journey-node-details">
-                            <div class="delivery-field">
-                                <label>Stop Type</label>
-                                <select class="delivery-select" data-stop-id="${stop.id}" data-stop-field="stop_type" ${disabledAttr}>
-                                    <option value="warehouse" ${stop.stop_type === 'warehouse' ? 'selected' : ''}>Warehouse</option>
-                                    <option value="port" ${stop.stop_type === 'port' ? 'selected' : ''}>Port</option>
-                                    <option value="customs" ${stop.stop_type === 'customs' ? 'selected' : ''}>Customs Facility</option>
-                                </select>
-                            </div>
-                            <div class="delivery-field">
-                                <label>Location Name</label>
-                                <input type="text" class="delivery-input" data-stop-id="${stop.id}" data-stop-field="location_name" value="${escapeHtml(stop.location_name || '')}" placeholder="e.g., Houston Distribution Center" ${disabledAttr}>
-                            </div>
-                            <div class="delivery-field" style="grid-column: 1 / -1;">
-                                <label>Address</label>
-                                ${addressInput}
-                            </div>
-                        </div>
-                        ${feesHtml}
-                        ${canEdit ? `<div style="margin-top: 12px; display: flex; justify-content: flex-end;"><button type="button" class="btn btn-sm btn-danger" data-action="remove-stop" data-stop-id="${stop.id}">Remove This Stop</button></div>` : ''}
                     `;
                 }
 
                 // Build the node HTML
-                html += `
-                    <div class="journey-node" data-stop-id="${stop.id}">
-                        <div class="journey-node-indicator">
-                            <div class="journey-node-dot ${dotClass}">${stepNumber}</div>
-                            ${!isLast ? '<div class="journey-connector"></div>' : ''}
-                        </div>
-                        <div class="journey-node-content">
-                            <div class="journey-node-card">
+                if (isWarehouse) {
+                    // Warehouse/Port uses the new collapsible card structure directly
+                    html += `
+                        <div class="journey-node" data-stop-id="${stop.id}">
+                            <div class="journey-node-indicator">
+                                <div class="journey-node-dot ${dotClass}">${stepNumber}</div>
+                                ${!isLast ? '<div class="journey-connector"></div>' : ''}
+                            </div>
+                            <div class="journey-node-content">
                                 ${nodeContent}
                             </div>
                         </div>
-                    </div>
-                `;
+                    `;
+                } else {
+                    html += `
+                        <div class="journey-node" data-stop-id="${stop.id}">
+                            <div class="journey-node-indicator">
+                                <div class="journey-node-dot ${dotClass}">${stepNumber}</div>
+                                ${!isLast ? '<div class="journey-connector"></div>' : ''}
+                            </div>
+                            <div class="journey-node-content">
+                                <div class="journey-node-card">
+                                    ${nodeContent}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
 
                 // Add leg card between stops (except after last stop)
                 if (!isLast) {
                     const nextStop = stops[index + 1];
                     const leg = getLegForStops(stop.id, nextStop.id);
-                    const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                    const maxTrucks = getTotalTrucks();
+                    const trucks = parseInt(leg.trucks_required, 10) || maxTrucks;
                     const totalFreight = leg.total_freight_cost || 0;
+                    const cadence = parseInt(leg.delivery_rate, 10) || 0;
+                    const cadenceUnit = leg.delivery_rate_unit || 'per_week';
+
+                    // Calculate end date based on cadence
+                    let endDateDisplay = '';
+                    if (leg.start_date && cadence > 0) {
+                        const calculatedEnd = calculateEndDate(leg.start_date, cadence, cadenceUnit, trucks);
+                        if (calculatedEnd) {
+                            endDateDisplay = `<span class="end-date-display">→ ${formatDate(calculatedEnd)}</span>`;
+                        }
+                    }
 
                     const transportIcon = getTransportIcon(leg.transport_mode);
 
@@ -3517,12 +4039,22 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                                     </select>
                                 </div>
                                 <div class="journey-leg-field">
-                                    <label>Start Date</label>
-                                    <input type="text" class="delivery-input flatpickr-date" data-leg-id="${leg.id}" data-leg-field="start_date" value="${leg.start_date || ''}" placeholder="Select date" style="padding: 6px 10px; font-size: 0.9em;" ${disabledAttr}>
+                                    <label>Trucks <span class="truck-info-badge">${maxTrucks} max</span></label>
+                                    <input type="number" class="delivery-input" data-leg-id="${leg.id}" data-leg-field="trucks_required" value="${leg.trucks_required || ''}" placeholder="${maxTrucks}" min="1" max="${maxTrucks}" style="padding: 6px 10px; font-size: 0.9em; width: 80px;" ${disabledAttr}>
                                 </div>
                                 <div class="journey-leg-field">
-                                    <label>Trucks</label>
-                                    <input type="number" class="delivery-input" data-leg-id="${leg.id}" data-leg-field="trucks_required" value="${leg.trucks_required || ''}" placeholder="${trucks}" min="1" style="padding: 6px 10px; font-size: 0.9em; width: 70px;" ${disabledAttr}>
+                                    <label>Cadence</label>
+                                    <div class="cadence-field">
+                                        <input type="number" class="delivery-input" data-leg-id="${leg.id}" data-leg-field="delivery_rate" value="${cadence || ''}" placeholder="0" min="1" style="padding: 6px 10px; font-size: 0.9em;" ${disabledAttr}>
+                                        <select class="delivery-select" data-leg-id="${leg.id}" data-leg-field="delivery_rate_unit" style="padding: 6px 8px; font-size: 0.85em;" ${disabledAttr}>
+                                            <option value="per_week" ${cadenceUnit === 'per_week' ? 'selected' : ''}>/week</option>
+                                            <option value="per_day" ${cadenceUnit === 'per_day' ? 'selected' : ''}>/day</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="journey-leg-field">
+                                    <label>Start Date ${endDateDisplay}</label>
+                                    <input type="text" class="delivery-input flatpickr-date" data-leg-id="${leg.id}" data-leg-field="start_date" value="${leg.start_date || ''}" placeholder="Select date" style="padding: 6px 10px; font-size: 0.9em;" ${disabledAttr}>
                                 </div>
                                 <div class="journey-leg-field">
                                     <label>Freight/Truck</label>
@@ -3536,8 +4068,19 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                         </div>
                     `;
 
-                    // Add "Add Stop" button between intermediate stops
-                    if (canEdit && index < stops.length - 2) {
+                    // Add "Add Stop" button after EVERY leg (including after origin)
+                    // This allows adding stops between origin and first stop, or between any intermediate stops
+                    if (canEdit && !nextStop || (canEdit && nextStop.stop_type !== 'destination')) {
+                        html += `
+                            <div class="journey-add-stop">
+                                <button type="button" class="journey-add-stop-btn" data-action="add-warehouse-after" data-stop-id="${stop.id}">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    Add Stop Here
+                                </button>
+                            </div>
+                        `;
+                    } else if (canEdit) {
+                        // Always add "Add Stop Here" button before destination too
                         html += `
                             <div class="journey-add-stop">
                                 <button type="button" class="journey-add-stop-btn" data-action="add-warehouse-after" data-stop-id="${stop.id}">
@@ -3549,18 +4092,6 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                     }
                 }
             });
-
-            // Add final "Add Stop" button before destination if there are no intermediate stops
-            if (canEdit && stops.length === 2) {
-                html += `
-                    <div class="journey-add-stop" style="margin-left: 70px; margin-top: -10px; margin-bottom: 10px;">
-                        <button type="button" class="journey-add-stop-btn" data-action="add-warehouse">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                            Add Warehouse/Port Stop
-                        </button>
-                    </div>
-                `;
-            }
 
             container.innerHTML = html;
 
@@ -4209,6 +4740,233 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             }
         });
 
+        // ==================== GEOCODING ====================
+        function geocodeAddress(address, callback) {
+            if (typeof google === 'undefined' || !google.maps || !google.maps.Geocoder) {
+                console.log('Google Geocoder not available');
+                callback(null);
+                return;
+            }
+
+            const geocoder = new google.maps.Geocoder();
+            geocoder.geocode({ address: address }, (results, status) => {
+                if (status === 'OK' && results[0]) {
+                    const location = results[0].geometry.location;
+                    callback({ lat: location.lat(), lng: location.lng() });
+                } else {
+                    console.log('Geocode failed for:', address, status);
+                    callback(null);
+                }
+            });
+        }
+
+        // ==================== TIMELINE CHART TABS ====================
+        function switchTimelineTab(tabId) {
+            // Update tab buttons
+            document.querySelectorAll('.timeline-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.tab === tabId);
+            });
+
+            // Update panels
+            document.querySelectorAll('.timeline-panel').forEach(panel => {
+                panel.classList.toggle('active', panel.id === tabId + '-panel');
+            });
+
+            // If switching to line chart, render it
+            if (tabId === 'line-chart') {
+                renderMonthlyForecastChart();
+            }
+        }
+
+        // ==================== MONTHLY FORECAST LINE CHART ====================
+        let monthlyChartInstance = null;
+
+        function renderMonthlyForecastChart() {
+            const ctx = document.getElementById('monthlyForecastChart');
+            if (!ctx) return;
+
+            // Destroy existing chart
+            if (monthlyChartInstance) {
+                monthlyChartInstance.destroy();
+            }
+
+            // Collect monthly data
+            const monthlyData = collectMonthlyData();
+
+            if (monthlyData.labels.length === 0) {
+                ctx.parentElement.innerHTML = '<div style="text-align: center; padding: 60px; color: #6c757d;">Add dates to your stops and legs to see the monthly forecast.</div>';
+                return;
+            }
+
+            monthlyChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: monthlyData.labels,
+                    datasets: [
+                        {
+                            label: 'Freight Costs',
+                            data: monthlyData.freight,
+                            borderColor: '#488C9A',
+                            backgroundColor: 'rgba(72, 140, 154, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Warehousing Costs',
+                            data: monthlyData.warehousing,
+                            borderColor: '#E07F3A',
+                            backgroundColor: 'rgba(224, 127, 58, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Milestone Payments',
+                            data: monthlyData.milestones,
+                            borderColor: '#28a745',
+                            backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Cumulative Total',
+                            data: monthlyData.cumulative,
+                            borderColor: '#293E4C',
+                            backgroundColor: 'transparent',
+                            borderWidth: 3,
+                            borderDash: [5, 5],
+                            fill: false,
+                            tension: 0.3
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': $' + context.raw.toLocaleString();
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return '$' + value.toLocaleString();
+                                }
+                            }
+                        }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    }
+                }
+            });
+        }
+
+        function collectMonthlyData() {
+            const monthlyBuckets = {};
+
+            // Collect freight costs by month
+            workingState.legs.forEach(leg => {
+                if (leg.start_date) {
+                    const monthKey = leg.start_date.substring(0, 7); // YYYY-MM
+                    if (!monthlyBuckets[monthKey]) {
+                        monthlyBuckets[monthKey] = { freight: 0, warehousing: 0, milestones: 0 };
+                    }
+                    monthlyBuckets[monthKey].freight += leg.total_freight_cost || 0;
+
+                    // Add milestone payment if triggered
+                    if (leg.triggers_milestone) {
+                        monthlyBuckets[monthKey].milestones += getMilestoneAmount(leg.triggers_milestone);
+                    }
+                }
+            });
+
+            // Collect warehousing costs by month
+            workingState.stops.forEach(stop => {
+                if (stop.estimated_arrival_date && stop.fees && stop.fees.length > 0) {
+                    const monthKey = stop.estimated_arrival_date.substring(0, 7);
+                    if (!monthlyBuckets[monthKey]) {
+                        monthlyBuckets[monthKey] = { freight: 0, warehousing: 0, milestones: 0 };
+                    }
+
+                    // Calculate storage fees considering duration
+                    stop.fees.forEach(fee => {
+                        const cost = fee.estimated_cost || 0;
+                        if (fee.fee_type === 'storage' || fee.trigger === 'monthly') {
+                            // Distribute monthly fees across months in storage
+                            const arrivalDate = new Date(stop.estimated_arrival_date);
+                            const nextStopIndex = workingState.stops.indexOf(stop) + 1;
+                            const nextStop = workingState.stops[nextStopIndex];
+                            const departureDate = nextStop?.estimated_arrival_date
+                                ? new Date(nextStop.estimated_arrival_date)
+                                : new Date(arrivalDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+                            const monthsInStorage = Math.max(1, Math.ceil((departureDate - arrivalDate) / (30 * 24 * 60 * 60 * 1000)));
+                            const monthlyFee = cost / monthsInStorage;
+
+                            for (let i = 0; i < monthsInStorage; i++) {
+                                const storageMonth = new Date(arrivalDate);
+                                storageMonth.setMonth(storageMonth.getMonth() + i);
+                                const storageMonthKey = storageMonth.toISOString().substring(0, 7);
+                                if (!monthlyBuckets[storageMonthKey]) {
+                                    monthlyBuckets[storageMonthKey] = { freight: 0, warehousing: 0, milestones: 0 };
+                                }
+                                monthlyBuckets[storageMonthKey].warehousing += monthlyFee;
+                            }
+                        } else {
+                            monthlyBuckets[monthKey].warehousing += cost;
+                        }
+                    });
+                }
+            });
+
+            // Sort months and prepare arrays
+            const sortedMonths = Object.keys(monthlyBuckets).sort();
+
+            const labels = sortedMonths.map(m => {
+                const date = new Date(m + '-01');
+                return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+            });
+
+            let cumulativeTotal = 0;
+            const freight = [];
+            const warehousing = [];
+            const milestones = [];
+            const cumulative = [];
+
+            sortedMonths.forEach(month => {
+                const data = monthlyBuckets[month];
+                freight.push(data.freight);
+                warehousing.push(data.warehousing);
+                milestones.push(data.milestones);
+                cumulativeTotal += data.freight + data.warehousing + data.milestones;
+                cumulative.push(cumulativeTotal);
+            });
+
+            return { labels, freight, warehousing, milestones, cumulative };
+        }
+
+        // ==================== WAREHOUSE CARD COLLAPSE ====================
+        function toggleWarehouseCard(stopId) {
+            const card = document.querySelector(`.warehouse-stop-card[data-stop-id="${stopId}"]`);
+            if (card) {
+                card.classList.toggle('collapsed');
+            }
+        }
+
         // ==================== GOOGLE MAPS ====================
         let map = null;
         let mapMarkers = [];
@@ -4372,38 +5130,58 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             let totalWarehousing = 0;
             let totalMilestones = 0;
 
-            // Collect events from stops and legs
-            workingState.stops.forEach(stop => {
-                if (stop.estimated_arrival_date) {
-                    const stopFees = (stop.fees || []).reduce((sum, f) => sum + (f.estimated_cost || 0), 0);
+            // Collect events from stops (warehousing fees)
+            workingState.stops.forEach((stop, stopIndex) => {
+                if (stop.stop_type === 'origin' || stop.stop_type === 'destination') return;
+
+                const stopFees = (stop.fees || []).reduce((sum, f) => sum + (f.estimated_cost || 0), 0);
+
+                // Calculate fees including monthly fees across time
+                const arrivalDate = stop.estimated_arrival_date || null;
+                const nextStop = workingState.stops[stopIndex + 1];
+                const departureDate = nextStop?.estimated_arrival_date || null;
+
+                if (stopFees > 0) {
                     totalWarehousing += stopFees;
 
+                    // Add warehousing event
                     events.push({
-                        date: stop.estimated_arrival_date,
-                        label: stop.location_name,
+                        date: arrivalDate || new Date().toISOString().split('T')[0],
+                        label: stop.location_name || 'Warehouse',
                         type: 'warehousing',
                         amount: stopFees
                     });
                 }
             });
 
+            // Collect events from legs (freight costs)
             workingState.legs.forEach(leg => {
-                if (leg.start_date) {
-                    const legCost = leg.total_freight_cost || 0;
+                const legCost = leg.total_freight_cost || 0;
+                const legDate = leg.start_date || leg.end_date || null;
+
+                if (legCost > 0) {
                     totalFreight += legCost;
 
                     events.push({
-                        date: leg.start_date,
+                        date: legDate || new Date().toISOString().split('T')[0],
                         label: getTransportModeLabel(leg.transport_mode),
                         type: 'freight',
-                        amount: legCost,
-                        milestone: leg.triggers_milestone
+                        amount: legCost
                     });
+                }
 
-                    // Add milestone if triggered
-                    if (leg.triggers_milestone) {
-                        const milestoneAmount = getMilestoneAmount(leg.triggers_milestone);
+                // Add milestone as a separate event if triggered
+                if (leg.triggers_milestone) {
+                    const milestoneAmount = getMilestoneAmount(leg.triggers_milestone);
+                    if (milestoneAmount > 0) {
                         totalMilestones += milestoneAmount;
+
+                        events.push({
+                            date: leg.end_date || leg.start_date || new Date().toISOString().split('T')[0],
+                            label: getMilestoneLabel(leg.triggers_milestone),
+                            type: 'milestone',
+                            amount: milestoneAmount
+                        });
                     }
                 }
             });
@@ -4411,27 +5189,40 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             // Sort by date
             events.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-            // Generate bars
-            const maxAmount = Math.max(...events.map(e => e.amount), 1);
-
-            container.innerHTML = events.map((event, i) => {
-                const height = Math.max((event.amount / maxAmount) * 140, 20);
-                const formattedDate = formatDate(event.date);
-                const formattedAmount = '$' + (event.amount || 0).toLocaleString();
-
-                return `
-                    <div class="timeline-bar">
-                        <div class="timeline-bar-fill ${event.type}" style="height: ${height}px;">
-                            <span class="timeline-bar-value">${formattedAmount}</span>
-                        </div>
-                        <div class="timeline-bar-label">
-                            <span class="timeline-bar-date">${formattedDate}</span>
-                            ${event.label}
-                            ${event.milestone ? `<br><span style="color: #28a745; font-size: 0.9em;">${getMilestoneLabel(event.milestone)}</span>` : ''}
-                        </div>
+            // Handle empty state
+            if (events.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #6c757d; width: 100%;">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5" style="margin-bottom: 12px;">
+                            <line x1="18" y1="20" x2="18" y2="10"/>
+                            <line x1="12" y1="20" x2="12" y2="4"/>
+                            <line x1="6" y1="20" x2="6" y2="14"/>
+                        </svg>
+                        <p style="margin: 0;">Add costs to your stops and legs to see the timeline chart.</p>
                     </div>
                 `;
-            }).join('');
+            } else {
+                // Generate bars
+                const maxAmount = Math.max(...events.map(e => e.amount), 1);
+
+                container.innerHTML = events.map((event, i) => {
+                    const height = Math.max((event.amount / maxAmount) * 140, 20);
+                    const formattedDate = formatDate(event.date);
+                    const formattedAmount = '$' + (event.amount || 0).toLocaleString();
+
+                    return `
+                        <div class="timeline-bar">
+                            <div class="timeline-bar-fill ${event.type}" style="height: ${height}px;">
+                                <span class="timeline-bar-value">${formattedAmount}</span>
+                            </div>
+                            <div class="timeline-bar-label">
+                                <span class="timeline-bar-date">${formattedDate}</span>
+                                ${event.label}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
 
             // Update cumulative displays
             const grandTotal = totalFreight + totalWarehousing + totalMilestones;
@@ -4482,11 +5273,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             return totalContract * (percentages[milestone] || 0);
         }
 
-        function formatDate(dateStr) {
-            if (!dateStr) return '';
-            const date = new Date(dateStr);
-            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        }
+        // Note: formatDate is defined earlier in the file
 
         // ==================== COMPARISON TABLE ====================
         function updateComparisonTable() {
