@@ -656,6 +656,39 @@ $module_trigger_labels = [
     'project_delivery' => 'Project Delivery'
 ];
 
+$module_contract_value = (float)($project_milestone_status['total_contract_value'] ?? 0.0);
+
+$module_milestone_targets = [];
+$stmt_targets = $conn->prepare("
+    SELECT mbm.trigger_event,
+           COALESCE(SUM(batch.batch_value * (mbm.percentage / 100)), 0) as target_amount
+    FROM module_batch_milestones mbm
+    JOIN (
+        SELECT m.id as module_id,
+               m.cost_per_watt,
+               SUM(umi.wattage * umi.quantity) as total_watts,
+               (m.cost_per_watt * SUM(umi.wattage * umi.quantity)) as batch_value
+        FROM modules m
+        JOIN unassigned_module_items umi ON umi.unassigned_module_id = m.id
+        WHERE m.project_id = ? AND m.cost_per_watt IS NOT NULL
+        GROUP BY m.id
+    ) batch ON batch.module_id = mbm.module_id
+    WHERE mbm.is_active = 1
+    GROUP BY mbm.trigger_event
+");
+if ($stmt_targets) {
+    $stmt_targets->bind_param('i', $project_id);
+    $stmt_targets->execute();
+    $targets_result = $stmt_targets->get_result();
+    while ($row = $targets_result->fetch_assoc()) {
+        $trigger = $row['trigger_event'] ?? '';
+        if ($trigger !== '') {
+            $module_milestone_targets[$trigger] = (float)$row['target_amount'];
+        }
+    }
+    $stmt_targets->close();
+}
+
 $module_configured_triggers = [];
 $stmt_configured = $conn->prepare("
     SELECT DISTINCT mbm.trigger_event
@@ -679,10 +712,16 @@ if ($stmt_configured) {
 $module_milestone_rows = [];
 foreach ($module_trigger_labels as $trigger => $label) {
     if (!empty($module_configured_triggers[$trigger])) {
+        $target_amount = $module_milestone_targets[$trigger] ?? 0.0;
+        $percentage = $module_contract_value > 0
+            ? ($target_amount / $module_contract_value) * 100
+            : null;
         $module_milestone_rows[] = [
             'trigger' => $trigger,
             'label' => $label,
-            'amount' => $module_milestone_breakdown[$trigger] ?? 0.0
+            'amount' => $module_milestone_breakdown[$trigger] ?? 0.0,
+            'target_amount' => $target_amount,
+            'percentage' => $percentage
         ];
     }
 }
@@ -1758,12 +1797,18 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
         .module-breakdown-table td {
             padding: 10px 12px;
             border-bottom: 1px solid rgba(72, 140, 154, 0.15);
+            text-align: left;
         }
 
         .module-breakdown-table th {
+            background: #ffffff;
             text-align: left;
             color: #293E4C;
             font-weight: 600;
+        }
+
+        .module-breakdown-table .text-right {
+            text-align: right;
         }
 
         .module-breakdown-summary {
@@ -2886,14 +2931,22 @@ if (isset($_GET['export']) && $_GET['export'] == 1) {
                         <thead>
                             <tr>
                                 <th>Milestone</th>
-                                <th style="text-align: right;">Accrued</th>
+                                <th class="text-right">Percent</th>
+                                <th class="text-right">Completion Amount</th>
+                                <th class="text-right">Accrued</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($module_milestone_rows as $row): ?>
                                 <tr>
                                     <td><?php echo htmlspecialchars($row['label']); ?></td>
-                                    <td style="text-align: right;">
+                                    <td class="text-right">
+                                        <?php echo $row['percentage'] !== null ? number_format($row['percentage'], 1) . '%' : '—'; ?>
+                                    </td>
+                                    <td class="text-right">
+                                        $<?php echo number_format($row['target_amount'], 2); ?>
+                                    </td>
+                                    <td class="text-right">
                                         <span class="cost-display" data-cost="<?php echo $row['amount']; ?>" data-per-watt="<?php echo $module_breakdown_per_watt[$row['trigger']] ?? ''; ?>">
                                             $<?php echo number_format($row['amount'], 2); ?>
                                         </span>
