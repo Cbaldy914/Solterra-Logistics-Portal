@@ -133,12 +133,58 @@ try {
         $clear_stmt->execute();
         $clear_stmt->close();
 
+        // Get project's account_id for manual entries
+        $account_id = 0;
+        $acc_stmt = $conn->prepare("SELECT account_id FROM projects WHERE id = ?");
+        $acc_stmt->bind_param("i", $project_id);
+        $acc_stmt->execute();
+        $acc_result = $acc_stmt->get_result()->fetch_assoc();
+        if ($acc_result) {
+            $account_id = $acc_result['account_id'];
+        }
+        $acc_stmt->close();
+
         // Add new allocations
         foreach ($input['module_allocations'] as $alloc) {
+            $module_id = $alloc['module_id'];
+
+            // Check if this is a manual entry (module_id starts with 'manual_' or is not numeric)
+            $module_id_str = strval($module_id);
+            if (!is_numeric($module_id) || strpos($module_id_str, 'manual_') === 0) {
+                // Create a lightweight module record for this manual entry
+                $vendor_name = $alloc['vendor_name'] ?? 'Manual Entry';
+                $location = $alloc['manufacturer_address'] ?? '';
+                $mods_per_pallet = intval($alloc['modules_per_pallet'] ?? 30);
+                $pallets_per_truck = intval($alloc['pallets_per_truck'] ?? 20);
+                $cost_per_watt = floatval($alloc['cost_per_watt'] ?? 0);
+
+                $insert_stmt = $conn->prepare("
+                    INSERT INTO modules (account_id, vendor_name, initial_location, project_id,
+                                        modules_per_pallet, pallets_per_truck, cost_per_watt, module_notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'Created via projection manual entry')
+                ");
+                $insert_stmt->bind_param("issiiid", $account_id, $vendor_name, $location, $project_id,
+                                         $mods_per_pallet, $pallets_per_truck, $cost_per_watt);
+                $insert_stmt->execute();
+                $module_id = $conn->insert_id;
+                $insert_stmt->close();
+
+                // Create the unassigned_module_items entry
+                $wattage = intval($alloc['wattage']);
+                $quantity = intval($alloc['quantity']);
+                $items_stmt = $conn->prepare("
+                    INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity)
+                    VALUES (?, ?, ?)
+                ");
+                $items_stmt->bind_param("iii", $module_id, $wattage, $quantity);
+                $items_stmt->execute();
+                $items_stmt->close();
+            }
+
             add_module_allocation(
                 $conn,
                 $projection_id,
-                intval($alloc['module_id']),
+                intval($module_id),
                 intval($alloc['wattage']),
                 intval($alloc['quantity']),
                 isset($alloc['pallets']) ? intval($alloc['pallets']) : null
