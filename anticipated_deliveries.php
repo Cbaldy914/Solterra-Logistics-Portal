@@ -193,8 +193,12 @@ $stops = $current_projection['stops'] ?? [];
 $legs = $current_projection['legs'] ?? [];
 $cost_summary = $current_projection['cost_summary'] ?? [];
 $total_pallets = 0;
+$total_modules = 0;
+$total_contract_value = 0;
 foreach ($allocated_modules as $alloc) {
     $total_pallets += $alloc['pallets'] ?? 0;
+    $total_modules += $alloc['quantity'] ?? 0;
+    $total_contract_value += $alloc['contract_value'] ?? 0;
 }
 
 // Get available templates
@@ -2607,7 +2611,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         <!-- Main Content Layout -->
         <div class="planner-layout">
             <div class="planner-main">
-                <!-- Collapsible: Modules & Costs -->
+                <!-- Collapsible: Modules & Manufacturers -->
                 <div class="collapsible-section" data-section="modules-costs">
                     <div class="collapsible-header" onclick="toggleSection('modules-costs')">
                         <div class="collapsible-title">
@@ -2616,9 +2620,16 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                                 <line x1="8" y1="21" x2="16" y2="21"/>
                                 <line x1="12" y1="17" x2="12" y2="21"/>
                             </svg>
-                            Modules & Costs
+                            Modules & Manufacturers
                         </div>
                         <div class="collapsible-meta">
+                            <div class="card-summary">
+                                <span class="summary-value" id="totalModulesCount"><?php echo number_format($total_modules); ?></span>
+                                <span class="summary-label">modules</span>
+                                <span class="summary-divider">|</span>
+                                <span class="summary-value" id="totalContractValue">$<?php echo number_format($total_contract_value, 2); ?></span>
+                                <span class="summary-label">contract value</span>
+                            </div>
                             <span class="collapsible-badge" id="modulesBadge"><?php echo number_format($total_pallets); ?> pallets</span>
                             <div class="collapsible-toggle">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3226,6 +3237,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                     wattage: a.wattage,
                     quantity: a.quantity,
                     pallets: a.pallets,
+                    po_execution_date: a.po_execution_date || null,
                     // Include additional fields for manual entries
                     vendor_name: a.vendor_name,
                     manufacturer_address: a.manufacturer_address,
@@ -3271,7 +3283,22 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             })
-            .then(response => response.json())
+            .then(async response => {
+                const text = await response.text();
+                if (!text) {
+                    throw new Error('Empty response from server');
+                }
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (parseError) {
+                    throw new Error(text);
+                }
+                if (!response.ok) {
+                    throw new Error(data.error || data.message || `Server error (${response.status})`);
+                }
+                return data;
+            })
             .then(data => {
                 hideLoading();
                 if (data.success) {
@@ -3287,7 +3314,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             })
             .catch(error => {
                 hideLoading();
-                showToast('Error saving projection', 'error');
+                showToast('Error saving projection: ' + error.message, 'error');
                 console.error(error);
             });
         }
@@ -3398,6 +3425,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 pallets: pallets,
                 vendor_name: batch.vendor_name,
                 manufacturer_name: batch.manufacturer_name,
+                manufacturer_address: batch.manufacturer_address,
                 contract_value: contractValue,
                 has_milestones: batch.has_milestones,
                 milestones: batch.milestones || []
@@ -3741,16 +3769,24 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             }
 
             closeStopEditorModal();
-            showToast('Stop saved. Remember to save projection!', 'success');
-            saveProjection();
+            showToast('Stop updated. Remember to save the projection!', 'success');
+            markAsUnsaved();
+            renderJourneyPlan();
+            updateMapFromState();
+            updateTimelineChart();
+            updateBadges();
         }
 
         function removeStop(stopId) {
             workingState.stops = workingState.stops.filter(s => s.id != stopId);
             // Also remove associated legs
             workingState.legs = workingState.legs.filter(l => l.from_stop_id != stopId && l.to_stop_id != stopId);
-            showToast('Stop removed. Remember to save!', 'info');
-            saveProjection();
+            showToast('Stop removed. Remember to save the projection!', 'info');
+            markAsUnsaved();
+            renderJourneyPlan();
+            updateMapFromState();
+            updateTimelineChart();
+            updateBadges();
         }
 
         // ==================== LEG MANAGEMENT ====================
@@ -3839,8 +3875,12 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             }
 
             closeLegEditorModal();
-            showToast('Leg saved. Remember to save projection!', 'success');
-            saveProjection();
+            showToast('Leg updated. Remember to save the projection!', 'success');
+            markAsUnsaved();
+            renderJourneyPlan();
+            updateMapFromState();
+            updateTimelineChart();
+            updateBadges();
         }
 
         // ==================== LOGISTICS PLAN (INLINE) ====================
@@ -4318,7 +4358,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                                     <button type="button" class="btn btn-sm btn-danger" data-action="remove-stop" data-stop-id="${stop.id}">Remove This Stop</button>
                                     <button type="button" class="btn btn-sm btn-primary" data-action="save-stop" data-stop-id="${stop.id}">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"/></svg>
-                                        Save & Collapse
+                                        Collapse
                                     </button>
                                 </div>
                                 ` : ''}
@@ -4539,7 +4579,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             // Re-render to update summary info
             renderJourneyPlan();
             updateTimelineChart();
-            showToast('Stop saved. Remember to save the entire projection!', 'success');
+            showToast('Stop updated. Remember to save the projection!', 'success');
         }
 
         function updateJourneyStopField(element) {
@@ -5133,6 +5173,21 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             markAsUnsaved();
             updateTimelineChart();
             showToast('PO Execution date updated. Remember to save the projection!', 'success');
+        }
+
+        function updateModuleAllocationPoDate(allocationId, dateValue) {
+            const allocation = workingState.moduleAllocations.find(item => item.id == allocationId);
+            if (!allocation) {
+                return;
+            }
+
+            const normalizedDate = dateValue || '';
+            if ((allocation.po_execution_date || '') === normalizedDate) {
+                return;
+            }
+
+            allocation.po_execution_date = normalizedDate;
+            markAsUnsaved();
         }
 
         // ==================== UI HELPERS ====================

@@ -9,36 +9,9 @@
  * - $can_edit: Boolean for edit permissions
  */
 
-$total_allocated_value = 0;
-$total_allocated_modules = 0;
-
-if (!empty($allocated_modules)) {
-    foreach ($allocated_modules as $alloc) {
-        $total_allocated_value += $alloc['contract_value'] ?? 0;
-        $total_allocated_modules += $alloc['quantity'] ?? 0;
-    }
-}
 ?>
 
 <div class="module-selector-card">
-    <div class="card-header">
-        <div class="card-title">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                <line x1="8" y1="21" x2="16" y2="21"/>
-                <line x1="12" y1="17" x2="12" y2="21"/>
-            </svg>
-            Modules Included
-        </div>
-        <div class="card-summary">
-            <span class="summary-value" id="totalModulesCount"><?php echo number_format($total_allocated_modules); ?></span>
-            <span class="summary-label">modules</span>
-            <span class="summary-divider">|</span>
-            <span class="summary-value" id="totalContractValue">$<?php echo number_format($total_allocated_value, 2); ?></span>
-            <span class="summary-label">contract value</span>
-        </div>
-    </div>
-
     <div class="module-list" id="moduleAllocationsList">
         <?php if (!empty($allocated_modules)): ?>
             <?php foreach ($allocated_modules as $alloc):
@@ -54,6 +27,11 @@ if (!empty($allocated_modules)) {
                             <div class="module-vendor-name">
                                 <?php echo htmlspecialchars($alloc['vendor_name'] ?? 'Unknown Vendor'); ?>
                             </div>
+                            <?php if (!empty($alloc['manufacturer_address'])): ?>
+                                <div class="module-manufacturer-location">
+                                    <?php echo htmlspecialchars($alloc['manufacturer_address']); ?>
+                                </div>
+                            <?php endif; ?>
                             <?php if ($po_execution_date): ?>
                                 <span class="po-badge-sm">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
@@ -190,7 +168,7 @@ if (!empty($allocated_modules)) {
                                 <button type="button" class="btn btn-sm btn-primary"
                                         onclick="saveAndCollapseModuleItem(<?php echo $alloc['id']; ?>)">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"/></svg>
-                                    Save & Collapse
+                                    Collapse
                                 </button>
                             <?php endif; ?>
                         </div>
@@ -1005,6 +983,12 @@ if (!empty($allocated_modules)) {
     color: #293E4C;
 }
 
+.module-manufacturer-location {
+    font-size: 0.9em;
+    color: #6c757d;
+    line-height: 1.2;
+}
+
 .module-header-stats {
     display: flex;
     align-items: center;
@@ -1531,40 +1515,16 @@ function saveAndCollapseModuleItem(allocationId) {
     const poDateInput = moduleItem.querySelector('.po-date-input');
     const poDate = poDateInput ? poDateInput.value : '';
 
-    // Save the PO execution date via AJAX
-    if (poDate) {
-        const formData = new FormData();
-        formData.append('action', 'save_po_execution_date');
-        formData.append('allocation_id', allocationId);
-        formData.append('po_execution_date', poDate);
+    if (typeof updateModuleAllocationPoDate === 'function') {
+        updateModuleAllocationPoDate(allocationId, poDate);
+    }
 
-        fetch(window.location.href, {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // Update the header badge
-                updateModuleHeaderBadge(allocationId, poDate);
+    updateModuleHeaderBadge(allocationId, poDate);
+    moduleItem.classList.add('collapsed');
+    showModuleSaveSuccess(moduleItem);
 
-                // Collapse the item
-                moduleItem.classList.add('collapsed');
-
-                // Show success feedback
-                showModuleSaveSuccess(moduleItem);
-            } else {
-                alert('Error saving PO date: ' + (data.message || 'Unknown error'));
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            // Still collapse even if save fails (might be handled elsewhere)
-            moduleItem.classList.add('collapsed');
-        });
-    } else {
-        // No date to save, just collapse
-        moduleItem.classList.add('collapsed');
+    if (typeof showToast === 'function') {
+        showToast('Module updated. Remember to save the projection!', 'success');
     }
 }
 
@@ -1572,11 +1532,22 @@ function updateModuleHeaderBadge(allocationId, poDate) {
     const moduleItem = document.querySelector(`.module-item[data-allocation-id="${allocationId}"]`);
     if (!moduleItem) return;
 
-    const summaryStats = moduleItem.querySelector('.module-summary-stats');
+    const summaryStats = moduleItem.querySelector('.module-header-left');
     if (!summaryStats) return;
 
     // Check if badge already exists
     let badge = summaryStats.querySelector('.po-badge-sm');
+    const divider = summaryStats.querySelector('.summary-divider');
+
+    if (!poDate) {
+        if (badge) {
+            badge.remove();
+        }
+        if (divider) {
+            divider.remove();
+        }
+        return;
+    }
 
     if (poDate) {
         const formattedDate = new Date(poDate).toLocaleDateString('en-US', {
@@ -1593,9 +1564,9 @@ function updateModuleHeaderBadge(allocationId, poDate) {
             `;
         } else {
             // Add new badge
-            const divider = document.createElement('span');
-            divider.className = 'summary-divider';
-            divider.innerHTML = '&bull;';
+            const dividerElement = document.createElement('span');
+            dividerElement.className = 'summary-divider';
+            dividerElement.innerHTML = '&bull;';
 
             badge = document.createElement('span');
             badge.className = 'po-badge-sm';
@@ -1604,7 +1575,7 @@ function updateModuleHeaderBadge(allocationId, poDate) {
                 PO: ${formattedDate}
             `;
 
-            summaryStats.appendChild(divider);
+            summaryStats.appendChild(dividerElement);
             summaryStats.appendChild(badge);
         }
     }
@@ -1634,7 +1605,15 @@ function initializePoDatePickers() {
                     dateFormat: 'Y-m-d',
                     altInput: true,
                     altFormat: 'F j, Y',
-                    allowInput: true
+                    allowInput: true,
+                    onChange: function(selectedDates, dateStr) {
+                        const allocationId = input.dataset.allocationId;
+                        if (!allocationId) return;
+                        if (typeof updateModuleAllocationPoDate === 'function') {
+                            updateModuleAllocationPoDate(allocationId, dateStr);
+                        }
+                        updateModuleHeaderBadge(allocationId, dateStr);
+                    }
                 });
             }
         });

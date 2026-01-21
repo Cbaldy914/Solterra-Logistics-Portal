@@ -274,7 +274,8 @@
                         <i class="fas fa-solar-panel placeholder-icon"></i>
                     <?php endif; ?>
 
-                    <?php if ($project['has_schedule']): ?>
+                    <?php $has_schedule = $project['has_schedule'] ?? ($project['has_projection'] ?? false); ?>
+                    <?php if ($has_schedule): ?>
                         <span class="schedule-badge has-schedule">
                             <i class="fas fa-check-circle"></i> Plan Set
                         </span>
@@ -293,7 +294,7 @@
                     <div class="project-card-meta">
                         <span class="account"><?php echo htmlspecialchars($project['account_name']); ?></span>
                         <span class="action">
-                            <?php echo $project['has_schedule'] ? 'View Plan' : 'Create Plan'; ?>
+                            <?php echo $has_schedule ? 'View Plan' : 'Create Plan'; ?>
                             <i class="fas fa-arrow-right"></i>
                         </span>
                     </div>
