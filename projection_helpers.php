@@ -298,7 +298,8 @@ function get_projection_module_allocations($conn, $projection_id) {
     }
 
     $stmt = $conn->prepare("
-        SELECT pma.*,
+        SELECT pma.id, pma.projection_id, pma.module_id, pma.wattage, pma.quantity, pma.pallets,
+               pma.po_execution_date,
                m.vendor_name,
                m.vendor_name AS manufacturer_name,
                m.initial_location AS manufacturer_address,

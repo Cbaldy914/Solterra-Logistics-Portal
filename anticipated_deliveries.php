@@ -20,6 +20,55 @@ if (!$conn) {
     die("Connection failed");
 }
 
+// ========== AJAX HANDLERS ==========
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    $action = $_POST['action'];
+
+    // Handle PO Execution Date save
+    if ($action === 'save_po_execution_date') {
+        header('Content-Type: application/json');
+
+        if (!in_array($role, ['admin', 'global_admin', 'customer_admin'])) {
+            echo json_encode(['success' => false, 'message' => 'Permission denied']);
+            exit();
+        }
+
+        $allocation_id = intval($_POST['allocation_id'] ?? 0);
+        $po_execution_date = $_POST['po_execution_date'] ?? '';
+
+        if (!$allocation_id) {
+            echo json_encode(['success' => false, 'message' => 'Invalid allocation ID']);
+            exit();
+        }
+
+        // Validate date format
+        $date_value = null;
+        if (!empty($po_execution_date)) {
+            $date = DateTime::createFromFormat('Y-m-d', $po_execution_date);
+            if ($date) {
+                $date_value = $date->format('Y-m-d');
+            }
+        }
+
+        // Update the allocation with PO execution date
+        $stmt = $conn->prepare("UPDATE projection_module_allocations SET po_execution_date = ? WHERE id = ?");
+        if ($stmt) {
+            $stmt->bind_param("si", $date_value, $allocation_id);
+            if ($stmt->execute()) {
+                echo json_encode(['success' => true, 'message' => 'PO execution date saved']);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Failed to save: ' . $stmt->error]);
+            }
+            $stmt->close();
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Database error: ' . $conn->error]);
+        }
+
+        $conn->close();
+        exit();
+    }
+}
+
 // ========== PORTFOLIO MODE (No project_id) ==========
 if (!isset($_GET['project_id']) || empty($_GET['project_id'])) {
     // Only admin, global_admin, customer_admin can access portfolio view
@@ -2785,7 +2834,10 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         const canEdit = <?php echo $can_edit ? 'true' : 'false'; ?>;
         const projectInfo = {
             name: <?php echo json_encode($project['project_name']); ?>,
-            address: <?php echo json_encode($project['project_address']); ?>
+            address: <?php echo json_encode($project['project_address']); ?>,
+            modulesPerPallet: <?php echo (int)($project_summary['modules_per_pallet'] ?? 30); ?>,
+            palletsPerTruck: <?php echo (int)($project_summary['pallets_per_truck'] ?? 20); ?>,
+            totalTrucks: <?php echo (float)($project_summary['trucks'] ?? 0); ?>
         };
 
         let currentProjection = <?php echo $current_projection ? json_encode($current_projection) : 'null'; ?>;
@@ -2799,6 +2851,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             status: currentProjection?.status || 'draft',
             notes: currentProjection?.notes || '',
             isPrimary: currentProjection?.is_primary || false,
+            poExecutionDate: <?php echo json_encode($current_projection['po_execution_date'] ?? ''); ?>,
             moduleAllocations: <?php echo json_encode($allocated_modules); ?> || [],
             stops: <?php echo json_encode($stops); ?> || [],
             legs: <?php echo json_encode($legs); ?> || []
@@ -2892,6 +2945,13 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 fields: ['formatted_address', 'geometry', 'address_components', 'name']
             });
 
+            // Prevent form submission on enter key in autocomplete
+            inputElement.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                }
+            });
+
             autocomplete.addListener('place_changed', function() {
                 const place = autocomplete.getPlace();
 
@@ -2905,8 +2965,12 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 inputElement.parentElement.classList.remove('error');
                 inputElement.parentElement.classList.add('verified');
 
+                // Explicitly set the input value to the formatted address
+                const formattedAddress = place.formatted_address || inputElement.value;
+                inputElement.value = formattedAddress;
+
                 const placeData = {
-                    address: place.formatted_address || inputElement.value,
+                    address: formattedAddress,
                     latitude: place.geometry.location.lat(),
                     longitude: place.geometry.location.lng(),
                     name: place.name || ''
@@ -2915,6 +2979,9 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 if (onPlaceSelected) {
                     onPlaceSelected(placeData);
                 }
+
+                // Trigger change event to update state
+                inputElement.dispatchEvent(new Event('change', { bubbles: true }));
             });
 
             autocompleteInstances.push(autocomplete);
@@ -3051,6 +3118,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 status: workingState.status,
                 notes: workingState.notes,
                 is_primary: workingState.isPrimary,
+                po_execution_date: workingState.poExecutionDate || null,
                 module_allocations: workingState.moduleAllocations.map(a => ({
                     module_id: a.module_id,
                     wattage: a.wattage,
@@ -3968,7 +4036,15 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                                     </div>
                                 </div>
                                 ${feesHtml}
-                                ${canEdit ? `<div style="margin-top: 12px; display: flex; justify-content: flex-end;"><button type="button" class="btn btn-sm btn-danger" data-action="remove-stop" data-stop-id="${stop.id}">Remove This Stop</button></div>` : ''}
+                                ${canEdit ? `
+                                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e9ecef; display: flex; justify-content: space-between; align-items: center;">
+                                    <button type="button" class="btn btn-sm btn-danger" data-action="remove-stop" data-stop-id="${stop.id}">Remove This Stop</button>
+                                    <button type="button" class="btn btn-sm btn-primary" data-action="save-stop" data-stop-id="${stop.id}">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"/></svg>
+                                        Save & Collapse
+                                    </button>
+                                </div>
+                                ` : ''}
                             </div>
                         </div>
                     `;
@@ -4068,19 +4144,11 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                         </div>
                     `;
 
-                    // Add "Add Stop" button after EVERY leg (including after origin)
-                    // This allows adding stops between origin and first stop, or between any intermediate stops
-                    if (canEdit && !nextStop || (canEdit && nextStop.stop_type !== 'destination')) {
-                        html += `
-                            <div class="journey-add-stop">
-                                <button type="button" class="journey-add-stop-btn" data-action="add-warehouse-after" data-stop-id="${stop.id}">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                    Add Stop Here
-                                </button>
-                            </div>
-                        `;
-                    } else if (canEdit) {
-                        // Always add "Add Stop Here" button before destination too
+                    // Add "Add Stop Here" button only AFTER the last intermediate stop (before destination)
+                    // This prevents showing multiple buttons (one before and one after)
+                    const isLastStopBeforeDestination = nextStop && nextStop.stop_type === 'destination';
+
+                    if (canEdit && isLastStopBeforeDestination) {
                         html += `
                             <div class="journey-add-stop">
                                 <button type="button" class="journey-add-stop-btn" data-action="add-warehouse-after" data-stop-id="${stop.id}">
@@ -4162,8 +4230,39 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                     removeJourneyStop(actionButton.dataset.stopId);
                 } else if (action === 'add-warehouse' || action === 'add-warehouse-after') {
                     addJourneyStop(actionButton.dataset.stopId);
+                } else if (action === 'save-stop') {
+                    saveAndCollapseStop(actionButton.dataset.stopId);
                 }
             };
+        }
+
+        function saveAndCollapseStop(stopId) {
+            // Capture current form state first
+            captureJourneyFormState();
+
+            // Sync state to recalculate fees
+            syncPlanState();
+
+            // Collapse the card
+            const card = document.querySelector(`.warehouse-stop-card[data-stop-id="${stopId}"]`);
+            if (card) {
+                card.classList.add('collapsed');
+
+                // Add saved indicator
+                const header = card.querySelector('.warehouse-stop-header');
+                if (header && !header.querySelector('.saved-indicator')) {
+                    const savedBadge = document.createElement('span');
+                    savedBadge.className = 'saved-indicator';
+                    savedBadge.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#28a745" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+                    savedBadge.style.cssText = 'margin-left: 8px; display: inline-flex; align-items: center;';
+                    header.querySelector('.warehouse-stop-title-row').appendChild(savedBadge);
+                }
+            }
+
+            // Re-render to update summary info
+            renderJourneyPlan();
+            updateTimelineChart();
+            showToast('Stop saved. Remember to save the entire projection!', 'success');
         }
 
         function updateJourneyStopField(element) {
@@ -4237,7 +4336,53 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             renderJourneyPlan();
         }
 
+        // Capture all current form values from the journey plan before re-rendering
+        function captureJourneyFormState() {
+            const container = document.getElementById('journeyFlow');
+            if (!container) return;
+
+            // Capture stop field values
+            container.querySelectorAll('[data-stop-id][data-stop-field]').forEach(el => {
+                const stopId = el.dataset.stopId;
+                const field = el.dataset.stopField;
+                const stop = workingState.stops.find(s => s.id == stopId);
+                if (!stop) return;
+
+                if (el.type === 'checkbox') {
+                    stop[field] = el.checked ? 1 : 0;
+                } else {
+                    stop[field] = el.value;
+                }
+            });
+
+            // Capture leg field values
+            container.querySelectorAll('[data-leg-id][data-leg-field]').forEach(el => {
+                const legId = el.dataset.legId;
+                const field = el.dataset.legField;
+                const leg = workingState.legs.find(l => l.id == legId);
+                if (!leg) return;
+
+                if (['delivery_rate', 'freight_cost_per_truck', 'accessorial_cost_per_truck', 'trucks_required'].includes(field)) {
+                    leg[field] = el.value === '' ? '' : parseFloat(el.value);
+                } else {
+                    leg[field] = el.value;
+                }
+            });
+
+            // Capture fee field values
+            container.querySelectorAll('[data-stop-id][data-fee-field]').forEach(el => {
+                const stopId = el.dataset.stopId;
+                const feeIndex = parseInt(el.dataset.feeIndex, 10);
+                const field = el.dataset.feeField;
+                const stop = workingState.stops.find(s => s.id == stopId);
+                if (!stop || !stop.fees || !stop.fees[feeIndex]) return;
+
+                stop.fees[feeIndex][field] = el.value;
+            });
+        }
+
         function removeJourneyStop(stopId) {
+            captureJourneyFormState(); // Capture state before removing
             const stopIndex = workingState.stops.findIndex(s => s.id == stopId);
             if (stopIndex <= 0 || stopIndex >= workingState.stops.length - 1) return;
 
@@ -4258,6 +4403,10 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
 
         function addJourneyStop(afterStopId) {
             if (!canEdit) return;
+
+            // IMPORTANT: Capture all current form values before re-rendering
+            captureJourneyFormState();
+
             ensureStops();
 
             const stops = workingState.stops;
@@ -4686,13 +4835,27 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         }
 
         function getTotalTrucks() {
+            // Use project configuration for accurate truck count
+            const palletsPerTruck = projectInfo.palletsPerTruck || 20;
             const pallets = getTotalPallets();
-            // Assume 24 pallets per truck if not specified
-            return Math.ceil(pallets / 24) || 1;
+
+            // If we have the pre-calculated total from PHP, use it
+            if (projectInfo.totalTrucks > 0) {
+                return Math.ceil(projectInfo.totalTrucks);
+            }
+
+            return Math.ceil(pallets / palletsPerTruck) || 1;
         }
 
         function recalculateCosts() {
             showToast('Costs will be recalculated when you save', 'info');
+        }
+
+        function updatePOExecutionDate(dateValue) {
+            workingState.poExecutionDate = dateValue;
+            markAsUnsaved();
+            updateTimelineChart();
+            showToast('PO Execution date updated. Remember to save the projection!', 'success');
         }
 
         // ==================== UI HELPERS ====================
