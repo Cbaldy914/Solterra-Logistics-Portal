@@ -1868,6 +1868,116 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
         .legend-color.milestone { background: #28a745; }
         .legend-color.total { background: #293E4C; }
 
+        /* Weekly Projections Table */
+        .weekly-projections-section {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .weekly-projections-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1em;
+            font-weight: 600;
+            color: #293E4C;
+            margin: 0 0 16px 0;
+        }
+
+        .weekly-projections-title svg {
+            color: #488C9A;
+        }
+
+        .weekly-table-wrapper {
+            overflow-x: auto;
+            border-radius: 12px;
+            border: 1px solid #e9ecef;
+        }
+
+        .weekly-projections-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9em;
+        }
+
+        .weekly-projections-table th,
+        .weekly-projections-table td {
+            padding: 12px 16px;
+            text-align: right;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .weekly-projections-table th:first-child,
+        .weekly-projections-table td:first-child {
+            text-align: left;
+        }
+
+        .weekly-projections-table th:nth-child(2),
+        .weekly-projections-table td:nth-child(2) {
+            text-align: left;
+        }
+
+        .weekly-projections-table thead th {
+            background: linear-gradient(135deg, #f8f9fa 0%, #f0f4f5 100%);
+            font-weight: 600;
+            color: #293E4C;
+            text-transform: uppercase;
+            font-size: 0.75em;
+            letter-spacing: 0.5px;
+        }
+
+        .weekly-projections-table tbody tr:hover {
+            background: rgba(72, 140, 154, 0.04);
+        }
+
+        .weekly-projections-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .weekly-projections-table .week-number {
+            font-weight: 600;
+            color: #488C9A;
+        }
+
+        .weekly-projections-table .date-range {
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+
+        .weekly-projections-table .amount {
+            font-weight: 500;
+        }
+
+        .weekly-projections-table .amount.freight { color: #488C9A; }
+        .weekly-projections-table .amount.warehousing { color: #E07F3A; }
+        .weekly-projections-table .amount.milestone { color: #28a745; }
+
+        .weekly-projections-table .weekly-total {
+            font-weight: 600;
+            color: #293E4C;
+        }
+
+        .weekly-projections-table .cumulative {
+            font-weight: 700;
+            color: #E07F3A;
+        }
+
+        .weekly-empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #6c757d;
+        }
+
+        .weekly-empty-state svg {
+            margin-bottom: 12px;
+        }
+
+        .weekly-empty-state p {
+            margin: 0;
+            font-size: 0.95em;
+        }
+
         /* Fee Table Styles for Journey */
         .fee-table-journey {
             width: 100%;
@@ -2519,13 +2629,8 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                     </div>
                     <div class="collapsible-content" id="modules-costs-content">
                         <div class="collapsible-inner">
-                            <div class="module-cost-grid">
-                                <!-- Module Selector Component -->
-                                <?php include 'components/projection_module_selector.php'; ?>
-
-                                <!-- Cost Summary Component -->
-                                <?php include 'components/projection_cost_summary.php'; ?>
-                            </div>
+                            <!-- Module Selector Component -->
+                            <?php include 'components/projection_module_selector.php'; ?>
                         </div>
                     </div>
                 </div>
@@ -2637,44 +2742,6 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                     </div>
                 </div>
 
-                <?php if ($can_edit): ?>
-                <div class="card plan-actions-card">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                            </svg>
-                            Plan Actions
-                        </h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="btn-group" style="flex-wrap: wrap;">
-                            <button type="button" class="btn btn-primary" onclick="saveProjection()">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                                    <polyline points="17 21 17 13 7 13 7 21"/>
-                                    <polyline points="7 3 7 8 15 8"/>
-                                </svg>
-                                Save Projection
-                            </button>
-                            <button type="button" class="btn btn-secondary" onclick="recalculateCosts()">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="23 4 23 10 17 10"/>
-                                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-                                </svg>
-                                Recalculate Costs
-                            </button>
-                            <button type="button" class="btn btn-orange" onclick="addWarehouseDelivery()">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <line x1="12" y1="5" x2="12" y2="19"/>
-                                    <line x1="5" y1="12" x2="19" y2="12"/>
-                                </svg>
-                                Add Warehouse Delivery
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                <?php endif; ?>
             </div>
         </div>
 
@@ -2700,13 +2767,12 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             <div class="collapsible-content" id="timeline-content">
                 <!-- Chart Type Tabs -->
                 <div class="timeline-tabs">
-                    <button type="button" class="timeline-tab active" data-tab="bar-chart" onclick="switchTimelineTab('bar-chart')">
+                    <button type="button" class="timeline-tab active" data-tab="cost-summary" onclick="switchTimelineTab('cost-summary')">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px; vertical-align: middle;">
-                            <line x1="18" y1="20" x2="18" y2="10"/>
-                            <line x1="12" y1="20" x2="12" y2="4"/>
-                            <line x1="6" y1="20" x2="6" y2="14"/>
+                            <line x1="12" y1="1" x2="12" y2="23"/>
+                            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
                         </svg>
-                        Event Timeline
+                        Cost Summary
                     </button>
                     <button type="button" class="timeline-tab" data-tab="line-chart" onclick="switchTimelineTab('line-chart')">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px; vertical-align: middle;">
@@ -2716,13 +2782,9 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                     </button>
                 </div>
 
-                <!-- Bar Chart Panel -->
-                <div class="timeline-panel active" id="bar-chart-panel">
-                    <div class="timeline-container">
-                        <div class="timeline-chart" id="timelineChart">
-                            <!-- Timeline bars generated by JavaScript -->
-                        </div>
-                    </div>
+                <!-- Cost Summary Panel -->
+                <div class="timeline-panel active" id="cost-summary-panel">
+                    <?php include 'components/projection_cost_summary.php'; ?>
                 </div>
 
                 <!-- Line Chart Panel -->
@@ -2747,6 +2809,46 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                             <div class="legend-item-chart">
                                 <span class="legend-color total"></span>
                                 <span>Cumulative Total</span>
+                            </div>
+                        </div>
+
+                        <!-- Weekly Cost Projections Table -->
+                        <div class="weekly-projections-section">
+                            <h4 class="weekly-projections-title">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                    <line x1="16" y1="2" x2="16" y2="6"/>
+                                    <line x1="8" y1="2" x2="8" y2="6"/>
+                                    <line x1="3" y1="10" x2="21" y2="10"/>
+                                </svg>
+                                Weekly Cost Projections
+                            </h4>
+                            <div class="weekly-table-wrapper">
+                                <table class="weekly-projections-table" id="weeklyProjectionsTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Week</th>
+                                            <th>Date Range</th>
+                                            <th>Freight</th>
+                                            <th>Warehousing</th>
+                                            <th>Milestones</th>
+                                            <th>Weekly Total</th>
+                                            <th>Cumulative</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="weeklyProjectionsBody">
+                                        <!-- Populated by JavaScript -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="weekly-empty-state" id="weeklyEmptyState" style="display: none;">
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                    <line x1="16" y1="2" x2="16" y2="6"/>
+                                    <line x1="8" y1="2" x2="8" y2="6"/>
+                                    <line x1="3" y1="10" x2="21" y2="10"/>
+                                </svg>
+                                <p>Add dates to your logistics plan to see weekly cost projections.</p>
                             </div>
                         </div>
                     </div>
@@ -3123,7 +3225,14 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                     module_id: a.module_id,
                     wattage: a.wattage,
                     quantity: a.quantity,
-                    pallets: a.pallets
+                    pallets: a.pallets,
+                    // Include additional fields for manual entries
+                    vendor_name: a.vendor_name,
+                    manufacturer_address: a.manufacturer_address,
+                    modules_per_pallet: a.modules_per_pallet,
+                    pallets_per_truck: a.pallets_per_truck,
+                    cost_per_watt: a.cost_per_watt,
+                    is_manual: a.is_manual || false
                 })),
                 stops: workingState.stops.map((s, i) => ({
                     id: s.id,
@@ -3166,6 +3275,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             .then(data => {
                 hideLoading();
                 if (data.success) {
+                    markAsSaved();
                     showToast('Projection saved successfully', 'success');
                     // Refresh to show updated data
                     setTimeout(() => {
@@ -3296,14 +3406,181 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             workingState.moduleAllocations.push(allocation);
             showToast('Module batch added. Remember to save!', 'success');
 
-            // Refresh page to update UI
-            saveProjection();
+            // Mark as unsaved and update UI
+            markAsUnsaved();
+            renderModuleAllocations();
+            updateBadges();
         }
 
         function removeAllocation(allocationId) {
             workingState.moduleAllocations = workingState.moduleAllocations.filter(a => a.id != allocationId);
             showToast('Module removed. Remember to save!', 'info');
-            saveProjection();
+
+            // Mark as unsaved and update UI
+            markAsUnsaved();
+            renderModuleAllocations();
+            updateBadges();
+        }
+
+        function addManualModuleAllocation(data) {
+            // Add manual module allocation directly to working state
+            const allocation = {
+                module_id: data.is_manual ? ('manual_' + Date.now()) : data.module_id,
+                wattage: parseInt(data.wattage),
+                quantity: parseInt(data.quantity),
+                pallets: data.pallets,
+                vendor_name: data.vendor_name,
+                manufacturer_name: data.manufacturer_name,
+                manufacturer_address: data.manufacturer_address || '',
+                modules_per_pallet: data.modules_per_pallet,
+                pallets_per_truck: data.pallets_per_truck,
+                cost_per_watt: data.cost_per_watt,
+                contract_value: data.contract_value,
+                has_milestones: false,
+                milestones: [],
+                is_manual: true
+            };
+
+            workingState.moduleAllocations.push(allocation);
+            showToast('Manual module entry added. Remember to save!', 'success');
+
+            // Mark as unsaved and update UI
+            markAsUnsaved();
+            renderModuleAllocations();
+            updateBadges();
+        }
+
+        function renderModuleAllocations() {
+            // Re-render the module allocations list based on workingState
+            const container = document.getElementById('moduleAllocationsList');
+            if (!container) return;
+
+            if (workingState.moduleAllocations.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5">
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                            <line x1="8" y1="21" x2="16" y2="21"/>
+                            <line x1="12" y1="17" x2="12" y2="21"/>
+                        </svg>
+                        <p>No modules allocated to this projection yet.</p>
+                    </div>
+                `;
+                updateModuleSummary();
+                return;
+            }
+
+            let html = '';
+            workingState.moduleAllocations.forEach((alloc, index) => {
+                const pallets = alloc.pallets || Math.ceil(alloc.quantity / (alloc.modules_per_pallet || 30));
+                const contractValue = alloc.contract_value || 0;
+                const vendorName = alloc.vendor_name || alloc.manufacturer_name || 'Unknown';
+                const modsPerPallet = alloc.modules_per_pallet || '-';
+                const palletsPerTruck = alloc.pallets_per_truck || '-';
+
+                html += `
+                    <div class="module-allocation-item" data-allocation-index="${index}">
+                        <div class="allocation-header" onclick="toggleAllocationExpand(${index})">
+                            <div class="allocation-summary">
+                                <span class="vendor-name">${escapeHtml(vendorName)}</span>
+                                <span class="summary-stat">${alloc.wattage}W</span>
+                                <span class="summary-divider">&bull;</span>
+                                <span class="summary-stat">${alloc.quantity.toLocaleString()} modules</span>
+                                <span class="summary-divider">&bull;</span>
+                                <span class="summary-stat">${pallets.toLocaleString()} pallets</span>
+                                ${palletsPerTruck !== '-' ? `
+                                    <span class="summary-divider">&bull;</span>
+                                    <span class="summary-stat">${palletsPerTruck} pallets/truck</span>
+                                ` : ''}
+                                <span class="summary-divider">&bull;</span>
+                                <span class="summary-stat contract-value">$${contractValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                            </div>
+                            <div class="allocation-toggle">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="allocation-details" style="display: none;">
+                            <div class="module-info-grid">
+                                <div class="info-item">
+                                    <span class="info-label">Wattage</span>
+                                    <span class="info-value">${alloc.wattage}W</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Modules</span>
+                                    <span class="info-value">${alloc.quantity.toLocaleString()}</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Pallets</span>
+                                    <span class="info-value">${pallets.toLocaleString()}</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Mods/Pallet</span>
+                                    <span class="info-value">${modsPerPallet}</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Pallets/Truck</span>
+                                    <span class="info-value">${palletsPerTruck}</span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Contract Value</span>
+                                    <span class="info-value">$${contractValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                                </div>
+                            </div>
+                            ${alloc.manufacturer_address ? `
+                                <div class="info-item full-width">
+                                    <span class="info-label">Location</span>
+                                    <span class="info-value">${escapeHtml(alloc.manufacturer_address)}</span>
+                                </div>
+                            ` : ''}
+                            <div class="allocation-actions">
+                                <button type="button" class="btn btn-sm btn-danger" onclick="removeAllocation(${alloc.id || index})">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"/>
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                    </svg>
+                                    Remove
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+            updateModuleSummary();
+        }
+
+        function toggleAllocationExpand(index) {
+            const item = document.querySelector(`.module-allocation-item[data-allocation-index="${index}"]`);
+            if (!item) return;
+            const details = item.querySelector('.allocation-details');
+            const toggle = item.querySelector('.allocation-toggle');
+            if (details.style.display === 'none') {
+                details.style.display = 'block';
+                toggle.style.transform = 'rotate(180deg)';
+            } else {
+                details.style.display = 'none';
+                toggle.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        function updateModuleSummary() {
+            const totalModules = workingState.moduleAllocations.reduce((sum, a) => sum + (a.quantity || 0), 0);
+            const totalValue = workingState.moduleAllocations.reduce((sum, a) => sum + (a.contract_value || 0), 0);
+
+            const modulesEl = document.getElementById('totalModulesCount');
+            const valueEl = document.getElementById('totalContractValue');
+
+            if (modulesEl) modulesEl.textContent = totalModules.toLocaleString();
+            if (valueEl) valueEl.textContent = '$' + totalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         // ==================== STOP MANAGEMENT ====================
@@ -4935,9 +5212,10 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 panel.classList.toggle('active', panel.id === tabId + '-panel');
             });
 
-            // If switching to line chart, render it
+            // If switching to line chart, render it and weekly projections
             if (tabId === 'line-chart') {
                 renderMonthlyForecastChart();
+                renderWeeklyProjectionsTable();
             }
         }
 
@@ -5120,6 +5398,144 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
             });
 
             return { labels, freight, warehousing, milestones, cumulative };
+        }
+
+        // ==================== WEEKLY PROJECTIONS TABLE ====================
+        function renderWeeklyProjectionsTable() {
+            const tbody = document.getElementById('weeklyProjectionsBody');
+            const emptyState = document.getElementById('weeklyEmptyState');
+            const tableWrapper = document.querySelector('.weekly-table-wrapper');
+
+            if (!tbody) return;
+
+            // Collect weekly data
+            const weeklyData = collectWeeklyData();
+
+            if (weeklyData.length === 0) {
+                if (tableWrapper) tableWrapper.style.display = 'none';
+                if (emptyState) emptyState.style.display = 'block';
+                return;
+            }
+
+            if (tableWrapper) tableWrapper.style.display = 'block';
+            if (emptyState) emptyState.style.display = 'none';
+
+            let html = '';
+            let cumulativeTotal = 0;
+
+            weeklyData.forEach((week, index) => {
+                const weeklyTotal = week.freight + week.warehousing + week.milestones;
+                cumulativeTotal += weeklyTotal;
+
+                html += `
+                    <tr>
+                        <td class="week-number">Week ${index + 1}</td>
+                        <td class="date-range">${week.dateRange}</td>
+                        <td class="amount freight">${formatCurrency(week.freight)}</td>
+                        <td class="amount warehousing">${formatCurrency(week.warehousing)}</td>
+                        <td class="amount milestone">${formatCurrency(week.milestones)}</td>
+                        <td class="weekly-total">${formatCurrency(weeklyTotal)}</td>
+                        <td class="cumulative">${formatCurrency(cumulativeTotal)}</td>
+                    </tr>
+                `;
+            });
+
+            tbody.innerHTML = html;
+        }
+
+        function collectWeeklyData() {
+            const weeklyBuckets = {};
+
+            // Helper to get week key from date
+            function getWeekKey(dateStr) {
+                const date = new Date(dateStr);
+                const startOfWeek = new Date(date);
+                startOfWeek.setDate(date.getDate() - date.getDay()); // Start of week (Sunday)
+                return startOfWeek.toISOString().split('T')[0];
+            }
+
+            // Helper to get week end date
+            function getWeekEnd(weekStartStr) {
+                const start = new Date(weekStartStr);
+                const end = new Date(start);
+                end.setDate(start.getDate() + 6);
+                return end;
+            }
+
+            // Collect freight costs by week
+            workingState.legs.forEach(leg => {
+                if (leg.start_date) {
+                    const weekKey = getWeekKey(leg.start_date);
+                    if (!weeklyBuckets[weekKey]) {
+                        weeklyBuckets[weekKey] = { freight: 0, warehousing: 0, milestones: 0 };
+                    }
+                    weeklyBuckets[weekKey].freight += leg.total_freight_cost || 0;
+
+                    // Add milestone payment if triggered
+                    if (leg.triggers_milestone) {
+                        weeklyBuckets[weekKey].milestones += getMilestoneAmount(leg.triggers_milestone);
+                    }
+                }
+            });
+
+            // Collect warehousing costs by week
+            workingState.stops.forEach(stop => {
+                if (stop.estimated_arrival_date && stop.fees && stop.fees.length > 0) {
+                    const weekKey = getWeekKey(stop.estimated_arrival_date);
+                    if (!weeklyBuckets[weekKey]) {
+                        weeklyBuckets[weekKey] = { freight: 0, warehousing: 0, milestones: 0 };
+                    }
+
+                    stop.fees.forEach(fee => {
+                        const cost = fee.estimated_cost || 0;
+                        if (fee.fee_type === 'storage' || fee.trigger === 'monthly') {
+                            // Distribute storage fees across weeks
+                            const arrivalDate = new Date(stop.estimated_arrival_date);
+                            const nextStopIndex = workingState.stops.indexOf(stop) + 1;
+                            const nextStop = workingState.stops[nextStopIndex];
+                            const departureDate = nextStop?.estimated_arrival_date
+                                ? new Date(nextStop.estimated_arrival_date)
+                                : new Date(arrivalDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+                            const weeksInStorage = Math.max(1, Math.ceil((departureDate - arrivalDate) / (7 * 24 * 60 * 60 * 1000)));
+                            const weeklyFee = cost / weeksInStorage;
+
+                            for (let i = 0; i < weeksInStorage; i++) {
+                                const storageWeek = new Date(arrivalDate);
+                                storageWeek.setDate(storageWeek.getDate() + (i * 7));
+                                const storageWeekKey = getWeekKey(storageWeek.toISOString().split('T')[0]);
+                                if (!weeklyBuckets[storageWeekKey]) {
+                                    weeklyBuckets[storageWeekKey] = { freight: 0, warehousing: 0, milestones: 0 };
+                                }
+                                weeklyBuckets[storageWeekKey].warehousing += weeklyFee;
+                            }
+                        } else {
+                            weeklyBuckets[weekKey].warehousing += cost;
+                        }
+                    });
+                }
+            });
+
+            // Sort weeks and prepare array with date ranges
+            const sortedWeeks = Object.keys(weeklyBuckets).sort();
+
+            return sortedWeeks.map(weekStart => {
+                const weekEnd = getWeekEnd(weekStart);
+                const startFormatted = new Date(weekStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const endFormatted = weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+                return {
+                    dateRange: `${startFormatted} - ${endFormatted}`,
+                    freight: weeklyBuckets[weekStart].freight,
+                    warehousing: weeklyBuckets[weekStart].warehousing,
+                    milestones: weeklyBuckets[weekStart].milestones
+                };
+            });
+        }
+
+        function formatCurrency(amount) {
+            if (amount === 0) return '-';
+            return '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
         }
 
         // ==================== WAREHOUSE CARD COLLAPSE ====================
@@ -5560,76 +5976,26 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 });
         }
 
-        // ==================== AUTO-SAVE ====================
-        let autoSaveTimer = null;
+        // ==================== UNSAVED CHANGES TRACKING ====================
         let hasUnsavedChanges = false;
 
         function markAsUnsaved() {
             hasUnsavedChanges = true;
-
-            // Clear existing timer
-            if (autoSaveTimer) {
-                clearTimeout(autoSaveTimer);
+            // Show unsaved indicator
+            const indicator = document.getElementById('autosaveIndicator');
+            if (indicator) {
+                indicator.classList.add('visible');
+                indicator.classList.remove('saving', 'saved');
+                indicator.querySelector('span').textContent = 'Unsaved changes';
             }
-
-            // Set auto-save timer (30 seconds)
-            autoSaveTimer = setTimeout(() => {
-                if (hasUnsavedChanges && canEdit && workingState.projectionId) {
-                    autoSave();
-                }
-            }, 30000);
         }
 
-        function autoSave() {
-            if (!canEdit || !workingState.projectionId) return;
-
-            syncPlanState();
+        function markAsSaved() {
+            hasUnsavedChanges = false;
             const indicator = document.getElementById('autosaveIndicator');
-            indicator.classList.add('visible', 'saving');
-            indicator.querySelector('span').textContent = 'Saving...';
-
-            const payload = {
-                project_id: projectId,
-                projection_id: workingState.projectionId,
-                projection_name: workingState.projectionName,
-                status: workingState.status,
-                notes: workingState.notes,
-                is_primary: workingState.isPrimary,
-                module_allocations: workingState.moduleAllocations.map(a => ({
-                    module_id: a.module_id,
-                    wattage: a.wattage,
-                    quantity: a.quantity,
-                    pallets: a.pallets
-                })),
-                stops: workingState.stops,
-                legs: workingState.legs
-            };
-
-            fetch('api/projection_save.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    hasUnsavedChanges = false;
-                    indicator.classList.remove('saving');
-                    indicator.classList.add('saved');
-                    indicator.querySelector('span').textContent = 'All changes saved';
-
-                    setTimeout(() => {
-                        indicator.classList.remove('visible', 'saved');
-                    }, 2000);
-                } else {
-                    indicator.classList.remove('visible', 'saving');
-                    showToast('Auto-save failed: ' + data.error, 'error');
-                }
-            })
-            .catch(error => {
+            if (indicator) {
                 indicator.classList.remove('visible', 'saving');
-                console.error('Auto-save error:', error);
-            });
+            }
         }
 
         // ==================== KEYBOARD SHORTCUTS ====================

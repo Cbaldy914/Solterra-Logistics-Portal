@@ -31,15 +31,15 @@ if (!empty($allocated_modules)) {
             Modules Included
         </div>
         <div class="card-summary">
-            <span class="summary-value"><?php echo number_format($total_allocated_modules); ?></span>
+            <span class="summary-value" id="totalModulesCount"><?php echo number_format($total_allocated_modules); ?></span>
             <span class="summary-label">modules</span>
             <span class="summary-divider">|</span>
-            <span class="summary-value">$<?php echo number_format($total_allocated_value, 2); ?></span>
+            <span class="summary-value" id="totalContractValue">$<?php echo number_format($total_allocated_value, 2); ?></span>
             <span class="summary-label">contract value</span>
         </div>
     </div>
 
-    <div class="module-list" id="allocatedModuleList">
+    <div class="module-list" id="moduleAllocationsList">
         <?php if (!empty($allocated_modules)): ?>
             <?php foreach ($allocated_modules as $alloc):
                 // Get milestones for this allocation
@@ -50,123 +50,134 @@ if (!empty($allocated_modules)) {
                 <div class="module-item <?php echo $is_collapsed ? 'collapsed' : ''; ?>" data-allocation-id="<?php echo $alloc['id']; ?>">
                     <!-- Collapsed Summary Header -->
                     <div class="module-item-header" onclick="toggleModuleItem(<?php echo $alloc['id']; ?>)">
-                        <div class="module-header-info">
-                            <div class="module-vendor">
+                        <div class="module-header-left">
+                            <div class="module-vendor-name">
                                 <?php echo htmlspecialchars($alloc['vendor_name'] ?? 'Unknown Vendor'); ?>
-                                <?php if (!empty($alloc['manufacturer_name'])): ?>
-                                    <span class="manufacturer-tag"><?php echo htmlspecialchars($alloc['manufacturer_name']); ?></span>
-                                <?php endif; ?>
                             </div>
-                            <div class="module-summary-stats">
-                                <span class="summary-stat">
-                                    <strong><?php echo number_format($alloc['wattage']); ?>W</strong>
+                            <?php if ($po_execution_date): ?>
+                                <span class="po-badge-sm">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                                    PO: <?php echo date('M j, Y', strtotime($po_execution_date)); ?>
                                 </span>
-                                <span class="summary-divider">&bull;</span>
-                                <span class="summary-stat">
-                                    <?php echo number_format($alloc['quantity']); ?> modules
-                                </span>
-                                <span class="summary-divider">&bull;</span>
-                                <span class="summary-stat">
-                                    <?php echo number_format($alloc['pallets'] ?? 0); ?> pallets
-                                </span>
-                                <span class="summary-divider">&bull;</span>
-                                <span class="summary-stat">
-                                    <strong>$<?php echo number_format($alloc['contract_value'] ?? 0, 2); ?></strong>
-                                </span>
-                                <?php if ($po_execution_date): ?>
-                                    <span class="summary-divider">&bull;</span>
-                                    <span class="po-badge-sm">
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                                        PO: <?php echo date('M j, Y', strtotime($po_execution_date)); ?>
-                                    </span>
-                                <?php endif; ?>
+                            <?php endif; ?>
+                        </div>
+                        <div class="module-header-stats">
+                            <div class="stat-item">
+                                <span class="stat-value"><?php echo number_format($alloc['wattage']); ?>W</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value"><?php echo number_format($alloc['quantity']); ?></span>
+                                <span class="stat-label">modules</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value"><?php echo number_format($alloc['pallets'] ?? 0); ?></span>
+                                <span class="stat-label">pallets</span>
+                            </div>
+                            <?php if (!empty($alloc['pallets_per_truck'])): ?>
+                            <div class="stat-item">
+                                <span class="stat-value"><?php echo number_format($alloc['pallets_per_truck']); ?></span>
+                                <span class="stat-label">pallets/truck</span>
+                            </div>
+                            <?php endif; ?>
+                            <div class="stat-item highlight">
+                                <span class="stat-value">$<?php echo number_format($alloc['contract_value'] ?? 0, 2); ?></span>
                             </div>
                         </div>
                         <div class="module-header-toggle">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         </div>
                     </div>
 
                     <!-- Expanded Content -->
                     <div class="module-item-body">
-                        <div class="module-info">
-                            <div class="module-details">
-                                <span class="detail-item">
-                                    <strong><?php echo number_format($alloc['wattage']); ?>W</strong>
-                                </span>
-                                <span class="detail-divider">&bull;</span>
-                                <span class="detail-item">
-                                    <?php echo number_format($alloc['quantity']); ?> modules
-                                </span>
-                                <span class="detail-divider">&bull;</span>
-                                <span class="detail-item">
-                                    <?php echo number_format($alloc['pallets'] ?? 0); ?> pallets
-                                </span>
+                        <!-- Module Details Grid -->
+                        <div class="module-details-grid">
+                            <div class="detail-card">
+                                <span class="detail-label">Wattage</span>
+                                <span class="detail-value"><?php echo number_format($alloc['wattage']); ?>W</span>
                             </div>
-                            <div class="module-costs">
-                                <span class="cost-contract">
-                                    Contract Value: <strong>$<?php echo number_format($alloc['contract_value'] ?? 0, 2); ?></strong>
-                                </span>
+                            <div class="detail-card">
+                                <span class="detail-label">Total Modules</span>
+                                <span class="detail-value"><?php echo number_format($alloc['quantity']); ?></span>
                             </div>
-                        </div>
-
-                        <!-- PO Execution Date -->
-                        <div class="po-execution-section">
-                            <div class="po-execution-header">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
-                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                                    <line x1="16" y1="2" x2="16" y2="6"/>
-                                    <line x1="8" y1="2" x2="8" y2="6"/>
-                                    <line x1="3" y1="10" x2="21" y2="10"/>
-                                </svg>
-                                <span>PO Execution Date</span>
+                            <div class="detail-card">
+                                <span class="detail-label">Total Pallets</span>
+                                <span class="detail-value"><?php echo number_format($alloc['pallets'] ?? 0); ?></span>
                             </div>
-                            <div class="po-execution-input">
-                                <input type="text" class="form-input flatpickr-date po-date-input"
-                                       data-allocation-id="<?php echo $alloc['id']; ?>"
-                                       value="<?php echo htmlspecialchars($po_execution_date); ?>"
-                                       placeholder="Select date when PO was executed"
-                                       <?php echo $can_edit ? '' : 'disabled'; ?>>
+                            <div class="detail-card">
+                                <span class="detail-label">Mods/Pallet</span>
+                                <span class="detail-value"><?php echo !empty($alloc['modules_per_pallet']) ? number_format($alloc['modules_per_pallet']) : '-'; ?></span>
+                            </div>
+                            <div class="detail-card">
+                                <span class="detail-label">Pallets/Truck</span>
+                                <span class="detail-value"><?php echo !empty($alloc['pallets_per_truck']) ? number_format($alloc['pallets_per_truck']) : '-'; ?></span>
+                            </div>
+                            <div class="detail-card highlight">
+                                <span class="detail-label">Contract Value</span>
+                                <span class="detail-value">$<?php echo number_format($alloc['contract_value'] ?? 0, 2); ?></span>
                             </div>
                         </div>
 
-                        <!-- Milestones Section -->
-                        <div class="milestones-section">
-                            <div class="milestones-header">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
-                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                                    <polyline points="22 4 12 14.01 9 11.01"/>
-                                </svg>
-                                <span>Milestone Payments</span>
+                        <!-- Two Column Layout for PO Date and Milestones -->
+                        <div class="module-expanded-columns">
+                            <!-- PO Execution Date -->
+                            <div class="po-execution-section">
+                                <div class="section-header">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
+                                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                        <line x1="16" y1="2" x2="16" y2="6"/>
+                                        <line x1="8" y1="2" x2="8" y2="6"/>
+                                        <line x1="3" y1="10" x2="21" y2="10"/>
+                                    </svg>
+                                    <span>PO Execution Date</span>
+                                </div>
+                                <div class="po-execution-input">
+                                    <input type="text" class="form-input flatpickr-date po-date-input"
+                                           data-allocation-id="<?php echo $alloc['id']; ?>"
+                                           value="<?php echo htmlspecialchars($po_execution_date); ?>"
+                                           placeholder="Select date when PO was executed"
+                                           <?php echo $can_edit ? '' : 'disabled'; ?>>
+                                </div>
                             </div>
-                            <?php if (!empty($milestones)): ?>
-                                <div class="milestones-list">
-                                    <?php foreach ($milestones as $milestone): ?>
-                                        <div class="milestone-row">
-                                            <div class="milestone-info">
-                                                <span class="milestone-name"><?php echo htmlspecialchars($milestone['milestone_name'] ?? $milestone['name'] ?? 'Milestone'); ?></span>
-                                                <span class="milestone-trigger"><?php echo htmlspecialchars($milestone['trigger_event'] ?? 'On trigger'); ?></span>
-                                            </div>
-                                            <div class="milestone-amount">
-                                                <?php
-                                                    $amount = $milestone['amount'] ?? 0;
-                                                    $percentage = $milestone['percentage'] ?? 0;
-                                                    if ($percentage > 0) {
-                                                        echo number_format($percentage, 1) . '%';
-                                                    } else {
-                                                        echo '$' . number_format($amount, 2);
-                                                    }
-                                                ?>
-                                            </div>
-                                        </div>
-                                    <?php endforeach; ?>
+
+                            <!-- Milestones Section -->
+                            <div class="milestones-section">
+                                <div class="section-header">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
+                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                        <polyline points="22 4 12 14.01 9 11.01"/>
+                                    </svg>
+                                    <span>Milestone Payments</span>
                                 </div>
-                            <?php else: ?>
-                                <div class="milestones-empty">
-                                    <p>No milestones configured for this batch.</p>
-                                    <small>Milestones are configured in the module batch settings.</small>
-                                </div>
-                            <?php endif; ?>
+                                <?php if (!empty($milestones)): ?>
+                                    <div class="milestones-list">
+                                        <?php foreach ($milestones as $milestone): ?>
+                                            <div class="milestone-row">
+                                                <div class="milestone-info">
+                                                    <span class="milestone-name"><?php echo htmlspecialchars($milestone['milestone_name'] ?? $milestone['name'] ?? 'Milestone'); ?></span>
+                                                    <span class="milestone-trigger"><?php echo htmlspecialchars($milestone['trigger_event'] ?? 'On trigger'); ?></span>
+                                                </div>
+                                                <div class="milestone-amount">
+                                                    <?php
+                                                        $amount = $milestone['amount'] ?? 0;
+                                                        $percentage = $milestone['percentage'] ?? 0;
+                                                        if ($percentage > 0) {
+                                                            echo number_format($percentage, 1) . '%';
+                                                        } else {
+                                                            echo '$' . number_format($amount, 2);
+                                                        }
+                                                    ?>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php else: ?>
+                                    <div class="milestones-empty">
+                                        <p>No milestones configured for this batch.</p>
+                                        <small>Milestones are configured in the module batch settings.</small>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
                         </div>
 
                         <!-- Actions -->
@@ -215,9 +226,9 @@ if (!empty($allocated_modules)) {
 <?php if ($can_edit): ?>
 <div id="moduleSelectorModal" class="modal" style="display: none;">
     <div class="modal-overlay" onclick="closeModuleSelectorModal()"></div>
-    <div class="modal-content">
+    <div class="modal-content modal-lg">
         <div class="modal-header">
-            <h3>Select Module Batch</h3>
+            <h3>Add Module Batch</h3>
             <button type="button" class="modal-close" onclick="closeModuleSelectorModal()">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="18" y1="6" x2="6" y2="18"/>
@@ -226,42 +237,153 @@ if (!empty($allocated_modules)) {
             </button>
         </div>
         <div class="modal-body">
-            <?php if (!empty($available_batches)): ?>
-                <div class="batch-list">
-                    <?php foreach ($available_batches as $batch): ?>
-                        <div class="batch-item" data-batch-id="<?php echo $batch['id']; ?>">
-                            <div class="batch-info">
-                                <div class="batch-vendor"><?php echo htmlspecialchars($batch['vendor_name']); ?></div>
-                                <div class="batch-manufacturer">
-                                    <?php echo htmlspecialchars($batch['manufacturer_name'] ?? 'Unknown manufacturer'); ?>
-                                    <?php if (!empty($batch['manufacturer_country'])): ?>
-                                        - <?php echo htmlspecialchars($batch['manufacturer_country']); ?>
-                                    <?php endif; ?>
+            <!-- Mode Tabs -->
+            <div class="module-mode-tabs">
+                <button type="button" class="mode-tab <?php echo !empty($available_batches) ? 'active' : ''; ?>" data-mode="existing" onclick="switchModuleMode('existing')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                        <polyline points="22 4 12 14.01 9 11.01"/>
+                    </svg>
+                    Select Existing Batch
+                </button>
+                <button type="button" class="mode-tab <?php echo empty($available_batches) ? 'active' : ''; ?>" data-mode="manual" onclick="switchModuleMode('manual')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"/>
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Manual Entry
+                </button>
+            </div>
+
+            <!-- Existing Batch Selection -->
+            <div class="module-mode-panel <?php echo !empty($available_batches) ? 'active' : ''; ?>" id="existing-batch-panel">
+                <?php if (!empty($available_batches)): ?>
+                    <div class="batch-list">
+                        <?php foreach ($available_batches as $batch): ?>
+                            <div class="batch-item" data-batch-id="<?php echo $batch['id']; ?>">
+                                <div class="batch-info">
+                                    <div class="batch-vendor"><?php echo htmlspecialchars($batch['vendor_name']); ?></div>
+                                    <div class="batch-manufacturer">
+                                        <?php echo htmlspecialchars($batch['manufacturer_name'] ?? 'Unknown manufacturer'); ?>
+                                        <?php if (!empty($batch['manufacturer_address'])): ?>
+                                            - <?php echo htmlspecialchars($batch['manufacturer_address']); ?>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="batch-details">
+                                        <span>Wattages: <?php echo htmlspecialchars($batch['wattages']); ?>W</span>
+                                        <span>&bull;</span>
+                                        <span>Total: <?php echo number_format($batch['total_quantity']); ?> modules</span>
+                                        <?php if (!empty($batch['modules_per_pallet'])): ?>
+                                            <span>&bull;</span>
+                                            <span><?php echo $batch['modules_per_pallet']; ?> mods/pallet</span>
+                                        <?php endif; ?>
+                                        <?php if (!empty($batch['pallets_per_truck'])): ?>
+                                            <span>&bull;</span>
+                                            <span><?php echo $batch['pallets_per_truck']; ?> pallets/truck</span>
+                                        <?php endif; ?>
+                                        <?php if ($batch['has_milestones']): ?>
+                                            <span class="milestone-badge-sm">Milestones configured</span>
+                                        <?php endif; ?>
+                                    </div>
                                 </div>
-                                <div class="batch-details">
-                                    <span>Wattages: <?php echo htmlspecialchars($batch['wattages']); ?>W</span>
-                                    <span>&bull;</span>
-                                    <span>Total: <?php echo number_format($batch['total_quantity']); ?> modules</span>
-                                    <?php if ($batch['has_milestones']): ?>
-                                        <span class="milestone-badge-sm">Milestones configured</span>
-                                    <?php endif; ?>
+                                <div class="batch-action">
+                                    <button type="button" class="btn btn-sm btn-primary"
+                                            onclick="selectModuleBatch(<?php echo $batch['id']; ?>, '<?php echo implode(',', $batch['wattage_list']); ?>', <?php echo $batch['total_quantity']; ?>, <?php echo $batch['modules_per_pallet'] ?? 30; ?>, <?php echo $batch['pallets_per_truck'] ?? 20; ?>)">
+                                        Select
+                                    </button>
                                 </div>
                             </div>
-                            <div class="batch-action">
-                                <button type="button" class="btn btn-sm btn-primary"
-                                        onclick="selectModuleBatch(<?php echo $batch['id']; ?>, '<?php echo implode(',', $batch['wattage_list']); ?>', <?php echo $batch['total_quantity']; ?>)">
-                                    Select
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
+                    <div class="empty-state">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5">
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                            <line x1="8" y1="21" x2="16" y2="21"/>
+                            <line x1="12" y1="17" x2="12" y2="21"/>
+                        </svg>
+                        <p>No module batches available for this project.</p>
+                        <p><small>Use Manual Entry to add module details for projection purposes.</small></p>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- Manual Entry Form -->
+            <div class="module-mode-panel <?php echo empty($available_batches) ? 'active' : ''; ?>" id="manual-entry-panel">
+                <div class="manual-entry-intro">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 16v-4"/>
+                        <path d="M12 8h.01"/>
+                    </svg>
+                    <span>Enter module details for projection purposes. This won't create an actual module batch.</span>
+                </div>
+
+                <div class="manual-form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Manufacturer/Vendor <span class="required">*</span></label>
+                        <input type="text" id="manualVendorName" class="form-input" placeholder="e.g., JA Solar, Longi, etc.">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Location/Origin</label>
+                        <input type="text" id="manualLocation" class="form-input" placeholder="e.g., Shanghai, China">
+                    </div>
+                </div>
+
+                <div class="wattage-entries-section">
+                    <label class="form-label">Module Wattages & Quantities <span class="required">*</span></label>
+                    <div id="manualWattageEntries">
+                        <div class="wattage-entry-row">
+                            <div class="wattage-input-group">
+                                <input type="number" class="form-input wattage-input" placeholder="Wattage (W)" min="100" max="1000">
+                                <input type="number" class="form-input quantity-input" placeholder="Quantity" min="1">
+                                <button type="button" class="btn-remove-wattage" onclick="removeManualWattageEntry(this)" style="display: none;">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="18" y1="6" x2="6" y2="18"/>
+                                        <line x1="6" y1="6" x2="18" y2="18"/>
+                                    </svg>
                                 </button>
                             </div>
                         </div>
-                    <?php endforeach; ?>
+                    </div>
+                    <button type="button" class="btn-add-wattage" onclick="addManualWattageEntry()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        Add Another Wattage
+                    </button>
                 </div>
-            <?php else: ?>
-                <div class="empty-state">
-                    <p>No module batches available for this project.</p>
-                    <p><small>Create module batches in the Project Overview to add them here.</small></p>
+
+                <div class="manual-form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Modules per Pallet <span class="required">*</span></label>
+                        <input type="number" id="manualModsPerPallet" class="form-input" placeholder="e.g., 30" min="1" value="30">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Pallets per Truck <span class="required">*</span></label>
+                        <input type="number" id="manualPalletsPerTruck" class="form-input" placeholder="e.g., 20" min="1" value="20">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Cost per Watt ($)</label>
+                        <input type="number" id="manualCostPerWatt" class="form-input" placeholder="e.g., 0.25" step="0.01" min="0">
+                    </div>
                 </div>
-            <?php endif; ?>
+
+                <div class="btn-group">
+                    <button type="button" class="btn btn-primary" onclick="addManualModuleEntry()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        Add to Projection
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="closeModuleSelectorModal()">Cancel</button>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -547,6 +669,146 @@ if (!empty($allocated_modules)) {
     max-width: 400px;
 }
 
+.modal-content.modal-lg {
+    max-width: 700px;
+}
+
+/* Module Mode Tabs */
+.module-mode-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.mode-tab {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: #f8f9fa;
+    border: 2px solid #e9ecef;
+    border-radius: 10px;
+    font-size: 0.9em;
+    font-weight: 600;
+    color: #6c757d;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex: 1;
+    justify-content: center;
+}
+
+.mode-tab:hover {
+    background: #f0f4f5;
+    border-color: #488C9A;
+    color: #488C9A;
+}
+
+.mode-tab.active {
+    background: linear-gradient(135deg, rgba(72, 140, 154, 0.1) 0%, rgba(72, 140, 154, 0.05) 100%);
+    border-color: #488C9A;
+    color: #488C9A;
+}
+
+.module-mode-panel {
+    display: none;
+}
+
+.module-mode-panel.active {
+    display: block;
+}
+
+/* Manual Entry Form */
+.manual-entry-intro {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, rgba(72, 140, 154, 0.08) 0%, rgba(72, 140, 154, 0.04) 100%);
+    border-radius: 10px;
+    margin-bottom: 20px;
+    font-size: 0.9em;
+    color: #495057;
+}
+
+.manual-entry-intro svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.manual-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.wattage-entries-section {
+    margin-bottom: 20px;
+}
+
+.wattage-entry-row {
+    margin-bottom: 10px;
+}
+
+.wattage-input-group {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.wattage-input-group .form-input {
+    flex: 1;
+}
+
+.wattage-input-group .wattage-input {
+    max-width: 140px;
+}
+
+.wattage-input-group .quantity-input {
+    max-width: 140px;
+}
+
+.btn-remove-wattage {
+    padding: 8px;
+    background: transparent;
+    border: 1px solid #dc3545;
+    border-radius: 8px;
+    color: #dc3545;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-remove-wattage:hover {
+    background: #dc3545;
+    color: white;
+}
+
+.btn-add-wattage {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: transparent;
+    border: 1px dashed #488C9A;
+    border-radius: 8px;
+    color: #488C9A;
+    font-size: 0.85em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-add-wattage:hover {
+    background: rgba(72, 140, 154, 0.1);
+    border-style: solid;
+}
+
+.required {
+    color: #dc3545;
+}
+
 .modal-header {
     display: flex;
     justify-content: space-between;
@@ -702,7 +964,7 @@ if (!empty($allocated_modules)) {
     background: #dee2e6;
 }
 
-/* Collapsible Module Item Styles */
+/* Collapsible Module Item Styles - Redesigned for better layout */
 .module-item {
     flex-direction: column;
     padding: 0;
@@ -713,15 +975,16 @@ if (!empty($allocated_modules)) {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 16px;
+    padding: 20px 24px;
     cursor: pointer;
-    background: #f8f9fa;
+    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
     border-bottom: 1px solid #e9ecef;
     transition: all 0.2s ease;
+    gap: 20px;
 }
 
 .module-item-header:hover {
-    background: #f0f4f5;
+    background: linear-gradient(135deg, #f0f4f5 0%, #f8f9fa 100%);
 }
 
 .module-item.collapsed .module-item-header {
@@ -729,36 +992,69 @@ if (!empty($allocated_modules)) {
     border-bottom: none;
 }
 
-.module-header-info {
+.module-header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 180px;
+}
+
+.module-vendor-name {
+    font-weight: 700;
+    font-size: 1.05em;
+    color: #293E4C;
+}
+
+.module-header-stats {
+    display: flex;
+    align-items: center;
+    gap: 24px;
     flex: 1;
+    justify-content: flex-end;
+}
+
+.stat-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 16px;
+    background: rgba(72, 140, 154, 0.05);
+    border-radius: 10px;
+    min-width: 80px;
+}
+
+.stat-item.highlight {
+    background: linear-gradient(135deg, rgba(72, 140, 154, 0.15) 0%, rgba(72, 140, 154, 0.1) 100%);
+}
+
+.stat-item .stat-value {
+    font-weight: 700;
+    font-size: 1.1em;
+    color: #293E4C;
+}
+
+.stat-item.highlight .stat-value {
+    color: #488C9A;
+    font-size: 1.15em;
+}
+
+.stat-item .stat-label {
+    font-size: 0.75em;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-top: 2px;
 }
 
 .module-header-toggle {
-    padding: 4px;
+    padding: 8px;
     color: #6c757d;
     transition: transform 0.3s ease;
+    margin-left: 12px;
 }
 
 .module-item.collapsed .module-header-toggle {
     transform: rotate(-90deg);
-}
-
-.module-summary-stats {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.85em;
-    color: #6c757d;
-    margin-top: 6px;
-    flex-wrap: wrap;
-}
-
-.summary-stat {
-    color: #495057;
-}
-
-.summary-stat strong {
-    color: #293E4C;
 }
 
 .po-badge-sm {
@@ -767,9 +1063,10 @@ if (!empty($allocated_modules)) {
     gap: 4px;
     background: #d4edda;
     color: #155724;
-    padding: 2px 8px;
-    border-radius: 10px;
+    padding: 4px 10px;
+    border-radius: 12px;
     font-weight: 500;
+    font-size: 0.85em;
 }
 
 .po-badge-sm svg {
@@ -777,7 +1074,7 @@ if (!empty($allocated_modules)) {
 }
 
 .module-item-body {
-    padding: 20px;
+    padding: 24px;
     background: white;
     transition: all 0.3s ease;
 }
@@ -786,42 +1083,86 @@ if (!empty($allocated_modules)) {
     display: none;
 }
 
+/* Module Details Grid - Full Width */
+.module-details-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.detail-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 12px;
+    background: #f8f9fa;
+    border-radius: 12px;
+    border: 1px solid #e9ecef;
+    text-align: center;
+}
+
+.detail-card.highlight {
+    background: linear-gradient(135deg, rgba(72, 140, 154, 0.1) 0%, rgba(72, 140, 154, 0.05) 100%);
+    border-color: rgba(72, 140, 154, 0.2);
+}
+
+.detail-card .detail-label {
+    font-size: 0.75em;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.detail-card .detail-value {
+    font-weight: 700;
+    font-size: 1.2em;
+    color: #293E4C;
+}
+
+.detail-card.highlight .detail-value {
+    color: #488C9A;
+}
+
+/* Two Column Layout for Expanded Content */
+.module-expanded-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-bottom: 20px;
+}
+
+/* Section Header (shared between PO and Milestones) */
+.section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: #293E4C;
+    margin-bottom: 12px;
+    font-size: 0.95em;
+}
+
 /* PO Execution Section */
 .po-execution-section {
     background: linear-gradient(135deg, rgba(72, 140, 154, 0.05) 0%, rgba(58, 110, 127, 0.05) 100%);
     border: 1px solid rgba(72, 140, 154, 0.2);
     border-radius: 12px;
-    padding: 16px;
-    margin-top: 16px;
-}
-
-.po-execution-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 600;
-    color: #293E4C;
-    margin-bottom: 12px;
+    padding: 20px;
 }
 
 .po-execution-input .form-input {
     background: white;
+    width: 100%;
 }
 
 /* Milestones Section */
 .milestones-section {
-    margin-top: 16px;
-    border-top: 1px solid #e9ecef;
-    padding-top: 16px;
-}
-
-.milestones-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 600;
-    color: #293E4C;
-    margin-bottom: 12px;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    padding: 20px;
 }
 
 .milestones-list {
@@ -834,8 +1175,8 @@ if (!empty($allocated_modules)) {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 14px;
-    background: #f8f9fa;
+    padding: 12px 16px;
+    background: white;
     border-radius: 8px;
     border-left: 3px solid #488C9A;
 }
@@ -860,12 +1201,12 @@ if (!empty($allocated_modules)) {
 .milestone-amount {
     font-weight: 700;
     color: #488C9A;
-    font-size: 0.95em;
+    font-size: 1em;
 }
 
 .milestones-empty {
     padding: 16px;
-    background: #f8f9fa;
+    background: white;
     border-radius: 8px;
     text-align: center;
     color: #6c757d;
@@ -883,8 +1224,51 @@ if (!empty($allocated_modules)) {
 /* Module Item Actions */
 .module-item-actions {
     display: flex;
-    justify-content: flex-end;
-    gap: 12px;
+    justify-content: center;
+    gap: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #e9ecef;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+    .module-details-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 900px) {
+    .module-expanded-columns {
+        grid-template-columns: 1fr;
+    }
+
+    .module-header-stats {
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .stat-item {
+        min-width: 70px;
+        padding: 6px 12px;
+    }
+}
+
+@media (max-width: 600px) {
+    .module-details-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .module-item-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .module-header-stats {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
     margin-top: 20px;
     padding-top: 16px;
     border-top: 1px solid #e9ecef;
@@ -910,13 +1294,26 @@ if (!empty($allocated_modules)) {
 <script>
 function openModuleSelectorModal() {
     document.getElementById('moduleSelectorModal').style.display = 'flex';
+    // Reset manual entry form
+    resetManualEntryForm();
 }
 
 function closeModuleSelectorModal() {
     document.getElementById('moduleSelectorModal').style.display = 'none';
 }
 
-function selectModuleBatch(batchId, wattages, totalQuantity) {
+function switchModuleMode(mode) {
+    // Update tabs
+    document.querySelectorAll('.mode-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.mode === mode);
+    });
+
+    // Update panels
+    document.getElementById('existing-batch-panel').classList.toggle('active', mode === 'existing');
+    document.getElementById('manual-entry-panel').classList.toggle('active', mode === 'manual');
+}
+
+function selectModuleBatch(batchId, wattages, totalQuantity, modsPerPallet, palletsPerTruck) {
     closeModuleSelectorModal();
 
     // Populate wattage selector
@@ -937,8 +1334,153 @@ function selectModuleBatch(batchId, wattages, totalQuantity) {
     document.getElementById('selectedQuantity').max = totalQuantity;
     document.getElementById('selectedQuantity').value = totalQuantity; // Default to all
 
+    // Store modules per pallet and pallets per truck for calculations
+    document.getElementById('selectedBatchId').dataset.modsPerPallet = modsPerPallet || 30;
+    document.getElementById('selectedBatchId').dataset.palletsPerTruck = palletsPerTruck || 20;
+
     // Show wattage/quantity modal
     document.getElementById('wattageQuantityModal').style.display = 'flex';
+}
+
+// Manual Entry Functions
+function addManualWattageEntry() {
+    const container = document.getElementById('manualWattageEntries');
+    const entryHtml = `
+        <div class="wattage-entry-row">
+            <div class="wattage-input-group">
+                <input type="number" class="form-input wattage-input" placeholder="Wattage (W)" min="100" max="1000">
+                <input type="number" class="form-input quantity-input" placeholder="Quantity" min="1">
+                <button type="button" class="btn-remove-wattage" onclick="removeManualWattageEntry(this)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', entryHtml);
+    updateRemoveButtons();
+}
+
+function removeManualWattageEntry(btn) {
+    btn.closest('.wattage-entry-row').remove();
+    updateRemoveButtons();
+}
+
+function updateRemoveButtons() {
+    const rows = document.querySelectorAll('#manualWattageEntries .wattage-entry-row');
+    rows.forEach((row, index) => {
+        const removeBtn = row.querySelector('.btn-remove-wattage');
+        if (removeBtn) {
+            removeBtn.style.display = rows.length > 1 ? 'flex' : 'none';
+        }
+    });
+}
+
+function resetManualEntryForm() {
+    document.getElementById('manualVendorName').value = '';
+    document.getElementById('manualLocation').value = '';
+    document.getElementById('manualModsPerPallet').value = '30';
+    document.getElementById('manualPalletsPerTruck').value = '20';
+    document.getElementById('manualCostPerWatt').value = '';
+
+    // Reset wattage entries to single row
+    document.getElementById('manualWattageEntries').innerHTML = `
+        <div class="wattage-entry-row">
+            <div class="wattage-input-group">
+                <input type="number" class="form-input wattage-input" placeholder="Wattage (W)" min="100" max="1000">
+                <input type="number" class="form-input quantity-input" placeholder="Quantity" min="1">
+                <button type="button" class="btn-remove-wattage" onclick="removeManualWattageEntry(this)" style="display: none;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function addManualModuleEntry() {
+    const vendorName = document.getElementById('manualVendorName').value.trim();
+    const location = document.getElementById('manualLocation').value.trim();
+    const modsPerPallet = parseInt(document.getElementById('manualModsPerPallet').value) || 30;
+    const palletsPerTruck = parseInt(document.getElementById('manualPalletsPerTruck').value) || 20;
+    const costPerWatt = parseFloat(document.getElementById('manualCostPerWatt').value) || 0;
+
+    // Validate vendor name
+    if (!vendorName) {
+        alert('Please enter a manufacturer/vendor name.');
+        return;
+    }
+
+    // Collect wattage entries
+    const wattageEntries = [];
+    const rows = document.querySelectorAll('#manualWattageEntries .wattage-entry-row');
+    rows.forEach(row => {
+        const wattage = parseInt(row.querySelector('.wattage-input').value);
+        const quantity = parseInt(row.querySelector('.quantity-input').value);
+        if (wattage > 0 && quantity > 0) {
+            wattageEntries.push({ wattage, quantity });
+        }
+    });
+
+    if (wattageEntries.length === 0) {
+        alert('Please enter at least one wattage and quantity.');
+        return;
+    }
+
+    // For manual entries, we'll add each wattage as a separate allocation
+    // but group them visually under the same vendor
+    wattageEntries.forEach(entry => {
+        const totalModules = entry.quantity;
+        const pallets = Math.ceil(totalModules / modsPerPallet);
+        const totalWatts = entry.wattage * totalModules;
+        const contractValue = costPerWatt > 0 ? costPerWatt * totalWatts : 0;
+
+        // Call the parent page function to add allocation
+        if (typeof addManualModuleAllocation === 'function') {
+            addManualModuleAllocation({
+                vendor_name: vendorName,
+                manufacturer_name: vendorName,
+                manufacturer_address: location,
+                wattage: entry.wattage,
+                quantity: totalModules,
+                pallets: pallets,
+                modules_per_pallet: modsPerPallet,
+                pallets_per_truck: palletsPerTruck,
+                cost_per_watt: costPerWatt,
+                contract_value: contractValue,
+                has_milestones: false,
+                milestones: [],
+                is_manual: true
+            });
+        } else if (typeof addModuleAllocation === 'function') {
+            // Fallback - add directly to working state
+            const allocation = {
+                module_id: 'manual_' + Date.now(),
+                vendor_name: vendorName,
+                manufacturer_name: vendorName,
+                manufacturer_address: location,
+                wattage: entry.wattage,
+                quantity: totalModules,
+                pallets: pallets,
+                modules_per_pallet: modsPerPallet,
+                pallets_per_truck: palletsPerTruck,
+                cost_per_watt: costPerWatt,
+                contract_value: contractValue,
+                has_milestones: false,
+                milestones: [],
+                is_manual: true
+            };
+            workingState.moduleAllocations.push(allocation);
+            showToast('Manual module entry added. Remember to save!', 'success');
+            saveProjection();
+        }
+    });
+
+    closeModuleSelectorModal();
 }
 
 function closeWattageQuantityModal() {
