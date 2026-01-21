@@ -649,6 +649,54 @@ if ($project_has_milestones) {
     }
 }
 
+function calculateProjectWarehousingCostAccrued($project_id, $conn) {
+    if (!$project_id || !$conn) {
+        return 0.0;
+    }
+
+    $stmt = $conn->prepare("
+        SELECT DISTINCT ip.id, ip.warehouse_cost, ip.current_warehouse_id, ip.arrival_date, ip.status
+        FROM inventory_pallets ip
+        JOIN delivery_pallets dp ON dp.inventory_pallet_id = ip.id
+        JOIN deliveries d ON dp.delivery_id = d.id
+        WHERE d.project_id = ?
+    ");
+
+    if (!$stmt) {
+        return 0.0;
+    }
+
+    $stmt->bind_param('i', $project_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $total_cost = 0.0;
+    while ($row = $result->fetch_assoc()) {
+        $recorded_cost = isset($row['warehouse_cost']) ? (float)$row['warehouse_cost'] : 0.0;
+        $pending_cost = 0.0;
+
+        if ($recorded_cost > 0 && ($row['status'] ?? '') === 'In Warehouse'
+            && !empty($row['current_warehouse_id']) && !empty($row['arrival_date'])) {
+            $estimated_total = calculate_pallet_storage_cost(
+                $row['current_warehouse_id'],
+                $row['arrival_date'],
+                date('Y-m-d H:i:s'),
+                $conn
+            );
+            $pending_cost = max(0, $estimated_total - $recorded_cost);
+        }
+
+        if ($recorded_cost <= 0) {
+            $recorded_cost = calculatePalletWarehousingCostFallback((int)$row['id'], $conn);
+        }
+
+        $total_cost += ($recorded_cost + $pending_cost);
+    }
+    $stmt->close();
+
+    return $total_cost;
+}
+
 $module_trigger_labels = [
     'po_execution' => 'PO Execution',
     'shipping' => 'Shipping',
@@ -1256,7 +1304,7 @@ if ($stmt_project_totals) {
     $stmt_project_totals->close();
 }
 
-$project_total_warehousing_cost = calculate_project_warehousing_cost($project_id, $conn);
+$project_total_warehousing_cost = calculateProjectWarehousingCostAccrued($project_id, $conn);
 $project_total_module_cost_full = 0.0;
 $project_total_module_watts = 0.0;
 $project_has_module_cost = false;

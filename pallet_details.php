@@ -325,6 +325,13 @@ try {
         'customs_cleared' => 0.0,
         'project_delivery' => 0.0
     ];
+    $module_trigger_labels = [
+        'po_execution' => 'PO Execution',
+        'shipping' => 'Shipping',
+        'customs_cleared' => 'Customs Cleared',
+        'project_delivery' => 'Project Delivery'
+    ];
+    $module_milestone_rows = [];
     $has_milestones = false;
     $accrued_module_cost = 0.0;
 
@@ -343,6 +350,26 @@ try {
     }
 
     if ($has_milestones && $pallet_total_watts > 0) {
+        $configured_triggers = [];
+        $stmt_configured = $conn->prepare("
+            SELECT trigger_event
+            FROM module_batch_milestones
+            WHERE module_id = ? AND is_active = 1
+            ORDER BY display_order, id
+        ");
+        if ($stmt_configured) {
+            $stmt_configured->bind_param("i", $module_batch_id);
+            $stmt_configured->execute();
+            $configured_result = $stmt_configured->get_result();
+            while ($row = $configured_result->fetch_assoc()) {
+                $trigger = $row['trigger_event'] ?? '';
+                if ($trigger !== '') {
+                    $configured_triggers[$trigger] = true;
+                }
+            }
+            $stmt_configured->close();
+        }
+
         $batch_total_watts = 0.0;
         $stmt_batch_watts = $conn->prepare("SELECT COALESCE(SUM(wattage * quantity), 0) FROM unassigned_module_items WHERE unassigned_module_id = ?");
         if ($stmt_batch_watts) {
@@ -427,6 +454,15 @@ try {
                         $module_milestone_breakdown[$trigger] += $share;
                     }
                 }
+            }
+        }
+
+        foreach ($module_trigger_labels as $trigger => $label) {
+            if (!empty($configured_triggers[$trigger])) {
+                $module_milestone_rows[] = [
+                    'label' => $label,
+                    'amount' => $module_milestone_breakdown[$trigger] ?? 0.0
+                ];
             }
         }
 
@@ -866,22 +902,14 @@ $conn->close();
                             <span class="calc-value"><?php echo number_format($pallet_quantity); ?></span>
                         </div>
                         <?php if ($has_milestones): ?>
-                            <div class="calc-row">
-                                <span class="calc-label">PO Execution (Accrued)</span>
-                                <span class="calc-value">$<?php echo number_format($module_milestone_breakdown['po_execution'], 2); ?></span>
-                            </div>
-                            <div class="calc-row">
-                                <span class="calc-label">Shipping (Accrued)</span>
-                                <span class="calc-value">$<?php echo number_format($module_milestone_breakdown['shipping'], 2); ?></span>
-                            </div>
-                            <div class="calc-row">
-                                <span class="calc-label">Customs Cleared (Accrued)</span>
-                                <span class="calc-value">$<?php echo number_format($module_milestone_breakdown['customs_cleared'], 2); ?></span>
-                            </div>
-                            <div class="calc-row">
-                                <span class="calc-label">Project Delivery (Accrued)</span>
-                                <span class="calc-value">$<?php echo number_format($module_milestone_breakdown['project_delivery'], 2); ?></span>
-                            </div>
+                            <?php if (!empty($module_milestone_rows)): ?>
+                                <?php foreach ($module_milestone_rows as $row): ?>
+                                    <div class="calc-row">
+                                        <span class="calc-label"><?php echo htmlspecialchars($row['label']); ?> (Accrued)</span>
+                                        <span class="calc-value">$<?php echo number_format($row['amount'], 2); ?></span>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                             <div class="calc-row total">
                                 <span class="calc-label">Accrued Module Cost</span>
                                 <span class="calc-value">$<?php echo number_format($total_module_cost, 2); ?></span>
