@@ -876,7 +876,7 @@ function add_projection_leg($conn, $projection_id, $leg_data) {
     $notes = $leg_data['notes'] ?? null;
 
     $stmt->bind_param(
-        "iiissssdsiidds",
+        "iiiisssdsidddss",
         $projection_id, $from_stop, $to_stop, $leg_order, $transport,
         $start, $end, $rate, $rate_unit,
         $trucks, $freight, $accessorial,

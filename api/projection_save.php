@@ -147,6 +147,14 @@ try {
         // Add new allocations
         foreach ($input['module_allocations'] as $alloc) {
             $module_id = $alloc['module_id'];
+            $po_execution_date = null;
+            $po_execution_raw = $alloc['po_execution_date'] ?? null;
+            if (is_string($po_execution_raw) && $po_execution_raw !== '') {
+                $date = DateTime::createFromFormat('Y-m-d', $po_execution_raw);
+                if ($date) {
+                    $po_execution_date = $date->format('Y-m-d');
+                }
+            }
 
             // Check if this is a manual entry (module_id starts with 'manual_' or is not numeric)
             $module_id_str = strval($module_id);
@@ -163,6 +171,9 @@ try {
                                         modules_per_pallet, pallets_per_truck, cost_per_watt, module_notes)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'Created via projection manual entry')
                 ");
+                if (!$insert_stmt) {
+                    throw new Exception('Failed to prepare manual module insert: ' . $conn->error);
+                }
                 $insert_stmt->bind_param("issiiid", $account_id, $vendor_name, $location, $project_id,
                                          $mods_per_pallet, $pallets_per_truck, $cost_per_watt);
                 $insert_stmt->execute();
@@ -176,12 +187,15 @@ try {
                     INSERT INTO unassigned_module_items (unassigned_module_id, wattage, quantity)
                     VALUES (?, ?, ?)
                 ");
+                if (!$items_stmt) {
+                    throw new Exception('Failed to prepare manual module items insert: ' . $conn->error);
+                }
                 $items_stmt->bind_param("iii", $module_id, $wattage, $quantity);
                 $items_stmt->execute();
                 $items_stmt->close();
             }
 
-            add_module_allocation(
+            $allocation_result = add_module_allocation(
                 $conn,
                 $projection_id,
                 intval($module_id),
@@ -189,6 +203,19 @@ try {
                 intval($alloc['quantity']),
                 isset($alloc['pallets']) ? intval($alloc['pallets']) : null
             );
+
+            if (!$allocation_result['success']) {
+                throw new Exception($allocation_result['error'] ?? 'Failed to add module allocation');
+            }
+
+            if ($po_execution_date) {
+                $po_stmt = $conn->prepare("UPDATE projection_module_allocations SET po_execution_date = ? WHERE id = ?");
+                if ($po_stmt) {
+                    $po_stmt->bind_param("si", $po_execution_date, $allocation_result['allocation_id']);
+                    $po_stmt->execute();
+                    $po_stmt->close();
+                }
+            }
         }
     }
 
@@ -358,10 +385,18 @@ try {
         'message' => $input['projection_id'] ? 'Projection updated successfully' : 'Projection created successfully'
     ]);
 
-} catch (Exception $e) {
-    $conn->rollback();
-    http_response_code(400);
-    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+} catch (Throwable $e) {
+    if ($conn && $conn->errno) {
+        $error_message = $e->getMessage() . ' (DB: ' . $conn->error . ')';
+    } else {
+        $error_message = $e->getMessage();
+    }
+
+    if ($conn) {
+        $conn->rollback();
+    }
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => $error_message]);
 }
 
 $conn->close();
