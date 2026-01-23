@@ -172,7 +172,7 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                                 <button type="button" class="btn btn-sm btn-primary"
                                         onclick="saveAndCollapseModuleItem(<?php echo $alloc['id']; ?>)">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"/></svg>
-                                    Collapse
+                                    Save &amp; Next
                                 </button>
                             <?php endif; ?>
                         </div>
@@ -193,7 +193,14 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 
     <?php if ($can_edit): ?>
     <div class="module-selector-panel">
-        <div class="module-mode-tabs">
+        <button type="button" class="module-selector-toggle" onclick="toggleModuleSelectorPanel()" aria-expanded="false">
+            <span class="toggle-label">Add Modules</span>
+            <svg class="toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </button>
+        <div class="module-selector-content" id="moduleSelectorContent">
+            <div class="module-mode-tabs">
                 <button type="button" class="mode-tab <?php echo !empty($available_batches) ? 'active' : ''; ?>" data-mode="existing" onclick="switchModuleMode('existing')">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
@@ -384,6 +391,7 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                 </div>
             </div>
         </div>
+    </div>
 
 <!-- Wattage/Quantity Selection Sub-Modal -->
 <div id="wattageQuantityModal" class="modal" style="display: none;">
@@ -490,6 +498,44 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
     border-top: 1px solid #e9ecef;
     background: #fafbfc;
     border-radius: 0 0 16px 16px;
+}
+
+.module-selector-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(72, 140, 154, 0.2);
+    background: white;
+    color: #293E4C;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.module-selector-toggle:hover {
+    border-color: rgba(72, 140, 154, 0.45);
+    box-shadow: 0 6px 16px rgba(72, 140, 154, 0.12);
+}
+
+.module-selector-toggle .toggle-icon {
+    transition: transform 0.2s ease;
+}
+
+.module-selector-toggle.open .toggle-icon {
+    transform: rotate(180deg);
+}
+
+.module-selector-content {
+    display: none;
+    margin-top: 16px;
+}
+
+.module-selector-content.open {
+    display: block;
 }
 
 .module-item {
@@ -908,6 +954,18 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 .batch-item:hover {
     border-color: #488C9A;
     background: rgba(72, 140, 154, 0.02);
+}
+
+.batch-item.is-disabled {
+    opacity: 0.6;
+    background: #f8f9fa;
+}
+
+.batch-item.is-disabled .btn {
+    background: #e9ecef;
+    color: #6c757d;
+    cursor: not-allowed;
+    box-shadow: none;
 }
 
 .batch-vendor {
@@ -1410,7 +1468,56 @@ function switchModuleMode(mode) {
     document.getElementById('manual-entry-panel').classList.toggle('active', mode === 'manual');
 }
 
+function toggleModuleSelectorPanel() {
+    const content = document.getElementById('moduleSelectorContent');
+    const button = document.querySelector('.module-selector-toggle');
+    if (!content || !button) return;
+
+    const isOpen = content.classList.toggle('open');
+    button.classList.toggle('open', isOpen);
+    button.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+
+    const label = button.querySelector('.toggle-label');
+    if (label) {
+        label.textContent = isOpen ? 'Hide Module Options' : 'Add Modules';
+    }
+
+    if (isOpen) {
+        initializeManualLocationAutocomplete();
+        updateAvailableBatchStates();
+    }
+}
+
+function isBatchAlreadySelected(batchId) {
+    if (!window.workingState || !Array.isArray(workingState.moduleAllocations)) {
+        return false;
+    }
+    return workingState.moduleAllocations.some(allocation => String(allocation.module_id) === String(batchId));
+}
+
+function updateAvailableBatchStates() {
+    document.querySelectorAll('.batch-item').forEach(item => {
+        const batchId = item.dataset.batchId;
+        const button = item.querySelector('button');
+        const isSelected = isBatchAlreadySelected(batchId);
+
+        item.classList.toggle('is-disabled', isSelected);
+        if (button) {
+            button.disabled = isSelected;
+            button.textContent = isSelected ? 'Added' : 'Select';
+        }
+    });
+}
+
 function selectModuleBatch(batchId, wattages, totalQuantity, modsPerPallet, palletsPerTruck) {
+    if (isBatchAlreadySelected(batchId)) {
+        if (typeof showToast === 'function') {
+            showToast('This batch is already added to the projection.', 'error');
+        } else {
+            alert('This batch is already added to the projection.');
+        }
+        return;
+    }
     // Populate wattage selector
     const wattageSelect = document.getElementById('selectedWattage');
     wattageSelect.innerHTML = '';
@@ -1730,6 +1837,21 @@ function saveAndCollapseModuleItem(allocationId) {
     moduleItem.classList.add('collapsed');
     showModuleSaveSuccess(moduleItem);
 
+    const moduleItems = Array.from(document.querySelectorAll('.module-item'));
+    const currentIndex = moduleItems.findIndex(item => item.dataset.allocationId === String(allocationId));
+    const nextItem = currentIndex >= 0 ? moduleItems[currentIndex + 1] : null;
+
+    if (nextItem) {
+        nextItem.classList.remove('collapsed');
+        nextItem.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (typeof expandSection === 'function') {
+        expandSection('logistics-plan');
+        const logisticsSection = document.querySelector('[data-section="logistics-plan"]');
+        if (logisticsSection) {
+            logisticsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }
+
     if (typeof showToast === 'function') {
         showToast('Module updated. Remember to save the projection!', 'success');
     }
@@ -1806,6 +1928,7 @@ document.addEventListener('DOMContentLoaded', function() {
     bindManualManufacturerEvents();
     updateRemoveButtons();
     updateMilestoneRemoveButtons();
+    updateAvailableBatchStates();
 });
 
 function initializePoDatePickers() {

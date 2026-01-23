@@ -14,6 +14,7 @@ $freight_cost = $cost_summary['total_freight_cost'] ?? 0;
 $warehouse_cost = $cost_summary['total_warehousing_cost'] ?? 0;
 $customs_cost = $cost_summary['total_customs_cost'] ?? 0;
 $other_cost = $cost_summary['total_other_cost'] ?? 0;
+$show_customs_cost = $customs_cost > 0;
 $logistics_total = $freight_cost + $warehouse_cost + $customs_cost + $other_cost;
 $grand_total = $cost_summary['grand_total'] ?? ($module_value + $logistics_total);
 
@@ -96,6 +97,7 @@ $milestone_order = ['po_execution', 'shipping', 'customs_cleared', 'project_deli
                     <span class="cost-value">$<?php echo number_format($warehouse_cost, 2); ?></span>
                 </div>
 
+                <?php if ($show_customs_cost): ?>
                 <div class="cost-item">
                     <span class="cost-label">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -108,6 +110,7 @@ $milestone_order = ['po_execution', 'shipping', 'customs_cleared', 'project_deli
                     </span>
                     <span class="cost-value">$<?php echo number_format($customs_cost, 2); ?></span>
                 </div>
+                <?php endif; ?>
 
                 <?php if ($other_cost > 0): ?>
                 <div class="cost-item">
@@ -194,7 +197,9 @@ $milestone_order = ['po_execution', 'shipping', 'customs_cleared', 'project_deli
             <div class="cost-bar-segment module-segment" style="width: <?php echo $module_pct; ?>%;" title="Modules: <?php echo round($module_pct, 1); ?>%"></div>
             <div class="cost-bar-segment freight-segment" style="width: <?php echo $freight_pct; ?>%;" title="Freight: <?php echo round($freight_pct, 1); ?>%"></div>
             <div class="cost-bar-segment warehouse-segment" style="width: <?php echo $warehouse_pct; ?>%;" title="Warehousing: <?php echo round($warehouse_pct, 1); ?>%"></div>
+            <?php if ($show_customs_cost): ?>
             <div class="cost-bar-segment customs-segment" style="width: <?php echo $customs_pct; ?>%;" title="Customs: <?php echo round($customs_pct, 1); ?>%"></div>
+            <?php endif; ?>
             <?php if ($other_pct > 0): ?>
             <div class="cost-bar-segment other-segment" style="width: <?php echo $other_pct; ?>%;" title="Other: <?php echo round($other_pct, 1); ?>%"></div>
             <?php endif; ?>
@@ -212,10 +217,12 @@ $milestone_order = ['po_execution', 'shipping', 'customs_cleared', 'project_deli
                 <span class="legend-color warehouse-color"></span>
                 <span>Warehousing (<?php echo round($warehouse_pct, 1); ?>%)</span>
             </div>
+            <?php if ($show_customs_cost): ?>
             <div class="legend-item">
                 <span class="legend-color customs-color"></span>
                 <span>Customs (<?php echo round($customs_pct, 1); ?>%)</span>
             </div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
