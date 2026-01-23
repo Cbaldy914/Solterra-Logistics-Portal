@@ -442,18 +442,47 @@ document.addEventListener('keydown', function(e) {
 
                     <!-- Forecast Badge -->
                     <?php if ($isAdmin || $role === 'customer_admin'):
-                        $has_schedule = (!empty($schedule_data) && !empty($schedule_data['dates'])) || !empty($primary_projection);
+                        // Determine plan status: none, partial, or complete
+                        $has_projection = !empty($primary_projection);
+                        $has_legs_with_dates = false;
+                        $has_modules_only = false;
+                        if ($has_projection) {
+                            // Check if legs have start_dates set
+                            if (!empty($primary_projection['legs'])) {
+                                foreach ($primary_projection['legs'] as $_leg) {
+                                    if (!empty($_leg['start_date']) && strtotime($_leg['start_date']) > 0) {
+                                        $has_legs_with_dates = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!$has_legs_with_dates) {
+                                $has_modules_only = !empty($primary_projection['module_allocations']);
+                            }
+                        }
+
+                        if ($has_legs_with_dates) {
+                            $plan_class = 'has-forecast';
+                            $plan_icon = 'fas fa-check-circle';
+                            $plan_label = 'Plan Set';
+                            $plan_title = 'View or edit delivery plan';
+                        } elseif ($has_modules_only) {
+                            $plan_class = 'partial-forecast';
+                            $plan_icon = 'fas fa-clock';
+                            $plan_label = 'In Progress';
+                            $plan_title = 'Plan partially configured - add routing details';
+                        } else {
+                            $plan_class = 'no-forecast';
+                            $plan_icon = 'fas fa-plus-circle';
+                            $plan_label = 'Add Plan';
+                            $plan_title = 'Create a delivery plan';
+                        }
                     ?>
                     <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>"
-                       class="forecast-badge <?php echo $has_schedule ? 'has-forecast' : 'no-forecast'; ?>"
-                       title="<?php echo $has_schedule ? 'View or edit delivery plan' : 'Create a delivery plan'; ?>">
-                        <?php if ($has_schedule): ?>
-                            <i class="fas fa-check-circle"></i>
-                            <span>Plan Set</span>
-                        <?php else: ?>
-                            <i class="fas fa-plus-circle"></i>
-                            <span>Add Plan</span>
-                        <?php endif; ?>
+                       class="forecast-badge <?php echo $plan_class; ?>"
+                       title="<?php echo $plan_title; ?>">
+                        <i class="<?php echo $plan_icon; ?>"></i>
+                        <span><?php echo $plan_label; ?></span>
                     </a>
                     <?php endif; ?>
 
