@@ -208,6 +208,57 @@ $templates = get_projection_templates($conn);
 require_once 'anticipated_schedule_helpers.php';
 $project_summary = getProjectSizeSummary($conn, $project_id);
 
+// Manufacturer suggestions for manual entry
+$manufacturer_names = [];
+$manufacturer_locations = [];
+$manufacturer_location_map = [];
+if (!empty($project['account_id'])) {
+    $stmt = $conn->prepare("
+        SELECT vendor_name, initial_location
+        FROM modules
+        WHERE account_id = ?
+          AND vendor_name IS NOT NULL
+          AND vendor_name <> ''
+    ");
+    if ($stmt) {
+        $stmt->bind_param("i", $project['account_id']);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $name_set = [];
+        $location_set = [];
+        $location_map = [];
+        while ($row = $result->fetch_assoc()) {
+            $vendor = trim($row['vendor_name'] ?? '');
+            $location = trim($row['initial_location'] ?? '');
+            if ($vendor !== '') {
+                $name_set[$vendor] = true;
+            }
+            if ($location !== '') {
+                $location_set[$location] = true;
+                if ($vendor !== '') {
+                    if (!isset($location_map[$vendor])) {
+                        $location_map[$vendor] = [];
+                    }
+                    $location_map[$vendor][$location] = true;
+                }
+            }
+        }
+        $stmt->close();
+
+        $manufacturer_names = array_keys($name_set);
+        sort($manufacturer_names, SORT_NATURAL | SORT_FLAG_CASE);
+
+        $manufacturer_locations = array_keys($location_set);
+        sort($manufacturer_locations, SORT_NATURAL | SORT_FLAG_CASE);
+
+        foreach ($location_map as $vendor => $locations) {
+            $locations_list = array_keys($locations);
+            sort($locations_list, SORT_NATURAL | SORT_FLAG_CASE);
+            $manufacturer_location_map[$vendor] = $locations_list;
+        }
+    }
+}
+
 // Note: Don't close connection here - components may need it
 ?>
 <!DOCTYPE html>
@@ -2925,11 +2976,6 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
 
         <?php endif; // End of projection exists else block ?>
 
-        <!-- Auto-save Indicator -->
-        <div class="autosave-indicator" id="autosaveIndicator">
-            <div class="autosave-spinner"></div>
-            <span>Saving...</span>
-        </div>
     </main>
 
     <!-- Toast Container -->
@@ -3238,6 +3284,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                     quantity: a.quantity,
                     pallets: a.pallets,
                     po_execution_date: a.po_execution_date || null,
+                    milestones: a.milestones || [],
                     // Include additional fields for manual entries
                     vendor_name: a.vendor_name,
                     manufacturer_address: a.manufacturer_address,
@@ -3452,6 +3499,7 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
 
         function addManualModuleAllocation(data) {
             // Add manual module allocation directly to working state
+            const milestones = data.milestones || [];
             const allocation = {
                 module_id: data.is_manual ? ('manual_' + Date.now()) : data.module_id,
                 wattage: parseInt(data.wattage),
@@ -3464,8 +3512,8 @@ $project_summary = getProjectSizeSummary($conn, $project_id);
                 pallets_per_truck: data.pallets_per_truck,
                 cost_per_watt: data.cost_per_watt,
                 contract_value: data.contract_value,
-                has_milestones: false,
-                milestones: [],
+                has_milestones: milestones.length > 0,
+                milestones: milestones,
                 is_manual: true
             };
 
