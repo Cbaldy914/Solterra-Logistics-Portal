@@ -442,7 +442,7 @@ document.addEventListener('keydown', function(e) {
 
                     <!-- Forecast Badge -->
                     <?php if ($isAdmin || $role === 'customer_admin'):
-                        $has_schedule = !empty($schedule_data) && !empty($schedule_data['dates']);
+                        $has_schedule = (!empty($schedule_data) && !empty($schedule_data['dates'])) || !empty($primary_projection);
                     ?>
                     <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>"
                        class="forecast-badge <?php echo $has_schedule ? 'has-forecast' : 'no-forecast'; ?>"
@@ -1147,19 +1147,6 @@ document.addEventListener('keydown', function(e) {
 
     <!-- Financial Sub-tab -->
     <div id="subtab-financial" class="sub-tab-content" style="display:none;">
-        <?php if ($has_milestone_data): ?>
-        <!-- Module Payment Progress Card -->
-        <div style="margin-bottom: 24px;">
-            <?php
-            $milestone_status = $milestone_completion;
-            $card_title = 'Module Payment Progress';
-            $show_batches = false;
-            $compact = false;
-            include __DIR__ . '/../milestone_summary_card.php';
-            ?>
-        </div>
-        <?php endif; ?>
-
         <!-- Unit Filters (inside content) -->
         <div class="unit-filter-bar">
             <span class="filter-label">View as:</span>
@@ -1171,21 +1158,20 @@ document.addEventListener('keydown', function(e) {
             </div>
         </div>
 
+        <style>
+            .cashflow-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; }
+            .cashflow-header h2 { margin-bottom: 0; }
+            .view-all-link { font-size: 0.85em; color: #488C9A; text-decoration: none; font-weight: 500; cursor: pointer; }
+            .view-all-link:hover { text-decoration: underline; color: #3A6E7F; }
+        </style>
         <div class="tables-and-charts">
                 <div class="left-side">
-                    <?php if ($has_milestone_data && !empty($milestone_timeline)): ?>
-                    <!-- Payment Timeline -->
-                    <div style="margin-bottom: 24px;">
-                        <?php
-                        $table_title = 'Payment Timeline';
-                        $show_cumulative = true;
-                        $max_rows = 8;
-                        include __DIR__ . '/../milestone_timeline_table.php';
-                        ?>
+                    <div class="cashflow-header">
+                        <h2>Invoices and Cashflow Forecast</h2>
+                        <?php if (!empty($all_projection_weeks)): ?>
+                        <a href="javascript:void(0)" onclick="openCashflowDetailModal()" class="view-all-link">View All</a>
+                        <?php endif; ?>
                     </div>
-                    <?php endif; ?>
-
-                    <h2>Invoices and Cashflow Forecast</h2>
                     <div class="table-responsive">
                         <table id="invoices-forecast-table">
                             <thead>
@@ -1316,10 +1302,21 @@ document.addEventListener('keydown', function(e) {
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php if ($has_module_cost_data): ?>
+                                <?php
+                                $display_module_cost = $has_milestone_data ? $accrued_module_cost : $total_module_cost;
+                                $module_cost_per_module = $total_raw_modules > 0 ? $display_module_cost / $total_raw_modules : 0;
+                                $module_cost_per_pallet = $total_raw_modules > 0 ? ($display_module_cost / $total_raw_modules) * 30 : 0;
+                                ?>
+                                <?php if ($has_module_cost_data || $has_milestone_data): ?>
                                 <tr>
-                                    <td class="cost-label">Module Investment</td>
-                                    <td class="cost-value cost-value-dynamic" data-total="<?php echo $total_module_cost; ?>" data-watt="<?php echo $module_cost_per_watt ?? 0; ?>" data-module="<?php echo $total_raw_modules > 0 ? $total_module_cost / $total_raw_modules : 0; ?>" data-pallet="<?php echo $total_raw_modules > 0 ? ($total_module_cost / $total_raw_modules) * 30 : 0; ?>">$<?php echo number_format($total_module_cost, 2); ?></td>
+                                    <td class="cost-label">
+                                        <?php if ($has_milestone_data): ?>
+                                        <span class="logistics-link" onclick="openModuleBreakdownModal()">Module Investment</span>
+                                        <?php else: ?>
+                                        Module Investment
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="cost-value cost-value-dynamic" data-total="<?php echo $display_module_cost; ?>" data-watt="<?php echo $module_cost_per_watt ?? 0; ?>" data-module="<?php echo $module_cost_per_module; ?>" data-pallet="<?php echo $module_cost_per_pallet; ?>">$<?php echo number_format($display_module_cost, 2); ?></td>
                                 </tr>
                                 <?php else: ?>
                                 <tr>
@@ -1345,9 +1342,10 @@ document.addEventListener('keydown', function(e) {
 
                     <!-- Cost Breakdown Chart -->
                     <?php
-                    // Calculate percentages for chart
-                    $chart_total = $total_module_cost + $total_freight_cost + $total_warehousing_cost + $total_accessorial_costs + $total_solterra_fee;
-                    $module_pct = $chart_total > 0 ? ($total_module_cost / $chart_total) * 100 : 0;
+                    // Calculate percentages for chart (use accrued module cost when available)
+                    $chart_module_cost = $has_milestone_data ? $accrued_module_cost : $total_module_cost;
+                    $chart_total = $chart_module_cost + $total_freight_cost + $total_warehousing_cost + $total_accessorial_costs + $total_solterra_fee;
+                    $module_pct = $chart_total > 0 ? ($chart_module_cost / $chart_total) * 100 : 0;
                     $freight_pct = $chart_total > 0 ? ($total_freight_cost / $chart_total) * 100 : 0;
                     $warehousing_pct = $chart_total > 0 ? ($total_warehousing_cost / $chart_total) * 100 : 0;
                     $other_cost = $total_accessorial_costs + $total_solterra_fee;
@@ -1358,12 +1356,12 @@ document.addEventListener('keydown', function(e) {
                         <div class="cost-chart-container">
                             <canvas id="costDonutMini" class="cost-chart-canvas-lg" width="220" height="220"></canvas>
                             <div class="cost-chart-legend-lg">
-                                <?php if ($has_module_cost_data && $total_module_cost > 0): ?>
+                                <?php if (($has_module_cost_data || $has_milestone_data) && $chart_module_cost > 0): ?>
                                 <div class="cost-legend-item-lg">
                                     <div class="cost-legend-dot-lg module"></div>
                                     <div class="cost-legend-info">
-                                        <div class="cost-legend-label">Modules</div>
-                                        <div class="cost-legend-value">$<?php echo number_format($total_module_cost, 0); ?></div>
+                                        <div class="cost-legend-label">Modules<?php echo $has_milestone_data ? ' (Accrued)' : ''; ?></div>
+                                        <div class="cost-legend-value">$<?php echo number_format($chart_module_cost, 0); ?></div>
                                     </div>
                                     <div class="cost-legend-pct-lg"><?php echo number_format($module_pct, 1); ?>%</div>
                                 </div>
@@ -1442,8 +1440,8 @@ document.addEventListener('keydown', function(e) {
                         if (ctx) {
                             const chartData = [];
                             const chartColors = [];
-                            <?php if ($has_module_cost_data && $total_module_cost > 0): ?>
-                            chartData.push(<?php echo $total_module_cost; ?>);
+                            <?php if (($has_module_cost_data || $has_milestone_data) && $chart_module_cost > 0): ?>
+                            chartData.push(<?php echo $chart_module_cost; ?>);
                             chartColors.push('#488C9A');
                             <?php endif; ?>
                             chartData.push(<?php echo $total_freight_cost; ?>);
