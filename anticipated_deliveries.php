@@ -5894,7 +5894,6 @@ if (!empty($project['account_id'])) {
         function updateTimelineChart() {
             syncPlanState();
             const container = document.getElementById('timelineChart');
-            if (!container) return;
 
             const events = [];
             let totalFreight = 0;
@@ -5985,39 +5984,41 @@ if (!empty($project['account_id'])) {
             // Sort by date
             events.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-            // Handle empty state
-            if (events.length === 0) {
-                container.innerHTML = `
-                    <div style="text-align: center; padding: 40px; color: #6c757d; width: 100%;">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5" style="margin-bottom: 12px;">
-                            <line x1="18" y1="20" x2="18" y2="10"/>
-                            <line x1="12" y1="20" x2="12" y2="4"/>
-                            <line x1="6" y1="20" x2="6" y2="14"/>
-                        </svg>
-                        <p style="margin: 0;">Add costs to your stops and legs to see the timeline chart.</p>
-                    </div>
-                `;
-            } else {
-                // Generate bars
-                const maxAmount = Math.max(...events.map(e => e.amount), 1);
-
-                container.innerHTML = events.map((event, i) => {
-                    const height = Math.max((event.amount / maxAmount) * 140, 20);
-                    const formattedDate = formatDate(event.date);
-                    const formattedAmount = '$' + (event.amount || 0).toLocaleString();
-
-                    return `
-                        <div class="timeline-bar">
-                            <div class="timeline-bar-fill ${event.type}" style="height: ${height}px;">
-                                <span class="timeline-bar-value">${formattedAmount}</span>
-                            </div>
-                            <div class="timeline-bar-label">
-                                <span class="timeline-bar-date">${formattedDate}</span>
-                                ${event.label}
-                            </div>
+            if (container) {
+                // Handle empty state
+                if (events.length === 0) {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #6c757d; width: 100%;">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5" style="margin-bottom: 12px;">
+                                <line x1="18" y1="20" x2="18" y2="10"/>
+                                <line x1="12" y1="20" x2="12" y2="4"/>
+                                <line x1="6" y1="20" x2="6" y2="14"/>
+                            </svg>
+                            <p style="margin: 0;">Add costs to your stops and legs to see the timeline chart.</p>
                         </div>
                     `;
-                }).join('');
+                } else {
+                    // Generate bars
+                    const maxAmount = Math.max(...events.map(e => e.amount), 1);
+
+                    container.innerHTML = events.map((event, i) => {
+                        const height = Math.max((event.amount / maxAmount) * 140, 20);
+                        const formattedDate = formatDate(event.date);
+                        const formattedAmount = '$' + (event.amount || 0).toLocaleString();
+
+                        return `
+                            <div class="timeline-bar">
+                                <div class="timeline-bar-fill ${event.type}" style="height: ${height}px;">
+                                    <span class="timeline-bar-value">${formattedAmount}</span>
+                                </div>
+                                <div class="timeline-bar-label">
+                                    <span class="timeline-bar-date">${formattedDate}</span>
+                                    ${event.label}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
             }
 
             // Update cumulative displays
