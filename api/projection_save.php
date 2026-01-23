@@ -37,6 +37,7 @@ if (!$input) {
 
 require_once '../../config.php';
 require_once '../projection_helpers.php';
+require_once '../milestone_helpers.php';
 
 $conn = getDBConnection();
 if (!$conn) {
@@ -193,6 +194,13 @@ try {
                 $items_stmt->bind_param("iii", $module_id, $wattage, $quantity);
                 $items_stmt->execute();
                 $items_stmt->close();
+
+                if (!empty($alloc['milestones']) && is_array($alloc['milestones'])) {
+                    $saved = save_module_milestones($module_id, $alloc['milestones'], $conn, $user_id);
+                    if (!$saved) {
+                        throw new Exception('Failed to save manual milestones');
+                    }
+                }
             }
 
             $allocation_result = add_module_allocation(

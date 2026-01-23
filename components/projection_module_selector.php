@@ -9,6 +9,10 @@
  * - $can_edit: Boolean for edit permissions
  */
 
+$manufacturer_names = $manufacturer_names ?? [];
+$manufacturer_locations = $manufacturer_locations ?? [];
+$manufacturer_location_map = $manufacturer_location_map ?? [];
+
 ?>
 
 <div class="module-selector-card">
@@ -188,35 +192,8 @@
     </div>
 
     <?php if ($can_edit): ?>
-    <div class="add-module-section">
-        <button type="button" class="btn btn-add-module" onclick="openModuleSelectorModal()">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="12" y1="5" x2="12" y2="19"/>
-                <line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            Add Module Batch
-        </button>
-    </div>
-    <?php endif; ?>
-</div>
-
-<!-- Module Selector Modal -->
-<?php if ($can_edit): ?>
-<div id="moduleSelectorModal" class="modal" style="display: none;">
-    <div class="modal-overlay" onclick="closeModuleSelectorModal()"></div>
-    <div class="modal-content modal-lg">
-        <div class="modal-header">
-            <h3>Add Module Batch</h3>
-            <button type="button" class="modal-close" onclick="closeModuleSelectorModal()">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="18" y1="6" x2="6" y2="18"/>
-                    <line x1="6" y1="6" x2="18" y2="18"/>
-                </svg>
-            </button>
-        </div>
-        <div class="modal-body">
-            <!-- Mode Tabs -->
-            <div class="module-mode-tabs">
+    <div class="module-selector-panel">
+        <div class="module-mode-tabs">
                 <button type="button" class="mode-tab <?php echo !empty($available_batches) ? 'active' : ''; ?>" data-mode="existing" onclick="switchModuleMode('existing')">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
@@ -300,12 +277,27 @@
                 <div class="manual-form-grid">
                     <div class="form-group">
                         <label class="form-label">Manufacturer/Vendor <span class="required">*</span></label>
-                        <input type="text" id="manualVendorName" class="form-input" placeholder="e.g., JA Solar, Longi, etc.">
+                        <input type="text" id="manualVendorName" class="form-input" list="manufacturerOptions" placeholder="e.g., JA Solar, Longi, etc.">
+                        <datalist id="manufacturerOptions">
+                            <?php foreach ($manufacturer_names ?? [] as $name): ?>
+                                <option value="<?php echo htmlspecialchars($name); ?>"></option>
+                            <?php endforeach; ?>
+                        </datalist>
                     </div>
 
                     <div class="form-group">
                         <label class="form-label">Location/Origin</label>
-                        <input type="text" id="manualLocation" class="form-input" placeholder="e.g., Shanghai, China">
+                        <div class="address-input-wrapper" id="manualLocationWrapper">
+                        <input type="text" id="manualLocation" class="form-input" list="manufacturerLocationOptions" placeholder="Start typing to search for address...">
+                            <div class="address-loading"></div>
+                            <svg class="address-verified" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                            <div class="address-error">Please select a valid address from the suggestions</div>
+                        </div>
+                        <datalist id="manufacturerLocationOptions">
+                            <?php foreach ($manufacturer_locations ?? [] as $location): ?>
+                                <option value="<?php echo htmlspecialchars($location); ?>"></option>
+                            <?php endforeach; ?>
+                        </datalist>
                     </div>
                 </div>
 
@@ -351,6 +343,36 @@
                     </div>
                 </div>
 
+                <div class="manual-milestones-section">
+                    <label class="form-label">Milestones (optional)</label>
+                    <div id="manualMilestoneEntries">
+                        <div class="milestone-entry-row">
+                            <input type="text" class="form-input milestone-name-input" placeholder="Milestone name">
+                            <select class="form-input milestone-trigger-input">
+                                <option value="">Trigger event</option>
+                                <option value="po_execution">PO Execution</option>
+                                <option value="shipping">Shipping</option>
+                                <option value="customs_cleared">Customs Clearance</option>
+                                <option value="project_delivery">Project Delivery</option>
+                            </select>
+                            <input type="number" class="form-input milestone-percentage-input" placeholder="%" min="0" max="100" step="0.1">
+                            <button type="button" class="btn-remove-milestone" onclick="removeManualMilestoneEntry(this)" style="display: none;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18"/>
+                                    <line x1="6" y1="6" x2="18" y2="18"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-add-milestone" onclick="addManualMilestoneEntry()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        Add Milestone
+                    </button>
+                </div>
+
                 <div class="btn-group">
                     <button type="button" class="btn btn-primary" onclick="addManualModuleEntry()">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;">
@@ -359,12 +381,9 @@
                         </svg>
                         Add to Projection
                     </button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModuleSelectorModal()">Cancel</button>
                 </div>
             </div>
         </div>
-    </div>
-</div>
 
 <!-- Wattage/Quantity Selection Sub-Modal -->
 <div id="wattageQuantityModal" class="modal" style="display: none;">
@@ -407,6 +426,7 @@
     </div>
 </div>
 <?php endif; ?>
+</div>
 
 <style>
 .module-selector-card {
@@ -463,6 +483,13 @@
 
 .module-list {
     padding: 16px 24px;
+}
+
+.module-selector-panel {
+    padding: 20px 24px 28px;
+    border-top: 1px solid #e9ecef;
+    background: #fafbfc;
+    border-radius: 0 0 16px 16px;
 }
 
 .module-item {
@@ -724,6 +751,47 @@
 
 .wattage-entries-section {
     margin-bottom: 20px;
+}
+
+.manual-milestones-section {
+    margin-bottom: 20px;
+}
+
+.milestone-entry-row {
+    display: grid;
+    grid-template-columns: 2fr 2fr 1fr auto;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.btn-add-milestone {
+    background: transparent;
+    border: 1px dashed #adb5bd;
+    color: #6c757d;
+    padding: 8px 12px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.btn-add-milestone:hover {
+    border-color: #488C9A;
+    color: #488C9A;
+}
+
+.btn-remove-milestone {
+    background: #f8d7da;
+    border: none;
+    color: #dc3545;
+    padding: 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .wattage-entry-row {
@@ -1235,6 +1303,10 @@
         min-width: 70px;
         padding: 6px 12px;
     }
+
+    .milestone-entry-row {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (max-width: 600px) {
@@ -1276,14 +1348,52 @@
 </style>
 
 <script>
-function openModuleSelectorModal() {
-    document.getElementById('moduleSelectorModal').style.display = 'flex';
-    // Reset manual entry form
-    resetManualEntryForm();
+const manufacturerLocationMap = <?php echo json_encode($manufacturer_location_map); ?>;
+const manufacturerLocationOptions = <?php echo json_encode($manufacturer_locations); ?>;
+
+function updateManualLocationOptions(vendorName) {
+    const datalist = document.getElementById('manufacturerLocationOptions');
+    if (!datalist) return;
+
+    const locations = manufacturerLocationMap[vendorName] || manufacturerLocationOptions;
+    datalist.innerHTML = '';
+    locations.forEach(location => {
+        const option = document.createElement('option');
+        option.value = location;
+        datalist.appendChild(option);
+    });
 }
 
-function closeModuleSelectorModal() {
-    document.getElementById('moduleSelectorModal').style.display = 'none';
+function initializeManualLocationAutocomplete() {
+    const input = document.getElementById('manualLocation');
+    if (!input || typeof initializeAddressAutocomplete !== 'function') {
+        return;
+    }
+    if (input.dataset.autocompleteInitialized) {
+        return;
+    }
+
+    const autocomplete = initializeAddressAutocomplete(input, (placeData) => {
+        if (placeData?.address) {
+            input.value = placeData.address;
+        }
+    });
+
+    input.dataset.autocompleteInitialized = 'true';
+    if (autocomplete && Array.isArray(window.autocompleteInstances)) {
+        window.autocompleteInstances.push(autocomplete);
+    }
+}
+
+function bindManualManufacturerEvents() {
+    const vendorInput = document.getElementById('manualVendorName');
+    if (!vendorInput) return;
+
+    vendorInput.addEventListener('input', () => {
+        updateManualLocationOptions(vendorInput.value.trim());
+    });
+
+    updateManualLocationOptions(vendorInput.value.trim());
 }
 
 function switchModuleMode(mode) {
@@ -1298,8 +1408,6 @@ function switchModuleMode(mode) {
 }
 
 function selectModuleBatch(batchId, wattages, totalQuantity, modsPerPallet, palletsPerTruck) {
-    closeModuleSelectorModal();
-
     // Populate wattage selector
     const wattageSelect = document.getElementById('selectedWattage');
     wattageSelect.innerHTML = '';
@@ -1362,12 +1470,58 @@ function updateRemoveButtons() {
     });
 }
 
+function addManualMilestoneEntry() {
+    const container = document.getElementById('manualMilestoneEntries');
+    if (!container) return;
+    const entryHtml = `
+        <div class="milestone-entry-row">
+            <input type="text" class="form-input milestone-name-input" placeholder="Milestone name">
+            <select class="form-input milestone-trigger-input">
+                <option value="">Trigger event</option>
+                <option value="po_execution">PO Execution</option>
+                <option value="shipping">Shipping</option>
+                <option value="customs_cleared">Customs Clearance</option>
+                <option value="project_delivery">Project Delivery</option>
+            </select>
+            <input type="number" class="form-input milestone-percentage-input" placeholder="%" min="0" max="100" step="0.1">
+            <button type="button" class="btn-remove-milestone" onclick="removeManualMilestoneEntry(this)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', entryHtml);
+    updateMilestoneRemoveButtons();
+}
+
+function removeManualMilestoneEntry(button) {
+    button.closest('.milestone-entry-row').remove();
+    updateMilestoneRemoveButtons();
+}
+
+function updateMilestoneRemoveButtons() {
+    const rows = document.querySelectorAll('#manualMilestoneEntries .milestone-entry-row');
+    rows.forEach(row => {
+        const removeBtn = row.querySelector('.btn-remove-milestone');
+        if (removeBtn) {
+            removeBtn.style.display = rows.length > 1 ? 'flex' : 'none';
+        }
+    });
+}
+
 function resetManualEntryForm() {
     document.getElementById('manualVendorName').value = '';
     document.getElementById('manualLocation').value = '';
     document.getElementById('manualModsPerPallet').value = '30';
     document.getElementById('manualPalletsPerTruck').value = '20';
     document.getElementById('manualCostPerWatt').value = '';
+
+    const manualLocationWrapper = document.getElementById('manualLocationWrapper');
+    if (manualLocationWrapper) {
+        manualLocationWrapper.classList.remove('verified', 'error', 'loading');
+    }
 
     // Reset wattage entries to single row
     document.getElementById('manualWattageEntries').innerHTML = `
@@ -1384,6 +1538,33 @@ function resetManualEntryForm() {
             </div>
         </div>
     `;
+
+    const milestoneContainer = document.getElementById('manualMilestoneEntries');
+    if (milestoneContainer) {
+        milestoneContainer.innerHTML = `
+            <div class="milestone-entry-row">
+                <input type="text" class="form-input milestone-name-input" placeholder="Milestone name">
+                <select class="form-input milestone-trigger-input">
+                    <option value="">Trigger event</option>
+                    <option value="po_execution">PO Execution</option>
+                    <option value="shipping">Shipping</option>
+                    <option value="customs_cleared">Customs Clearance</option>
+                    <option value="project_delivery">Project Delivery</option>
+                </select>
+                <input type="number" class="form-input milestone-percentage-input" placeholder="%" min="0" max="100" step="0.1">
+                <button type="button" class="btn-remove-milestone" onclick="removeManualMilestoneEntry(this)" style="display: none;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+        `;
+    }
+
+    updateRemoveButtons();
+    updateMilestoneRemoveButtons();
+    updateManualLocationOptions('');
 }
 
 function addManualModuleEntry() {
@@ -1415,6 +1596,21 @@ function addManualModuleEntry() {
         return;
     }
 
+    // Collect milestone entries
+    const milestones = [];
+    document.querySelectorAll('#manualMilestoneEntries .milestone-entry-row').forEach(row => {
+        const name = row.querySelector('.milestone-name-input')?.value.trim();
+        const trigger = row.querySelector('.milestone-trigger-input')?.value;
+        const percentage = parseFloat(row.querySelector('.milestone-percentage-input')?.value) || 0;
+        if (trigger && percentage > 0) {
+            milestones.push({
+                milestone_name: name,
+                trigger_event: trigger,
+                percentage: percentage
+            });
+        }
+    });
+
     // For manual entries, we'll add each wattage as a separate allocation
     // but group them visually under the same vendor
     wattageEntries.forEach(entry => {
@@ -1436,8 +1632,8 @@ function addManualModuleEntry() {
                 pallets_per_truck: palletsPerTruck,
                 cost_per_watt: costPerWatt,
                 contract_value: contractValue,
-                has_milestones: false,
-                milestones: [],
+                has_milestones: milestones.length > 0,
+                milestones: milestones,
                 is_manual: true
             });
         } else if (typeof addModuleAllocation === 'function') {
@@ -1454,17 +1650,25 @@ function addManualModuleEntry() {
                 pallets_per_truck: palletsPerTruck,
                 cost_per_watt: costPerWatt,
                 contract_value: contractValue,
-                has_milestones: false,
-                milestones: [],
+                has_milestones: milestones.length > 0,
+                milestones: milestones,
                 is_manual: true
             };
             workingState.moduleAllocations.push(allocation);
             showToast('Manual module entry added. Remember to save!', 'success');
-            saveProjection();
+            if (typeof markAsUnsaved === 'function') {
+                markAsUnsaved();
+            }
+            if (typeof renderModuleAllocations === 'function') {
+                renderModuleAllocations();
+            }
+            if (typeof updateBadges === 'function') {
+                updateBadges();
+            }
         }
     });
 
-    closeModuleSelectorModal();
+    resetManualEntryForm();
 }
 
 function closeWattageQuantityModal() {
@@ -1595,6 +1799,10 @@ function showModuleSaveSuccess(moduleItem) {
 // Initialize flatpickr for PO date inputs when document loads
 document.addEventListener('DOMContentLoaded', function() {
     initializePoDatePickers();
+    initializeManualLocationAutocomplete();
+    bindManualManufacturerEvents();
+    updateRemoveButtons();
+    updateMilestoneRemoveButtons();
 });
 
 function initializePoDatePickers() {
