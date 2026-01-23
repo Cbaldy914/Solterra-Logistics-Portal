@@ -1190,7 +1190,13 @@ document.addEventListener('keydown', function(e) {
                                             $<?php echo number_format($open_invoices_total,2);?>
                                         </a>
                                     </td>
-                                    <td class="financial-value" data-total="<?php echo $total_logistics_cost; ?>" data-watt="<?php echo $combined_ppw; ?>" data-module="<?php echo $combined_ppm; ?>" data-pallet="<?php echo $combined_ppp; ?>">$<?php echo number_format($total_logistics_cost,2);?></td>
+                                    <?php
+                                    $total_costs_display = $total_project_cost;
+                                    $total_costs_ppw = $sum_watts > 0 ? $total_costs_display / $sum_watts : 0;
+                                    $total_costs_ppm = $combined_qty > 0 ? $total_costs_display / $combined_qty : 0;
+                                    $total_costs_ppp = $combined_pallets > 0 ? $total_costs_display / $combined_pallets : 0;
+                                    ?>
+                                    <td class="financial-value" data-total="<?php echo $total_costs_display; ?>" data-watt="<?php echo $total_costs_ppw; ?>" data-module="<?php echo $total_costs_ppm; ?>" data-pallet="<?php echo $total_costs_ppp; ?>">$<?php echo number_format($total_costs_display,2);?></td>
                                     <?php foreach($weeks_financial as $ix=>$wf){
                                         $val = $anticipated_deliveries_financial[$ix] ?? 0;
                                         // Calculate per-unit values for weekly forecasts

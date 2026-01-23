@@ -110,25 +110,25 @@ if (in_array($role, ['admin', 'global_admin', 'customer_admin'])):
     background: #fff;
     border-radius: 16px;
     width: 90%;
-    max-width: 400px;
-    margin: 10% auto;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+    max-width: 420px;
+    margin: 8% auto;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.2), 0 8px 24px rgba(0,0,0,0.1);
     overflow: hidden;
     animation: modalSlideIn 0.3s ease;
 }
 .logistics-modal-header {
     background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-    padding: 28px 32px;
+    padding: 32px 36px;
     position: relative;
 }
 .logistics-modal-header h3 {
     color: #fff;
-    margin: 0 0 6px 0;
-    font-size: 0.9em;
+    margin: 0 0 8px 0;
+    font-size: 0.85em;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 1px;
-    opacity: 0.85;
+    letter-spacing: 1.2px;
+    opacity: 0.8;
 }
 .logistics-modal-total {
     color: #fff;
@@ -138,15 +138,15 @@ if (in_array($role, ['admin', 'global_admin', 'customer_admin'])):
 }
 .logistics-modal-close {
     position: absolute;
-    top: 12px;
-    right: 12px;
+    top: 16px;
+    right: 16px;
     width: 36px;
     height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
     color: #fff;
-    font-size: 24px;
+    font-size: 22px;
     cursor: pointer;
     opacity: 0.7;
     transition: all 0.2s;
@@ -158,14 +158,14 @@ if (in_array($role, ['admin', 'global_admin', 'customer_admin'])):
     background: rgba(255,255,255,0.15);
 }
 .logistics-modal-body {
-    padding: 24px 32px 32px 32px;
+    padding: 28px 36px 36px 36px;
 }
 .logistics-breakdown-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 14px 0;
-    border-bottom: 1px solid #eee;
+    padding: 16px 0;
+    border-bottom: 1px solid #f0f2f4;
 }
 .logistics-breakdown-item:last-child {
     border-bottom: none;
@@ -177,15 +177,15 @@ if (in_array($role, ['admin', 'global_admin', 'customer_admin'])):
 .logistics-breakdown-label {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 14px;
     color: #293E4C;
     font-weight: 500;
     font-size: 0.95em;
 }
 .logistics-breakdown-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
+    width: 12px;
+    height: 12px;
+    border-radius: 4px;
     flex-shrink: 0;
 }
 .logistics-breakdown-dot.freight { background: #3b82f6; }
@@ -195,7 +195,7 @@ if (in_array($role, ['admin', 'global_admin', 'customer_admin'])):
 .logistics-breakdown-value {
     font-weight: 600;
     color: #293E4C;
-    font-size: 1em;
+    font-size: 1.05em;
 }
 </style>
 
@@ -258,39 +258,45 @@ document.getElementById('logisticsBreakdownModal')?.addEventListener('click', fu
 .cashflow-modal-content {
     background: #fff;
     border-radius: 16px;
-    width: 90%;
-    max-width: 600px;
-    margin: 5% auto;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+    width: 92%;
+    max-width: 720px;
+    margin: 4% auto;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.2), 0 8px 24px rgba(0,0,0,0.1);
     overflow: hidden;
     animation: modalSlideIn 0.3s ease;
-    max-height: 80vh;
+    max-height: 82vh;
     display: flex;
     flex-direction: column;
 }
 .cashflow-modal-header {
     background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-    padding: 24px 32px;
+    padding: 28px 32px;
     position: relative;
     flex-shrink: 0;
 }
 .cashflow-modal-header h3 {
     color: #fff;
     margin: 0;
-    font-size: 1.1em;
+    font-size: 1.15em;
     font-weight: 600;
+    letter-spacing: -0.2px;
+}
+.cashflow-modal-header .modal-subtitle {
+    color: rgba(255,255,255,0.75);
+    font-size: 0.85em;
+    margin-top: 4px;
 }
 .cashflow-modal-close {
     position: absolute;
-    top: 12px;
-    right: 12px;
+    top: 16px;
+    right: 16px;
     width: 36px;
     height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
     color: #fff;
-    font-size: 24px;
+    font-size: 22px;
     cursor: pointer;
     opacity: 0.7;
     transition: all 0.2s;
@@ -309,39 +315,78 @@ document.getElementById('logisticsBreakdownModal')?.addEventListener('click', fu
 .cashflow-detail-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.85em;
+    font-size: 0.88em;
 }
 .cashflow-detail-table thead th {
     position: sticky;
     top: 0;
-    background: #f8f9fa;
-    padding: 12px 14px;
+    background: linear-gradient(135deg, #f8f9fa 0%, #f0f4f5 100%);
+    padding: 14px 16px;
     font-weight: 600;
     color: #293E4C;
     text-align: right;
     border-bottom: 2px solid #e9ecef;
     white-space: nowrap;
+    text-transform: uppercase;
+    font-size: 0.78em;
+    letter-spacing: 0.5px;
+    z-index: 1;
 }
 .cashflow-detail-table thead th:first-child {
     text-align: left;
 }
 .cashflow-detail-table tbody td {
-    padding: 10px 14px;
+    padding: 13px 16px;
     border-bottom: 1px solid #f1f3f4;
     text-align: right;
     color: #495057;
+    font-weight: 500;
 }
 .cashflow-detail-table tbody td:first-child {
     text-align: left;
     font-weight: 500;
     color: #293E4C;
+    font-size: 0.9em;
 }
 .cashflow-detail-table tbody tr:hover {
-    background: #f8f9fa;
+    background: rgba(72, 140, 154, 0.04);
+}
+.cashflow-detail-table tbody tr:last-child td {
+    border-bottom: none;
+}
+.cashflow-detail-table .amount-freight { color: #488C9A; }
+.cashflow-detail-table .amount-warehousing { color: #E07F3A; }
+.cashflow-detail-table .amount-milestone { color: #28a745; }
+.cashflow-detail-table .weekly-total-val {
+    font-weight: 600;
+    color: #293E4C;
 }
 .cashflow-detail-table .cumulative-val {
-    font-weight: 600;
+    font-weight: 700;
     color: #488C9A;
+}
+.cashflow-modal-footer {
+    padding: 16px 24px;
+    background: #f8f9fa;
+    border-top: 1px solid #e9ecef;
+    display: flex;
+    justify-content: flex-end;
+    gap: 16px;
+    flex-shrink: 0;
+}
+.cashflow-modal-footer .footer-stat {
+    text-align: right;
+}
+.cashflow-modal-footer .footer-stat-label {
+    font-size: 0.75em;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.cashflow-modal-footer .footer-stat-value {
+    font-size: 1.1em;
+    font-weight: 700;
+    color: #293E4C;
 }
 </style>
 
@@ -350,16 +395,17 @@ document.getElementById('logisticsBreakdownModal')?.addEventListener('click', fu
         <div class="cashflow-modal-header">
             <span class="cashflow-modal-close" onclick="closeCashflowDetailModal()">&times;</span>
             <h3>Cashflow Forecast Detail</h3>
+            <div class="modal-subtitle">Weekly cost projections from primary logistics plan</div>
         </div>
         <div class="cashflow-modal-body">
             <table class="cashflow-detail-table">
                 <thead>
                     <tr>
-                        <th>Week Ending</th>
+                        <th>Date Range</th>
                         <th>Freight</th>
                         <th>Warehousing</th>
                         <th>Milestones</th>
-                        <th>Total</th>
+                        <th>Weekly Total</th>
                         <th>Cumulative</th>
                     </tr>
                 </thead>
@@ -367,23 +413,36 @@ document.getElementById('logisticsBreakdownModal')?.addEventListener('click', fu
                     <?php if (!empty($all_projection_weeks)):
                         foreach ($all_projection_weeks as $pw):
                             $we = new DateTime($pw['week_ending']);
+                            $ws = clone $we;
+                            $ws->modify('-6 days');
+                            $date_range = $ws->format('M j') . ' - ' . $we->format('M j, Y');
                     ?>
                     <tr>
-                        <td><?php echo $we->format('M j, Y'); ?></td>
-                        <td>$<?php echo number_format($pw['freight'], 0); ?></td>
-                        <td>$<?php echo number_format($pw['warehousing'], 0); ?></td>
-                        <td>$<?php echo number_format($pw['milestones'], 0); ?></td>
-                        <td>$<?php echo number_format($pw['total'], 0); ?></td>
+                        <td><?php echo $date_range; ?></td>
+                        <td class="amount-freight">$<?php echo number_format($pw['freight'], 0); ?></td>
+                        <td class="amount-warehousing">$<?php echo number_format($pw['warehousing'], 0); ?></td>
+                        <td class="amount-milestone">$<?php echo number_format($pw['milestones'], 0); ?></td>
+                        <td class="weekly-total-val">$<?php echo number_format($pw['total'], 0); ?></td>
                         <td class="cumulative-val">$<?php echo number_format($pw['cumulative'], 0); ?></td>
                     </tr>
                     <?php endforeach; else: ?>
                     <tr>
-                        <td colspan="6" style="text-align:center; padding:24px; color:#6c757d;">No projection data available</td>
+                        <td colspan="6" style="text-align:center; padding:40px; color:#6c757d; font-style:italic;">No projection data available. Create a logistics plan to see forecasted costs.</td>
                     </tr>
                     <?php endif; ?>
                 </tbody>
             </table>
         </div>
+        <?php if (!empty($all_projection_weeks)):
+            $last_week = end($all_projection_weeks);
+        ?>
+        <div class="cashflow-modal-footer">
+            <div class="footer-stat">
+                <div class="footer-stat-label">Projected Total</div>
+                <div class="footer-stat-value">$<?php echo number_format($last_week['cumulative'], 0); ?></div>
+            </div>
+        </div>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -405,48 +464,48 @@ document.getElementById('cashflowDetailModal')?.addEventListener('click', functi
     background: #fff;
     border-radius: 16px;
     width: 90%;
-    max-width: 500px;
-    margin: 8% auto;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+    max-width: 480px;
+    margin: 6% auto;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.2), 0 8px 24px rgba(0,0,0,0.1);
     overflow: hidden;
     animation: modalSlideIn 0.3s ease;
 }
 .module-breakdown-header {
     background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
-    padding: 24px 32px;
+    padding: 32px 36px;
     position: relative;
 }
 .module-breakdown-header h3 {
     color: #fff;
-    margin: 0 0 4px 0;
+    margin: 0 0 8px 0;
     font-size: 0.85em;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 1px;
-    opacity: 0.85;
+    letter-spacing: 1.2px;
+    opacity: 0.8;
 }
 .module-breakdown-total {
     color: #fff;
-    font-size: 2em;
+    font-size: 2.2em;
     font-weight: 700;
     letter-spacing: -0.5px;
 }
 .module-breakdown-subtitle {
     color: rgba(255,255,255,0.75);
     font-size: 0.85em;
-    margin-top: 4px;
+    margin-top: 6px;
 }
 .module-breakdown-close {
     position: absolute;
-    top: 12px;
-    right: 12px;
+    top: 16px;
+    right: 16px;
     width: 36px;
     height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
     color: #fff;
-    font-size: 24px;
+    font-size: 22px;
     cursor: pointer;
     opacity: 0.7;
     transition: all 0.2s;
@@ -458,26 +517,30 @@ document.getElementById('cashflowDetailModal')?.addEventListener('click', functi
     background: rgba(255,255,255,0.15);
 }
 .module-breakdown-body {
-    padding: 24px 32px;
+    padding: 28px 36px 32px 36px;
 }
 .milestone-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 0;
-    border-bottom: 1px solid #eee;
+    padding: 16px 0;
+    border-bottom: 1px solid #f0f2f4;
 }
 .milestone-row:last-child {
     border-bottom: none;
+    padding-bottom: 0;
+}
+.milestone-row:first-child {
+    padding-top: 0;
 }
 .milestone-row-left {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
 }
 .milestone-status-dot {
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     flex-shrink: 0;
 }
@@ -486,10 +549,10 @@ document.getElementById('cashflowDetailModal')?.addEventListener('click', functi
 .milestone-row-name {
     font-weight: 500;
     color: #293E4C;
-    font-size: 0.9em;
+    font-size: 0.95em;
 }
 .milestone-row-pct {
-    font-size: 0.75em;
+    font-size: 0.78em;
     color: #6c757d;
     margin-left: 4px;
 }
@@ -499,30 +562,31 @@ document.getElementById('cashflowDetailModal')?.addEventListener('click', functi
 .milestone-row-accrued {
     font-weight: 600;
     color: #293E4C;
-    font-size: 0.9em;
+    font-size: 0.95em;
 }
 .milestone-row-target {
-    font-size: 0.75em;
+    font-size: 0.78em;
     color: #6c757d;
+    margin-top: 2px;
 }
 .module-breakdown-footer {
     border-top: 2px solid #e9ecef;
-    margin-top: 8px;
-    padding-top: 16px;
+    margin-top: 12px;
+    padding-top: 20px;
 }
 .module-breakdown-footer-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 4px 0;
+    padding: 6px 0;
 }
 .module-breakdown-footer-label {
-    font-size: 0.85em;
+    font-size: 0.88em;
     color: #6c757d;
 }
 .module-breakdown-footer-value {
     font-weight: 600;
-    font-size: 0.9em;
+    font-size: 0.95em;
     color: #293E4C;
 }
 </style>

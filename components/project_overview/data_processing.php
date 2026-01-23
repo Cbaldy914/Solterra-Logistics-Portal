@@ -1377,6 +1377,20 @@ while($dv = $allDel->fetch_assoc()) {
     }
 }
 
+// Add actual milestone payments to actual costs (module costs accrued by date)
+if (!empty($milestone_timeline)) {
+    foreach ($milestone_timeline as $mt_entry) {
+        if (!empty($mt_entry['date'])) {
+            $mt_date = is_string($mt_entry['date']) ? substr($mt_entry['date'], 0, 10) : $mt_entry['date'];
+            $mt_week = getWeekEndingSunday($mt_date);
+            if (!isset($deliveries_by_date_actual_cost[$mt_week])) {
+                $deliveries_by_date_actual_cost[$mt_week] = 0;
+            }
+            $deliveries_by_date_actual_cost[$mt_week] += floatval($mt_entry['amount']);
+        }
+    }
+}
+
 // Anticipated costs from projection (or fallback to old method)
 $deliveries_by_date_anticipated = [];
 if (!empty($all_projection_weeks)) {
