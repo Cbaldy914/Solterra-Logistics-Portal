@@ -2033,6 +2033,13 @@ if (!empty($project['account_id'])) {
             font-size: 0.95em;
         }
 
+        .weekly-note {
+            margin-top: 12px;
+            font-size: 0.85em;
+            color: #6c757d;
+            text-align: right;
+        }
+
         /* Fee Table Styles for Journey */
         .fee-table-journey {
             width: 100%;
@@ -2903,6 +2910,9 @@ if (!empty($project['account_id'])) {
                                     </tbody>
                                 </table>
                             </div>
+                            <div class="weekly-note">
+                                PO execution milestones are applied to the week of each PO execution date (or the current week if no date is set).
+                            </div>
                             <div class="weekly-empty-state" id="weeklyEmptyState" style="display: none;">
                                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5">
                                     <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
@@ -3451,6 +3461,11 @@ if (!empty($project['account_id'])) {
 
         // ==================== MODULE ALLOCATION ====================
         function addModuleAllocation(batchId, wattage, quantity) {
+            if (workingState.moduleAllocations.some(allocation => String(allocation.module_id) === String(batchId))) {
+                showToast('This batch is already added to the projection.', 'error');
+                return;
+            }
+
             const batch = availableBatches.find(b => b.id == batchId);
             if (!batch) {
                 showToast('Module batch not found', 'error');
@@ -3543,6 +3558,9 @@ if (!empty($project['account_id'])) {
                     </div>
                 `;
                 updateModuleSummary();
+                if (typeof updateAvailableBatchStates === 'function') {
+                    updateAvailableBatchStates();
+                }
                 return;
             }
 
@@ -3626,6 +3644,19 @@ if (!empty($project['account_id'])) {
 
             container.innerHTML = html;
             updateModuleSummary();
+            if (typeof updateAvailableBatchStates === 'function') {
+                updateAvailableBatchStates();
+            }
+        }
+
+        function expandSection(sectionId) {
+            const header = document.querySelector(`[data-section="${sectionId}"] .collapsible-header`);
+            const content = document.getElementById(`${sectionId}-content`);
+            if (!header || !content) return;
+
+            header.classList.remove('collapsed');
+            content.classList.remove('collapsed');
+            saveCollapsibleStates();
         }
 
         function toggleAllocationExpand(index) {
@@ -4335,6 +4366,10 @@ if (!empty($project['account_id'])) {
                     const stopTypeBadge = stop.stop_type === 'port' ? 'port' : (stop.stop_type === 'customs' ? 'customs' : 'warehouse');
                     const stopTypeLabel = stop.stop_type === 'port' ? 'Port' : (stop.stop_type === 'customs' ? 'Customs Facility' : 'Warehouse');
                     const feeCount = (stop.fees || []).length;
+                    const collapsedClass = stop.is_collapsed ? 'collapsed' : '';
+                    const savedIndicator = stop.is_saved
+                        ? '<span class="saved-indicator" style="margin-left: 8px; display: inline-flex; align-items: center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#28a745" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></span>'
+                        : '';
 
                     // Calculate estimated duration if arrival dates are available
                     const nextStopIdx = stops.indexOf(stop) + 1;
@@ -4350,13 +4385,14 @@ if (!empty($project['account_id'])) {
                     }
 
                     nodeContent = `
-                        <div class="warehouse-stop-card" data-stop-id="${stop.id}">
+                        <div class="warehouse-stop-card ${collapsedClass}" data-stop-id="${stop.id}">
                             <div class="warehouse-stop-header" onclick="toggleWarehouseCard('${stop.id}')">
                                 <div class="warehouse-stop-info">
                                     <div class="warehouse-stop-title-row">
                                         <h4 class="warehouse-stop-title">${escapeHtml(stop.location_name || 'Unnamed ' + stopTypeLabel)}</h4>
                                         <span class="warehouse-stop-type-badge ${stopTypeBadge}">${stopTypeLabel}</span>
                                         ${badges}
+                                        ${savedIndicator}
                                     </div>
                                     <div class="warehouse-stop-summary">
                                         <div class="warehouse-stop-summary-item">
@@ -4406,7 +4442,7 @@ if (!empty($project['account_id'])) {
                                     <button type="button" class="btn btn-sm btn-danger" data-action="remove-stop" data-stop-id="${stop.id}">Remove This Stop</button>
                                     <button type="button" class="btn btn-sm btn-primary" data-action="save-stop" data-stop-id="${stop.id}">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><polyline points="20 6 9 17 4 12"/></svg>
-                                        Collapse
+                                        Save &amp; Next
                                     </button>
                                 </div>
                                 ` : ''}
@@ -4608,19 +4644,19 @@ if (!empty($project['account_id'])) {
             // Sync state to recalculate fees
             syncPlanState();
 
-            // Collapse the card
-            const card = document.querySelector(`.warehouse-stop-card[data-stop-id="${stopId}"]`);
-            if (card) {
-                card.classList.add('collapsed');
+            const stops = workingState.stops || [];
+            let nextStopId = null;
+            const currentIndex = stops.findIndex(stop => stop.id == stopId);
+            if (currentIndex >= 0) {
+                stops[currentIndex].is_collapsed = true;
+                stops[currentIndex].is_saved = true;
 
-                // Add saved indicator
-                const header = card.querySelector('.warehouse-stop-header');
-                if (header && !header.querySelector('.saved-indicator')) {
-                    const savedBadge = document.createElement('span');
-                    savedBadge.className = 'saved-indicator';
-                    savedBadge.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#28a745" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
-                    savedBadge.style.cssText = 'margin-left: 8px; display: inline-flex; align-items: center;';
-                    header.querySelector('.warehouse-stop-title-row').appendChild(savedBadge);
+                for (let i = currentIndex + 1; i < stops.length; i++) {
+                    if (!['origin', 'destination'].includes(stops[i].stop_type)) {
+                        stops[i].is_collapsed = false;
+                        nextStopId = stops[i].id;
+                        break;
+                    }
                 }
             }
 
@@ -4628,6 +4664,21 @@ if (!empty($project['account_id'])) {
             renderJourneyPlan();
             updateTimelineChart();
             showToast('Stop updated. Remember to save the projection!', 'success');
+
+            if (nextStopId) {
+                setTimeout(() => {
+                    const nextCard = document.querySelector(`.warehouse-stop-card[data-stop-id="${nextStopId}"]`);
+                    if (nextCard) {
+                        nextCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                }, 100);
+            } else {
+                expandSection('route-map');
+                const routeSection = document.querySelector('[data-section="route-map"]');
+                if (routeSection) {
+                    routeSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            }
         }
 
         function updateJourneyStopField(element) {
@@ -4637,6 +4688,7 @@ if (!empty($project['account_id'])) {
             const field = element.dataset.stopField;
             const value = element.type === 'checkbox' ? (element.checked ? 1 : 0) : element.value;
             stop[field] = value;
+            stop.is_saved = false;
 
             markAsUnsaved();
             renderJourneyPlan();
@@ -4670,6 +4722,7 @@ if (!empty($project['account_id'])) {
 
             fee[element.dataset.feeField] = element.value;
             fee.estimated_cost = calculateFeeEstimate(fee);
+            stop.is_saved = false;
 
             markAsUnsaved();
             renderJourneyPlan();
@@ -4688,6 +4741,7 @@ if (!empty($project['account_id'])) {
                 rate_unit: 'per_pallet',
                 estimated_cost: 0
             });
+            stop.is_saved = false;
 
             markAsUnsaved();
             renderJourneyPlan();
@@ -4697,6 +4751,7 @@ if (!empty($project['account_id'])) {
             const stop = workingState.stops.find(s => s.id == stopId);
             if (!stop || !stop.fees) return;
             stop.fees.splice(feeIndex, 1);
+            stop.is_saved = false;
             markAsUnsaved();
             renderJourneyPlan();
         }
@@ -5421,6 +5476,9 @@ if (!empty($project['account_id'])) {
 
         function collectMonthlyData() {
             const monthlyBuckets = {};
+            const milestoneEvents = collectMilestoneEvents();
+            const milestoneTotals = collectMilestoneTotals(milestoneEvents);
+            const addedMilestones = new Set();
 
             // Collect freight costs by month
             workingState.legs.forEach(leg => {
@@ -5432,11 +5490,23 @@ if (!empty($project['account_id'])) {
                     monthlyBuckets[monthKey].freight += leg.total_freight_cost || 0;
 
                     // Add milestone payment if triggered
-                    if (leg.triggers_milestone) {
-                        monthlyBuckets[monthKey].milestones += getMilestoneAmount(leg.triggers_milestone);
+                    if (leg.triggers_milestone && milestoneTotals[leg.triggers_milestone] && !addedMilestones.has(leg.triggers_milestone)) {
+                        monthlyBuckets[monthKey].milestones += milestoneTotals[leg.triggers_milestone].amount || 0;
+                        addedMilestones.add(leg.triggers_milestone);
                     }
                 }
             });
+
+            milestoneEvents
+                .filter(event => event.trigger === 'po_execution')
+                .forEach(event => {
+                    const eventDate = event.date || new Date().toISOString().split('T')[0];
+                    const monthKey = eventDate.substring(0, 7);
+                    if (!monthlyBuckets[monthKey]) {
+                        monthlyBuckets[monthKey] = { freight: 0, warehousing: 0, milestones: 0 };
+                    }
+                    monthlyBuckets[monthKey].milestones += event.amount || 0;
+                });
 
             // Collect warehousing costs by month
             workingState.stops.forEach(stop => {
@@ -5548,6 +5618,9 @@ if (!empty($project['account_id'])) {
 
         function collectWeeklyData() {
             const weeklyBuckets = {};
+            const milestoneEvents = collectMilestoneEvents();
+            const milestoneTotals = collectMilestoneTotals(milestoneEvents);
+            const addedMilestones = new Set();
 
             // Helper to get week key from date
             function getWeekKey(dateStr) {
@@ -5575,11 +5648,23 @@ if (!empty($project['account_id'])) {
                     weeklyBuckets[weekKey].freight += leg.total_freight_cost || 0;
 
                     // Add milestone payment if triggered
-                    if (leg.triggers_milestone) {
-                        weeklyBuckets[weekKey].milestones += getMilestoneAmount(leg.triggers_milestone);
+                    if (leg.triggers_milestone && milestoneTotals[leg.triggers_milestone] && !addedMilestones.has(leg.triggers_milestone)) {
+                        weeklyBuckets[weekKey].milestones += milestoneTotals[leg.triggers_milestone].amount || 0;
+                        addedMilestones.add(leg.triggers_milestone);
                     }
                 }
             });
+
+            milestoneEvents
+                .filter(event => event.trigger === 'po_execution')
+                .forEach(event => {
+                    const eventDate = event.date || new Date().toISOString().split('T')[0];
+                    const weekKey = getWeekKey(eventDate);
+                    if (!weeklyBuckets[weekKey]) {
+                        weeklyBuckets[weekKey] = { freight: 0, warehousing: 0, milestones: 0 };
+                    }
+                    weeklyBuckets[weekKey].milestones += event.amount || 0;
+                });
 
             // Collect warehousing costs by week
             workingState.stops.forEach(stop => {
@@ -5644,8 +5729,12 @@ if (!empty($project['account_id'])) {
         // ==================== WAREHOUSE CARD COLLAPSE ====================
         function toggleWarehouseCard(stopId) {
             const card = document.querySelector(`.warehouse-stop-card[data-stop-id="${stopId}"]`);
+            const stop = workingState.stops.find(item => item.id == stopId);
             if (card) {
                 card.classList.toggle('collapsed');
+            }
+            if (stop) {
+                stop.is_collapsed = card ? card.classList.contains('collapsed') : !stop.is_collapsed;
             }
         }
 
@@ -5810,13 +5899,27 @@ if (!empty($project['account_id'])) {
             const events = [];
             let totalFreight = 0;
             let totalWarehousing = 0;
-            let totalMilestones = 0;
+            const milestoneEvents = collectMilestoneEvents();
+            const milestoneTotals = collectMilestoneTotals(milestoneEvents);
+            const totalMilestones = milestoneEvents.reduce((sum, event) => sum + (event.amount || 0), 0);
+            const addedMilestones = new Set();
+
+            const poEventsByDate = {};
+            milestoneEvents
+                .filter(event => event.trigger === 'po_execution')
+                .forEach(event => {
+                    const date = event.date || new Date().toISOString().split('T')[0];
+                    if (!poEventsByDate[date]) {
+                        poEventsByDate[date] = { amount: 0, label: event.label || getMilestoneLabel('po_execution') };
+                    }
+                    poEventsByDate[date].amount += event.amount || 0;
+                });
 
             // Collect events from stops (warehousing fees)
             workingState.stops.forEach((stop, stopIndex) => {
                 if (stop.stop_type === 'origin' || stop.stop_type === 'destination') return;
 
-                const stopFees = (stop.fees || []).reduce((sum, f) => sum + (f.estimated_cost || 0), 0);
+                const stopFees = (stop.fees || []).reduce((sum, fee) => sum + (parseFloat(fee.estimated_cost) || 0), 0);
 
                 // Calculate fees including monthly fees across time
                 const arrivalDate = stop.estimated_arrival_date || null;
@@ -5838,7 +5941,7 @@ if (!empty($project['account_id'])) {
 
             // Collect events from legs (freight costs)
             workingState.legs.forEach(leg => {
-                const legCost = leg.total_freight_cost || 0;
+                const legCost = parseFloat(leg.total_freight_cost) || 0;
                 const legDate = leg.start_date || leg.end_date || null;
 
                 if (legCost > 0) {
@@ -5853,19 +5956,30 @@ if (!empty($project['account_id'])) {
                 }
 
                 // Add milestone as a separate event if triggered
-                if (leg.triggers_milestone) {
-                    const milestoneAmount = getMilestoneAmount(leg.triggers_milestone);
+                if (leg.triggers_milestone && milestoneTotals[leg.triggers_milestone] && !addedMilestones.has(leg.triggers_milestone)) {
+                    const milestoneInfo = milestoneTotals[leg.triggers_milestone];
+                    const milestoneAmount = milestoneInfo.amount || 0;
                     if (milestoneAmount > 0) {
-                        totalMilestones += milestoneAmount;
+                        addedMilestones.add(leg.triggers_milestone);
 
                         events.push({
                             date: leg.end_date || leg.start_date || new Date().toISOString().split('T')[0],
-                            label: getMilestoneLabel(leg.triggers_milestone),
+                            label: milestoneInfo.label || getMilestoneLabel(leg.triggers_milestone),
                             type: 'milestone',
                             amount: milestoneAmount
                         });
                     }
                 }
+            });
+
+            Object.entries(poEventsByDate).forEach(([date, info]) => {
+                if (info.amount <= 0) return;
+                events.push({
+                    date,
+                    label: info.label,
+                    type: 'milestone',
+                    amount: info.amount
+                });
             });
 
             // Sort by date
@@ -5932,6 +6046,7 @@ if (!empty($project['account_id'])) {
 
         function getMilestoneLabel(milestone) {
             const labels = {
+                'po_execution': 'PO Execution',
                 'shipping': 'Shipping',
                 'customs_cleared': 'Customs',
                 'project_delivery': 'Delivery'
@@ -5939,20 +6054,57 @@ if (!empty($project['account_id'])) {
             return labels[milestone] || milestone;
         }
 
-        function getMilestoneAmount(milestone) {
-            // Calculate from module allocations
-            let totalContract = 0;
+        function collectMilestoneEvents() {
+            const events = [];
+
             workingState.moduleAllocations.forEach(alloc => {
-                totalContract += alloc.contract_value || 0;
+                const contractValue = parseFloat(alloc.contract_value) || 0;
+                if (!contractValue || !Array.isArray(alloc.milestones)) {
+                    return;
+                }
+
+                alloc.milestones.forEach(milestone => {
+                    const trigger = milestone.trigger_event;
+                    const percentage = parseFloat(milestone.percentage) || 0;
+                    if (!trigger || percentage <= 0) {
+                        return;
+                    }
+
+                    const poDate = alloc.po_execution_date || alloc.poExecutionDate || '';
+                    const eventDate = trigger === 'po_execution' ? poDate : '';
+
+                    events.push({
+                        trigger,
+                        amount: contractValue * (percentage / 100),
+                        label: milestone.milestone_name || getMilestoneLabel(trigger),
+                        date: eventDate
+                    });
+                });
             });
 
-            const percentages = {
-                'shipping': 0.20,
-                'customs_cleared': 0.20,
-                'project_delivery': 0.30
-            };
+            return events;
+        }
 
-            return totalContract * (percentages[milestone] || 0);
+        function collectMilestoneTotals(milestoneEvents = null) {
+            const events = milestoneEvents || collectMilestoneEvents();
+            const totals = {};
+
+            events.forEach(event => {
+                if (!totals[event.trigger]) {
+                    totals[event.trigger] = {
+                        amount: 0,
+                        label: event.label || getMilestoneLabel(event.trigger)
+                    };
+                }
+                totals[event.trigger].amount += event.amount;
+            });
+
+            return totals;
+        }
+
+        function getMilestoneAmount(milestone, milestoneTotals = null) {
+            const totals = milestoneTotals || collectMilestoneTotals();
+            return totals[milestone]?.amount || 0;
         }
 
         // Note: formatDate is defined earlier in the file
