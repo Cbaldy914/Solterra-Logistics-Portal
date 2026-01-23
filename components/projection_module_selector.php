@@ -1015,6 +1015,7 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
     flex-direction: column;
     padding: 0;
     overflow: hidden;
+    width: 100%;
 }
 
 .module-item-header {
@@ -1027,6 +1028,7 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
     border-bottom: 1px solid #e9ecef;
     transition: all 0.2s ease;
     gap: 20px;
+    width: 100%;
 }
 
 .module-item-header:hover {
@@ -1129,6 +1131,7 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
     padding: 24px;
     background: white;
     transition: all 0.3s ease;
+    width: 100%;
 }
 
 .module-item.collapsed .module-item-body {
