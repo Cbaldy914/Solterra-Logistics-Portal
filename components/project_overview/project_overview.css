@@ -1680,17 +1680,33 @@
     text-decoration: none;
 }
 
-/* State: Forecast set - use Solterra blue for confirmed state */
+/* State: Partial forecast - modules set but no full plan yet */
+.forecast-badge.partial-forecast {
+    background: linear-gradient(135deg, #e8f4f6 0%, #d4eaee 100%);
+    color: #3A6E7F;
+    box-shadow: 0 2px 8px rgba(72, 140, 154, 0.15);
+    border: 1px solid rgba(72, 140, 154, 0.25);
+}
+
+.forecast-badge.partial-forecast:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.25);
+    background: linear-gradient(135deg, #d4eaee 0%, #c0dfe5 100%);
+    color: #2d5a66;
+    text-decoration: none;
+}
+
+/* State: Forecast set - use green for confirmed/complete state */
 .forecast-badge.has-forecast {
-    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    background: linear-gradient(135deg, #28a745 0%, #218838 100%);
     color: #fff;
-    box-shadow: 0 2px 8px rgba(72, 140, 154, 0.3);
+    box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
 }
 
 .forecast-badge.has-forecast:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.4);
-    background: linear-gradient(135deg, #3A6E7F 0%, #2d5a66 100%);
+    box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
+    background: linear-gradient(135deg, #218838 0%, #1e7e34 100%);
     color: #fff;
     text-decoration: none;
 }

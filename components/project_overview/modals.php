@@ -412,9 +412,9 @@ document.getElementById('logisticsBreakdownModal')?.addEventListener('click', fu
                 <tbody>
                     <?php if (!empty($all_projection_weeks)):
                         foreach ($all_projection_weeks as $pw):
-                            $we = new DateTime($pw['week_ending']);
-                            $ws = clone $we;
-                            $ws->modify('-6 days');
+                            $ws = new DateTime($pw['week_start']);
+                            $we = clone $ws;
+                            $we->modify('+6 days');
                             $date_range = $ws->format('M j') . ' - ' . $we->format('M j, Y');
                     ?>
                     <tr>

@@ -991,8 +991,8 @@ function trigger_batch_milestone($module_batch_id, $trigger_event, $conn, $user_
         return $result;
     }
 
-    // Get module batch cost_per_watt
-    $stmt = $conn->prepare("SELECT cost_per_watt FROM modules WHERE id = ?");
+    // Get module batch cost_per_watt and po_execution_date
+    $stmt = $conn->prepare("SELECT cost_per_watt, po_execution_date FROM modules WHERE id = ?");
     if (!$stmt) {
         $result['error'] = 'Database error';
         return $result;
@@ -1009,6 +1009,7 @@ function trigger_batch_milestone($module_batch_id, $trigger_event, $conn, $user_
     }
 
     $cost_per_watt = $module_result['cost_per_watt'];
+    $po_execution_date = $module_result['po_execution_date'] ?? null;
 
     // No cost configured - milestones don't apply
     if (!$cost_per_watt || $cost_per_watt <= 0) {
@@ -1064,11 +1065,12 @@ function trigger_batch_milestone($module_batch_id, $trigger_event, $conn, $user_
         return $result;
     }
 
-    // Process each milestone
+    // Process each milestone - use po_execution_date if available for po_execution events
+    $triggered_at_value = ($trigger_event === 'po_execution' && !empty($po_execution_date)) ? $po_execution_date : date('Y-m-d H:i:s');
     $insert_stmt = $conn->prepare("
         INSERT INTO delivery_milestone_instances
         (delivery_id, module_batch_id, milestone_id, triggered_at, triggered_by_user_id, module_quantity, wattage, cost_per_watt, milestone_percentage, payment_amount)
-        VALUES (NULL, ?, ?, NOW(), ?, ?, ?, ?, ?, ?)
+        VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
 
     if (!$insert_stmt) {
@@ -1093,9 +1095,10 @@ function trigger_batch_milestone($module_batch_id, $trigger_event, $conn, $user_
         $payment_amount = round($total_batch_value * ($percentage / 100), 2);
 
         $insert_stmt->bind_param(
-            "iiiiiddd",
+            "iisiiiddd",
             $module_batch_id,
             $milestone_id,
+            $triggered_at_value,
             $user_id,
             $total_quantity,
             $avg_wattage,
