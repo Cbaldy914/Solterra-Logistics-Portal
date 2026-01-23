@@ -2646,20 +2646,24 @@ function initializeFinancialCharts(){
             labels: dateLabelsForBudget,
             datasets:[
                 {
-                    label:'Anticipated Cost',
+                    label:'Forecasted',
                     data: antCost,
                     borderColor:'#488C9A',
+                    borderWidth:2,
                     fill:false,
                     borderDash:[5,5],
-                    pointRadius:0
+                    pointRadius:0,
+                    tension:0.1
                 },
                 {
-                    label:'Actual Cost',
+                    label:'Actual',
                     data: actCost,
                     borderColor:'#293E4C',
+                    borderWidth:2,
                     fill:false,
                     pointRadius:0,
-                    spanGaps:false
+                    spanGaps:false,
+                    tension:0.1
                 }
             ]
         },
@@ -2681,8 +2685,8 @@ function initializeFinancialCharts(){
                 },
                 y:{
                     beginAtZero:true,
-                    ticks:{ callback:function(val){return '$'+Number(val).toFixed(2);} },
-                    title:{display:true, text:'Cost (USD)'}
+                    ticks:{ callback:function(val){return '$'+Number(val).toLocaleString();} },
+                    title:{display:true, text:'Cost ($)'}
                 }
             },
             plugins:{
@@ -2691,7 +2695,7 @@ function initializeFinancialCharts(){
                         label:function(context){
                             var label = context.dataset.label || '';
                             var val = context.parsed.y || 0;
-                            return label+': $'+ Number(val).toFixed(2);
+                            return label+': $'+ Number(val).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
                         }
                     }
                 }
