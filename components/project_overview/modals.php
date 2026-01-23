@@ -252,3 +252,335 @@ document.getElementById('logisticsBreakdownModal')?.addEventListener('click', fu
     if (e.target === this) closeLogisticsBreakdownModal();
 });
 </script>
+
+<!-- Cashflow Forecast Detail Modal -->
+<style>
+.cashflow-modal-content {
+    background: #fff;
+    border-radius: 16px;
+    width: 90%;
+    max-width: 600px;
+    margin: 5% auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+    overflow: hidden;
+    animation: modalSlideIn 0.3s ease;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+.cashflow-modal-header {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    padding: 24px 32px;
+    position: relative;
+    flex-shrink: 0;
+}
+.cashflow-modal-header h3 {
+    color: #fff;
+    margin: 0;
+    font-size: 1.1em;
+    font-weight: 600;
+}
+.cashflow-modal-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 24px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: all 0.2s;
+    border-radius: 50%;
+    background: transparent;
+}
+.cashflow-modal-close:hover {
+    opacity: 1;
+    background: rgba(255,255,255,0.15);
+}
+.cashflow-modal-body {
+    padding: 0;
+    overflow-y: auto;
+    flex: 1;
+}
+.cashflow-detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85em;
+}
+.cashflow-detail-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f8f9fa;
+    padding: 12px 14px;
+    font-weight: 600;
+    color: #293E4C;
+    text-align: right;
+    border-bottom: 2px solid #e9ecef;
+    white-space: nowrap;
+}
+.cashflow-detail-table thead th:first-child {
+    text-align: left;
+}
+.cashflow-detail-table tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f1f3f4;
+    text-align: right;
+    color: #495057;
+}
+.cashflow-detail-table tbody td:first-child {
+    text-align: left;
+    font-weight: 500;
+    color: #293E4C;
+}
+.cashflow-detail-table tbody tr:hover {
+    background: #f8f9fa;
+}
+.cashflow-detail-table .cumulative-val {
+    font-weight: 600;
+    color: #488C9A;
+}
+</style>
+
+<div id="cashflowDetailModal" class="warehouse-selection-modal" style="display:none;">
+    <div class="cashflow-modal-content">
+        <div class="cashflow-modal-header">
+            <span class="cashflow-modal-close" onclick="closeCashflowDetailModal()">&times;</span>
+            <h3>Cashflow Forecast Detail</h3>
+        </div>
+        <div class="cashflow-modal-body">
+            <table class="cashflow-detail-table">
+                <thead>
+                    <tr>
+                        <th>Week Ending</th>
+                        <th>Freight</th>
+                        <th>Warehousing</th>
+                        <th>Milestones</th>
+                        <th>Total</th>
+                        <th>Cumulative</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (!empty($all_projection_weeks)):
+                        foreach ($all_projection_weeks as $pw):
+                            $we = new DateTime($pw['week_ending']);
+                    ?>
+                    <tr>
+                        <td><?php echo $we->format('M j, Y'); ?></td>
+                        <td>$<?php echo number_format($pw['freight'], 0); ?></td>
+                        <td>$<?php echo number_format($pw['warehousing'], 0); ?></td>
+                        <td>$<?php echo number_format($pw['milestones'], 0); ?></td>
+                        <td>$<?php echo number_format($pw['total'], 0); ?></td>
+                        <td class="cumulative-val">$<?php echo number_format($pw['cumulative'], 0); ?></td>
+                    </tr>
+                    <?php endforeach; else: ?>
+                    <tr>
+                        <td colspan="6" style="text-align:center; padding:24px; color:#6c757d;">No projection data available</td>
+                    </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function openCashflowDetailModal() {
+    document.getElementById('cashflowDetailModal').style.display = 'block';
+}
+function closeCashflowDetailModal() {
+    document.getElementById('cashflowDetailModal').style.display = 'none';
+}
+document.getElementById('cashflowDetailModal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeCashflowDetailModal();
+});
+</script>
+
+<!-- Module Cost Breakdown Modal -->
+<style>
+.module-breakdown-modal-content {
+    background: #fff;
+    border-radius: 16px;
+    width: 90%;
+    max-width: 500px;
+    margin: 8% auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+    overflow: hidden;
+    animation: modalSlideIn 0.3s ease;
+}
+.module-breakdown-header {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    padding: 24px 32px;
+    position: relative;
+}
+.module-breakdown-header h3 {
+    color: #fff;
+    margin: 0 0 4px 0;
+    font-size: 0.85em;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    opacity: 0.85;
+}
+.module-breakdown-total {
+    color: #fff;
+    font-size: 2em;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+.module-breakdown-subtitle {
+    color: rgba(255,255,255,0.75);
+    font-size: 0.85em;
+    margin-top: 4px;
+}
+.module-breakdown-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 24px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: all 0.2s;
+    border-radius: 50%;
+    background: transparent;
+}
+.module-breakdown-close:hover {
+    opacity: 1;
+    background: rgba(255,255,255,0.15);
+}
+.module-breakdown-body {
+    padding: 24px 32px;
+}
+.milestone-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #eee;
+}
+.milestone-row:last-child {
+    border-bottom: none;
+}
+.milestone-row-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.milestone-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.milestone-status-dot.complete { background: #10b981; }
+.milestone-status-dot.pending { background: #e5e7eb; border: 2px solid #9ca3af; box-sizing: border-box; }
+.milestone-row-name {
+    font-weight: 500;
+    color: #293E4C;
+    font-size: 0.9em;
+}
+.milestone-row-pct {
+    font-size: 0.75em;
+    color: #6c757d;
+    margin-left: 4px;
+}
+.milestone-row-right {
+    text-align: right;
+}
+.milestone-row-accrued {
+    font-weight: 600;
+    color: #293E4C;
+    font-size: 0.9em;
+}
+.milestone-row-target {
+    font-size: 0.75em;
+    color: #6c757d;
+}
+.module-breakdown-footer {
+    border-top: 2px solid #e9ecef;
+    margin-top: 8px;
+    padding-top: 16px;
+}
+.module-breakdown-footer-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+}
+.module-breakdown-footer-label {
+    font-size: 0.85em;
+    color: #6c757d;
+}
+.module-breakdown-footer-value {
+    font-weight: 600;
+    font-size: 0.9em;
+    color: #293E4C;
+}
+</style>
+
+<div id="moduleBreakdownModal" class="warehouse-selection-modal" style="display:none;">
+    <div class="module-breakdown-modal-content">
+        <div class="module-breakdown-header">
+            <span class="module-breakdown-close" onclick="closeModuleBreakdownModal()">&times;</span>
+            <h3>Accrued Module Cost</h3>
+            <div class="module-breakdown-total">$<?php echo number_format($accrued_module_cost ?? 0, 2); ?></div>
+            <?php if (($module_contract_value ?? 0) > 0): ?>
+            <div class="module-breakdown-subtitle">of $<?php echo number_format($module_contract_value, 2); ?> contract value (<?php echo $milestone_completion['completion_percent'] ?? 0; ?>%)</div>
+            <?php endif; ?>
+        </div>
+        <div class="module-breakdown-body">
+            <?php if (!empty($module_milestone_rows)):
+                foreach ($module_milestone_rows as $msr):
+                    if ($msr['percentage'] <= 0) continue;
+            ?>
+            <div class="milestone-row">
+                <div class="milestone-row-left">
+                    <div class="milestone-status-dot <?php echo $msr['is_complete'] ? 'complete' : 'pending'; ?>"></div>
+                    <div>
+                        <span class="milestone-row-name"><?php echo htmlspecialchars($msr['name']); ?></span>
+                        <span class="milestone-row-pct">(<?php echo $msr['percentage']; ?>%)</span>
+                    </div>
+                </div>
+                <div class="milestone-row-right">
+                    <div class="milestone-row-accrued">$<?php echo number_format($msr['accrued_amount'], 2); ?></div>
+                    <div class="milestone-row-target">of $<?php echo number_format($msr['target_amount'], 2); ?></div>
+                </div>
+            </div>
+            <?php endforeach; else: ?>
+            <div style="text-align:center; padding:24px; color:#6c757d;">No milestone data configured</div>
+            <?php endif; ?>
+
+            <div class="module-breakdown-footer">
+                <div class="module-breakdown-footer-row">
+                    <span class="module-breakdown-footer-label">Accrued Module Cost</span>
+                    <span class="module-breakdown-footer-value">$<?php echo number_format($accrued_module_cost ?? 0, 2); ?></span>
+                </div>
+                <div class="module-breakdown-footer-row">
+                    <span class="module-breakdown-footer-label">Full Contract Value</span>
+                    <span class="module-breakdown-footer-value">$<?php echo number_format($module_contract_value ?? 0, 2); ?></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function openModuleBreakdownModal() {
+    document.getElementById('moduleBreakdownModal').style.display = 'block';
+}
+function closeModuleBreakdownModal() {
+    document.getElementById('moduleBreakdownModal').style.display = 'none';
+}
+document.getElementById('moduleBreakdownModal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeModuleBreakdownModal();
+});
+</script>

@@ -24,6 +24,7 @@ require_once '../config.php';
 require_once 'anticipated_schedule_helpers.php';
 require_once 'cost_helpers.php';
 require_once 'milestone_helpers.php';
+require_once 'projection_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Connection failed");
@@ -290,6 +291,9 @@ function fetchDeliveriesByDate($conn, $project_id, $date_field, $status_filter =
 
 // NEW: Check if anticipated delivery schedule exists - use it if available
 $schedule_data = generateAnticipatedDeliveriesFromSchedule($conn, $project_id);
+
+// Load primary delivery projection for financial forecasting
+$primary_projection = get_primary_projection($conn, $project_id);
 $anticipated_deliveries = [];
 $date_labels = [];
 
@@ -1029,13 +1033,78 @@ $has_module_cost_data = $module_cost_data['has_cost_data'];
 // Calculate logistics as percentage of module cost (if module cost data available)
 $logistics_percentage_of_module = ($total_module_cost > 0) ? ($total_logistics_cost / $total_module_cost) * 100 : null;
 
-// Total project cost (modules + logistics)
+// Total project cost (will be recalculated after milestone data is loaded)
 $total_project_cost = $total_module_cost + $total_logistics_cost;
 
 // Get milestone payment data
 $milestone_completion = get_milestone_completion_status($project_id, $conn);
 $milestone_timeline = get_milestone_payment_timeline($project_id, $conn);
 $has_milestone_data = $milestone_completion['total_contract_value'] > 0;
+
+// Calculate accrued module cost (triggered milestones) for cost summary
+$accrued_module_cost = $milestone_completion['total_triggered'];
+$module_contract_value = $milestone_completion['total_contract_value'];
+
+// Build milestone breakdown data for the modal
+$module_milestone_rows = [];
+$milestone_trigger_names = [
+    'po_execution' => 'PO Execution',
+    'shipping' => 'Shipping',
+    'customs_cleared' => 'Customs Clearance',
+    'project_delivery' => 'Project Delivery'
+];
+$milestone_trigger_order = ['po_execution', 'shipping', 'customs_cleared', 'project_delivery'];
+
+// Get triggered amounts by event for this project
+$milestone_by_event = [];
+$stmt_ms_events = $conn->prepare("
+    SELECT mbm.trigger_event, mbm.percentage,
+           COALESCE(SUM(
+               CASE WHEN mbm.trigger_event = 'shipping' AND d.origin_type = 'warehouse' THEN 0
+                    ELSE dmi.payment_amount END
+           ), 0) as triggered_amount
+    FROM module_batch_milestones mbm
+    JOIN modules m ON mbm.module_id = m.id
+    LEFT JOIN delivery_milestone_instances dmi ON dmi.milestone_id = mbm.id
+    LEFT JOIN deliveries d ON dmi.delivery_id = d.id
+    WHERE m.project_id = ? AND mbm.is_active = 1
+    GROUP BY mbm.trigger_event, mbm.percentage
+");
+if ($stmt_ms_events) {
+    $stmt_ms_events->bind_param("i", $project_id);
+    $stmt_ms_events->execute();
+    $ms_events_result = $stmt_ms_events->get_result();
+    while ($ms_row = $ms_events_result->fetch_assoc()) {
+        $trigger = $ms_row['trigger_event'];
+        if (!isset($milestone_by_event[$trigger])) {
+            $milestone_by_event[$trigger] = ['triggered' => 0, 'percentage' => $ms_row['percentage']];
+        }
+        $milestone_by_event[$trigger]['triggered'] += floatval($ms_row['triggered_amount']);
+    }
+    $stmt_ms_events->close();
+}
+
+// Build rows for the modal table
+foreach ($milestone_trigger_order as $trigger) {
+    if (isset($milestone_by_event[$trigger]) || $module_contract_value > 0) {
+        $pct = $milestone_by_event[$trigger]['percentage'] ?? 0;
+        $target_amount = $module_contract_value * ($pct / 100);
+        $triggered_amount = $milestone_by_event[$trigger]['triggered'] ?? 0;
+        $module_milestone_rows[] = [
+            'name' => $milestone_trigger_names[$trigger] ?? $trigger,
+            'trigger' => $trigger,
+            'percentage' => $pct,
+            'target_amount' => round($target_amount, 2),
+            'accrued_amount' => round($triggered_amount, 2),
+            'is_complete' => ($target_amount > 0 && $triggered_amount >= $target_amount * 0.99)
+        ];
+    }
+}
+
+// Recalculate total project cost using accrued milestone amount
+if ($has_milestone_data) {
+    $total_project_cost = $accrued_module_cost + $total_logistics_cost;
+}
 
 // Build cost_data
 $cost_data = [];
@@ -1126,37 +1195,138 @@ for($i=0;$i<5;$i++){
     $weekEndingFin->modify('+1 week');
 }
 
-// Forecast next 5 weeks
-$anticipated_deliveries_financial = [];
-foreach($weeks_financial as $ix=>$wf) {
-    $anticipated_deliveries_financial[$ix] = 0;
-}
-$stmt = $conn->prepare("
-    SELECT anticipated_delivery_date AS dd, quantity, wattage
-    FROM deliveries
-    WHERE project_id=? AND anticipated_delivery_date IS NOT NULL
-    ORDER BY anticipated_delivery_date ASC
-");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$res_fin = $stmt->get_result();
-while($rf=$res_fin->fetch_assoc()) {
-    $dd   = new DateTime($rf['dd']);
-    $w    = (float)$rf['wattage'];
-    $q    = (int)$rf['quantity'];
+// Forecast from primary projection (or zeros if no projection)
+$anticipated_deliveries_financial = array_fill(0, count($weeks_financial), 0);
+$all_projection_weeks = []; // All weeks with costs (for modal)
 
-    $perModFreight     = ($total_raw_modules>0)?($forecasted_freight / $total_raw_modules):0;
-    $perModAccessorial = ($total_raw_modules>0)?($forecasted_accessorial / $total_raw_modules):0;
-    $forecastVal = ($perModFreight + $perModAccessorial)*$q + ($solterra_fee*($w*$q));
+if ($primary_projection && !empty($primary_projection['legs'])) {
+    $projection_weekly_costs = []; // date => ['freight' => X, 'warehousing' => X, 'milestones' => X]
 
-    foreach($weeks_financial as $ix=>$wk) {
-        if($dd>=$wk['start'] && $dd<=$wk['end']) {
-            $anticipated_deliveries_financial[$ix] += $forecastVal;
-            break;
+    // Calculate total milestone amounts per trigger event from module allocations
+    $projection_milestone_amounts = []; // trigger_event => total_amount
+    $projection_total_contract_value = 0;
+    if (!empty($primary_projection['module_allocations'])) {
+        foreach ($primary_projection['module_allocations'] as $alloc) {
+            $contract_val = $alloc['contract_value'] ?? 0;
+            $projection_total_contract_value += $contract_val;
+            if (!empty($alloc['milestones'])) {
+                foreach ($alloc['milestones'] as $ms) {
+                    $trigger = $ms['trigger_event'];
+                    $ms_amount = $contract_val * ($ms['percentage'] / 100);
+                    if (!isset($projection_milestone_amounts[$trigger])) {
+                        $projection_milestone_amounts[$trigger] = 0;
+                    }
+                    $projection_milestone_amounts[$trigger] += $ms_amount;
+                }
+            }
+
+            // PO execution milestone goes to po_execution_date week
+            if (!empty($alloc['po_execution_date']) && isset($projection_milestone_amounts['po_execution'])) {
+                $po_week = getWeekEndingSunday($alloc['po_execution_date']);
+                if (!isset($projection_weekly_costs[$po_week])) {
+                    $projection_weekly_costs[$po_week] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
+                }
+                // Add po_execution milestone for this allocation only
+                $alloc_po_amount = 0;
+                foreach ($alloc['milestones'] as $ms) {
+                    if ($ms['trigger_event'] === 'po_execution') {
+                        $alloc_po_amount += $contract_val * ($ms['percentage'] / 100);
+                    }
+                }
+                $projection_weekly_costs[$po_week]['milestones'] += $alloc_po_amount;
+            }
+        }
+    }
+
+    // Iterate legs: assign freight cost to start_date week, milestones to triggered week
+    $assigned_milestone_events = []; // Prevent double-counting if multiple legs trigger same event
+    foreach ($primary_projection['legs'] as $leg) {
+        if (!empty($leg['start_date'])) {
+            $leg_week = getWeekEndingSunday($leg['start_date']);
+            if (!isset($projection_weekly_costs[$leg_week])) {
+                $projection_weekly_costs[$leg_week] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
+            }
+            $projection_weekly_costs[$leg_week]['freight'] += floatval($leg['total_freight_cost'] ?? 0);
+
+            // If this leg triggers a milestone, add milestone amount to this week
+            if (!empty($leg['triggers_milestone']) && $leg['triggers_milestone'] !== 'po_execution') {
+                $trigger = $leg['triggers_milestone'];
+                if (isset($projection_milestone_amounts[$trigger]) && !in_array($trigger, $assigned_milestone_events)) {
+                    $projection_weekly_costs[$leg_week]['milestones'] += $projection_milestone_amounts[$trigger];
+                    $assigned_milestone_events[] = $trigger;
+                }
+            }
+        }
+    }
+
+    // Distribute stop fees across their duration (arrival to departure)
+    if (!empty($primary_projection['stops'])) {
+        foreach ($primary_projection['stops'] as $stop) {
+            if (empty($stop['fees']) || $stop['total_fees'] <= 0) continue;
+            $arrival = $stop['estimated_arrival_date'] ?? null;
+            $departure = $stop['estimated_departure_date'] ?? null;
+            if ($arrival) {
+                if ($departure && $departure > $arrival) {
+                    // Distribute across weeks from arrival to departure
+                    $arr_dt = new DateTime($arrival);
+                    $dep_dt = new DateTime($departure);
+                    $days = max(1, $arr_dt->diff($dep_dt)->days);
+                    $daily_cost = $stop['total_fees'] / $days;
+
+                    $current = clone $arr_dt;
+                    while ($current <= $dep_dt) {
+                        $w_key = getWeekEndingSunday($current->format('Y-m-d'));
+                        if (!isset($projection_weekly_costs[$w_key])) {
+                            $projection_weekly_costs[$w_key] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
+                        }
+                        // Count days in this week
+                        $week_end = new DateTime($w_key);
+                        $week_start = clone $week_end;
+                        $week_start->modify('-6 days');
+                        $period_start = max($current->getTimestamp(), $week_start->getTimestamp());
+                        $period_end = min($dep_dt->getTimestamp(), $week_end->getTimestamp());
+                        $period_days = max(1, (int)ceil(($period_end - $period_start) / 86400));
+                        $projection_weekly_costs[$w_key]['warehousing'] += $daily_cost * $period_days;
+                        $current = clone $week_end;
+                        $current->modify('+1 day');
+                    }
+                } else {
+                    // Lump sum at arrival week
+                    $w_key = getWeekEndingSunday($arrival);
+                    if (!isset($projection_weekly_costs[$w_key])) {
+                        $projection_weekly_costs[$w_key] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
+                    }
+                    $projection_weekly_costs[$w_key]['warehousing'] += $stop['total_fees'];
+                }
+            }
+        }
+    }
+
+    // Sort weeks and build all_projection_weeks for modal
+    ksort($projection_weekly_costs);
+    $cumulative_projection = 0;
+    foreach ($projection_weekly_costs as $week_date => $costs) {
+        $week_total = $costs['freight'] + $costs['warehousing'] + $costs['milestones'];
+        $cumulative_projection += $week_total;
+        $all_projection_weeks[] = [
+            'week_ending' => $week_date,
+            'freight' => round($costs['freight'], 2),
+            'warehousing' => round($costs['warehousing'], 2),
+            'milestones' => round($costs['milestones'], 2),
+            'total' => round($week_total, 2),
+            'cumulative' => round($cumulative_projection, 2)
+        ];
+    }
+
+    // Fill the 5-week financial forecast from projection data
+    foreach ($weeks_financial as $ix => $wf) {
+        $week_key = $wf['end']->format('Y-m-d');
+        if (isset($projection_weekly_costs[$week_key])) {
+            $costs = $projection_weekly_costs[$week_key];
+            $anticipated_deliveries_financial[$ix] = $costs['freight'] + $costs['warehousing'] + $costs['milestones'];
         }
     }
 }
-$stmt->close();
 
 // open invoices
 $stmt = $conn->prepare("
@@ -1172,8 +1342,8 @@ $stmt->close();
 $open_invoices_total=$open_invoices_total?:0;
 
 // For Forecasted vs Actual Cost line chart
-$deliveries_by_date_actual_cost  = [];
-$deliveries_by_date_anticipated = [];
+// Actual costs from real deliveries
+$deliveries_by_date_actual_cost = [];
 $stmt = $conn->prepare("
     SELECT *
     FROM deliveries
@@ -1191,13 +1361,11 @@ while($dv = $allDel->fetch_assoc()) {
     $watt  = (float)$dv['wattage'];
     $qty   = (int)$dv['quantity'];
 
-    // Actual cost
     if(empty($adate) && $stat==='Canceled') {
         $adate = (!empty($ddate)) ? $ddate : date('Y-m-d');
     }
     if(!empty($adate)){
         $weekKey = getWeekEndingSunday($adate);
-        // Warehousing is now calculated from pallets at project level, not per-delivery
         $cc   = (float)$dv['customer_cost'];
         $ac   = (float)$dv['accessorial_costs'];
         $fee  = $solterra_fee*($watt*$qty);
@@ -1207,23 +1375,45 @@ while($dv = $allDel->fetch_assoc()) {
         }
         $deliveries_by_date_actual_cost[$weekKey] += $actual_tc;
     }
+}
 
-    // Anticipated cost
-    $cost_date = $dv['actual_delivery_date'];
-    if(empty($cost_date) && $stat==='Canceled'){
-        $cost_date = (!empty($ddate))? $ddate : date('Y-m-d');
-    } else if(empty($cost_date)){
-        $cost_date = $ddate;
+// Anticipated costs from projection (or fallback to old method)
+$deliveries_by_date_anticipated = [];
+if (!empty($all_projection_weeks)) {
+    // Use projection weekly costs
+    foreach ($all_projection_weeks as $pw) {
+        $deliveries_by_date_anticipated[$pw['week_ending']] = $pw['total'];
     }
-    if(!empty($cost_date)) {
-        $weekKey = getWeekEndingSunday($cost_date);
-        $pmFreight     = ($total_raw_modules>0)?($forecasted_freight / $total_raw_modules):0;
-        $pmAccessorial = ($total_raw_modules>0)?($forecasted_accessorial / $total_raw_modules):0;
-        $forecast_tc   = ($pmFreight + $pmAccessorial)*$qty + ($solterra_fee*($watt*$qty));
-        if(!isset($deliveries_by_date_anticipated[$weekKey])) {
-            $deliveries_by_date_anticipated[$weekKey] = 0;
+} else {
+    // Fallback: use forecasted costs from deliveries table
+    $stmt = $conn->prepare("SELECT * FROM deliveries WHERE project_id=?");
+    $stmt->bind_param("i", $project_id);
+    $stmt->execute();
+    $allDelForecast = $stmt->get_result();
+    $stmt->close();
+
+    while($dv = $allDelForecast->fetch_assoc()) {
+        $ddate = $dv['anticipated_delivery_date'];
+        $stat  = $dv['status_of_delivery'];
+        $watt  = (float)$dv['wattage'];
+        $qty   = (int)$dv['quantity'];
+
+        $cost_date = $dv['actual_delivery_date'];
+        if(empty($cost_date) && $stat==='Canceled'){
+            $cost_date = (!empty($ddate))? $ddate : date('Y-m-d');
+        } else if(empty($cost_date)){
+            $cost_date = $ddate;
         }
-        $deliveries_by_date_anticipated[$weekKey] += $forecast_tc;
+        if(!empty($cost_date)) {
+            $weekKey = getWeekEndingSunday($cost_date);
+            $pmFreight     = ($total_raw_modules>0)?($forecasted_freight / $total_raw_modules):0;
+            $pmAccessorial = ($total_raw_modules>0)?($forecasted_accessorial / $total_raw_modules):0;
+            $forecast_tc   = ($pmFreight + $pmAccessorial)*$qty + ($solterra_fee*($watt*$qty));
+            if(!isset($deliveries_by_date_anticipated[$weekKey])) {
+                $deliveries_by_date_anticipated[$weekKey] = 0;
+            }
+            $deliveries_by_date_anticipated[$weekKey] += $forecast_tc;
+        }
     }
 }
 
@@ -1256,6 +1446,7 @@ $budgetLineChartData = [
 ];
 $budgetLineChartDataJSON=json_encode($budgetLineChartData);
 $dateLabelsForBudget=json_encode($all_dates_cost);
+$allProjectionWeeksJSON=json_encode($all_projection_weeks);
 
 // For Admin Warehousing functionality - check if project has pallets in multiple warehouses
 $warehouses_with_inventory = [];
