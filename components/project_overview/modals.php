@@ -253,6 +253,195 @@ document.getElementById('logisticsBreakdownModal')?.addEventListener('click', fu
 });
 </script>
 
+<!-- Total Cost Breakdown Modal -->
+<style>
+.total-cost-modal-content {
+    background: #fff;
+    border-radius: 18px;
+    width: 92%;
+    max-width: 800px;
+    margin: 6% auto;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.2), 0 8px 24px rgba(0,0,0,0.1);
+    overflow: hidden;
+    animation: modalSlideIn 0.3s ease;
+    max-height: 86vh;
+    display: flex;
+    flex-direction: column;
+}
+.total-cost-modal-header {
+    background: #488C9A;
+    padding: 26px 32px;
+    position: relative;
+    flex-shrink: 0;
+}
+.total-cost-modal-header h3 {
+    color: #fff;
+    margin: 0 0 6px 0;
+    font-size: 1.1em;
+    font-weight: 600;
+}
+.total-cost-modal-total {
+    color: #fff;
+    font-size: 2.1em;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+.total-cost-modal-subtitle {
+    color: rgba(255,255,255,0.75);
+    font-size: 0.85em;
+    margin-top: 6px;
+}
+.total-cost-modal-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 22px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: all 0.2s;
+    border-radius: 50%;
+    background: transparent;
+}
+.total-cost-modal-close:hover {
+    opacity: 1;
+    background: rgba(255,255,255,0.15);
+}
+.total-cost-modal-body {
+    padding: 24px 32px 32px 32px;
+    overflow-y: auto;
+    flex: 1;
+}
+.total-cost-sections {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 50px;
+}
+.total-cost-sections .total-cost-section {
+    min-width: 0;
+}
+@media (max-width: 768px) {
+    .total-cost-sections {
+        grid-template-columns: 1fr;
+    }
+}
+.total-cost-section {
+    margin-top: 0;
+}
+.total-cost-section-title {
+    font-size: 0.78em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #6c757d;
+    margin-bottom: 14px;
+}
+</style>
+
+<div id="totalCostBreakdownModal" class="warehouse-selection-modal" style="display:none;">
+    <div class="total-cost-modal-content">
+        <div class="total-cost-modal-header">
+            <span class="total-cost-modal-close" onclick="closeTotalCostBreakdownModal()">&times;</span>
+            <h3>Total Costs to Date</h3>
+            <div class="total-cost-modal-total">$<?php echo number_format($total_project_cost ?? 0, 2); ?></div>
+            <div class="total-cost-modal-subtitle">Accrued milestones and logistics costs</div>
+        </div>
+        <div class="total-cost-modal-body">
+            <div class="total-cost-sections">
+                <div class="total-cost-section">
+                    <div class="total-cost-section-title">Milestone Accrual</div>
+                    <?php if (!empty($module_milestone_rows)):
+                        foreach ($module_milestone_rows as $msr):
+                            if ($msr['percentage'] <= 0) continue;
+                    ?>
+                    <div class="milestone-row">
+                        <div class="milestone-row-left">
+                            <div class="milestone-status-dot <?php echo $msr['is_complete'] ? 'complete' : 'pending'; ?>"></div>
+                            <div>
+                                <span class="milestone-row-name"><?php echo htmlspecialchars($msr['name']); ?></span>
+                                <span class="milestone-row-pct">(<?php echo $msr['percentage']; ?>%)</span>
+                            </div>
+                        </div>
+                        <div class="milestone-row-right">
+                            <div class="milestone-row-accrued">$<?php echo number_format($msr['accrued_amount'], 2); ?></div>
+                            <div class="milestone-row-target">of $<?php echo number_format($msr['target_amount'], 2); ?></div>
+                        </div>
+                    </div>
+                    <?php endforeach; else: ?>
+                    <div style="text-align:center; padding:18px; color:#6c757d;">No milestone data configured</div>
+                    <?php endif; ?>
+
+                    <div class="module-breakdown-footer">
+                        <div class="module-breakdown-footer-row">
+                            <span class="module-breakdown-footer-label">Accrued Module Cost</span>
+                            <span class="module-breakdown-footer-value">$<?php echo number_format($accrued_module_cost ?? 0, 2); ?></span>
+                        </div>
+                        <div class="module-breakdown-footer-row">
+                            <span class="module-breakdown-footer-label">Full Contract Value</span>
+                            <span class="module-breakdown-footer-value">$<?php echo number_format($module_contract_value ?? 0, 2); ?></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="total-cost-section">
+                    <div class="total-cost-section-title">Logistics Costs to Date</div>
+                    <div class="logistics-breakdown-item">
+                        <span class="logistics-breakdown-label">
+                            <span class="logistics-breakdown-dot freight"></span>
+                            Freight
+                        </span>
+                        <span class="logistics-breakdown-value">$<?php echo number_format($total_freight_cost ?? 0, 2); ?></span>
+                    </div>
+                    <div class="logistics-breakdown-item">
+                        <span class="logistics-breakdown-label">
+                            <span class="logistics-breakdown-dot warehousing"></span>
+                            Warehousing
+                        </span>
+                        <span class="logistics-breakdown-value">$<?php echo number_format($total_warehousing_cost ?? 0, 2); ?></span>
+                    </div>
+                    <div class="logistics-breakdown-item">
+                        <span class="logistics-breakdown-label">
+                            <span class="logistics-breakdown-dot accessorial"></span>
+                            Accessorial
+                        </span>
+                        <span class="logistics-breakdown-value">$<?php echo number_format($total_accessorial_costs ?? 0, 2); ?></span>
+                    </div>
+                    <?php if (($total_solterra_fee ?? 0) > 0): ?>
+                    <div class="logistics-breakdown-item">
+                        <span class="logistics-breakdown-label">
+                            <span class="logistics-breakdown-dot solterra"></span>
+                            Solterra Fee
+                        </span>
+                        <span class="logistics-breakdown-value">$<?php echo number_format($total_solterra_fee, 2); ?></span>
+                    </div>
+                    <?php endif; ?>
+                    <div class="logistics-breakdown-item">
+                        <span class="logistics-breakdown-label">Total Logistics</span>
+                        <span class="logistics-breakdown-value">$<?php echo number_format($total_logistics_cost ?? 0, 2); ?></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function openTotalCostBreakdownModal() {
+    document.getElementById('totalCostBreakdownModal').style.display = 'block';
+}
+function closeTotalCostBreakdownModal() {
+    document.getElementById('totalCostBreakdownModal').style.display = 'none';
+}
+document.getElementById('totalCostBreakdownModal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeTotalCostBreakdownModal();
+});
+</script>
+
 <!-- Cashflow Forecast Detail Modal -->
 <style>
 .cashflow-modal-content {

@@ -440,52 +440,6 @@ document.addEventListener('keydown', function(e) {
                     </span>
                     <div class="description"><a href="module_movements.php?project_id=<?php echo $project_id; ?>" class="description-link">View Supply Chain Map</a></div>
 
-                    <!-- Forecast Badge -->
-                    <?php if ($isAdmin || $role === 'customer_admin'):
-                        // Determine plan status: none, partial, or complete
-                        $has_projection = !empty($primary_projection);
-                        $has_legs_with_dates = false;
-                        $has_modules_only = false;
-                        if ($has_projection) {
-                            // Check if legs have start_dates set
-                            if (!empty($primary_projection['legs'])) {
-                                foreach ($primary_projection['legs'] as $_leg) {
-                                    if (!empty($_leg['start_date']) && strtotime($_leg['start_date']) > 0) {
-                                        $has_legs_with_dates = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!$has_legs_with_dates) {
-                                $has_modules_only = !empty($primary_projection['module_allocations']);
-                            }
-                        }
-
-                        if ($has_legs_with_dates) {
-                            $plan_class = 'has-forecast';
-                            $plan_icon = 'fas fa-check-circle';
-                            $plan_label = 'Plan Set';
-                            $plan_title = 'View or edit delivery plan';
-                        } elseif ($has_modules_only) {
-                            $plan_class = 'partial-forecast';
-                            $plan_icon = 'fas fa-clock';
-                            $plan_label = 'In Progress';
-                            $plan_title = 'Plan partially configured - add routing details';
-                        } else {
-                            $plan_class = 'no-forecast';
-                            $plan_icon = 'fas fa-plus-circle';
-                            $plan_label = 'Add Plan';
-                            $plan_title = 'Create a delivery plan';
-                        }
-                    ?>
-                    <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>"
-                       class="forecast-badge <?php echo $plan_class; ?>"
-                       title="<?php echo $plan_title; ?>">
-                        <i class="<?php echo $plan_icon; ?>"></i>
-                        <span><?php echo $plan_label; ?></span>
-                    </a>
-                    <?php endif; ?>
-
                     <?php if ($current_step >= 4): ?>
                     <div class="shipping-connector"></div>
                     <div class="shipping-boxes-container">
@@ -1215,7 +1169,7 @@ document.addEventListener('keydown', function(e) {
                             <tbody>
                                 <tr>
                                     <td>
-                                        <a href="invoices_all.php?project_id=<?php echo $project_id; ?>">
+                                        <a class="open-invoices-link" href="invoices_all.php?project_id=<?php echo $project_id; ?>">
                                             $<?php echo number_format($open_invoices_total,2);?>
                                         </a>
                                     </td>
@@ -1225,7 +1179,17 @@ document.addEventListener('keydown', function(e) {
                                     $total_costs_ppm = $combined_qty > 0 ? $total_costs_display / $combined_qty : 0;
                                     $total_costs_ppp = $combined_pallets > 0 ? $total_costs_display / $combined_pallets : 0;
                                     ?>
-                                    <td class="financial-value" data-total="<?php echo $total_costs_display; ?>" data-watt="<?php echo $total_costs_ppw; ?>" data-module="<?php echo $total_costs_ppm; ?>" data-pallet="<?php echo $total_costs_ppp; ?>">$<?php echo number_format($total_costs_display,2);?></td>
+                                    <td>
+                                        <button type="button"
+                                                class="financial-value total-cost-link"
+                                                data-total="<?php echo $total_costs_display; ?>"
+                                                data-watt="<?php echo $total_costs_ppw; ?>"
+                                                data-module="<?php echo $total_costs_ppm; ?>"
+                                                data-pallet="<?php echo $total_costs_ppp; ?>"
+                                                onclick="openTotalCostBreakdownModal()">
+                                            $<?php echo number_format($total_costs_display,2);?>
+                                        </button>
+                                    </td>
                                     <?php foreach($weeks_financial as $ix=>$wf){
                                         $val = $anticipated_deliveries_financial[$ix] ?? 0;
                                         // Calculate per-unit values for weekly forecasts
