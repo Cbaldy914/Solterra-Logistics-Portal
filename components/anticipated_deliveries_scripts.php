@@ -44,7 +44,34 @@
             initializeMap();
             updateTimelineChart();
             loadCollapsibleStates();
+            openTimelineSectionFromLink();
         });
+
+        function openTimelineSectionFromLink() {
+            const params = new URLSearchParams(window.location.search);
+            const target = params.get('section');
+            const tab = params.get('tab');
+            const hash = window.location.hash.replace('#', '');
+            if (target !== 'timeline' && hash !== 'timeline') {
+                return;
+            }
+
+            const header = document.querySelector('[data-section="timeline"] .collapsible-header');
+            const content = document.getElementById('timeline-content');
+            if (header && content) {
+                header.classList.remove('collapsed');
+                content.classList.remove('collapsed');
+            }
+
+            const section = document.querySelector('[data-section="timeline"]');
+            if (section) {
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+
+            if (tab && typeof switchTimelineTab === 'function') {
+                switchTimelineTab(tab);
+            }
+        }
 
         // ==================== COLLAPSIBLE SECTIONS ====================
         function toggleSection(sectionId) {
@@ -56,11 +83,27 @@
             const isCollapsed = header.classList.contains('collapsed');
 
             if (isCollapsed) {
+                // Opening this section - collapse all others first
+                stepperSections.forEach(otherId => {
+                    if (otherId !== sectionId) {
+                        const otherHeader = document.querySelector(`[data-section="${otherId}"] .collapsible-header`);
+                        const otherContent = document.getElementById(`${otherId}-content`);
+                        if (otherHeader && otherContent) {
+                            otherHeader.classList.add('collapsed');
+                            otherContent.classList.add('collapsed');
+                        }
+                    }
+                });
                 header.classList.remove('collapsed');
                 content.classList.remove('collapsed');
+                // Update stepper to show this section as active
+                updateStepperState(sectionId);
             } else {
+                // Closing this section
                 header.classList.add('collapsed');
                 content.classList.add('collapsed');
+                // Update stepper to show no section as active (all collapsed)
+                updateStepperState(null);
             }
 
             // Save state to localStorage
@@ -101,6 +144,9 @@
             });
 
             localStorage.removeItem(`projection_collapsed_${projectId}`);
+
+            // Update stepper to show no active step since all are collapsed
+            updateStepperState(null);
         }
 
         function toggleWeeklyProjections() {
@@ -649,7 +695,6 @@
         function switchLogisticsView(view) {
             const buttons = document.querySelectorAll('.view-toggle-btn');
             const views = document.querySelectorAll('.logistics-view');
-            const fullscreenBtn = document.getElementById('mapFullscreenBtn');
 
             buttons.forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.view === view);
@@ -658,11 +703,6 @@
             views.forEach(v => {
                 v.classList.toggle('active', v.id === `logistics-${view}-view`);
             });
-
-            // Show/hide fullscreen button based on view
-            if (fullscreenBtn) {
-                fullscreenBtn.style.display = (view === 'map') ? 'inline-flex' : 'none';
-            }
 
             // Trigger map resize when switching to map view
             if (view === 'map' && map) {
@@ -749,13 +789,17 @@
 
             const steps = document.querySelectorAll('.stepper-step');
             const connectors = document.querySelectorAll('.stepper-connector');
-            const currentActive = activeSection
-                || document.querySelector('.stepper-step.active')?.dataset.step
-                || stepperSections[0];
+
+            // Determine which section is currently expanded (if any)
+            let currentActive = activeSection;
+            if (currentActive === null) {
+                // Check if any section is expanded
+                currentActive = getExpandedSection();
+            }
 
             steps.forEach(step => {
                 const stepSection = step.dataset.step;
-                const isActive = stepSection === currentActive;
+                const isActive = currentActive && stepSection === currentActive;
                 step.classList.toggle('active', isActive);
                 step.classList.toggle('completed', !isActive && completion[stepSection]);
             });
@@ -765,7 +809,30 @@
             });
         }
 
+        // Helper to find which section is currently expanded
+        function getExpandedSection() {
+            for (const sectionId of stepperSections) {
+                const header = document.querySelector(`[data-section="${sectionId}"] .collapsible-header`);
+                if (header && !header.classList.contains('collapsed')) {
+                    return sectionId;
+                }
+            }
+            return null; // All collapsed
+        }
+
         function navigateToStep(sectionId) {
+            // Collapse all other sections first
+            stepperSections.forEach(otherId => {
+                if (otherId !== sectionId) {
+                    const otherHeader = document.querySelector(`[data-section="${otherId}"] .collapsible-header`);
+                    const otherContent = document.getElementById(`${otherId}-content`);
+                    if (otherHeader && otherContent) {
+                        otherHeader.classList.add('collapsed');
+                        otherContent.classList.add('collapsed');
+                    }
+                }
+            });
+
             // Expand the target section
             expandSection(sectionId);
 
@@ -779,15 +846,26 @@
                 }, 100);
             }
 
+            // Save state
+            saveCollapsibleStates();
         }
 
         // Update stepper state based on scroll position
         function updateStepperOnScroll() {
-            let activeSection = stepperSections[0];
+            // Only update based on scroll if a section is expanded
+            const expandedSection = getExpandedSection();
+            if (!expandedSection) {
+                // All sections collapsed - don't change stepper state on scroll
+                return;
+            }
+
+            let activeSection = null;
 
             stepperSections.forEach(sectionId => {
                 const section = document.querySelector(`[data-section="${sectionId}"]`);
-                if (section) {
+                const header = document.querySelector(`[data-section="${sectionId}"] .collapsible-header`);
+                // Only consider expanded sections
+                if (section && header && !header.classList.contains('collapsed')) {
                     const rect = section.getBoundingClientRect();
                     if (rect.top < window.innerHeight / 2) {
                         activeSection = sectionId;
@@ -795,7 +873,9 @@
                 }
             });
 
-            updateStepperState(activeSection);
+            if (activeSection) {
+                updateStepperState(activeSection);
+            }
         }
 
         // Throttled scroll listener for stepper
@@ -2031,55 +2111,149 @@
             const pallets = getTotalPallets();
             const stops = workingState.stops || [];
             const legs = workingState.legs || [];
+            const modules = getTotalModules();
 
+            // Module section badge
             const modulesBadge = document.getElementById('modulesBadge');
-            const routeSummary = document.getElementById('logisticsRouteSummary');
-            const freightSummary = document.getElementById('logisticsFreightSummary');
-            const warehousingSummary = document.getElementById('logisticsWarehousingSummary');
-
             if (modulesBadge) {
                 modulesBadge.textContent = `${pallets.toLocaleString()} pallets`;
             }
 
+            // Calculate totals
             const totalFreight = legs.reduce((sum, l) => sum + (parseFloat(l.total_freight_cost) || 0), 0);
             const totalWarehouseFees = stops.reduce((sum, s) => {
                 return sum + (s.fees || []).reduce((fsum, f) => fsum + (parseFloat(f.estimated_cost) || 0), 0);
             }, 0);
 
-            if (routeSummary) {
-                if (stops.length === 0) {
-                    routeSummary.innerHTML = '<span class="route-step">Add logistics stops</span>';
-                } else {
-                    const routeParts = stops.map((stop, index) => {
-                        if (stop.stop_type === 'origin') return 'Manufacturer';
-                        if (stop.stop_type === 'destination') return 'Project Site';
-                        return stop.location_name || stop.location_address || `Stop ${index + 1}`;
-                    });
+            // Calculate milestone totals
+            const milestoneEvents = collectMilestoneEvents();
+            const totalMilestones = milestoneEvents.reduce((sum, e) => sum + (e.amount || 0), 0);
+            const grandTotal = totalFreight + totalWarehouseFees + totalMilestones;
 
-                    routeSummary.innerHTML = routeParts
-                        .map((label, index) => {
-                            const arrow = index < routeParts.length - 1
-                                ? '<span class="route-arrow">→</span>'
-                                : '';
-                            return `<span class="route-step">${escapeHtml(label)}</span>${arrow}`;
-                        })
-                        .join(' ');
+            // Calculate date range
+            let earliestDate = null;
+            let latestDate = null;
+
+            legs.forEach(leg => {
+                if (leg.start_date) {
+                    const d = new Date(leg.start_date);
+                    if (!isNaN(d) && (!earliestDate || d < earliestDate)) earliestDate = d;
+                }
+                if (leg.end_date) {
+                    const d = new Date(leg.end_date);
+                    if (!isNaN(d) && (!latestDate || d > latestDate)) latestDate = d;
+                }
+            });
+
+            stops.forEach(stop => {
+                if (stop.estimated_arrival_date) {
+                    const d = new Date(stop.estimated_arrival_date);
+                    if (!isNaN(d)) {
+                        if (!earliestDate || d < earliestDate) earliestDate = d;
+                        if (!latestDate || d > latestDate) latestDate = d;
+                    }
+                }
+                if (stop.estimated_departure_date) {
+                    const d = new Date(stop.estimated_departure_date);
+                    if (!isNaN(d) && (!latestDate || d > latestDate)) latestDate = d;
+                }
+            });
+
+            // Format dates
+            const formatDate = (date) => {
+                if (!date) return null;
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            };
+
+            const formatDateFull = (date) => {
+                if (!date) return null;
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            };
+
+            // Calculate duration in days
+            let durationDays = 0;
+            if (earliestDate && latestDate) {
+                durationDays = Math.ceil((latestDate - earliestDate) / (1000 * 60 * 60 * 24));
+            }
+
+            // ==================== LOGISTICS SECTION (Simplified) ====================
+            const logisticsRouteText = document.getElementById('logisticsRouteText');
+            const logisticsTotalCost = document.getElementById('logisticsTotalCost');
+            const totalLogisticsCost = totalFreight + totalWarehouseFees;
+
+            if (logisticsRouteText) {
+                if (stops.length === 0) {
+                    logisticsRouteText.textContent = 'No route configured';
+                } else {
+                    const warehouseCount = stops.filter(s => !['origin', 'destination'].includes(s.stop_type)).length;
+                    if (warehouseCount === 0) {
+                        logisticsRouteText.textContent = 'Direct route';
+                    } else {
+                        logisticsRouteText.textContent = `${stops.length} stops, ${legs.length} legs`;
+                    }
                 }
             }
 
-            if (freightSummary) {
-                freightSummary.textContent = totalFreight > 0
-                    ? `$${totalFreight.toLocaleString()} Freight`
-                    : 'No freight yet';
-                freightSummary.classList.toggle('hidden', totalFreight <= 0);
+            if (logisticsTotalCost) {
+                if (totalLogisticsCost > 0) {
+                    logisticsTotalCost.textContent = '$' + formatCompactNumber(totalLogisticsCost) + ' total logistics';
+                } else {
+                    logisticsTotalCost.textContent = 'No costs yet';
+                }
             }
 
-            if (warehousingSummary) {
-                warehousingSummary.textContent = totalWarehouseFees > 0
-                    ? `$${totalWarehouseFees.toLocaleString()} Warehousing`
-                    : 'No warehousing yet';
-                warehousingSummary.classList.toggle('hidden', totalWarehouseFees <= 0);
+            // ==================== TIMELINE SECTION (Simplified) ====================
+            const timelineDateText = document.getElementById('timelineDateText');
+            const timelineGrandTotal = document.getElementById('timelineGrandTotal');
+
+            if (timelineDateText) {
+                if (earliestDate && latestDate) {
+                    const startStr = formatDateFull(earliestDate);
+                    const endStr = formatDateFull(latestDate);
+                    if (durationDays > 0) {
+                        timelineDateText.textContent = `${startStr} → ${endStr} (${durationDays} days)`;
+                    } else {
+                        timelineDateText.textContent = `${startStr} → ${endStr}`;
+                    }
+                } else {
+                    timelineDateText.textContent = 'No dates yet';
+                }
             }
+
+            if (timelineGrandTotal) {
+                if (grandTotal > 0) {
+                    timelineGrandTotal.textContent = '$' + formatCompactNumber(grandTotal) + ' projected total';
+                } else {
+                    timelineGrandTotal.textContent = 'No costs yet';
+                }
+            }
+
+            // Update the cumulative displays at bottom of timeline section
+            const totalFreightDisplay = document.getElementById('totalFreightDisplay');
+            const totalWarehousingDisplay = document.getElementById('totalWarehousingDisplay');
+            const totalMilestonesDisplay = document.getElementById('totalMilestonesDisplay');
+            const grandTotalDisplay = document.getElementById('grandTotalDisplay');
+
+            if (totalFreightDisplay) totalFreightDisplay.textContent = '$' + totalFreight.toLocaleString();
+            if (totalWarehousingDisplay) totalWarehousingDisplay.textContent = '$' + totalWarehouseFees.toLocaleString();
+            if (totalMilestonesDisplay) totalMilestonesDisplay.textContent = '$' + totalMilestones.toLocaleString();
+            if (grandTotalDisplay) grandTotalDisplay.textContent = '$' + grandTotal.toLocaleString();
+        }
+
+        // Helper to format numbers compactly (e.g., 1.2K, 45K, 1.5M)
+        function formatCompactNumber(num) {
+            if (num >= 1000000) {
+                return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+            }
+            if (num >= 1000) {
+                return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+            }
+            return num.toLocaleString();
+        }
+
+        // Get total modules count
+        function getTotalModules() {
+            return (workingState.moduleAllocations || []).reduce((sum, a) => sum + (parseInt(a.quantity) || 0), 0);
         }
 
         // Keep renderDeliveryPlan for backwards compatibility
@@ -3096,8 +3270,54 @@
             const totalFees = (stop.fees || []).reduce((sum, f) => sum + (parseFloat(f.estimated_cost) || 0), 0);
             const feeCount = (stop.fees || []).length;
 
-            // Get leg info for arrival date
-            const arrivalDate = stop.estimated_arrival_date ? new Date(stop.estimated_arrival_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+            // Calculate arrival date RANGE instead of single date
+            let arrivalRangeHtml = '';
+            const formatDateShort = (date) => {
+                if (!date) return null;
+                const d = new Date(date);
+                if (isNaN(d)) return null;
+                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            };
+
+            // Get arrival start from estimated_arrival_date
+            const arrivalStart = stop.estimated_arrival_date ? formatDateShort(stop.estimated_arrival_date) : null;
+
+            // Get arrival end from estimated_departure_date or calculate from delivery cadence
+            let arrivalEnd = null;
+            if (stop.estimated_departure_date) {
+                arrivalEnd = formatDateShort(stop.estimated_departure_date);
+            } else if (stop.estimated_arrival_date) {
+                // For destination, calculate end date based on delivery duration
+                // Use leg info to determine how long deliveries take
+                const legs = workingState.legs || [];
+                const incomingLeg = legs.find(l => l.to_stop_id == stop.id);
+
+                if (incomingLeg && incomingLeg.delivery_rate > 0) {
+                    const totalPallets = getTotalPallets();
+                    const palletsPerTruck = projectInfo.palletsPerTruck || 20;
+                    const trucks = Math.ceil(totalPallets / palletsPerTruck);
+                    const rate = parseInt(incomingLeg.delivery_rate) || 1;
+                    const isDaily = incomingLeg.delivery_rate_unit === 'per_day';
+                    const daysPerDelivery = isDaily ? 1 : 7;
+                    const totalDays = Math.ceil(trucks / rate) * daysPerDelivery;
+
+                    if (totalDays > 1) {
+                        const startDate = new Date(stop.estimated_arrival_date);
+                        const endDate = new Date(startDate);
+                        endDate.setDate(endDate.getDate() + totalDays);
+                        arrivalEnd = formatDateShort(endDate);
+                    }
+                }
+            }
+
+            // Build the arrival range display
+            if (arrivalStart) {
+                if (arrivalEnd && arrivalEnd !== arrivalStart) {
+                    arrivalRangeHtml = `${arrivalStart} - ${arrivalEnd}`;
+                } else {
+                    arrivalRangeHtml = arrivalStart;
+                }
+            }
 
             // Calculate total pallets for the project
             const totalPallets = getTotalPallets();
@@ -3149,10 +3369,10 @@
                             <span style="font-size: 12px; color: #555; line-height: 1.4;">${escapeHtml(stop.location_address)}</span>
                         </div>
                         ` : ''}
-                        ${arrivalDate ? `
+                        ${arrivalRangeHtml ? `
                         <div style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #e3f4f7; border-radius: 6px; margin-bottom: 10px;">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                            <span style="font-size: 12px; color: #488C9A; font-weight: 500;">Arrival: ${arrivalDate}</span>
+                            <span style="font-size: 12px; color: #488C9A; font-weight: 500;">Arrival: ${arrivalRangeHtml}</span>
                         </div>
                         ` : ''}
                         ${statsHtml}
