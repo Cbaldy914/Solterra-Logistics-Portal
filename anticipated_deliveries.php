@@ -201,9 +201,6 @@ foreach ($allocated_modules as $alloc) {
     $total_contract_value += $alloc['contract_value'] ?? 0;
 }
 
-// Get available templates
-$templates = get_projection_templates($conn);
-
 // Get project size summary for header stats
 require_once 'anticipated_schedule_helpers.php';
 $project_summary = getProjectSizeSummary($conn, $project_id);
@@ -377,36 +374,6 @@ if (!empty($project['account_id'])) {
         </div>
         <?php else: ?>
 
-        <!-- Template Selector (for new projections) -->
-        <?php if ($can_edit && !empty($templates) && empty($current_projection['stops'])): ?>
-        <div class="template-selector">
-            <div class="template-info">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                    <line x1="3" y1="9" x2="21" y2="9"/>
-                    <line x1="9" y1="21" x2="9" y2="9"/>
-                </svg>
-                <div>
-                    <strong>Quick Start from Template</strong>
-                    <span style="display: block; font-size: 0.9em; opacity: 0.8;">Load a saved template to pre-fill stops and legs</span>
-                </div>
-            </div>
-            <div class="template-actions">
-                <select class="template-dropdown" id="templateSelector">
-                    <option value="">Select a template...</option>
-                    <?php foreach ($templates as $template): ?>
-                    <option value="<?php echo $template['id']; ?>">
-                        <?php echo htmlspecialchars($template['template_name']); ?>
-                    </option>
-                    <?php endforeach; ?>
-                </select>
-                <button type="button" class="btn btn-orange" onclick="loadFromTemplate()">
-                    Load Template
-                </button>
-            </div>
-        </div>
-        <?php endif; ?>
-
         <!-- Step Navigation -->
         <div class="stepper-nav" id="stepperNav">
             <div class="stepper-step active" data-step="modules-costs" onclick="navigateToStep('modules-costs')">
@@ -475,7 +442,11 @@ if (!empty($project['account_id'])) {
                             Logistics Plan
                         </div>
                         <div class="collapsible-meta">
-                            <span class="collapsible-badge" id="stopsBadge"><?php echo count($stops); ?> stops</span>
+                            <div class="route-summary" id="logisticsRouteSummary"></div>
+                            <div class="route-costs">
+                                <span class="summary-chip" id="logisticsFreightSummary"></span>
+                                <span class="summary-chip" id="logisticsWarehousingSummary"></span>
+                            </div>
                             <div class="collapsible-toggle">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="6 9 12 15 18 9"/>
@@ -600,6 +571,12 @@ if (!empty($project['account_id'])) {
                     Projected Timeline & Costs
                 </div>
                 <div class="collapsible-meta">
+                    <div class="timeline-summary">
+                        <span class="summary-chip" id="timelineDateRange">No dates yet</span>
+                        <span class="summary-chip" id="timelineFreightSummary">$0 Freight</span>
+                        <span class="summary-chip" id="timelineWarehousingSummary">$0 Warehousing</span>
+                        <span class="summary-chip" id="timelineMilestoneSummary">$0 Milestones</span>
+                    </div>
                     <span class="collapsible-badge" id="grandTotalBadge">$0</span>
                     <div class="collapsible-toggle">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

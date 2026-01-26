@@ -919,18 +919,16 @@ function initBudgetLineChart() {
                     var forecasted = budgetChartData.anticipated_cost[dataIndex] || 0;
                     var actual = budgetChartData.actual_cost[dataIndex];
 
-                    // Calculate cumulative values up to this point
-                    var forecastedCumulative = 0;
-                    var actualCumulative = 0;
-                    for (var i = 0; i <= dataIndex; i++) {
-                        forecastedCumulative += (budgetChartData.anticipated_cost[i] || 0);
-                        if (budgetChartData.actual_cost[i] !== null && budgetChartData.actual_cost[i] !== undefined) {
-                            actualCumulative += budgetChartData.actual_cost[i];
-                        }
-                    }
+                    // Get cumulative values at this point (already cumulative in the data)
+                    var forecastedCumulative = budgetChartData.anticipated_cost[dataIndex] || 0;
+                    var actualCumulative = budgetChartData.actual_cost[dataIndex] || 0;
+
+                    // Get breakdown data for this point
+                    var forecastBreakdown = budgetChartData.forecast_breakdown ? budgetChartData.forecast_breakdown[dataIndex] : null;
+                    var actualBreakdown = budgetChartData.actual_breakdown ? budgetChartData.actual_breakdown[dataIndex] : null;
 
                     if (typeof openCostDetailModal === 'function') {
-                        openCostDetailModal(date, forecasted, actual, forecastedCumulative, actualCumulative);
+                        openCostDetailModal(date, forecasted, actual, forecastedCumulative, actualCumulative, forecastBreakdown, actualBreakdown);
                     }
                 }
             },
@@ -2704,6 +2702,8 @@ function initializeFinancialCharts(){
     var ctxBudget = ctxBudgetEl.getContext('2d');
     var antCost = budgetLineData.anticipated_cost;
     var actCost = budgetLineData.actual_cost;
+    var forecastBreakdownData = budgetLineData.forecast_breakdown || [];
+    var actualBreakdownData = budgetLineData.actual_breakdown || [];
 
     var budgetChart = new Chart(ctxBudget,{
         type:'line',
@@ -2810,18 +2810,16 @@ function initializeFinancialCharts(){
                     var forecasted = antCost[dataIndex] || 0;
                     var actual = actCost[dataIndex];
 
-                    // Calculate cumulative values up to this point
-                    var forecastedCumulative = 0;
-                    var actualCumulative = 0;
-                    for(var i = 0; i <= dataIndex; i++){
-                        forecastedCumulative += (antCost[i] || 0);
-                        if(actCost[i] !== null && actCost[i] !== undefined){
-                            actualCumulative += actCost[i];
-                        }
-                    }
+                    // Get cumulative values at this point (already cumulative in the data)
+                    var forecastedCumulative = antCost[dataIndex] || 0;
+                    var actualCumulative = actCost[dataIndex] || 0;
+
+                    // Get breakdown data for this point
+                    var forecastBreakdown = forecastBreakdownData[dataIndex] || null;
+                    var actualBreakdown = actualBreakdownData[dataIndex] || null;
 
                     if(typeof openCostDetailModal === 'function'){
-                        openCostDetailModal(date, forecasted, actual, forecastedCumulative, actualCumulative);
+                        openCostDetailModal(date, forecasted, actual, forecastedCumulative, actualCumulative, forecastBreakdown, actualBreakdown);
                     }
                 }
             },

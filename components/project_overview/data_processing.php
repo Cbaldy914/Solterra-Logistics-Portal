@@ -1445,8 +1445,9 @@ $stmt->close();
 $open_invoices_total=$open_invoices_total?:0;
 
 // For Forecasted vs Actual Cost line chart
-// Actual costs from real deliveries
+// Actual costs from real deliveries - track by category for breakdown
 $deliveries_by_date_actual_cost = [];
+$actual_cost_breakdown_by_week = []; // Track freight, milestones, warehousing per week
 $stmt = $conn->prepare("
     SELECT *
     FROM deliveries
@@ -1481,6 +1482,12 @@ while($dv = $allDel->fetch_assoc()) {
             $deliveries_by_date_actual_cost[$weekKey] = 0;
         }
         $deliveries_by_date_actual_cost[$weekKey] += $actual_tc;
+
+        // Track breakdown by category
+        if (!isset($actual_cost_breakdown_by_week[$weekKey])) {
+            $actual_cost_breakdown_by_week[$weekKey] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
+        }
+        $actual_cost_breakdown_by_week[$weekKey]['freight'] += ($fc + $ac + $fee);
     }
 }
 
@@ -1519,6 +1526,12 @@ if (!empty($milestone_timeline)) {
                 $deliveries_by_date_actual_cost[$mt_week] = 0;
             }
             $deliveries_by_date_actual_cost[$mt_week] += floatval($mt_entry['amount']);
+
+            // Track milestone breakdown
+            if (!isset($actual_cost_breakdown_by_week[$mt_week])) {
+                $actual_cost_breakdown_by_week[$mt_week] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
+            }
+            $actual_cost_breakdown_by_week[$mt_week]['milestones'] += floatval($mt_entry['amount']);
         }
     }
 }
@@ -1530,6 +1543,12 @@ if (($total_warehousing_cost ?? 0) > 0) {
         $deliveries_by_date_actual_cost[$wh_week] = 0;
     }
     $deliveries_by_date_actual_cost[$wh_week] += $total_warehousing_cost;
+
+    // Track warehousing breakdown
+    if (!isset($actual_cost_breakdown_by_week[$wh_week])) {
+        $actual_cost_breakdown_by_week[$wh_week] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
+    }
+    $actual_cost_breakdown_by_week[$wh_week]['warehousing'] += $total_warehousing_cost;
 }
 
 // Anticipated costs from projection (or fallback to old method)
@@ -1580,17 +1599,54 @@ sort($all_dates_cost);
 
 $budgetLine_anticipated = [];
 $budgetLine_actual = [];
+$budgetLine_forecast_breakdown = []; // Per-point breakdown for forecasted
+$budgetLine_actual_breakdown = [];   // Per-point breakdown for actual
 $acc_ant=0;
 $acc_act=0;
+$acc_forecast_freight = 0;
+$acc_forecast_warehousing = 0;
+$acc_forecast_milestones = 0;
+$acc_actual_freight = 0;
+$acc_actual_warehousing = 0;
+$acc_actual_milestones = 0;
 $today_str=(new DateTime())->format('Y-m-d');
+// Get the current week's ending Sunday to include partial week costs
+$current_week_end = getWeekEndingSunday($today_str);
 
 foreach($all_dates_cost as $d) {
     $acc_ant += ($deliveries_by_date_anticipated[$d] ?? 0);
-    if($d<=$today_str) {
+
+    // Get forecasted breakdown from projection_weekly_costs if available
+    if (isset($projection_weekly_costs[$d])) {
+        $acc_forecast_freight += $projection_weekly_costs[$d]['freight'] ?? 0;
+        $acc_forecast_warehousing += $projection_weekly_costs[$d]['warehousing'] ?? 0;
+        $acc_forecast_milestones += $projection_weekly_costs[$d]['milestones'] ?? 0;
+    }
+    $budgetLine_forecast_breakdown[] = [
+        'freight' => $acc_forecast_freight,
+        'warehousing' => $acc_forecast_warehousing,
+        'milestones' => $acc_forecast_milestones
+    ];
+
+    // Include actual costs for weeks up to and including the current week
+    if($d<=$current_week_end) {
         $acc_act += ($deliveries_by_date_actual_cost[$d] ?? 0);
         $budgetLine_actual[]=$acc_act;
+
+        // Accumulate actual breakdown
+        if (isset($actual_cost_breakdown_by_week[$d])) {
+            $acc_actual_freight += $actual_cost_breakdown_by_week[$d]['freight'] ?? 0;
+            $acc_actual_warehousing += $actual_cost_breakdown_by_week[$d]['warehousing'] ?? 0;
+            $acc_actual_milestones += $actual_cost_breakdown_by_week[$d]['milestones'] ?? 0;
+        }
+        $budgetLine_actual_breakdown[] = [
+            'freight' => $acc_actual_freight,
+            'warehousing' => $acc_actual_warehousing,
+            'milestones' => $acc_actual_milestones
+        ];
     } else {
         $budgetLine_actual[]=null;
+        $budgetLine_actual_breakdown[] = null;
     }
     $budgetLine_anticipated[]=$acc_ant;
 }
@@ -1598,6 +1654,8 @@ foreach($all_dates_cost as $d) {
 $budgetLineChartData = [
     'anticipated_cost'=> $budgetLine_anticipated,
     'actual_cost'     => $budgetLine_actual,
+    'forecast_breakdown' => $budgetLine_forecast_breakdown,
+    'actual_breakdown' => $budgetLine_actual_breakdown,
 ];
 $budgetLineChartDataJSON=json_encode($budgetLineChartData);
 $dateLabelsForBudget=json_encode($all_dates_cost);
