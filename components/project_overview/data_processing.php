@@ -1296,12 +1296,19 @@ if ($primary_projection && !empty($primary_projection['legs'])) {
         }
     }
 
-    // Build stop_id -> inferred arrival date from legs (for stops missing dates)
+    // Build stop_id -> inferred arrival/outgoing dates from legs (for stops missing dates)
     $stop_inferred_dates = [];
+    $outgoing_leg_dates = [];
     if (!empty($primary_projection['legs'])) {
         foreach ($primary_projection['legs'] as $leg) {
-            if (!empty($leg['start_date']) && strtotime($leg['start_date']) > 0 && !empty($leg['to_stop_id'])) {
+            if (empty($leg['start_date']) || strtotime($leg['start_date']) <= 0) {
+                continue;
+            }
+            if (!empty($leg['to_stop_id'])) {
                 $stop_inferred_dates[$leg['to_stop_id']] = $leg['start_date'];
+            }
+            if (!empty($leg['from_stop_id'])) {
+                $outgoing_leg_dates[$leg['from_stop_id']] = $leg['start_date'];
             }
         }
     }
@@ -1326,23 +1333,29 @@ if ($primary_projection && !empty($primary_projection['legs'])) {
                 }
             }
 
+            if (!$valid_arrival) {
+                continue;
+            }
+
             foreach ($stop['fees'] as $fee) {
                 $fee_cost = floatval($fee['estimated_cost'] ?? 0);
                 if ($fee_cost <= 0) continue;
 
-                $fee_type = $fee['fee_type'] ?? 'other';
+                $fee_type = strtolower($fee['fee_type'] ?? 'other');
+                $fee_trigger = strtolower((string)($fee['trigger'] ?? ''));
+                $is_storage_fee = ($fee_type === 'storage' || $fee_trigger === 'monthly');
 
-                if ($fee_type === 'storage') {
+                if ($is_storage_fee) {
                     // Monthly storage fees: place on 1st of each month during storage period
                     if ($valid_arrival) {
                         $arr_dt = new DateTime($arrival);
-                        if ($valid_departure && $departure > $arrival) {
+                        if ($valid_departure && strtotime($departure) > strtotime($arrival)) {
                             $dep_dt = new DateTime($departure);
                         } else {
                             // Default: estimate next stop arrival or 3 months
                             $next_stop = $primary_projection['stops'][$stop_idx + 1] ?? null;
                             $next_arrival = $next_stop['estimated_arrival_date'] ?? null;
-                            if ($next_arrival && strtotime($next_arrival) > 0 && $next_arrival > $arrival) {
+                            if ($next_arrival && strtotime($next_arrival) > 0 && strtotime($next_arrival) > strtotime($arrival)) {
                                 $dep_dt = new DateTime($next_arrival);
                             } else {
                                 $dep_dt = clone $arr_dt;
@@ -1375,11 +1388,35 @@ if ($primary_projection && !empty($primary_projection['legs'])) {
                         }
                     }
                 } else {
-                    // In/out/handling/other fees: place at arrival week (in) or departure week (out)
+                    // In/out/handling/other fees: place at arrival week (in) or departure week (out/outbound)
                     $fee_date = null;
-                    if ($fee_type === 'out' && $valid_departure) {
-                        $fee_date = $departure;
-                    } elseif ($valid_arrival) {
+
+                    if (in_array($fee_type, ['outbound', 'out'], true)) {
+                        if ($valid_departure) {
+                            $fee_date = $departure;
+                        }
+
+                        if (!$fee_date) {
+                            $stop_id = $stop['id'] ?? null;
+                            if ($stop_id && !empty($outgoing_leg_dates[$stop_id])) {
+                                $fee_date = $outgoing_leg_dates[$stop_id];
+                            }
+                        }
+
+                        if (!$fee_date) {
+                            $next_stop = $primary_projection['stops'][$stop_idx + 1] ?? null;
+                            $next_arrival = $next_stop['estimated_arrival_date'] ?? null;
+                            if ($next_arrival && strtotime($next_arrival) > 0) {
+                                $fee_date = $next_arrival;
+                            }
+                        }
+
+                        if ($fee_date && strtotime($fee_date) <= strtotime($arrival)) {
+                            $fee_date = $arrival;
+                        }
+                    }
+
+                    if (!$fee_date && $valid_arrival) {
                         $fee_date = $arrival;
                     }
 

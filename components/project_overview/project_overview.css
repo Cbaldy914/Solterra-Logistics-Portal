@@ -431,6 +431,18 @@
     font-weight: 500;
 }
 
+.project-planning-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+}
+
+.project-planning-badge {
+    margin-top: 0;
+}
+
 /* Stats in Header */
 .project-header-stats {
     display: flex;
@@ -1652,7 +1664,7 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    margin-top: 10px;
+    margin-top: 5px;
     padding: 6px 14px;
     border-radius: 20px;
     font-size: 11px;
@@ -2593,6 +2605,35 @@
 
 .table-responsive tbody tr:last-child td:last-child {
     border-bottom-right-radius: 12px;
+}
+
+#invoices-forecast-table .open-invoices-link {
+    color: #488C9A;
+    font-weight: 600;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+#invoices-forecast-table .open-invoices-link:hover {
+    color: #3A6E7F;
+    text-decoration: underline;
+}
+
+#invoices-forecast-table .total-cost-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: #293E4C;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+#invoices-forecast-table .total-cost-link:hover {
+    color: #3A6E7F;
+    text-decoration: underline;
 }
 
 .project-overview-container {
