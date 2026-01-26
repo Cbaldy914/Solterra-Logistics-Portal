@@ -417,6 +417,55 @@
             display: flex;
             align-items: center;
             gap: 14px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .route-summary {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            font-size: 0.82em;
+            color: var(--gray-700);
+        }
+
+        .route-step {
+            background: var(--gray-50);
+            border: 1px solid var(--gray-200);
+            color: var(--dark);
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .route-arrow {
+            color: var(--gray-400);
+            font-weight: 600;
+        }
+
+        .route-costs,
+        .timeline-summary {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .summary-chip {
+            background: var(--gray-50);
+            border: 1px solid var(--gray-200);
+            color: var(--gray-700);
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.78em;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .summary-chip.hidden {
+            display: none;
         }
 
         .collapsible-badge {

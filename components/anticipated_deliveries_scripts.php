@@ -445,38 +445,6 @@
             saveProjection();
         }
 
-        function saveAsTemplate() {
-            const templateName = prompt('Enter template name:', workingState.projectionName + ' Template');
-            if (!templateName) return;
-
-            showLoading('Saving as template...');
-
-            fetch('api/projection_save.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...workingState,
-                    project_id: projectId,
-                    projection_id: workingState.projectionId,
-                    is_template: true,
-                    template_name: templateName
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                hideLoading();
-                if (data.success) {
-                    showToast('Saved as template', 'success');
-                } else {
-                    showToast('Failed to save template: ' + data.error, 'error');
-                }
-            })
-            .catch(error => {
-                hideLoading();
-                showToast('Error saving template', 'error');
-            });
-        }
-
         // ==================== MODULE ALLOCATION ====================
         function addModuleAllocation(batchId, wattage, quantity) {
             if (workingState.moduleAllocations.some(allocation => String(allocation.module_id) === String(batchId))) {
@@ -2065,33 +2033,52 @@
             const legs = workingState.legs || [];
 
             const modulesBadge = document.getElementById('modulesBadge');
-            const stopsBadge = document.getElementById('stopsBadge');
+            const routeSummary = document.getElementById('logisticsRouteSummary');
+            const freightSummary = document.getElementById('logisticsFreightSummary');
+            const warehousingSummary = document.getElementById('logisticsWarehousingSummary');
 
             if (modulesBadge) {
                 modulesBadge.textContent = `${pallets.toLocaleString()} pallets`;
             }
 
-            if (stopsBadge) {
-                // Build a more detailed logistics summary
-                const warehouseStops = stops.filter(s => !['origin', 'destination'].includes(s.stop_type));
-                const totalFreight = legs.reduce((sum, l) => sum + (parseFloat(l.total_freight_cost) || 0), 0);
-                const totalWarehouseFees = stops.reduce((sum, s) => {
-                    return sum + (s.fees || []).reduce((fsum, f) => fsum + (parseFloat(f.estimated_cost) || 0), 0);
-                }, 0);
+            const totalFreight = legs.reduce((sum, l) => sum + (parseFloat(l.total_freight_cost) || 0), 0);
+            const totalWarehouseFees = stops.reduce((sum, s) => {
+                return sum + (s.fees || []).reduce((fsum, f) => fsum + (parseFloat(f.estimated_cost) || 0), 0);
+            }, 0);
 
-                let parts = [];
-                parts.push(`${stops.length} stops`);
-                if (warehouseStops.length > 0) {
-                    parts.push(`${warehouseStops.length} warehouse${warehouseStops.length > 1 ? 's' : ''}`);
-                }
-                if (totalFreight > 0) {
-                    parts.push(`$${totalFreight.toLocaleString()} freight`);
-                }
-                if (totalWarehouseFees > 0) {
-                    parts.push(`$${totalWarehouseFees.toLocaleString()} fees`);
-                }
+            if (routeSummary) {
+                if (stops.length === 0) {
+                    routeSummary.innerHTML = '<span class="route-step">Add logistics stops</span>';
+                } else {
+                    const routeParts = stops.map((stop, index) => {
+                        if (stop.stop_type === 'origin') return 'Manufacturer';
+                        if (stop.stop_type === 'destination') return 'Project Site';
+                        return stop.location_name || stop.location_address || `Stop ${index + 1}`;
+                    });
 
-                stopsBadge.textContent = parts.join(' · ');
+                    routeSummary.innerHTML = routeParts
+                        .map((label, index) => {
+                            const arrow = index < routeParts.length - 1
+                                ? '<span class="route-arrow">→</span>'
+                                : '';
+                            return `<span class="route-step">${escapeHtml(label)}</span>${arrow}`;
+                        })
+                        .join(' ');
+                }
+            }
+
+            if (freightSummary) {
+                freightSummary.textContent = totalFreight > 0
+                    ? `$${totalFreight.toLocaleString()} Freight`
+                    : 'No freight yet';
+                freightSummary.classList.toggle('hidden', totalFreight <= 0);
+            }
+
+            if (warehousingSummary) {
+                warehousingSummary.textContent = totalWarehouseFees > 0
+                    ? `$${totalWarehouseFees.toLocaleString()} Warehousing`
+                    : 'No warehousing yet';
+                warehousingSummary.classList.toggle('hidden', totalWarehouseFees <= 0);
             }
         }
 
@@ -3598,6 +3585,48 @@
                 grandTotalBadge.textContent = '$' + grandTotal.toLocaleString();
             }
 
+            const timelineFreightSummary = document.getElementById('timelineFreightSummary');
+            if (timelineFreightSummary) {
+                timelineFreightSummary.textContent = `$${displayFreight.toLocaleString()} Freight`;
+                timelineFreightSummary.classList.toggle('hidden', displayFreight <= 0);
+            }
+
+            const timelineWarehousingSummary = document.getElementById('timelineWarehousingSummary');
+            if (timelineWarehousingSummary) {
+                timelineWarehousingSummary.textContent = `$${displayWarehousing.toLocaleString()} Warehousing`;
+                timelineWarehousingSummary.classList.toggle('hidden', displayWarehousing <= 0);
+            }
+
+            const timelineMilestoneSummary = document.getElementById('timelineMilestoneSummary');
+            if (timelineMilestoneSummary) {
+                timelineMilestoneSummary.textContent = `$${displayMilestones.toLocaleString()} Milestones`;
+                timelineMilestoneSummary.classList.toggle('hidden', displayMilestones <= 0);
+            }
+
+            const timelineDateRange = document.getElementById('timelineDateRange');
+            if (timelineDateRange) {
+                const dates = [];
+                (workingState.legs || []).forEach(leg => {
+                    if (leg.start_date) dates.push(new Date(leg.start_date));
+                    if (leg.end_date) dates.push(new Date(leg.end_date));
+                });
+                (workingState.stops || []).forEach(stop => {
+                    if (stop.estimated_arrival_date) dates.push(new Date(stop.estimated_arrival_date));
+                    if (stop.estimated_departure_date) dates.push(new Date(stop.estimated_departure_date));
+                });
+
+                const validDates = dates.filter(date => !isNaN(date.getTime()));
+                if (validDates.length > 0) {
+                    const minDate = new Date(Math.min(...validDates.map(date => date.getTime())));
+                    const maxDate = new Date(Math.max(...validDates.map(date => date.getTime())));
+                    const startLabel = minDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const endLabel = maxDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    timelineDateRange.textContent = `${startLabel} → ${endLabel}`;
+                } else {
+                    timelineDateRange.textContent = 'No dates yet';
+                }
+            }
+
             updateStepperState();
         }
 
@@ -3760,42 +3789,6 @@
                 document.getElementById('deliveryProgressText').textContent =
                     `${completedDeliveries} of ${totalDeliveries} deliveries completed`;
             }
-        }
-
-        // ==================== TEMPLATE FUNCTIONS ====================
-        function loadFromTemplate() {
-            const selector = document.getElementById('templateSelector');
-            if (!selector || !selector.value) {
-                showToast('Please select a template first', 'error');
-                return;
-            }
-
-            showLoading('Loading template...');
-
-            fetch(`api/projection_load.php?projection_id=${selector.value}&as_template=1`)
-                .then(response => response.json())
-                .then(data => {
-                    hideLoading();
-                    if (data.success && data.projection) {
-                        // Apply template data to working state
-                        workingState.stops = data.projection.stops || [];
-                        workingState.legs = data.projection.legs || [];
-
-                        showToast('Template loaded! Configure your stops and save.', 'success');
-
-                        // Refresh UI
-                        renderJourneyPlan();
-                        updateMapFromState();
-                        updateTimelineChart();
-                    } else {
-                        showToast('Failed to load template: ' + (data.error || 'Unknown error'), 'error');
-                    }
-                })
-                .catch(error => {
-                    hideLoading();
-                    showToast('Error loading template', 'error');
-                    console.error(error);
-                });
         }
 
         // ==================== UNSAVED CHANGES TRACKING ====================

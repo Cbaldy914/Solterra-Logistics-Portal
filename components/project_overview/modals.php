@@ -836,32 +836,129 @@ document.getElementById('moduleBreakdownModal')?.addEventListener('click', funct
 
             <div class="cost-detail-breakdown">
                 <h4>Cumulative Cost at This Point</h4>
-                <div class="cost-detail-breakdown-item">
+                <div class="cost-detail-breakdown-item clickable-breakdown" onclick="toggleBreakdown('forecasted')">
                     <span class="breakdown-label">
                         <span class="breakdown-dot forecasted"></span>
                         Forecasted (Cumulative)
+                        <span class="breakdown-expand-icon" id="forecastedExpandIcon">▶</span>
                     </span>
                     <span class="breakdown-value" id="costDetailForecastedCumulative">$0.00</span>
                 </div>
-                <div class="cost-detail-breakdown-item">
+                <div class="breakdown-detail-panel" id="forecastedBreakdownPanel" style="display: none;">
+                    <div class="breakdown-detail-item">
+                        <span class="breakdown-detail-label">Module Costs (Milestones)</span>
+                        <span class="breakdown-detail-value" id="forecastedMilestones">$0.00</span>
+                    </div>
+                    <div class="breakdown-detail-item">
+                        <span class="breakdown-detail-label">Freight & Accessorial</span>
+                        <span class="breakdown-detail-value" id="forecastedFreight">$0.00</span>
+                    </div>
+                    <div class="breakdown-detail-item">
+                        <span class="breakdown-detail-label">Warehousing</span>
+                        <span class="breakdown-detail-value" id="forecastedWarehousing">$0.00</span>
+                    </div>
+                </div>
+                <div class="cost-detail-breakdown-item clickable-breakdown" onclick="toggleBreakdown('actual')">
                     <span class="breakdown-label">
                         <span class="breakdown-dot actual"></span>
                         Actual (Cumulative)
+                        <span class="breakdown-expand-icon" id="actualExpandIcon">▶</span>
                     </span>
                     <span class="breakdown-value" id="costDetailActualCumulative">$0.00</span>
+                </div>
+                <div class="breakdown-detail-panel" id="actualBreakdownPanel" style="display: none;">
+                    <div class="breakdown-detail-item">
+                        <span class="breakdown-detail-label">Module Costs (Milestones)</span>
+                        <span class="breakdown-detail-value" id="actualMilestones">$0.00</span>
+                    </div>
+                    <div class="breakdown-detail-item">
+                        <span class="breakdown-detail-label">Freight & Accessorial</span>
+                        <span class="breakdown-detail-value" id="actualFreight">$0.00</span>
+                    </div>
+                    <div class="breakdown-detail-item">
+                        <span class="breakdown-detail-label">Warehousing</span>
+                        <span class="breakdown-detail-value" id="actualWarehousing">$0.00</span>
+                    </div>
                 </div>
             </div>
 
             <p style="margin-top: 24px; padding: 16px; background: #f8f9fa; border-radius: 8px; font-size: 0.85em; color: #6c757d;">
                 <strong>Note:</strong> Forecasted costs are based on the primary logistics plan projections.
                 Actual costs are calculated from completed deliveries and triggered milestones.
+                <br><br><em>Click on Forecasted or Actual cumulative values to see breakdown.</em>
             </p>
         </div>
     </div>
 </div>
 
+<style>
+.clickable-breakdown {
+    cursor: pointer;
+    transition: background 0.2s;
+    border-radius: 6px;
+    margin: 0 -8px;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+}
+.clickable-breakdown:hover {
+    background: rgba(72, 140, 154, 0.08);
+}
+.breakdown-expand-icon {
+    font-size: 0.7em;
+    margin-left: 6px;
+    color: #6c757d;
+    transition: transform 0.2s;
+    display: inline-block;
+}
+.breakdown-expand-icon.expanded {
+    transform: rotate(90deg);
+}
+.breakdown-detail-panel {
+    background: linear-gradient(135deg, #f8f9fa 0%, #f0f4f5 100%);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 8px 0 12px 0;
+    border-left: 3px solid #488C9A;
+}
+.breakdown-detail-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #e9ecef;
+}
+.breakdown-detail-item:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+.breakdown-detail-item:first-child {
+    padding-top: 0;
+}
+.breakdown-detail-label {
+    font-size: 0.85em;
+    color: #495057;
+}
+.breakdown-detail-value {
+    font-weight: 600;
+    font-size: 0.9em;
+    color: #293E4C;
+}
+</style>
+
 <script>
-function openCostDetailModal(date, forecasted, actual, forecastedCumulative, actualCumulative) {
+function toggleBreakdown(type) {
+    const panel = document.getElementById(type + 'BreakdownPanel');
+    const icon = document.getElementById(type + 'ExpandIcon');
+    if (panel.style.display === 'none') {
+        panel.style.display = 'block';
+        icon.classList.add('expanded');
+    } else {
+        panel.style.display = 'none';
+        icon.classList.remove('expanded');
+    }
+}
+
+function openCostDetailModal(date, forecasted, actual, forecastedCumulative, actualCumulative, forecastBreakdown, actualBreakdown) {
     // Format date
     const dateObj = new Date(date);
     const formattedDate = dateObj.toLocaleDateString('en-US', {
@@ -882,6 +979,34 @@ function openCostDetailModal(date, forecasted, actual, forecastedCumulative, act
     document.getElementById('costDetailActual').textContent = formatCurrency(actual);
     document.getElementById('costDetailForecastedCumulative').textContent = formatCurrency(forecastedCumulative);
     document.getElementById('costDetailActualCumulative').textContent = formatCurrency(actualCumulative);
+
+    // Populate forecasted breakdown
+    if (forecastBreakdown) {
+        document.getElementById('forecastedMilestones').textContent = formatCurrency(forecastBreakdown.milestones || 0);
+        document.getElementById('forecastedFreight').textContent = formatCurrency(forecastBreakdown.freight || 0);
+        document.getElementById('forecastedWarehousing').textContent = formatCurrency(forecastBreakdown.warehousing || 0);
+    } else {
+        document.getElementById('forecastedMilestones').textContent = formatCurrency(0);
+        document.getElementById('forecastedFreight').textContent = formatCurrency(0);
+        document.getElementById('forecastedWarehousing').textContent = formatCurrency(0);
+    }
+
+    // Populate actual breakdown
+    if (actualBreakdown) {
+        document.getElementById('actualMilestones').textContent = formatCurrency(actualBreakdown.milestones || 0);
+        document.getElementById('actualFreight').textContent = formatCurrency(actualBreakdown.freight || 0);
+        document.getElementById('actualWarehousing').textContent = formatCurrency(actualBreakdown.warehousing || 0);
+    } else {
+        document.getElementById('actualMilestones').textContent = formatCurrency(0);
+        document.getElementById('actualFreight').textContent = formatCurrency(0);
+        document.getElementById('actualWarehousing').textContent = formatCurrency(0);
+    }
+
+    // Reset breakdown panels to collapsed state
+    document.getElementById('forecastedBreakdownPanel').style.display = 'none';
+    document.getElementById('actualBreakdownPanel').style.display = 'none';
+    document.getElementById('forecastedExpandIcon').classList.remove('expanded');
+    document.getElementById('actualExpandIcon').classList.remove('expanded');
 
     // Calculate and display variance
     const variance = (actual || 0) - (forecasted || 0);
