@@ -315,24 +315,6 @@ if (!empty($project['account_id'])) {
                         </p>
                     </div>
                 </div>
-                <div class="header-stats">
-                    <div class="stat-card">
-                        <div class="stat-value"><?php echo number_format($project_summary['mw'], 2); ?></div>
-                        <div class="stat-label">Total MW</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value"><?php echo number_format($project_summary['modules']); ?></div>
-                        <div class="stat-label">Modules</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value"><?php echo number_format($project_summary['pallets'], 0); ?></div>
-                        <div class="stat-label">Pallets</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value"><?php echo number_format($project_summary['trucks'], 0); ?></div>
-                        <div class="stat-label">Trucks</div>
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -608,7 +590,7 @@ if (!empty($project['account_id'])) {
         </div>
 
         <!-- Collapsible: Timeline & Costs -->
-        <div class="collapsible-section" data-section="timeline">
+        <div class="collapsible-section timeline-section" data-section="timeline">
             <div class="collapsible-header" onclick="toggleSection('timeline')">
                 <div class="collapsible-title">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -675,45 +657,54 @@ if (!empty($project['account_id'])) {
                         </div>
 
                         <!-- Weekly Cost Projections Table -->
-                        <div class="weekly-projections-section">
-                            <h4 class="weekly-projections-title">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                                    <line x1="16" y1="2" x2="16" y2="6"/>
-                                    <line x1="8" y1="2" x2="8" y2="6"/>
-                                    <line x1="3" y1="10" x2="21" y2="10"/>
-                                </svg>
-                                Weekly Cost Projections
-                            </h4>
-                            <div class="weekly-table-wrapper">
-                                <table class="weekly-projections-table" id="weeklyProjectionsTable">
-                                    <thead>
-                                        <tr>
-                                            <th>Week</th>
-                                            <th>Date Range</th>
-                                            <th>Freight</th>
-                                            <th>Warehousing</th>
-                                            <th>Milestones</th>
-                                            <th>Weekly Total</th>
-                                            <th>Cumulative</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="weeklyProjectionsBody">
-                                        <!-- Populated by JavaScript -->
-                                    </tbody>
-                                </table>
+                        <div class="weekly-projections-section" id="weeklyProjectionsSection">
+                            <div class="weekly-projections-header" onclick="toggleWeeklyProjections()">
+                                <h4 class="weekly-projections-title">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                        <line x1="16" y1="2" x2="16" y2="6"/>
+                                        <line x1="8" y1="2" x2="8" y2="6"/>
+                                        <line x1="3" y1="10" x2="21" y2="10"/>
+                                    </svg>
+                                    Weekly Cost Projections
+                                </h4>
+                                <div class="weekly-projections-toggle">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="6 9 12 15 18 9"/>
+                                    </svg>
+                                </div>
                             </div>
-                            <div class="weekly-note">
-                                PO execution milestones are applied to the week of each PO execution date (or the current week if no date is set).
-                            </div>
-                            <div class="weekly-empty-state" id="weeklyEmptyState" style="display: none;">
-                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5">
-                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                                    <line x1="16" y1="2" x2="16" y2="6"/>
-                                    <line x1="8" y1="2" x2="8" y2="6"/>
-                                    <line x1="3" y1="10" x2="21" y2="10"/>
-                                </svg>
-                                <p>Add dates to your logistics plan to see weekly cost projections.</p>
+                            <div class="weekly-projections-content" id="weeklyProjectionsContent">
+                                <div class="weekly-table-wrapper">
+                                    <table class="weekly-projections-table" id="weeklyProjectionsTable">
+                                        <thead>
+                                            <tr>
+                                                <th>Week</th>
+                                                <th>Date Range</th>
+                                                <th>Freight</th>
+                                                <th>Warehousing</th>
+                                                <th>Milestones</th>
+                                                <th>Weekly Total</th>
+                                                <th>Cumulative</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="weeklyProjectionsBody">
+                                            <!-- Populated by JavaScript -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="weekly-note">
+                                    PO execution milestones are applied to the week of each PO execution date (or the current week if no date is set).
+                                </div>
+                                <div class="weekly-empty-state" id="weeklyEmptyState" style="display: none;">
+                                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5">
+                                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                        <line x1="16" y1="2" x2="16" y2="6"/>
+                                        <line x1="8" y1="2" x2="8" y2="6"/>
+                                        <line x1="3" y1="10" x2="21" y2="10"/>
+                                    </svg>
+                                    <p>Add dates to your logistics plan to see weekly cost projections.</p>
+                                </div>
                             </div>
                         </div>
                     </div>

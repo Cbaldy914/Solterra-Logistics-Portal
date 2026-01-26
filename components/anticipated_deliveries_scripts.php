@@ -28,6 +28,8 @@
             legs: <?php echo json_encode($legs); ?> || []
         };
 
+        const stepperSections = ['modules-costs', 'logistics-plan', 'timeline'];
+
         // Flatpickr instances
         let datePickerInstances = [];
 
@@ -98,27 +100,21 @@
                 }
             });
 
-            // Then restore any explicitly expanded states from localStorage
-            try {
-                const saved = localStorage.getItem(`projection_collapsed_${projectId}`);
-                if (saved) {
-                    const states = JSON.parse(saved);
-                    Object.keys(states).forEach(sectionId => {
-                        const header = document.querySelector(`[data-section="${sectionId}"] .collapsible-header`);
-                        const content = document.getElementById(`${sectionId}-content`);
-                        if (header && content) {
-                            if (states[sectionId]) {
-                                header.classList.add('collapsed');
-                                content.classList.add('collapsed');
-                            } else {
-                                header.classList.remove('collapsed');
-                                content.classList.remove('collapsed');
-                            }
-                        }
-                    });
-                }
-            } catch (e) {
-                console.log('Could not load collapsible states');
+            localStorage.removeItem(`projection_collapsed_${projectId}`);
+        }
+
+        function toggleWeeklyProjections() {
+            const section = document.getElementById('weeklyProjectionsSection');
+            const content = document.getElementById('weeklyProjectionsContent');
+            if (!section || !content) return;
+
+            const isCollapsed = section.classList.contains('collapsed');
+            if (isCollapsed) {
+                section.classList.remove('collapsed');
+                content.classList.remove('collapsed');
+            } else {
+                section.classList.add('collapsed');
+                content.classList.add('collapsed');
             }
         }
 
@@ -208,6 +204,8 @@
             if (selector && workingState.projectionId) {
                 selector.value = workingState.projectionId;
             }
+
+            updateStepperState();
         }
 
         // ==================== PROJECTION MANAGEMENT ====================
@@ -708,40 +706,102 @@
         }
 
         // ==================== STEPPER NAVIGATION ====================
+        function getStepCompletionState() {
+            const hasModules = Array.isArray(workingState.moduleAllocations) && workingState.moduleAllocations.length > 0;
+            const hasStops = Array.isArray(workingState.stops) && workingState.stops.length > 1;
+            const hasLegs = Array.isArray(workingState.legs) && workingState.legs.length > 0;
+            const hasLogistics = hasStops && hasLegs;
+
+            const hasTimelineDates = (workingState.legs || []).some(leg => leg.start_date || leg.end_date)
+                || (workingState.stops || []).some(stop => stop.estimated_arrival_date || stop.estimated_departure_date);
+
+            const hasTimelineCosts = (workingState.legs || []).some(leg => parseFloat(leg.total_freight_cost) > 0)
+                || (workingState.stops || []).some(stop => (stop.fees || []).some(fee => parseFloat(fee.estimated_cost) > 0))
+                || (typeof collectMilestoneEvents === 'function' && collectMilestoneEvents().some(event => parseFloat(event.amount) > 0));
+
+            const hasTimeline = hasTimelineDates || hasTimelineCosts;
+
+            return {
+                'modules-costs': hasModules,
+                'logistics-plan': hasLogistics,
+                'timeline': hasTimeline
+            };
+        }
+
+        function deriveProjectionStatus(completion) {
+            if (workingState.status === 'archived') {
+                return 'archived';
+            }
+
+            const allComplete = stepperSections.every(section => completion[section]);
+            return allComplete ? 'active' : 'draft';
+        }
+
+        function getStatusDescriptor(status) {
+            const normalized = (status || 'draft').toLowerCase();
+            const map = {
+                draft: { label: 'Draft', className: 'status-draft' },
+                active: { label: 'Completed', className: 'status-active' },
+                completed: { label: 'Completed', className: 'status-completed' },
+                archived: { label: 'Archived', className: 'status-archived' }
+            };
+            return map[normalized] || map.draft;
+        }
+
+        function updateProjectionStatusDisplay(status, isPrimary) {
+            const statusBadge = document.getElementById('projectionStatusBadge');
+            if (statusBadge) {
+                const descriptor = getStatusDescriptor(status);
+                statusBadge.textContent = descriptor.label;
+                statusBadge.dataset.status = status;
+                statusBadge.className = `status-badge ${descriptor.className}`;
+            }
+
+            const primaryBadge = document.getElementById('projectionPrimaryBadge');
+            if (primaryBadge) {
+                primaryBadge.style.display = isPrimary ? 'inline-flex' : 'none';
+            }
+        }
+
+        function updateStepperState(activeSection = null) {
+            if (typeof syncPlanState === 'function') {
+                syncPlanState();
+            }
+            const completion = getStepCompletionState();
+            const derivedStatus = deriveProjectionStatus(completion);
+            const normalizedStatus = (workingState.status || 'draft').toLowerCase();
+            const hasExplicitStatus = ['active', 'archived', 'completed'].includes(normalizedStatus);
+            const statusToDisplay = hasExplicitStatus ? normalizedStatus : derivedStatus;
+
+            if (normalizedStatus === 'draft' && derivedStatus === 'active') {
+                workingState.status = 'active';
+            }
+
+            updateProjectionStatusDisplay(statusToDisplay, workingState.isPrimary);
+
+            const steps = document.querySelectorAll('.stepper-step');
+            const connectors = document.querySelectorAll('.stepper-connector');
+            const currentActive = activeSection
+                || document.querySelector('.stepper-step.active')?.dataset.step
+                || stepperSections[0];
+
+            steps.forEach(step => {
+                const stepSection = step.dataset.step;
+                const isActive = stepSection === currentActive;
+                step.classList.toggle('active', isActive);
+                step.classList.toggle('completed', !isActive && completion[stepSection]);
+            });
+
+            connectors.forEach((conn, index) => {
+                conn.classList.toggle('completed', completion[stepperSections[index]]);
+            });
+        }
+
         function navigateToStep(sectionId) {
             // Expand the target section
             expandSection(sectionId);
 
-            // Update stepper visual state
-            const steps = document.querySelectorAll('.stepper-step');
-            const connectors = document.querySelectorAll('.stepper-connector');
-            let foundActive = false;
-            let activeIndex = -1;
-
-            steps.forEach((step, index) => {
-                const stepSection = step.dataset.step;
-                if (stepSection === sectionId) {
-                    step.classList.add('active');
-                    step.classList.remove('completed');
-                    foundActive = true;
-                    activeIndex = index;
-                } else if (!foundActive) {
-                    step.classList.remove('active');
-                    step.classList.add('completed');
-                } else {
-                    step.classList.remove('active');
-                    step.classList.remove('completed');
-                }
-            });
-
-            // Update connectors
-            connectors.forEach((conn, index) => {
-                if (index < activeIndex) {
-                    conn.classList.add('completed');
-                } else {
-                    conn.classList.remove('completed');
-                }
-            });
+            updateStepperState(sectionId);
 
             // Scroll to the section
             const section = document.querySelector(`[data-section="${sectionId}"]`);
@@ -755,10 +815,9 @@
 
         // Update stepper state based on scroll position
         function updateStepperOnScroll() {
-            const sections = ['modules-costs', 'logistics-plan', 'timeline'];
-            let activeSection = sections[0];
+            let activeSection = stepperSections[0];
 
-            sections.forEach(sectionId => {
+            stepperSections.forEach(sectionId => {
                 const section = document.querySelector(`[data-section="${sectionId}"]`);
                 if (section) {
                     const rect = section.getBoundingClientRect();
@@ -768,26 +827,7 @@
                 }
             });
 
-            const steps = document.querySelectorAll('.stepper-step');
-            const connectors = document.querySelectorAll('.stepper-connector');
-            let activeIndex = sections.indexOf(activeSection);
-
-            steps.forEach((step, index) => {
-                if (step.dataset.step === activeSection) {
-                    step.classList.add('active');
-                    step.classList.remove('completed');
-                } else if (index < activeIndex) {
-                    step.classList.remove('active');
-                    step.classList.add('completed');
-                } else {
-                    step.classList.remove('active');
-                    step.classList.remove('completed');
-                }
-            });
-
-            connectors.forEach((conn, index) => {
-                conn.classList.toggle('completed', index < activeIndex);
-            });
+            updateStepperState(activeSection);
         }
 
         // Throttled scroll listener for stepper
@@ -823,6 +863,8 @@
 
             if (modulesEl) modulesEl.textContent = totalModules.toLocaleString();
             if (valueEl) valueEl.textContent = '$' + totalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+            updateStepperState();
         }
 
         function escapeHtml(text) {
@@ -1712,6 +1754,7 @@
 
             // Update badges
             updateBadges();
+            updateStepperState();
         }
 
         function getTransportIcon(mode) {
@@ -2773,10 +2816,24 @@
 
             let html = '';
             let cumulativeTotal = 0;
+            const totals = { freight: 0, warehousing: 0, milestones: 0 };
+
+            const formatRange = (startValue, endValue) => {
+                if (!startValue || !endValue) return '-';
+                const start = startValue instanceof Date ? startValue : new Date(startValue);
+                const end = endValue instanceof Date ? endValue : new Date(endValue);
+                if (isNaN(start.getTime()) || isNaN(end.getTime())) return '-';
+                const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                return `${startFormatted} - ${endFormatted}`;
+            };
 
             weeklyData.forEach((week, index) => {
                 const weeklyTotal = week.freight + week.warehousing + week.milestones;
                 cumulativeTotal += weeklyTotal;
+                totals.freight += week.freight;
+                totals.warehousing += week.warehousing;
+                totals.milestones += week.milestones;
 
                 html += `
                     <tr>
@@ -2790,6 +2847,23 @@
                     </tr>
                 `;
             });
+
+            const overallRange = weeklyData.length
+                ? formatRange(weeklyData[0].weekStartDate, weeklyData[weeklyData.length - 1].weekEndDate)
+                : '-';
+            const grandTotal = totals.freight + totals.warehousing + totals.milestones;
+
+            html += `
+                <tr class="totals-row">
+                    <td>Total</td>
+                    <td class="date-range">${overallRange}</td>
+                    <td class="amount freight">${formatCurrency(totals.freight)}</td>
+                    <td class="amount warehousing">${formatCurrency(totals.warehousing)}</td>
+                    <td class="amount milestone">${formatCurrency(totals.milestones)}</td>
+                    <td class="weekly-total">${formatCurrency(grandTotal)}</td>
+                    <td class="cumulative">${formatCurrency(grandTotal)}</td>
+                </tr>
+            `;
 
             tbody.innerHTML = html;
         }
@@ -2901,11 +2975,14 @@
             const sortedWeeks = Object.keys(weeklyBuckets).sort();
 
             return sortedWeeks.map(weekStart => {
-                const weekEnd = getWeekEnd(weekStart);
-                const startFormatted = new Date(weekStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                const endFormatted = weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const weekStartDate = new Date(weekStart);
+                const weekEndDate = getWeekEnd(weekStart);
+                const startFormatted = weekStartDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const endFormatted = weekEndDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
                 return {
+                    weekStartDate,
+                    weekEndDate,
                     dateRange: `${startFormatted} - ${endFormatted}`,
                     freight: weeklyBuckets[weekStart].freight,
                     warehousing: weeklyBuckets[weekStart].warehousing,
@@ -3520,6 +3597,8 @@
             if (grandTotalBadge) {
                 grandTotalBadge.textContent = '$' + grandTotal.toLocaleString();
             }
+
+            updateStepperState();
         }
 
         function getTransportModeLabel(mode) {

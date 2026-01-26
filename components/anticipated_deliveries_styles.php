@@ -39,12 +39,6 @@
             min-height: 100vh;
         }
 
-        main {
-            padding-bottom: 80px;
-            max-width: 1600px;
-            margin: 0 auto;
-        }
-
         /* ==================== PAGE HEADER ==================== */
         .page-header {
             background: var(--glass);
@@ -66,7 +60,7 @@
             left: 0;
             right: 0;
             height: 3px;
-            background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 50%, var(--dark) 100%);
+            background: linear-gradient(90deg, var(--primary) 0%, var(--primary-dark) 100%);
             opacity: 0.9;
         }
 
@@ -368,6 +362,10 @@
         /* ==================== COLLAPSIBLE SECTIONS ==================== */
         .collapsible-section {
             margin-bottom: 0;
+        }
+
+        .timeline-section {
+            margin-top: 24px;
         }
 
         .collapsible-header {
@@ -1227,6 +1225,14 @@
             border-top: 1px solid var(--gray-200);
         }
 
+        .weekly-projections-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            cursor: pointer;
+        }
+
         .weekly-projections-title {
             display: flex;
             align-items: center;
@@ -1234,11 +1240,53 @@
             font-size: 1em;
             font-weight: 600;
             color: var(--dark);
-            margin: 0 0 16px 0;
+            margin: 0;
         }
 
         .weekly-projections-title svg {
             color: var(--primary);
+        }
+
+        .weekly-projections-toggle {
+            width: 32px;
+            height: 32px;
+            border-radius: 10px;
+            background: var(--gray-50);
+            border: 1px solid var(--gray-200);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--gray-500);
+            transition: all var(--transition);
+            flex-shrink: 0;
+        }
+
+        .weekly-projections-header:hover .weekly-projections-toggle {
+            background: var(--primary-light);
+            border-color: rgba(72, 140, 154, 0.2);
+            color: var(--primary);
+        }
+
+        .weekly-projections-toggle svg {
+            transition: transform var(--transition);
+        }
+
+        .weekly-projections-section.collapsed .weekly-projections-toggle svg {
+            transform: rotate(-90deg);
+        }
+
+        .weekly-projections-content {
+            margin-top: 16px;
+            max-height: 2000px;
+            overflow: hidden;
+            transition: max-height 0.4s ease, opacity 0.3s ease, margin-top 0.3s ease;
+            opacity: 1;
+        }
+
+        .weekly-projections-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+            margin-top: 0;
         }
 
         .weekly-table-wrapper {
@@ -1293,6 +1341,10 @@
         .weekly-projections-table .amount.milestone { color: var(--success); }
         .weekly-projections-table .weekly-total { font-weight: 600; color: var(--dark); }
         .weekly-projections-table .cumulative { font-weight: 700; color: var(--accent); }
+        .weekly-projections-table .totals-row td {
+            font-weight: 700;
+            background: var(--gray-50);
+        }
 
         .weekly-empty-state {
             text-align: center;
