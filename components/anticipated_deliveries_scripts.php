@@ -2912,13 +2912,43 @@
                                 monthlyBuckets[storageMonthKey].warehousing += monthlyFee;
                             }
                         } else {
-                            // In/out/handling fees: place at arrival month (in) or departure month (out)
-                            let feeMonthKey;
-                            if (fee.fee_type === 'out' && stop.estimated_departure_date) {
-                                const depDate = new Date(stop.estimated_departure_date);
-                                feeMonthKey = !isNaN(depDate.getTime()) ? stop.estimated_departure_date.substring(0, 7) : stop.estimated_arrival_date.substring(0, 7);
-                            } else {
-                                feeMonthKey = stop.estimated_arrival_date.substring(0, 7);
+                            // In/out/handling fees: place at arrival month (in/receiving) or departure month (out/outbound)
+                            let feeMonthKey = stop.estimated_arrival_date.substring(0, 7);
+                            if (fee.fee_type === 'outbound' || fee.fee_type === 'out') {
+                                // Try to get departure date from stop, or fall back to next leg/stop
+                                let departureDate = null;
+                                let departureDateStr = null;
+                                if (stop.estimated_departure_date) {
+                                    const depDate = new Date(stop.estimated_departure_date);
+                                    if (!isNaN(depDate.getTime())) {
+                                        departureDate = depDate;
+                                        departureDateStr = stop.estimated_departure_date;
+                                    }
+                                }
+                                // Fallback: use the outgoing leg's start date or next stop's arrival
+                                if (!departureDate) {
+                                    const outgoingLeg = workingState.legs.find(l => l.from_stop_id == stop.id);
+                                    if (outgoingLeg?.start_date) {
+                                        const legDate = new Date(outgoingLeg.start_date);
+                                        if (!isNaN(legDate.getTime())) {
+                                            departureDate = legDate;
+                                            departureDateStr = outgoingLeg.start_date;
+                                        }
+                                    }
+                                }
+                                if (!departureDate) {
+                                    const nextStop = workingState.stops[stopIndex + 1];
+                                    if (nextStop?.estimated_arrival_date) {
+                                        const nextDate = new Date(nextStop.estimated_arrival_date);
+                                        if (!isNaN(nextDate.getTime())) {
+                                            departureDate = nextDate;
+                                            departureDateStr = nextStop.estimated_arrival_date;
+                                        }
+                                    }
+                                }
+                                if (departureDate && departureDateStr && departureDate > arrivalDate) {
+                                    feeMonthKey = departureDateStr.substring(0, 7);
+                                }
                             }
                             if (!monthlyBuckets[feeMonthKey]) {
                                 monthlyBuckets[feeMonthKey] = { freight: 0, warehousing: 0, milestones: 0 };
@@ -3116,11 +3146,34 @@
                                 weeklyBuckets[monthFirstKey].warehousing += monthlyFee;
                             }
                         } else {
-                            // In/out/handling fees: place at arrival (in) or departure (out)
+                            // In/out/handling fees: place at arrival (in/receiving) or departure (out/outbound)
                             let feeDate = arrivalDate;
-                            if (fee.fee_type === 'out' && stop.estimated_departure_date) {
-                                const depDate = new Date(stop.estimated_departure_date);
-                                if (!isNaN(depDate.getTime())) feeDate = depDate;
+                            // Outbound fees should be placed at departure date
+                            if (fee.fee_type === 'outbound' || fee.fee_type === 'out') {
+                                // Try to get departure date from stop, or fall back to next leg/stop
+                                let departureDate = null;
+                                if (stop.estimated_departure_date) {
+                                    const depDate = new Date(stop.estimated_departure_date);
+                                    if (!isNaN(depDate.getTime())) departureDate = depDate;
+                                }
+                                // Fallback: use the outgoing leg's start date or next stop's arrival
+                                if (!departureDate) {
+                                    const outgoingLeg = workingState.legs.find(l => l.from_stop_id == stop.id);
+                                    if (outgoingLeg?.start_date) {
+                                        const legDate = new Date(outgoingLeg.start_date);
+                                        if (!isNaN(legDate.getTime())) departureDate = legDate;
+                                    }
+                                }
+                                if (!departureDate) {
+                                    const nextStop = workingState.stops[stopIndex + 1];
+                                    if (nextStop?.estimated_arrival_date) {
+                                        const nextDate = new Date(nextStop.estimated_arrival_date);
+                                        if (!isNaN(nextDate.getTime())) departureDate = nextDate;
+                                    }
+                                }
+                                if (departureDate && departureDate > arrivalDate) {
+                                    feeDate = departureDate;
+                                }
                             }
                             const feeWeekKey = getWeekKey(feeDate.toISOString().split('T')[0]);
                             if (!weeklyBuckets[feeWeekKey]) {
