@@ -1151,9 +1151,7 @@ function openCostDetailModal(date, forecasted, actual, forecastedCumulative, act
     // Format date
     const dateObj = new Date(date);
     const formattedDate = dateObj.toLocaleDateString('en-US', {
-        weekday: 'long',
         month: 'long',
-        day: 'numeric',
         year: 'numeric'
     });
     document.getElementById('costDetailDate').textContent = formattedDate;
