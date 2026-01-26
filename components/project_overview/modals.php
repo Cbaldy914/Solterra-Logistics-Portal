@@ -648,3 +648,268 @@ document.getElementById('moduleBreakdownModal')?.addEventListener('click', funct
     if (e.target === this) closeModuleBreakdownModal();
 });
 </script>
+
+<!-- Forecasted vs Actual Cost Detail Modal -->
+<style>
+.cost-detail-modal-content {
+    background: #fff;
+    border-radius: 16px;
+    width: 92%;
+    max-width: 680px;
+    margin: 5% auto;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.2), 0 8px 24px rgba(0,0,0,0.1);
+    overflow: hidden;
+    animation: modalSlideIn 0.3s ease;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+}
+.cost-detail-modal-header {
+    background: linear-gradient(135deg, #488C9A 0%, #3A6E7F 100%);
+    padding: 28px 32px;
+    position: relative;
+    flex-shrink: 0;
+}
+.cost-detail-modal-header h3 {
+    color: #fff;
+    margin: 0 0 4px 0;
+    font-size: 1.15em;
+    font-weight: 600;
+}
+.cost-detail-modal-header .modal-date {
+    color: rgba(255,255,255,0.8);
+    font-size: 0.9em;
+}
+.cost-detail-modal-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 22px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: all 0.2s;
+    border-radius: 50%;
+    background: transparent;
+}
+.cost-detail-modal-close:hover {
+    opacity: 1;
+    background: rgba(255,255,255,0.15);
+}
+.cost-detail-modal-body {
+    padding: 28px 32px;
+    overflow-y: auto;
+    flex: 1;
+}
+.cost-detail-summary {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.cost-detail-card {
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+}
+.cost-detail-card.forecasted {
+    border-left: 4px solid #488C9A;
+}
+.cost-detail-card.actual {
+    border-left: 4px solid #293E4C;
+}
+.cost-detail-card.variance {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 24px;
+}
+.cost-detail-card.variance.positive {
+    background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+    border-left: 4px solid #dc3545;
+}
+.cost-detail-card.variance.negative {
+    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+    border-left: 4px solid #28a745;
+}
+.cost-detail-card-label {
+    font-size: 0.75em;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+.cost-detail-card-value {
+    font-size: 1.8em;
+    font-weight: 700;
+    color: #293E4C;
+}
+.cost-detail-card.forecasted .cost-detail-card-value {
+    color: #488C9A;
+}
+.cost-detail-card.actual .cost-detail-card-value {
+    color: #293E4C;
+}
+.variance-label {
+    font-size: 0.85em;
+    color: #6c757d;
+}
+.variance-value {
+    font-size: 1.2em;
+    font-weight: 700;
+}
+.variance.positive .variance-value {
+    color: #dc3545;
+}
+.variance.negative .variance-value {
+    color: #28a745;
+}
+.cost-detail-breakdown {
+    margin-top: 24px;
+}
+.cost-detail-breakdown h4 {
+    font-size: 0.9em;
+    color: #293E4C;
+    margin: 0 0 16px 0;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #e9ecef;
+}
+.cost-detail-breakdown-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #f1f3f4;
+}
+.cost-detail-breakdown-item:last-child {
+    border-bottom: none;
+}
+.breakdown-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #495057;
+    font-size: 0.9em;
+}
+.breakdown-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+.breakdown-dot.forecasted { background: #488C9A; }
+.breakdown-dot.actual { background: #293E4C; }
+.breakdown-value {
+    font-weight: 600;
+    color: #293E4C;
+}
+</style>
+
+<div id="costDetailModal" class="warehouse-selection-modal" style="display:none;">
+    <div class="cost-detail-modal-content">
+        <div class="cost-detail-modal-header">
+            <span class="cost-detail-modal-close" onclick="closeCostDetailModal()">&times;</span>
+            <h3>Cost Comparison</h3>
+            <div class="modal-date" id="costDetailDate"></div>
+        </div>
+        <div class="cost-detail-modal-body">
+            <div class="cost-detail-summary">
+                <div class="cost-detail-card forecasted">
+                    <div class="cost-detail-card-label">Forecasted Cost</div>
+                    <div class="cost-detail-card-value" id="costDetailForecasted">$0.00</div>
+                </div>
+                <div class="cost-detail-card actual">
+                    <div class="cost-detail-card-label">Actual Cost</div>
+                    <div class="cost-detail-card-value" id="costDetailActual">$0.00</div>
+                </div>
+                <div class="cost-detail-card variance" id="costDetailVarianceCard">
+                    <div class="variance-label">Variance from Forecast</div>
+                    <div class="variance-value" id="costDetailVariance">$0.00 (0%)</div>
+                </div>
+            </div>
+
+            <div class="cost-detail-breakdown">
+                <h4>Cumulative Cost at This Point</h4>
+                <div class="cost-detail-breakdown-item">
+                    <span class="breakdown-label">
+                        <span class="breakdown-dot forecasted"></span>
+                        Forecasted (Cumulative)
+                    </span>
+                    <span class="breakdown-value" id="costDetailForecastedCumulative">$0.00</span>
+                </div>
+                <div class="cost-detail-breakdown-item">
+                    <span class="breakdown-label">
+                        <span class="breakdown-dot actual"></span>
+                        Actual (Cumulative)
+                    </span>
+                    <span class="breakdown-value" id="costDetailActualCumulative">$0.00</span>
+                </div>
+            </div>
+
+            <p style="margin-top: 24px; padding: 16px; background: #f8f9fa; border-radius: 8px; font-size: 0.85em; color: #6c757d;">
+                <strong>Note:</strong> Forecasted costs are based on the primary logistics plan projections.
+                Actual costs are calculated from completed deliveries and triggered milestones.
+            </p>
+        </div>
+    </div>
+</div>
+
+<script>
+function openCostDetailModal(date, forecasted, actual, forecastedCumulative, actualCumulative) {
+    // Format date
+    const dateObj = new Date(date);
+    const formattedDate = dateObj.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+    });
+    document.getElementById('costDetailDate').textContent = formattedDate;
+
+    // Format currency values
+    const formatCurrency = (val) => '$' + Number(val || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+
+    document.getElementById('costDetailForecasted').textContent = formatCurrency(forecasted);
+    document.getElementById('costDetailActual').textContent = formatCurrency(actual);
+    document.getElementById('costDetailForecastedCumulative').textContent = formatCurrency(forecastedCumulative);
+    document.getElementById('costDetailActualCumulative').textContent = formatCurrency(actualCumulative);
+
+    // Calculate and display variance
+    const variance = (actual || 0) - (forecasted || 0);
+    const variancePercent = forecasted > 0 ? (variance / forecasted * 100) : 0;
+    const varianceCard = document.getElementById('costDetailVarianceCard');
+    const varianceValue = document.getElementById('costDetailVariance');
+
+    if (variance > 0) {
+        varianceCard.classList.remove('negative');
+        varianceCard.classList.add('positive');
+        varianceValue.textContent = '+' + formatCurrency(variance) + ' (+' + variancePercent.toFixed(1) + '%)';
+    } else if (variance < 0) {
+        varianceCard.classList.remove('positive');
+        varianceCard.classList.add('negative');
+        varianceValue.textContent = formatCurrency(variance) + ' (' + variancePercent.toFixed(1) + '%)';
+    } else {
+        varianceCard.classList.remove('positive', 'negative');
+        varianceValue.textContent = '$0.00 (0%)';
+    }
+
+    document.getElementById('costDetailModal').style.display = 'block';
+}
+
+function closeCostDetailModal() {
+    document.getElementById('costDetailModal').style.display = 'none';
+}
+
+document.getElementById('costDetailModal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeCostDetailModal();
+});
+</script>

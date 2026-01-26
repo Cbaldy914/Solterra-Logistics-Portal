@@ -15,6 +15,7 @@ $current_id = $current_projection['id'] ?? null;
 $current_name = $current_projection['projection_name'] ?? 'New Projection';
 $current_status = $current_projection['status'] ?? 'draft';
 $is_primary = $current_projection['is_primary'] ?? false;
+$primary_style = $is_primary ? '' : 'style="display: none;"';
 ?>
 
 <div class="projection-header">
@@ -49,12 +50,10 @@ $is_primary = $current_projection['is_primary'] ?? false;
 
         <?php if ($current_id): ?>
         <div class="projection-status-group">
-            <span class="status-badge status-<?php echo $current_status; ?>">
+            <span class="status-badge status-<?php echo $current_status; ?>" id="projectionStatusBadge" data-status="<?php echo $current_status; ?>">
                 <?php echo ucfirst($current_status); ?>
             </span>
-            <?php if ($is_primary): ?>
-            <span class="primary-badge">Primary</span>
-            <?php endif; ?>
+            <span class="primary-badge" id="projectionPrimaryBadge" <?php echo $primary_style; ?>>Primary</span>
         </div>
         <?php endif; ?>
 
@@ -199,6 +198,11 @@ $is_primary = $current_projection['is_primary'] ?? false;
 }
 
 .status-active {
+    background: #d4edda;
+    color: #155724;
+}
+
+.status-completed {
     background: #d4edda;
     color: #155724;
 }

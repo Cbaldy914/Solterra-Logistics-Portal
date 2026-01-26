@@ -831,6 +831,8 @@ function initBudgetLineChart() {
                     borderWidth: 2,
                     fill: false,
                     pointRadius: 0,
+                    pointHoverRadius: 6,
+                    pointHoverBackgroundColor: '#488C9A',
                     tension: 0.1
                 },
                 {
@@ -840,6 +842,8 @@ function initBudgetLineChart() {
                     borderWidth: 2,
                     fill: false,
                     pointRadius: 0,
+                    pointHoverRadius: 6,
+                    pointHoverBackgroundColor: '#293E4C',
                     spanGaps: false,
                     tension: 0.1
                 }
@@ -847,12 +851,47 @@ function initBudgetLineChart() {
         },
         options: {
             responsive: true,
+            interaction: { mode: 'index', intersect: false },
             plugins: {
                 legend: { position: 'top' },
                 tooltip: {
+                    backgroundColor: 'rgba(41, 62, 76, 0.95)',
+                    titleColor: '#fff',
+                    bodyColor: '#fff',
+                    borderColor: '#488C9A',
+                    borderWidth: 1,
+                    padding: 14,
+                    displayColors: true,
                     callbacks: {
+                        title: function(tooltipItems) {
+                            if (tooltipItems.length > 0) {
+                                var date = new Date(tooltipItems[0].parsed.x);
+                                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                            }
+                            return '';
+                        },
                         label: function(context) {
                             return context.dataset.label + ': $' + (context.parsed.y || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                        },
+                        afterBody: function(tooltipItems) {
+                            if (tooltipItems.length >= 2) {
+                                var forecasted = tooltipItems[0].parsed.y || 0;
+                                var actual = tooltipItems[1].parsed.y;
+                                if (actual !== null && actual !== undefined) {
+                                    var variance = actual - forecasted;
+                                    var variancePercent = forecasted > 0 ? (variance / forecasted * 100) : 0;
+                                    var sign = variance >= 0 ? '+' : '';
+                                    return [
+                                        '',
+                                        'Variance: ' + sign + '$' + Number(Math.abs(variance)).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) +
+                                        ' (' + sign + variancePercent.toFixed(1) + '%)'
+                                    ];
+                                }
+                            }
+                            return [];
+                        },
+                        footer: function() {
+                            return 'Click for details';
                         }
                     }
                 }
@@ -872,6 +911,31 @@ function initBudgetLineChart() {
                         }
                     }
                 }
+            },
+            onClick: function(event, elements) {
+                if (elements.length > 0) {
+                    var dataIndex = elements[0].index;
+                    var date = budgetDateLabels[dataIndex];
+                    var forecasted = budgetChartData.anticipated_cost[dataIndex] || 0;
+                    var actual = budgetChartData.actual_cost[dataIndex];
+
+                    // Calculate cumulative values up to this point
+                    var forecastedCumulative = 0;
+                    var actualCumulative = 0;
+                    for (var i = 0; i <= dataIndex; i++) {
+                        forecastedCumulative += (budgetChartData.anticipated_cost[i] || 0);
+                        if (budgetChartData.actual_cost[i] !== null && budgetChartData.actual_cost[i] !== undefined) {
+                            actualCumulative += budgetChartData.actual_cost[i];
+                        }
+                    }
+
+                    if (typeof openCostDetailModal === 'function') {
+                        openCostDetailModal(date, forecasted, actual, forecastedCumulative, actualCumulative);
+                    }
+                }
+            },
+            onHover: function(event, elements) {
+                event.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
             }
         }
     });
@@ -2641,7 +2705,7 @@ function initializeFinancialCharts(){
     var antCost = budgetLineData.anticipated_cost;
     var actCost = budgetLineData.actual_cost;
 
-    new Chart(ctxBudget,{
+    var budgetChart = new Chart(ctxBudget,{
         type:'line',
         data:{
             labels: dateLabelsForBudget,
@@ -2654,6 +2718,8 @@ function initializeFinancialCharts(){
                     fill:false,
                     borderDash:[5,5],
                     pointRadius:0,
+                    pointHoverRadius:6,
+                    pointHoverBackgroundColor:'#488C9A',
                     tension:0.1
                 },
                 {
@@ -2663,6 +2729,8 @@ function initializeFinancialCharts(){
                     borderWidth:2,
                     fill:false,
                     pointRadius:0,
+                    pointHoverRadius:6,
+                    pointHoverBackgroundColor:'#293E4C',
                     spanGaps:false,
                     tension:0.1
                 }
@@ -2692,14 +2760,73 @@ function initializeFinancialCharts(){
             },
             plugins:{
                 tooltip:{
+                    backgroundColor:'rgba(41, 62, 76, 0.95)',
+                    titleColor:'#fff',
+                    bodyColor:'#fff',
+                    borderColor:'#488C9A',
+                    borderWidth:1,
+                    padding:14,
+                    displayColors:true,
                     callbacks:{
+                        title:function(tooltipItems){
+                            if(tooltipItems.length > 0){
+                                var date = new Date(tooltipItems[0].parsed.x);
+                                return date.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+                            }
+                            return '';
+                        },
                         label:function(context){
                             var label = context.dataset.label || '';
                             var val = context.parsed.y || 0;
                             return label+': $'+ Number(val).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+                        },
+                        afterBody:function(tooltipItems){
+                            if(tooltipItems.length >= 2){
+                                var forecasted = tooltipItems[0].parsed.y || 0;
+                                var actual = tooltipItems[1].parsed.y;
+                                if(actual !== null && actual !== undefined){
+                                    var variance = actual - forecasted;
+                                    var variancePercent = forecasted > 0 ? (variance / forecasted * 100) : 0;
+                                    var sign = variance >= 0 ? '+' : '';
+                                    return [
+                                        '',
+                                        'Variance: ' + sign + '$' + Number(Math.abs(variance)).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) +
+                                        ' (' + sign + variancePercent.toFixed(1) + '%)'
+                                    ];
+                                }
+                            }
+                            return [];
+                        },
+                        footer:function(){
+                            return 'Click for details';
                         }
                     }
                 }
+            },
+            onClick:function(event, elements){
+                if(elements.length > 0){
+                    var dataIndex = elements[0].index;
+                    var date = dateLabelsForBudget[dataIndex];
+                    var forecasted = antCost[dataIndex] || 0;
+                    var actual = actCost[dataIndex];
+
+                    // Calculate cumulative values up to this point
+                    var forecastedCumulative = 0;
+                    var actualCumulative = 0;
+                    for(var i = 0; i <= dataIndex; i++){
+                        forecastedCumulative += (antCost[i] || 0);
+                        if(actCost[i] !== null && actCost[i] !== undefined){
+                            actualCumulative += actCost[i];
+                        }
+                    }
+
+                    if(typeof openCostDetailModal === 'function'){
+                        openCostDetailModal(date, forecasted, actual, forecastedCumulative, actualCumulative);
+                    }
+                }
+            },
+            onHover:function(event, elements){
+                event.native.target.style.cursor = elements.length > 0 ? 'pointer' : 'default';
             }
         }
     });
