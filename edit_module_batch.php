@@ -9,6 +9,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin','globa
 }
 
 require_once '../config.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) { die('Database connection failed.'); }
 
@@ -260,6 +261,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stacking_during_transport = trim($_POST['stacking_during_transport'] ?? '');
     $module_notes = trim($_POST['module_notes'] ?? '');
     $cost_per_watt = isset($_POST['cost_per_watt']) && $_POST['cost_per_watt'] !== '' ? floatval($_POST['cost_per_watt']) : null;
+    $po_execution_date = isset($_POST['po_execution_date']) && $_POST['po_execution_date'] !== '' ? trim($_POST['po_execution_date']) : null;
 
     $posted_watts = $_POST['wattages'] ?? [];
     $posted_qtys = $_POST['quantities'] ?? [];
@@ -312,13 +314,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // Update modules
-            $stmtU = $conn->prepare('UPDATE modules SET vendor_name=?, initial_location=?, modules_per_pallet=?, pallets_per_truck=?, modules_per_truck=?, pallet_length_mm=?, pallet_depth_mm=?, pallet_double_stacked_height_mm=?, pallet_total_weight_kg=?, stacking_in_warehouse=?, stacking_during_transport=?, forklift_truck_long_side_mm=?, forklift_truck_short_side_mm=?, pallet_jack_long_side_mm=?, pallet_jack_short_side_mm=?, module_notes=?, cost_per_watt=?, last_updated_at=NOW() WHERE id=?');
-            $stmtU->bind_param('ssiiiiiiissiiiisdi',
+            $stmtU = $conn->prepare('UPDATE modules SET vendor_name=?, initial_location=?, modules_per_pallet=?, pallets_per_truck=?, modules_per_truck=?, pallet_length_mm=?, pallet_depth_mm=?, pallet_double_stacked_height_mm=?, pallet_total_weight_kg=?, stacking_in_warehouse=?, stacking_during_transport=?, forklift_truck_long_side_mm=?, forklift_truck_short_side_mm=?, pallet_jack_long_side_mm=?, pallet_jack_short_side_mm=?, module_notes=?, cost_per_watt=?, po_execution_date=?, last_updated_at=NOW() WHERE id=?');
+            $stmtU->bind_param('ssiiiiiiissiiiisdsi',
                 $vendor_name, $initial_location, $modules_per_pallet, $pallets_per_truck, $modules_per_truck,
                 $pallet_length_mm, $pallet_depth_mm, $pallet_double_stacked_height_mm, $pallet_total_weight_kg,
                 $stacking_in_warehouse, $stacking_during_transport,
                 $forklift_truck_long_side_mm, $forklift_truck_short_side_mm, $pallet_jack_long_side_mm, $pallet_jack_short_side_mm,
-                $module_notes, $cost_per_watt, $batch_id
+                $module_notes, $cost_per_watt, $po_execution_date, $batch_id
             );
             if (!$stmtU->execute()) { throw new Exception('Failed updating module: '.$stmtU->error); }
             $stmtU->close();
@@ -426,6 +428,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $conn->commit();
 
+            // Save milestones
+            $posted_milestones = $_POST['milestones'] ?? [];
+            save_module_milestones($batch_id, $posted_milestones, $conn, $user_id);
+
             // Calculate total modules for response
             $total_modules = 0;
             foreach ($posted_watts as $i => $w) {
@@ -522,6 +528,21 @@ foreach ($current_wattages as $w) {
             'pallet_modules'=>(int)($w['pallet_modules'] ?? 0)
         ];
     }
+}
+
+// Load existing milestones for this batch
+$existingMilestones = [];
+if ($stmtM = $conn->prepare('SELECT trigger_event, percentage FROM module_batch_milestones WHERE module_id = ? AND is_active = 1 ORDER BY display_order, id')) {
+    $stmtM->bind_param('i', $batch_id);
+    $stmtM->execute();
+    $resM = $stmtM->get_result();
+    while ($row = $resM->fetch_assoc()) {
+        $existingMilestones[] = [
+            'trigger_event' => $row['trigger_event'],
+            'percentage' => $row['percentage']
+        ];
+    }
+    $stmtM->close();
 }
 
 ?>

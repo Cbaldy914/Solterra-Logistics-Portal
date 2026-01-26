@@ -10,6 +10,7 @@ if (!isset($_SESSION['user_id']) || !in_array($_SESSION['role'], ['admin', 'glob
 
 require_once '../config.php';
 require_once 'document_helpers.php';
+require_once 'milestone_helpers.php';
 $conn = getDBConnection();
 if (!$conn) {
     die("Database connection failed.");
@@ -150,6 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pallet_jack_short_side_mm = isset($_POST['pallet_jack_short_side_mm']) && $_POST['pallet_jack_short_side_mm'] !== '' ? intval($_POST['pallet_jack_short_side_mm']) : null;
     $module_notes = trim($_POST['module_notes'] ?? '');
     $cost_per_watt = isset($_POST['cost_per_watt']) && $_POST['cost_per_watt'] !== '' ? floatval($_POST['cost_per_watt']) : null;
+    $po_execution_date = isset($_POST['po_execution_date']) && $_POST['po_execution_date'] !== '' ? trim($_POST['po_execution_date']) : null;
 
     // Build vendor/location defaults
     if ($manufacturer_id) {
@@ -233,8 +235,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     pallets_per_truck, modules_per_truck, pallet_length_mm, pallet_depth_mm,
                     pallet_double_stacked_height_mm, pallet_total_weight_kg, stacking_in_warehouse,
                     stacking_during_transport, forklift_truck_long_side_mm, forklift_truck_short_side_mm,
-                    pallet_jack_long_side_mm, pallet_jack_short_side_mm, module_notes, module_docs_url, cost_per_watt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                    pallet_jack_long_side_mm, pallet_jack_short_side_mm, module_notes, module_docs_url, cost_per_watt, po_execution_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
             ");
             // Determine account for insert
             $insert_account_id = 0;
@@ -249,12 +251,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Please select a valid account (or project).');
             }
 
-            $stmtInsert->bind_param("issiiiiiiiissiiiisd",
+            $stmtInsert->bind_param("issiiiiiiiissiiiisds",
                 $insert_account_id, $vendor_name, $initial_location, $project_id, $modules_per_pallet,
                 $pallets_per_truck, $modules_per_truck, $pallet_length_mm, $pallet_depth_mm,
                 $pallet_double_stacked_height_mm, $pallet_total_weight_kg, $stacking_in_warehouse,
                 $stacking_during_transport, $forklift_truck_long_side_mm, $forklift_truck_short_side_mm,
-                $pallet_jack_long_side_mm, $pallet_jack_short_side_mm, $module_notes, $cost_per_watt
+                $pallet_jack_long_side_mm, $pallet_jack_short_side_mm, $module_notes, $cost_per_watt, $po_execution_date
             );
             
             if (!$stmtInsert->execute()) {
@@ -502,6 +504,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $conn->commit();
+
+            // Save milestones
+            $posted_milestones = $_POST['milestones'] ?? [];
+            save_module_milestones($module_id, $posted_milestones, $conn, $user_id);
 
             // Calculate total modules for the response
             $total_modules = 0;
@@ -1055,7 +1061,7 @@ $conn->close();
                         </div>
                     <?php endif; ?>
 
-                    <?php $prefManufacturerId = null; $prefLocationId = null; $existingWattages = []; include __DIR__ . '/components/module_batch_section.php'; ?>
+                    <?php $prefManufacturerId = null; $prefLocationId = null; $existingWattages = []; $module = []; $existingMilestones = []; include __DIR__ . '/components/module_batch_section.php'; ?>
 
                     <!-- Palletization Section -->
                     <div class="form-section" style="margin-top: 30px; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%); border: 1px solid #e9ecef; border-left: 4px solid #488C9A; border-radius: 12px; padding: 24px;">
