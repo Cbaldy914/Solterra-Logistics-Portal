@@ -2823,7 +2823,7 @@
                 const start = startValue instanceof Date ? startValue : new Date(startValue);
                 const end = endValue instanceof Date ? endValue : new Date(endValue);
                 if (isNaN(start.getTime()) || isNaN(end.getTime())) return '-';
-                const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 return `${startFormatted} - ${endFormatted}`;
             };

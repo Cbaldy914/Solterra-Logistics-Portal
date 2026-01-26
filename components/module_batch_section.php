@@ -303,12 +303,6 @@ if (!function_exists('mb_optional_number_value')) {
                 </div>
             </div>
 
-            <!-- Cost Per Watt (Optional) -->
-            <div class="input-group" style="margin-top: 20px; max-width: 300px;">
-                <label for="cost_per_watt">Cost Per Watt ($/W) <span style="color: #6c757d; font-weight: 400; font-size: 0.85em;">(optional)</span></label>
-                <input type="number" step="0.000001" min="0" name="cost_per_watt" id="cost_per_watt" placeholder="e.g. 0.25" value="<?php echo htmlspecialchars($module['cost_per_watt'] ?? ''); ?>">
-                <small style="color: #6c757d; font-size: 0.8rem; margin-top: 4px; display: block;">Enter the module cost in price per watt for reporting.</small>
-            </div>
         </div>
     </div>
 
@@ -323,6 +317,11 @@ if (!function_exists('mb_optional_number_value')) {
             <span>📄</span>
             <span>Module Documentation</span>
             <span class="badge" id="moduleDocsBadgeManual" style="display: none;"></span>
+        </button>
+        <button type="button" class="logistics-inline-btn" id="milestoneBtnManual" onclick="mb_openMilestonePanel()" style="margin-left: 12px; border-color: #17a2b8; color: #17a2b8;">
+            <span>💰</span>
+            <span>Module Costs</span>
+            <span class="badge" id="milestoneBadgeManual" style="display: none; background: #17a2b8;">Set</span>
         </button>
     </div>
 </div>
@@ -494,12 +493,85 @@ if (!function_exists('mb_optional_number_value')) {
     </div>
 </div>
 
+<!-- Module Costs Panel Overlay -->
+<div class="logistics-panel-overlay" id="mb_milestonePanelOverlay"></div>
+
+<!-- Module Costs Slide-out Panel -->
+<div class="logistics-panel" id="mb_milestonePanel" style="border-left: 4px solid #17a2b8;">
+    <div class="logistics-panel-header" style="border-bottom: 2px solid #17a2b8;">
+        <h3 style="color: #17a2b8;"><span style="margin-right: 8px;">💰</span>Module Costs</h3>
+        <button type="button" class="logistics-panel-close" id="mb_milestonePanelClose">&times;</button>
+    </div>
+    <div class="logistics-panel-body">
+        <!-- Cost Per Watt Section -->
+        <div class="logistics-panel-section" style="margin-bottom: 24px;">
+            <h5>Cost Per Watt</h5>
+            <div style="margin-top: 12px;">
+                <label for="cost_per_watt" style="display: block; font-size: 12px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px;">Price per Watt ($/W)</label>
+                <input type="number" step="0.000001" min="0" name="cost_per_watt" id="cost_per_watt" placeholder="e.g. 0.25" value="<?php echo htmlspecialchars($module['cost_per_watt'] ?? ''); ?>" style="width: 100%; max-width: 200px; padding: 10px 12px; border: 1px solid #dee2e6; border-radius: 6px; font-size: 14px;" oninput="mb_updateMilestoneAvailability()">
+                <small style="display: block; margin-top: 6px; color: #6c757d; font-size: 12px;">Enter the module cost for reporting and milestone calculations.</small>
+            </div>
+        </div>
+
+        <!-- PO Execution Date Section -->
+        <div class="logistics-panel-section" style="margin-bottom: 24px;">
+            <h5>PO Execution Date</h5>
+            <div style="margin-top: 12px;">
+                <label for="po_execution_date" style="display: block; font-size: 12px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px;">Date of PO Execution</label>
+                <input type="date" name="po_execution_date" id="po_execution_date" value="<?php echo htmlspecialchars($module['po_execution_date'] ?? ''); ?>" style="width: 100%; max-width: 200px; padding: 10px 12px; border: 1px solid #dee2e6; border-radius: 6px; font-size: 14px;">
+                <small style="display: block; margin-top: 6px; color: #6c757d; font-size: 12px;">The date when the purchase order was executed. Used for milestone payment triggers.</small>
+            </div>
+        </div>
+
+        <!-- Payment Milestones Section -->
+        <div class="logistics-panel-section" id="mb_milestoneSection">
+            <h5>Payment Milestones <span style="font-weight: 400; font-size: 12px; color: #6c757d;">(optional)</span></h5>
+            <p style="margin: 8px 0 16px 0; color: #6c757d; font-size: 12px;">
+                Configure when payments are triggered based on delivery events.<br>
+                Payment = <strong>cost per watt × wattage × quantity × percentage</strong>
+            </p>
+            <div id="mb_milestoneRequiresCost" style="display: none; padding: 12px 16px; background: #f8f9fa; border: 1px dashed #dee2e6; border-radius: 8px; color: #6c757d; font-size: 13px; text-align: center;">
+                Enter a cost per watt above to configure payment milestones.
+            </div>
+            <div id="mb_milestoneConfigArea">
+                <div id="mb_milestoneContainer"></div>
+                <button type="button" id="mb_addMilestoneBtn" style="margin-top: 12px; padding: 10px 16px; background: #17a2b8; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;">
+                    + Add Milestone
+                </button>
+            </div>
+        </div>
+
+        <!-- Total Percentage Display -->
+        <div id="mb_milestoneTotalArea" style="margin-top: 20px; padding: 12px 16px; background: #f8f9fa; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: 500; color: #293E4C;">Total Percentage:</span>
+            <span id="mb_milestoneTotalPercent" style="font-weight: 600; font-size: 1.1rem; color: #17a2b8;">0%</span>
+        </div>
+        <div id="mb_milestonePercentWarning" style="display: none; margin-top: 8px; padding: 8px 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; color: #856404; font-size: 12px;">
+            Note: Total percentage does not equal 100%. This is allowed but may indicate incomplete milestone configuration.
+        </div>
+
+        <!-- Action Buttons -->
+        <div style="display: flex; gap: 12px; margin-top: 24px; padding-top: 16px; border-top: 1px solid #e9ecef;">
+            <button type="button" id="mb_milestoneClearBtn" style="flex: 1; padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; cursor: pointer; font-size: 14px; color: #6c757d;">
+                Clear All
+            </button>
+            <button type="button" id="mb_milestoneDoneBtn" style="flex: 2; padding: 12px; background: linear-gradient(135deg, #17a2b8 0%, #138496 100%); border: none; border-radius: 8px; cursor: pointer; font-size: 14px; color: white; font-weight: 600;">
+                Done
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden inputs for milestone data -->
+<div id="mb_milestoneHiddenInputs"></div>
+
 <script>
 // Store location data for address display
 let mb_locationDataCache = {};
 
 function mb_addWattageField(wattage = '', quantity = '') {
     const container = document.getElementById('wattage-container');
+    if (!container) return; // Guard against missing container
     const index = container.children.length;
     const div = document.createElement('div');
     div.className = 'wattage-entry';
@@ -538,9 +610,12 @@ function mb_handleManufacturerChange(select) {
     // Reset address display
     if (addressDisplay) {
         addressDisplay.style.display = 'none';
-        addressText.textContent = '';
+        if (addressText) addressText.textContent = '';
     }
     mb_locationDataCache = {};
+
+    // Guard against missing location select
+    if (!locationSelect) return;
 
     if (select.value === 'add_new') {
         window.open('add_manufacturer.php', '_blank');
@@ -760,6 +835,215 @@ function mb_updateModuleDocsButtonStatus() {
     }
 }
 
+// ========== Module Costs Panel Functions ==========
+let mb_milestones = [];
+
+const mb_triggerEventLabels = {
+    'po_execution': 'PO Execution',
+    'shipping': 'Shipping',
+    'customs_cleared': 'Customs Clearance',
+    'project_delivery': 'Project Delivery'
+};
+
+function mb_openMilestonePanel() {
+    document.getElementById('mb_milestonePanel').classList.add('open');
+    document.getElementById('mb_milestonePanelOverlay').classList.add('open');
+    mb_updateMilestoneAvailability();
+    mb_renderMilestones();
+}
+
+function mb_updateMilestoneAvailability() {
+    const costInput = document.getElementById('cost_per_watt');
+    const requiresCostMsg = document.getElementById('mb_milestoneRequiresCost');
+    const configArea = document.getElementById('mb_milestoneConfigArea');
+    const totalArea = document.getElementById('mb_milestoneTotalArea');
+
+    if (!costInput || !requiresCostMsg || !configArea) return;
+
+    const hasCost = costInput.value && parseFloat(costInput.value) > 0;
+
+    if (hasCost) {
+        requiresCostMsg.style.display = 'none';
+        configArea.style.display = 'block';
+        if (totalArea) totalArea.style.display = 'flex';
+    } else {
+        requiresCostMsg.style.display = 'block';
+        configArea.style.display = 'none';
+        if (totalArea) totalArea.style.display = 'none';
+    }
+}
+
+function mb_closeMilestonePanel() {
+    document.getElementById('mb_milestonePanel').classList.remove('open');
+    document.getElementById('mb_milestonePanelOverlay').classList.remove('open');
+    mb_updateMilestoneButtonStatus();
+    mb_syncMilestonesToHiddenInputs();
+}
+
+function mb_addMilestone(trigger = '', percentage = '') {
+    mb_milestones.push({ trigger_event: trigger, percentage: percentage });
+    mb_renderMilestones();
+}
+
+function mb_removeMilestone(index) {
+    mb_milestones.splice(index, 1);
+    mb_renderMilestones();
+}
+
+function mb_getTriggerTooltip(trigger) {
+    const tooltips = {
+        'po_execution': 'Triggered when this module batch is added to the project',
+        'shipping': 'Triggered when a delivery is created (modules ship from manufacturer)',
+        'customs_cleared': 'Triggered when delivery clears customs at port',
+        'project_delivery': 'Triggered when delivery arrives at the project site'
+    };
+    return tooltips[trigger] || '';
+}
+
+function mb_updateTriggerInfo(index) {
+    const trigger = mb_milestones[index]?.trigger_event || '';
+    const tooltip = mb_getTriggerTooltip(trigger);
+    const infoEl = document.getElementById('mb_triggerInfo_' + index);
+    if (infoEl) {
+        infoEl.textContent = tooltip;
+    }
+}
+
+function mb_renderMilestones() {
+    const container = document.getElementById('mb_milestoneContainer');
+    if (!container) return;
+
+    if (mb_milestones.length === 0) {
+        container.innerHTML = '<div style="padding: 20px; text-align: center; color: #6c757d; background: #f8f9fa; border-radius: 8px; border: 2px dashed #dee2e6;">No milestones configured. Click "Add Milestone" to get started.</div>';
+        mb_updateMilestoneTotal();
+        return;
+    }
+
+    let html = '';
+    mb_milestones.forEach((m, index) => {
+        const triggerTooltip = mb_getTriggerTooltip(m.trigger_event);
+        html += `
+            <div style="padding: 12px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; border: 1px solid #e9ecef;">
+                <div style="display: flex; gap: 12px; align-items: flex-end;">
+                    <div style="flex: 2;">
+                        <label style="font-size: 11px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.3px; display: block; margin-bottom: 4px;">Trigger Event</label>
+                        <select onchange="mb_updateMilestoneData(${index}, 'trigger_event', this.value); mb_updateTriggerInfo(${index})" style="width: 100%; padding: 8px 10px; border: 1px solid #dee2e6; border-radius: 6px; font-size: 13px;">
+                            <option value="">Select event...</option>
+                            <option value="po_execution" ${m.trigger_event === 'po_execution' ? 'selected' : ''}>PO Execution</option>
+                            <option value="shipping" ${m.trigger_event === 'shipping' ? 'selected' : ''}>Shipping</option>
+                            <option value="customs_cleared" ${m.trigger_event === 'customs_cleared' ? 'selected' : ''}>Customs Clearance</option>
+                            <option value="project_delivery" ${m.trigger_event === 'project_delivery' ? 'selected' : ''}>Project Delivery</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1;">
+                        <label style="font-size: 11px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.3px; display: block; margin-bottom: 4px;">Percentage</label>
+                        <div style="display: flex; align-items: center;">
+                            <input type="number" min="0" max="100" step="0.01" value="${m.percentage}" onchange="mb_updateMilestoneData(${index}, 'percentage', this.value)" style="width: 80px; padding: 8px 10px; border: 1px solid #dee2e6; border-radius: 6px; font-size: 13px;">
+                            <span style="margin-left: 4px; color: #6c757d;">%</span>
+                        </div>
+                    </div>
+                    <button type="button" onclick="mb_removeMilestone(${index})" style="background: #dc3545; color: white; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 14px;">&times;</button>
+                </div>
+                <div id="mb_triggerInfo_${index}" style="margin-top: 8px; font-size: 11px; color: #17a2b8; font-style: italic; min-height: 14px;">${triggerTooltip}</div>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+    mb_updateMilestoneTotal();
+}
+
+function mb_updateMilestoneData(index, field, value) {
+    if (mb_milestones[index]) {
+        mb_milestones[index][field] = value;
+        mb_updateMilestoneTotal();
+    }
+}
+
+function mb_updateMilestoneTotal() {
+    let total = 0;
+    mb_milestones.forEach(m => {
+        total += parseFloat(m.percentage) || 0;
+    });
+
+    const totalEl = document.getElementById('mb_milestoneTotalPercent');
+    const warningEl = document.getElementById('mb_milestonePercentWarning');
+
+    if (totalEl) {
+        totalEl.textContent = total.toFixed(2).replace(/\.?0+$/, '') + '%';
+        totalEl.style.color = total === 100 ? '#28a745' : (total > 100 ? '#dc3545' : '#17a2b8');
+    }
+
+    if (warningEl) {
+        warningEl.style.display = (mb_milestones.length > 0 && total !== 100) ? 'block' : 'none';
+    }
+}
+
+function mb_updateMilestoneButtonStatus() {
+    const costInput = document.getElementById('cost_per_watt');
+    const hasCost = costInput && costInput.value && parseFloat(costInput.value) > 0;
+    const hasMilestones = mb_milestones.length > 0 && mb_milestones.some(m => m.trigger_event && parseFloat(m.percentage) > 0);
+    const btn = document.getElementById('milestoneBtnManual');
+    const badge = document.getElementById('milestoneBadgeManual');
+
+    if (btn) {
+        if (hasCost || hasMilestones) {
+            btn.style.background = 'linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%)';
+            btn.style.borderColor = '#17a2b8';
+            btn.style.color = '#0c5460';
+            if (badge) {
+                badge.style.display = 'inline';
+                // Show cost per watt value in badge
+                if (hasCost) {
+                    const costVal = parseFloat(costInput.value);
+                    badge.textContent = '$' + costVal.toFixed(costVal < 1 ? 2 : 2) + '/W';
+                } else {
+                    badge.textContent = 'Set';
+                }
+            }
+        } else {
+            btn.style.background = 'linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%)';
+            btn.style.borderColor = '#17a2b8';
+            btn.style.color = '#17a2b8';
+            if (badge) badge.style.display = 'none';
+        }
+    }
+}
+
+function mb_syncMilestonesToHiddenInputs() {
+    const container = document.getElementById('mb_milestoneHiddenInputs');
+    if (!container) return;
+
+    // Clear existing hidden inputs
+    container.innerHTML = '';
+
+    // Add hidden inputs for each valid milestone
+    mb_milestones.forEach((m, index) => {
+        if (m.trigger_event && parseFloat(m.percentage) > 0) {
+            container.innerHTML += `<input type="hidden" name="milestones[${index}][trigger_event]" value="${m.trigger_event}">`;
+            container.innerHTML += `<input type="hidden" name="milestones[${index}][percentage]" value="${m.percentage}">`;
+        }
+    });
+}
+
+function mb_clearAllMilestones() {
+    mb_milestones = [];
+    mb_renderMilestones();
+    mb_updateMilestoneButtonStatus();
+    mb_syncMilestonesToHiddenInputs();
+}
+
+function mb_loadExistingMilestones(existingMilestones) {
+    if (Array.isArray(existingMilestones) && existingMilestones.length > 0) {
+        mb_milestones = existingMilestones.map(m => ({
+            trigger_event: m.trigger_event || '',
+            percentage: m.percentage || ''
+        }));
+        mb_updateMilestoneButtonStatus();
+        mb_syncMilestonesToHiddenInputs();
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const existing = <?php echo json_encode($existingWattages ?? []); ?>;
     if (existing.length) {
@@ -894,15 +1178,43 @@ document.addEventListener('DOMContentLoaded', function() {
             const addressDisplay = document.getElementById('locationAddressDisplay');
             const addressText = document.getElementById('locationAddressText');
 
-            if (this.value && mb_locationDataCache[this.value] && addressDisplay) {
+            if (this.value && mb_locationDataCache[this.value] && addressDisplay && addressText) {
                 addressText.textContent = mb_locationDataCache[this.value];
                 addressDisplay.style.display = 'flex';
             } else if (addressDisplay) {
                 addressDisplay.style.display = 'none';
-                addressText.textContent = '';
+                if (addressText) addressText.textContent = '';
             }
         });
     }
+
+    // Payment Milestones Panel Event Listeners
+    const milestoneCloseBtn = document.getElementById('mb_milestonePanelClose');
+    const milestoneOverlay = document.getElementById('mb_milestonePanelOverlay');
+    const milestoneDoneBtn = document.getElementById('mb_milestoneDoneBtn');
+    const milestoneClearBtn = document.getElementById('mb_milestoneClearBtn');
+    const milestoneAddBtn = document.getElementById('mb_addMilestoneBtn');
+
+    if (milestoneCloseBtn) milestoneCloseBtn.addEventListener('click', mb_closeMilestonePanel);
+    if (milestoneOverlay) milestoneOverlay.addEventListener('click', mb_closeMilestonePanel);
+    if (milestoneDoneBtn) milestoneDoneBtn.addEventListener('click', mb_closeMilestonePanel);
+    if (milestoneClearBtn) milestoneClearBtn.addEventListener('click', mb_clearAllMilestones);
+    if (milestoneAddBtn) milestoneAddBtn.addEventListener('click', function() { mb_addMilestone(); });
+
+    // Load existing milestones if available (for edit mode)
+    const existingMilestones = <?php echo json_encode($existingMilestones ?? []); ?>;
+    if (existingMilestones && existingMilestones.length > 0) {
+        mb_loadExistingMilestones(existingMilestones);
+    }
+
+    // Cost per watt change listener - update button status when cost changes
+    const costPerWattInput = document.getElementById('cost_per_watt');
+    if (costPerWattInput) {
+        costPerWattInput.addEventListener('input', mb_updateMilestoneButtonStatus);
+    }
+
+    // Initial milestone button status and availability
+    mb_updateMilestoneButtonStatus();
+    mb_updateMilestoneAvailability();
 });
 </script>
-
