@@ -1195,26 +1195,28 @@ $pieChartDataFinancial = [
     'Accessorial'   => $total_accessorial_costs,
 ];
 
-// Next 5 weeks for Invoices/Cashflow
+// Next 5 weeks for Invoices/Cashflow (Sunday-Saturday weeks)
 $weeks_financial = [];
-$weekEndingFin = new DateTime();
-if ($weekEndingFin->format('w') != 0) {
-    $weekEndingFin->modify('next Sunday');
+$weekStartFin = new DateTime();
+if ($weekStartFin->format('w') != 0) {
+    $weekStartFin->modify('last Sunday');
 }
-for($i=0;$i<5;$i++){
-    $startFin = clone $weekEndingFin;
-    $startFin->modify('-6 days');
-    $weeks_financial[] = ['start'=>$startFin,'end'=>clone $weekEndingFin];
-    $weekEndingFin->modify('+1 week');
+for ($i = 0; $i < 5; $i++) {
+    $startFin = clone $weekStartFin;
+    $endFin = clone $weekStartFin;
+    $endFin->modify('+6 days');
+    $weeks_financial[] = ['start' => $startFin, 'end' => $endFin];
+    $weekStartFin->modify('+1 week');
 }
 
 // Forecast from primary projection (or zeros if no projection)
 $anticipated_deliveries_financial = array_fill(0, count($weeks_financial), 0);
 $all_projection_weeks = []; // All weeks with costs (for modal)
 
-if ($primary_projection && !empty($primary_projection['legs'])) {
-    $projection_weekly_costs = []; // date => ['freight' => X, 'warehousing' => X, 'milestones' => X]
-    $modal_weekly_costs = []; // Same but keyed by week-starting-Sunday (matches JS weeklyProjectionsTable)
+if ($primary_projection) {
+    $today_str = (new DateTime())->format('Y-m-d');
+    $projection_weekly_costs = []; // week-starting-Sunday => ['freight' => X, 'warehousing' => X, 'milestones' => X]
+    $projection_monthly_costs = []; // YYYY-MM => ['freight' => X, 'warehousing' => X, 'milestones' => X]
 
     // Calculate total milestone amounts per trigger event from module allocations
     $projection_milestone_amounts = []; // trigger_event => total_amount
@@ -1234,78 +1236,69 @@ if ($primary_projection && !empty($primary_projection['legs'])) {
                 }
             }
 
-            // PO execution milestone goes to po_execution_date week
-            if (!empty($alloc['po_execution_date']) && isset($projection_milestone_amounts['po_execution'])) {
-                $po_week = getWeekEndingSunday($alloc['po_execution_date']);
-                if (!isset($projection_weekly_costs[$po_week])) {
-                    $projection_weekly_costs[$po_week] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
-                }
-                // Add po_execution milestone for this allocation only
-                $alloc_po_amount = 0;
+            // PO execution milestone goes to po_execution_date week (or today if missing)
+            $alloc_po_amount = 0;
+            if (!empty($alloc['milestones'])) {
                 foreach ($alloc['milestones'] as $ms) {
-                    if ($ms['trigger_event'] === 'po_execution') {
+                    if (($ms['trigger_event'] ?? '') === 'po_execution') {
                         $alloc_po_amount += $contract_val * ($ms['percentage'] / 100);
                     }
                 }
+            }
+
+            if ($alloc_po_amount > 0) {
+                $po_date = !empty($alloc['po_execution_date']) ? $alloc['po_execution_date'] : $today_str;
+                $po_week = getWeekStartingSunday($po_date);
+                if (!isset($projection_weekly_costs[$po_week])) {
+                    $projection_weekly_costs[$po_week] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
+                }
                 $projection_weekly_costs[$po_week]['milestones'] += $alloc_po_amount;
 
-                // Modal: same but keyed by week-starting-Sunday
-                $po_week_modal = getWeekStartingSunday($alloc['po_execution_date']);
-                if (!isset($modal_weekly_costs[$po_week_modal])) {
-                    $modal_weekly_costs[$po_week_modal] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
+                $po_month = substr($po_date, 0, 7);
+                if (!isset($projection_monthly_costs[$po_month])) {
+                    $projection_monthly_costs[$po_month] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
                 }
-                $modal_weekly_costs[$po_week_modal]['milestones'] += $alloc_po_amount;
+                $projection_monthly_costs[$po_month]['milestones'] += $alloc_po_amount;
             }
         }
     }
 
     // Iterate legs: assign freight cost to start_date week, milestones to triggered week
     $assigned_milestone_events = []; // Prevent double-counting if multiple legs trigger same event
-    $modal_assigned_milestone_events = [];
-    foreach ($primary_projection['legs'] as $leg) {
-        if (!empty($leg['start_date'])) {
-            $leg_week = getWeekEndingSunday($leg['start_date']);
-            if (!isset($projection_weekly_costs[$leg_week])) {
-                $projection_weekly_costs[$leg_week] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
-            }
-            $projection_weekly_costs[$leg_week]['freight'] += floatval($leg['total_freight_cost'] ?? 0);
-
-            // If this leg triggers a milestone, add milestone amount to this week
-            if (!empty($leg['triggers_milestone']) && $leg['triggers_milestone'] !== 'po_execution') {
-                $trigger = $leg['triggers_milestone'];
-                if (isset($projection_milestone_amounts[$trigger]) && !in_array($trigger, $assigned_milestone_events)) {
-                    $projection_weekly_costs[$leg_week]['milestones'] += $projection_milestone_amounts[$trigger];
-                    $assigned_milestone_events[] = $trigger;
+    if (!empty($primary_projection['legs'])) {
+        foreach ($primary_projection['legs'] as $leg) {
+            if (!empty($leg['start_date'])) {
+                $leg_week = getWeekStartingSunday($leg['start_date']);
+                if (!isset($projection_weekly_costs[$leg_week])) {
+                    $projection_weekly_costs[$leg_week] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
                 }
-            }
+                $projection_weekly_costs[$leg_week]['freight'] += floatval($leg['total_freight_cost'] ?? 0);
 
-            // Modal: week-starting-Sunday bucketing
-            $leg_week_modal = getWeekStartingSunday($leg['start_date']);
-            if (!isset($modal_weekly_costs[$leg_week_modal])) {
-                $modal_weekly_costs[$leg_week_modal] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
-            }
-            $modal_weekly_costs[$leg_week_modal]['freight'] += floatval($leg['total_freight_cost'] ?? 0);
+                $leg_month = substr($leg['start_date'], 0, 7);
+                if (!isset($projection_monthly_costs[$leg_month])) {
+                    $projection_monthly_costs[$leg_month] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
+                }
+                $projection_monthly_costs[$leg_month]['freight'] += floatval($leg['total_freight_cost'] ?? 0);
 
-            if (!empty($leg['triggers_milestone']) && $leg['triggers_milestone'] !== 'po_execution') {
-                $trigger = $leg['triggers_milestone'];
-                if (isset($projection_milestone_amounts[$trigger]) && !in_array($trigger, $modal_assigned_milestone_events)) {
-                    $modal_weekly_costs[$leg_week_modal]['milestones'] += $projection_milestone_amounts[$trigger];
-                    $modal_assigned_milestone_events[] = $trigger;
+                // If this leg triggers a milestone, add milestone amount to this week
+                if (!empty($leg['triggers_milestone']) && $leg['triggers_milestone'] !== 'po_execution') {
+                    $trigger = $leg['triggers_milestone'];
+                    if (isset($projection_milestone_amounts[$trigger]) && !in_array($trigger, $assigned_milestone_events)) {
+                        $projection_weekly_costs[$leg_week]['milestones'] += $projection_milestone_amounts[$trigger];
+                        $projection_monthly_costs[$leg_month]['milestones'] += $projection_milestone_amounts[$trigger];
+                        $assigned_milestone_events[] = $trigger;
+                    }
                 }
             }
         }
     }
 
-    // Build stop_id -> inferred arrival/outgoing dates from legs (for stops missing dates)
-    $stop_inferred_dates = [];
+    // Build stop_id -> outgoing leg dates for outbound fee placement
     $outgoing_leg_dates = [];
     if (!empty($primary_projection['legs'])) {
         foreach ($primary_projection['legs'] as $leg) {
             if (empty($leg['start_date']) || strtotime($leg['start_date']) <= 0) {
                 continue;
-            }
-            if (!empty($leg['to_stop_id'])) {
-                $stop_inferred_dates[$leg['to_stop_id']] = $leg['start_date'];
             }
             if (!empty($leg['from_stop_id'])) {
                 $outgoing_leg_dates[$leg['from_stop_id']] = $leg['start_date'];
@@ -1316,26 +1309,20 @@ if ($primary_projection && !empty($primary_projection['legs'])) {
     // Distribute stop fees: monthly storage to 1st of each month, in/out at actual dates
     if (!empty($primary_projection['stops'])) {
         foreach ($primary_projection['stops'] as $stop_idx => $stop) {
-            if (empty($stop['fees'])) continue;
-            $arrival = $stop['estimated_arrival_date'] ?? null;
-            $departure = $stop['estimated_departure_date'] ?? null;
-
-            // Validate dates
-            $valid_arrival = ($arrival && strtotime($arrival) !== false && strtotime($arrival) > 0);
-            $valid_departure = ($departure && strtotime($departure) !== false && strtotime($departure) > 0);
-
-            // Fallback: infer arrival from connecting leg if stop date is invalid
-            if (!$valid_arrival) {
-                $stop_id = $stop['id'] ?? null;
-                if ($stop_id && isset($stop_inferred_dates[$stop_id])) {
-                    $arrival = $stop_inferred_dates[$stop_id];
-                    $valid_arrival = true;
-                }
-            }
-
-            if (!$valid_arrival) {
+            if (empty($stop['fees']) || empty($stop['estimated_arrival_date'])) {
                 continue;
             }
+
+            $arrival = $stop['estimated_arrival_date'];
+            $arrival_ts = strtotime($arrival);
+            if ($arrival_ts === false || $arrival_ts <= 0) {
+                continue;
+            }
+
+            $arrival_dt = new DateTime($arrival);
+            $departure = $stop['estimated_departure_date'] ?? null;
+            $departure_ts = ($departure && strtotime($departure) !== false) ? strtotime($departure) : null;
+            $valid_departure = ($departure_ts && $departure_ts > $arrival_ts);
 
             foreach ($stop['fees'] as $fee) {
                 $fee_cost = floatval($fee['estimated_cost'] ?? 0);
@@ -1347,102 +1334,92 @@ if ($primary_projection && !empty($primary_projection['legs'])) {
 
                 if ($is_storage_fee) {
                     // Monthly storage fees: place on 1st of each month during storage period
-                    if ($valid_arrival) {
-                        $arr_dt = new DateTime($arrival);
-                        if ($valid_departure && strtotime($departure) > strtotime($arrival)) {
-                            $dep_dt = new DateTime($departure);
+                    if ($valid_departure) {
+                        $dep_dt = new DateTime($departure);
+                    } else {
+                        $next_stop = $primary_projection['stops'][$stop_idx + 1] ?? null;
+                        $next_arrival = $next_stop['estimated_arrival_date'] ?? null;
+                        if ($next_arrival && strtotime($next_arrival) > $arrival_ts) {
+                            $dep_dt = new DateTime($next_arrival);
                         } else {
-                            // Default: estimate next stop arrival or 3 months
-                            $next_stop = $primary_projection['stops'][$stop_idx + 1] ?? null;
-                            $next_arrival = $next_stop['estimated_arrival_date'] ?? null;
-                            if ($next_arrival && strtotime($next_arrival) > 0 && strtotime($next_arrival) > strtotime($arrival)) {
-                                $dep_dt = new DateTime($next_arrival);
-                            } else {
-                                $dep_dt = clone $arr_dt;
-                                $dep_dt->modify('+3 months');
-                            }
-                        }
-
-                        // Calculate months in storage and distribute to 1st of each month
-                        $months_in_storage = max(1, (int)ceil($arr_dt->diff($dep_dt)->days / 30));
-                        $monthly_fee = $fee_cost / $months_in_storage;
-
-                        $current_month = new DateTime($arr_dt->format('Y-m-01'));
-                        for ($m = 0; $m < $months_in_storage; $m++) {
-                            $month_first = clone $current_month;
-                            $month_first->modify("+{$m} months");
-                            $month_first_str = $month_first->format('Y-m-d');
-
-                            $w_key = getWeekEndingSunday($month_first_str);
-                            if (!isset($projection_weekly_costs[$w_key])) {
-                                $projection_weekly_costs[$w_key] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
-                            }
-                            $projection_weekly_costs[$w_key]['warehousing'] += $monthly_fee;
-
-                            // Modal: week-starting-Sunday
-                            $w_key_modal = getWeekStartingSunday($month_first_str);
-                            if (!isset($modal_weekly_costs[$w_key_modal])) {
-                                $modal_weekly_costs[$w_key_modal] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
-                            }
-                            $modal_weekly_costs[$w_key_modal]['warehousing'] += $monthly_fee;
-                        }
-                    }
-                } else {
-                    // In/out/handling/other fees: place at arrival week (in) or departure week (out/outbound)
-                    $fee_date = null;
-
-                    if (in_array($fee_type, ['outbound', 'out'], true)) {
-                        if ($valid_departure) {
-                            $fee_date = $departure;
-                        }
-
-                        if (!$fee_date) {
-                            $stop_id = $stop['id'] ?? null;
-                            if ($stop_id && !empty($outgoing_leg_dates[$stop_id])) {
-                                $fee_date = $outgoing_leg_dates[$stop_id];
-                            }
-                        }
-
-                        if (!$fee_date) {
-                            $next_stop = $primary_projection['stops'][$stop_idx + 1] ?? null;
-                            $next_arrival = $next_stop['estimated_arrival_date'] ?? null;
-                            if ($next_arrival && strtotime($next_arrival) > 0) {
-                                $fee_date = $next_arrival;
-                            }
-                        }
-
-                        if ($fee_date && strtotime($fee_date) <= strtotime($arrival)) {
-                            $fee_date = $arrival;
+                            $dep_dt = clone $arrival_dt;
+                            $dep_dt->modify('+90 days');
                         }
                     }
 
-                    if (!$fee_date && $valid_arrival) {
-                        $fee_date = $arrival;
-                    }
+                    $months_in_storage = max(1, (int)ceil(($dep_dt->getTimestamp() - $arrival_dt->getTimestamp()) / (30 * 86400)));
+                    $monthly_fee = $fee_cost / $months_in_storage;
 
-                    if ($fee_date) {
-                        $w_key = getWeekEndingSunday($fee_date);
+                    $current_month = new DateTime($arrival_dt->format('Y-m-01'));
+                    for ($m = 0; $m < $months_in_storage; $m++) {
+                        $month_first = clone $current_month;
+                        $month_first->modify("+{$m} months");
+                        $month_first_str = $month_first->format('Y-m-d');
+                        $month_key = $month_first->format('Y-m');
+
+                        if (!isset($projection_monthly_costs[$month_key])) {
+                            $projection_monthly_costs[$month_key] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
+                        }
+                        $projection_monthly_costs[$month_key]['warehousing'] += $monthly_fee;
+
+                        $w_key = getWeekStartingSunday($month_first_str);
                         if (!isset($projection_weekly_costs[$w_key])) {
                             $projection_weekly_costs[$w_key] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
                         }
-                        $projection_weekly_costs[$w_key]['warehousing'] += $fee_cost;
-
-                        // Modal: week-starting-Sunday
-                        $w_key_modal = getWeekStartingSunday($fee_date);
-                        if (!isset($modal_weekly_costs[$w_key_modal])) {
-                            $modal_weekly_costs[$w_key_modal] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
-                        }
-                        $modal_weekly_costs[$w_key_modal]['warehousing'] += $fee_cost;
+                        $projection_weekly_costs[$w_key]['warehousing'] += $monthly_fee;
                     }
+                } else {
+                    // In/out/handling/other fees: place at arrival week (in) or departure week (out/outbound)
+                    $fee_date = $arrival;
+                    if (in_array($fee_type, ['outbound', 'out'], true)) {
+                        $departure_candidate = null;
+                        if ($valid_departure) {
+                            $departure_candidate = $departure;
+                        }
+
+                        if (!$departure_candidate) {
+                            $stop_id = $stop['id'] ?? null;
+                            if ($stop_id && !empty($outgoing_leg_dates[$stop_id])) {
+                                $departure_candidate = $outgoing_leg_dates[$stop_id];
+                            }
+                        }
+
+                        if (!$departure_candidate) {
+                            $next_stop = $primary_projection['stops'][$stop_idx + 1] ?? null;
+                            $next_arrival = $next_stop['estimated_arrival_date'] ?? null;
+                            if ($next_arrival && strtotime($next_arrival) > 0) {
+                                $departure_candidate = $next_arrival;
+                            }
+                        }
+
+                        if ($departure_candidate) {
+                            $departure_candidate_ts = strtotime($departure_candidate);
+                            if ($departure_candidate_ts && $departure_candidate_ts > $arrival_ts) {
+                                $fee_date = $departure_candidate;
+                            }
+                        }
+                    }
+
+                    $w_key = getWeekStartingSunday($fee_date);
+                    if (!isset($projection_weekly_costs[$w_key])) {
+                        $projection_weekly_costs[$w_key] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
+                    }
+                    $projection_weekly_costs[$w_key]['warehousing'] += $fee_cost;
+
+                    $fee_month = substr($fee_date, 0, 7);
+                    if (!isset($projection_monthly_costs[$fee_month])) {
+                        $projection_monthly_costs[$fee_month] = ['freight' => 0, 'warehousing' => 0, 'milestones' => 0];
+                    }
+                    $projection_monthly_costs[$fee_month]['warehousing'] += $fee_cost;
                 }
             }
         }
     }
 
     // Sort weeks and build all_projection_weeks for modal (using week-starting-Sunday to match JS)
-    ksort($modal_weekly_costs);
+    ksort($projection_weekly_costs);
     $cumulative_projection = 0;
-    foreach ($modal_weekly_costs as $week_start => $costs) {
+    foreach ($projection_weekly_costs as $week_start => $costs) {
         $week_total = $costs['freight'] + $costs['warehousing'] + $costs['milestones'];
         $cumulative_projection += $week_total;
         $all_projection_weeks[] = [
@@ -1460,12 +1437,19 @@ if ($primary_projection && !empty($primary_projection['legs'])) {
 
     // Fill the 5-week financial forecast from projection data
     foreach ($weeks_financial as $ix => $wf) {
-        $week_key = $wf['end']->format('Y-m-d');
+        $week_key = $wf['start']->format('Y-m-d');
         if (isset($projection_weekly_costs[$week_key])) {
             $costs = $projection_weekly_costs[$week_key];
             $anticipated_deliveries_financial[$ix] = $costs['freight'] + $costs['warehousing'] + $costs['milestones'];
         }
     }
+}
+
+if (!isset($projection_weekly_costs)) {
+    $projection_weekly_costs = [];
+}
+if (!isset($projection_monthly_costs)) {
+    $projection_monthly_costs = [];
 }
 
 // open invoices
@@ -1483,8 +1467,8 @@ $open_invoices_total=$open_invoices_total?:0;
 
 // For Forecasted vs Actual Cost line chart
 // Actual costs from real deliveries - track by category for breakdown
-$deliveries_by_date_actual_cost = [];
-$actual_cost_breakdown_by_week = []; // Track freight, milestones, warehousing per week
+$deliveries_by_month_actual_cost = [];
+$actual_cost_breakdown_by_month = []; // Track freight, milestones, warehousing per month
 $stmt = $conn->prepare("
     SELECT *
     FROM deliveries
@@ -1510,21 +1494,21 @@ while($dv = $allDel->fetch_assoc()) {
 
     $fc   = (float)$dv['freight_cost'];
     $ac   = (float)$dv['accessorial_costs'];
-    $fee  = $has_actual_date ? $solterra_fee*($watt*$qty) : 0;
+    $fee  = $has_actual_date ? $solterra_fee * ($watt * $qty) : 0;
     $actual_tc = $fc + $ac + $fee;
 
     if ($actual_tc > 0 && !empty($adate)) {
-        $weekKey = getWeekEndingSunday($adate);
-        if(!isset($deliveries_by_date_actual_cost[$weekKey])) {
-            $deliveries_by_date_actual_cost[$weekKey] = 0;
+        $monthKey = substr($adate, 0, 7);
+        if (!isset($deliveries_by_month_actual_cost[$monthKey])) {
+            $deliveries_by_month_actual_cost[$monthKey] = 0;
         }
-        $deliveries_by_date_actual_cost[$weekKey] += $actual_tc;
+        $deliveries_by_month_actual_cost[$monthKey] += $actual_tc;
 
         // Track breakdown by category
-        if (!isset($actual_cost_breakdown_by_week[$weekKey])) {
-            $actual_cost_breakdown_by_week[$weekKey] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
+        if (!isset($actual_cost_breakdown_by_month[$monthKey])) {
+            $actual_cost_breakdown_by_month[$monthKey] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
         }
-        $actual_cost_breakdown_by_week[$weekKey]['freight'] += ($fc + $ac + $fee);
+        $actual_cost_breakdown_by_month[$monthKey]['freight'] += ($fc + $ac + $fee);
     }
 }
 
@@ -1558,42 +1542,41 @@ if (!empty($milestone_timeline)) {
         }
 
         if ($mt_date && strtotime($mt_date) > 0) {
-            $mt_week = getWeekEndingSunday($mt_date);
-            if (!isset($deliveries_by_date_actual_cost[$mt_week])) {
-                $deliveries_by_date_actual_cost[$mt_week] = 0;
+            $mt_month = substr($mt_date, 0, 7);
+            if (!isset($deliveries_by_month_actual_cost[$mt_month])) {
+                $deliveries_by_month_actual_cost[$mt_month] = 0;
             }
-            $deliveries_by_date_actual_cost[$mt_week] += floatval($mt_entry['amount']);
+            $deliveries_by_month_actual_cost[$mt_month] += floatval($mt_entry['amount']);
 
             // Track milestone breakdown
-            if (!isset($actual_cost_breakdown_by_week[$mt_week])) {
-                $actual_cost_breakdown_by_week[$mt_week] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
+            if (!isset($actual_cost_breakdown_by_month[$mt_month])) {
+                $actual_cost_breakdown_by_month[$mt_month] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
             }
-            $actual_cost_breakdown_by_week[$mt_week]['milestones'] += floatval($mt_entry['amount']);
+            $actual_cost_breakdown_by_month[$mt_month]['milestones'] += floatval($mt_entry['amount']);
         }
     }
 }
 
-// Add actual warehousing cost (from pallets in warehouse) at today's week
+// Add actual warehousing cost (from pallets in warehouse) at today's month
 if (($total_warehousing_cost ?? 0) > 0) {
-    $wh_week = getWeekEndingSunday(date('Y-m-d'));
-    if (!isset($deliveries_by_date_actual_cost[$wh_week])) {
-        $deliveries_by_date_actual_cost[$wh_week] = 0;
+    $wh_month = date('Y-m');
+    if (!isset($deliveries_by_month_actual_cost[$wh_month])) {
+        $deliveries_by_month_actual_cost[$wh_month] = 0;
     }
-    $deliveries_by_date_actual_cost[$wh_week] += $total_warehousing_cost;
+    $deliveries_by_month_actual_cost[$wh_month] += $total_warehousing_cost;
 
     // Track warehousing breakdown
-    if (!isset($actual_cost_breakdown_by_week[$wh_week])) {
-        $actual_cost_breakdown_by_week[$wh_week] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
+    if (!isset($actual_cost_breakdown_by_month[$wh_month])) {
+        $actual_cost_breakdown_by_month[$wh_month] = ['freight' => 0, 'milestones' => 0, 'warehousing' => 0];
     }
-    $actual_cost_breakdown_by_week[$wh_week]['warehousing'] += $total_warehousing_cost;
+    $actual_cost_breakdown_by_month[$wh_month]['warehousing'] += $total_warehousing_cost;
 }
 
 // Anticipated costs from projection (or fallback to old method)
-$deliveries_by_date_anticipated = [];
-if ($primary_projection && !empty($projection_weekly_costs)) {
-    // Use projection weekly costs (week-ending-Sunday to match actual cost keys)
-    foreach ($projection_weekly_costs as $week_date => $costs) {
-        $deliveries_by_date_anticipated[$week_date] = $costs['freight'] + $costs['warehousing'] + $costs['milestones'];
+$deliveries_by_month_anticipated = [];
+if ($primary_projection && !empty($projection_monthly_costs)) {
+    foreach ($projection_monthly_costs as $month_key => $costs) {
+        $deliveries_by_month_anticipated[$month_key] = $costs['freight'] + $costs['warehousing'] + $costs['milestones'];
     }
 } else {
     // Fallback: use forecasted costs from deliveries table
@@ -1610,29 +1593,29 @@ if ($primary_projection && !empty($projection_weekly_costs)) {
         $qty   = (int)$dv['quantity'];
 
         $cost_date = $dv['actual_delivery_date'];
-        if(empty($cost_date) && $stat==='Canceled'){
-            $cost_date = (!empty($ddate))? $ddate : date('Y-m-d');
-        } else if(empty($cost_date)){
+        if (empty($cost_date) && $stat === 'Canceled') {
+            $cost_date = (!empty($ddate)) ? $ddate : date('Y-m-d');
+        } else if (empty($cost_date)) {
             $cost_date = $ddate;
         }
-        if(!empty($cost_date)) {
-            $weekKey = getWeekEndingSunday($cost_date);
-            $pmFreight     = ($total_raw_modules>0)?($forecasted_freight / $total_raw_modules):0;
-            $pmAccessorial = ($total_raw_modules>0)?($forecasted_accessorial / $total_raw_modules):0;
-            $forecast_tc   = ($pmFreight + $pmAccessorial)*$qty + ($solterra_fee*($watt*$qty));
-            if(!isset($deliveries_by_date_anticipated[$weekKey])) {
-                $deliveries_by_date_anticipated[$weekKey] = 0;
+        if (!empty($cost_date)) {
+            $monthKey = substr($cost_date, 0, 7);
+            $pmFreight     = ($total_raw_modules > 0) ? ($forecasted_freight / $total_raw_modules) : 0;
+            $pmAccessorial = ($total_raw_modules > 0) ? ($forecasted_accessorial / $total_raw_modules) : 0;
+            $forecast_tc   = ($pmFreight + $pmAccessorial) * $qty + ($solterra_fee * ($watt * $qty));
+            if (!isset($deliveries_by_month_anticipated[$monthKey])) {
+                $deliveries_by_month_anticipated[$monthKey] = 0;
             }
-            $deliveries_by_date_anticipated[$weekKey] += $forecast_tc;
+            $deliveries_by_month_anticipated[$monthKey] += $forecast_tc;
         }
     }
 }
 
-$all_dates_cost = array_unique(array_merge(
-    array_keys($deliveries_by_date_actual_cost),
-    array_keys($deliveries_by_date_anticipated)
+$all_months_cost = array_unique(array_merge(
+    array_keys($deliveries_by_month_actual_cost),
+    array_keys($deliveries_by_month_anticipated)
 ));
-sort($all_dates_cost);
+sort($all_months_cost);
 
 $budgetLine_anticipated = [];
 $budgetLine_actual = [];
@@ -1646,18 +1629,16 @@ $acc_forecast_milestones = 0;
 $acc_actual_freight = 0;
 $acc_actual_warehousing = 0;
 $acc_actual_milestones = 0;
-$today_str=(new DateTime())->format('Y-m-d');
-// Get the current week's ending Sunday to include partial week costs
-$current_week_end = getWeekEndingSunday($today_str);
+$current_month = date('Y-m');
 
-foreach($all_dates_cost as $d) {
-    $acc_ant += ($deliveries_by_date_anticipated[$d] ?? 0);
+foreach ($all_months_cost as $month_key) {
+    $acc_ant += ($deliveries_by_month_anticipated[$month_key] ?? 0);
 
-    // Get forecasted breakdown from projection_weekly_costs if available
-    if (isset($projection_weekly_costs[$d])) {
-        $acc_forecast_freight += $projection_weekly_costs[$d]['freight'] ?? 0;
-        $acc_forecast_warehousing += $projection_weekly_costs[$d]['warehousing'] ?? 0;
-        $acc_forecast_milestones += $projection_weekly_costs[$d]['milestones'] ?? 0;
+    // Get forecasted breakdown from projection_monthly_costs if available
+    if (isset($projection_monthly_costs[$month_key])) {
+        $acc_forecast_freight += $projection_monthly_costs[$month_key]['freight'] ?? 0;
+        $acc_forecast_warehousing += $projection_monthly_costs[$month_key]['warehousing'] ?? 0;
+        $acc_forecast_milestones += $projection_monthly_costs[$month_key]['milestones'] ?? 0;
     }
     $budgetLine_forecast_breakdown[] = [
         'freight' => $acc_forecast_freight,
@@ -1665,16 +1646,14 @@ foreach($all_dates_cost as $d) {
         'milestones' => $acc_forecast_milestones
     ];
 
-    // Include actual costs for weeks up to and including the current week
-    if($d<=$current_week_end) {
-        $acc_act += ($deliveries_by_date_actual_cost[$d] ?? 0);
-        $budgetLine_actual[]=$acc_act;
+    if ($month_key <= $current_month) {
+        $acc_act += ($deliveries_by_month_actual_cost[$month_key] ?? 0);
+        $budgetLine_actual[] = $acc_act;
 
-        // Accumulate actual breakdown
-        if (isset($actual_cost_breakdown_by_week[$d])) {
-            $acc_actual_freight += $actual_cost_breakdown_by_week[$d]['freight'] ?? 0;
-            $acc_actual_warehousing += $actual_cost_breakdown_by_week[$d]['warehousing'] ?? 0;
-            $acc_actual_milestones += $actual_cost_breakdown_by_week[$d]['milestones'] ?? 0;
+        if (isset($actual_cost_breakdown_by_month[$month_key])) {
+            $acc_actual_freight += $actual_cost_breakdown_by_month[$month_key]['freight'] ?? 0;
+            $acc_actual_warehousing += $actual_cost_breakdown_by_month[$month_key]['warehousing'] ?? 0;
+            $acc_actual_milestones += $actual_cost_breakdown_by_month[$month_key]['milestones'] ?? 0;
         }
         $budgetLine_actual_breakdown[] = [
             'freight' => $acc_actual_freight,
@@ -1682,10 +1661,11 @@ foreach($all_dates_cost as $d) {
             'milestones' => $acc_actual_milestones
         ];
     } else {
-        $budgetLine_actual[]=null;
+        $budgetLine_actual[] = null;
         $budgetLine_actual_breakdown[] = null;
     }
-    $budgetLine_anticipated[]=$acc_ant;
+
+    $budgetLine_anticipated[] = $acc_ant;
 }
 
 $budgetLineChartData = [
@@ -1694,9 +1674,12 @@ $budgetLineChartData = [
     'forecast_breakdown' => $budgetLine_forecast_breakdown,
     'actual_breakdown' => $budgetLine_actual_breakdown,
 ];
-$budgetLineChartDataJSON=json_encode($budgetLineChartData);
-$dateLabelsForBudget=json_encode($all_dates_cost);
-$allProjectionWeeksJSON=json_encode($all_projection_weeks);
+$budgetLineChartDataJSON = json_encode($budgetLineChartData);
+$budgetDateLabels = array_map(function($month_key) {
+    return $month_key . '-01';
+}, $all_months_cost);
+$dateLabelsForBudget = json_encode($budgetDateLabels);
+$allProjectionWeeksJSON = json_encode($all_projection_weeks);
 
 // For Admin Warehousing functionality - check if project has pallets in multiple warehouses
 $warehouses_with_inventory = [];

@@ -919,7 +919,7 @@ function initBudgetLineChart() {
                         title: function(tooltipItems) {
                             if (tooltipItems.length > 0) {
                                 var date = new Date(tooltipItems[0].parsed.x);
-                                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                                return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
                             }
                             return '';
                         },
@@ -952,7 +952,7 @@ function initBudgetLineChart() {
             scales: {
                 x: {
                     type: 'time',
-                    time: { parser: 'yyyy-MM-dd', unit: 'week', displayFormats: { week: 'MMM d' } },
+                    time: { parser: 'yyyy-MM-dd', unit: 'month', displayFormats: { month: 'MMM yyyy' } },
                     title: { display: true, text: 'Date' }
                 },
                 y: {
@@ -2824,7 +2824,7 @@ function initializeFinancialCharts(){
                         title:function(tooltipItems){
                             if(tooltipItems.length > 0){
                                 var date = new Date(tooltipItems[0].parsed.x);
-                                return date.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+                                return date.toLocaleDateString('en-US', {month:'short', year:'numeric'});
                             }
                             return '';
                         },
