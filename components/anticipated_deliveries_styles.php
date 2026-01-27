@@ -2368,7 +2368,306 @@
             transform: scale(1.1);
         }
 
-        /* ==================== MODULE ALLOCATION ITEMS ==================== */
+        /* ==================== MODULE ALLOCATION CARDS (Redesigned) ==================== */
+        .module-allocation-card {
+            background: white;
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            border: 1px solid var(--gray-200);
+            margin-bottom: 20px;
+            overflow: hidden;
+            transition: all var(--transition);
+        }
+
+        .module-allocation-card:hover {
+            box-shadow: var(--shadow-lg);
+            border-color: rgba(72, 140, 154, 0.2);
+        }
+
+        /* Card Header - Manufacturer Info */
+        .allocation-card-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 24px;
+            background: linear-gradient(135deg, var(--gray-50) 0%, white 100%);
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .manufacturer-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            flex-shrink: 0;
+            box-shadow: 0 4px 16px rgba(72, 140, 154, 0.3);
+        }
+
+        .manufacturer-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .manufacturer-name {
+            margin: 0 0 6px;
+            font-size: 1.15em;
+            font-weight: 700;
+            color: var(--dark);
+        }
+
+        .manufacturer-address {
+            margin: 0;
+            font-size: 0.88em;
+            color: var(--gray-600);
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+        }
+
+        .manufacturer-address svg {
+            flex-shrink: 0;
+            margin-top: 2px;
+            color: var(--gray-400);
+        }
+
+        .allocation-card-value {
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .allocation-card-value .value-amount {
+            display: block;
+            font-size: 1.4em;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .allocation-card-value .value-label {
+            font-size: 0.75em;
+            color: var(--gray-500);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        /* Specs Grid */
+        .allocation-specs-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1px;
+            background: var(--gray-200);
+            margin: 0;
+        }
+
+        .spec-card {
+            background: white;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .spec-icon {
+            width: 42px;
+            height: 42px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .spec-wattage .spec-icon {
+            background: rgba(255, 193, 7, 0.12);
+            color: #d39e00;
+        }
+
+        .spec-modules .spec-icon {
+            background: rgba(72, 140, 154, 0.1);
+            color: var(--primary);
+        }
+
+        .spec-pallets .spec-icon {
+            background: rgba(111, 66, 193, 0.1);
+            color: #6f42c1;
+        }
+
+        .spec-trucks .spec-icon {
+            background: rgba(40, 167, 69, 0.1);
+            color: var(--success);
+        }
+
+        .spec-content {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .spec-value {
+            font-size: 1.3em;
+            font-weight: 700;
+            color: var(--dark);
+            line-height: 1.2;
+        }
+
+        .spec-label {
+            font-size: 0.75em;
+            color: var(--gray-500);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        /* Packing Config */
+        .allocation-packing {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 16px 24px;
+            background: var(--gray-50);
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .packing-item {
+            text-align: center;
+        }
+
+        .packing-value {
+            display: block;
+            font-size: 1.1em;
+            font-weight: 700;
+            color: var(--dark);
+        }
+
+        .packing-label {
+            font-size: 0.7em;
+            color: var(--gray-500);
+            text-transform: uppercase;
+            letter-spacing: 0.2px;
+        }
+
+        .packing-divider, .packing-equals {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: var(--gray-400);
+        }
+
+        .packing-result .packing-value {
+            color: var(--primary);
+        }
+
+        /* Milestones Section */
+        .allocation-milestones {
+            padding: 20px 24px;
+            background: white;
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .milestones-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            color: var(--dark);
+            font-size: 0.9em;
+            margin-bottom: 14px;
+        }
+
+        .milestones-header svg {
+            color: var(--primary);
+        }
+
+        .milestones-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .milestone-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: linear-gradient(135deg, rgba(72, 140, 154, 0.08) 0%, rgba(72, 140, 154, 0.03) 100%);
+            border: 1px solid rgba(72, 140, 154, 0.15);
+            border-radius: 10px;
+            padding: 10px 14px;
+        }
+
+        .milestone-trigger {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: var(--dark);
+        }
+
+        .milestone-pct {
+            font-size: 0.9em;
+            font-weight: 700;
+            color: var(--primary);
+            background: rgba(72, 140, 154, 0.1);
+            padding: 2px 8px;
+            border-radius: 6px;
+        }
+
+        .milestone-amount {
+            font-size: 0.85em;
+            color: var(--gray-600);
+        }
+
+        /* Card Actions */
+        .allocation-card-actions {
+            padding: 16px 24px;
+            display: flex;
+            justify-content: flex-end;
+            background: var(--gray-50);
+        }
+
+        .btn-allocation-remove {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            background: white;
+            border: 1px solid #fee2e2;
+            border-radius: var(--radius-sm);
+            color: #dc2626;
+            font-size: 0.85em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-allocation-remove:hover {
+            background: #dc2626;
+            border-color: #dc2626;
+            color: white;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .allocation-card-header {
+                flex-direction: column;
+            }
+
+            .allocation-card-value {
+                text-align: left;
+                width: 100%;
+                padding-top: 12px;
+                border-top: 1px dashed var(--gray-200);
+                margin-top: 12px;
+            }
+
+            .allocation-specs-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .allocation-packing {
+                flex-wrap: wrap;
+            }
+        }
+
+        /* Legacy styles for backwards compatibility */
         .module-allocation-item {
             background: white;
             border: 1px solid var(--gray-200);
@@ -2376,11 +2675,6 @@
             margin-bottom: 10px;
             transition: all var(--transition);
             overflow: hidden;
-        }
-
-        .module-allocation-item:hover {
-            border-color: rgba(72, 140, 154, 0.2);
-            box-shadow: var(--shadow-sm);
         }
 
         .allocation-header {
@@ -2398,61 +2692,6 @@
             gap: 8px;
             flex-wrap: wrap;
             font-size: 0.88em;
-        }
-
-        .vendor-name {
-            font-weight: 600;
-            color: var(--dark);
-        }
-
-        .summary-stat {
-            color: var(--gray-600);
-        }
-
-        .contract-value {
-            color: var(--primary) !important;
-            font-weight: 600 !important;
-        }
-
-        .allocation-toggle {
-            transition: transform var(--transition);
-            color: var(--gray-500);
-        }
-
-        .allocation-details {
-            padding: 0 18px 18px;
-            border-top: 1px solid var(--gray-200);
-        }
-
-        .module-info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-            gap: 12px;
-            padding-top: 14px;
-        }
-
-        .info-item {
-            display: flex;
-            flex-direction: column;
-            gap: 3px;
-        }
-
-        .info-item.full-width {
-            grid-column: 1 / -1;
-        }
-
-        .info-label {
-            font-size: 0.72em;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.4px;
-            color: var(--gray-600);
-        }
-
-        .info-value {
-            font-weight: 500;
-            color: var(--dark);
-            font-size: 0.92em;
         }
 
         .allocation-actions {
@@ -3561,6 +3800,16 @@
             margin: 0;
             color: var(--gray-500);
             font-size: 0.95em;
+        }
+
+        .journey-node-placeholder {
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--gray-400);
+            font-style: italic;
+            background: rgba(0, 0, 0, 0.02);
+            border-radius: var(--radius-lg);
+            border: 2px dashed var(--gray-200);
         }
 
         /* Node Actions */
