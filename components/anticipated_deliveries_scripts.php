@@ -45,6 +45,18 @@
             updateTimelineChart();
             loadCollapsibleStates();
             openTimelineSectionFromLink();
+            checkStoredNavigation();
+
+            // Redraw flow connections on window resize
+            let resizeTimeout;
+            window.addEventListener('resize', function() {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(() => {
+                    if (typeof renderFlowConnections === 'function') {
+                        renderFlowConnections();
+                    }
+                }, 150);
+            });
         });
 
         function openTimelineSectionFromLink() {
@@ -289,6 +301,11 @@
                 selector.value = workingState.projectionId;
             }
 
+            // Update project allocation tracker
+            if (typeof updateProjectAllocationTracker === 'function') {
+                updateProjectAllocationTracker();
+            }
+
             updateStepperState();
         }
 
@@ -530,6 +547,69 @@
         }
 
         // ==================== MODULE ALLOCATION ====================
+
+        // Direct batch selection - no modal, just add it
+        function selectModuleBatch(batchId, wattagesStr, totalQuantity, modsPerPallet, palletsPerTruck) {
+            // Check if already added
+            if (workingState.moduleAllocations.some(allocation => String(allocation.module_id) === String(batchId))) {
+                showToast('This batch is already added to the projection.', 'error');
+                return;
+            }
+
+            const batch = availableBatches.find(b => b.id == batchId);
+            if (!batch) {
+                showToast('Module batch not found', 'error');
+                return;
+            }
+
+            // Use first wattage if multiple, or parse the wattages string
+            const wattages = wattagesStr.split(',').map(w => parseInt(w.trim()));
+            const wattage = wattages[0] || batch.wattage || 560;
+
+            // Use total quantity from batch
+            const quantity = totalQuantity || batch.total_quantity;
+
+            // Calculate pallets
+            const modulesPerPallet = modsPerPallet || batch.modules_per_pallet || 30;
+            const palletsPerTruckVal = palletsPerTruck || batch.pallets_per_truck || 20;
+            const pallets = Math.ceil(quantity / modulesPerPallet);
+
+            // Calculate contract value
+            const totalWatts = wattage * quantity;
+            const contractValue = batch.cost_per_watt ? (batch.cost_per_watt * totalWatts) : 0;
+
+            const allocation = {
+                module_id: batchId,
+                wattage: parseInt(wattage),
+                quantity: parseInt(quantity),
+                pallets: pallets,
+                modules_per_pallet: modulesPerPallet,
+                pallets_per_truck: palletsPerTruckVal,
+                vendor_name: batch.vendor_name,
+                manufacturer_name: batch.manufacturer_name,
+                manufacturer_address: batch.manufacturer_address,
+                cost_per_watt: batch.cost_per_watt,
+                contract_value: contractValue,
+                has_milestones: batch.has_milestones,
+                milestones: batch.milestones || []
+            };
+
+            workingState.moduleAllocations.push(allocation);
+            showToast('Module batch added!', 'success');
+
+            // Hide this batch from the available list
+            const batchItem = document.querySelector(`.batch-item[data-batch-id="${batchId}"]`);
+            if (batchItem) {
+                batchItem.style.display = 'none';
+            }
+
+            // Mark as unsaved and update UI
+            markAsUnsaved();
+            renderModuleAllocations();
+            updateBadges();
+            updateStepperState();
+        }
+
         function addModuleAllocation(batchId, wattage, quantity) {
             if (workingState.moduleAllocations.some(allocation => String(allocation.module_id) === String(batchId))) {
                 showToast('This batch is already added to the projection.', 'error');
@@ -544,6 +624,7 @@
 
             // Calculate pallets
             const modulesPerPallet = batch.modules_per_pallet || 30;
+            const palletsPerTruck = batch.pallets_per_truck || 20;
             const pallets = Math.ceil(quantity / modulesPerPallet);
 
             // Calculate contract value
@@ -555,9 +636,12 @@
                 wattage: parseInt(wattage),
                 quantity: parseInt(quantity),
                 pallets: pallets,
+                modules_per_pallet: modulesPerPallet,
+                pallets_per_truck: palletsPerTruck,
                 vendor_name: batch.vendor_name,
                 manufacturer_name: batch.manufacturer_name,
                 manufacturer_address: batch.manufacturer_address,
+                cost_per_watt: batch.cost_per_watt,
                 contract_value: contractValue,
                 has_milestones: batch.has_milestones,
                 milestones: batch.milestones || []
@@ -754,9 +838,19 @@
         // ==================== STEPPER NAVIGATION ====================
         function getStepCompletionState() {
             const hasModules = Array.isArray(workingState.moduleAllocations) && workingState.moduleAllocations.length > 0;
-            const hasStops = Array.isArray(workingState.stops) && workingState.stops.length > 1;
-            const hasLegs = Array.isArray(workingState.legs) && workingState.legs.length > 0;
-            const hasLogistics = hasStops && hasLegs;
+
+            // Logistics is only "done" if there are intermediate stops (warehouses/ports)
+            // OR if any leg has been actually configured (has freight cost, start date, or explicit truck count)
+            const intermediateStops = (workingState.stops || []).filter(s =>
+                !['origin', 'destination'].includes(s.stop_type)
+            );
+            const hasIntermediateStops = intermediateStops.length > 0;
+            const hasConfiguredLegs = (workingState.legs || []).some(leg =>
+                leg.start_date ||
+                parseFloat(leg.freight_cost_per_truck) > 0 ||
+                parseFloat(leg.total_freight_cost) > 0
+            );
+            const hasLogistics = hasIntermediateStops || hasConfiguredLegs;
 
             const hasTimelineDates = (workingState.legs || []).some(leg => leg.start_date || leg.end_date)
                 || (workingState.stops || []).some(stop => stop.estimated_arrival_date || stop.estimated_departure_date);
@@ -950,7 +1044,103 @@
             if (modulesEl) modulesEl.textContent = totalModules.toLocaleString();
             if (valueEl) valueEl.textContent = '$' + totalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
 
+            updateProjectAllocationTracker();
             updateStepperState();
+        }
+
+        // Update project allocation tracker (MW allocated vs committed)
+        function updateProjectAllocationTracker() {
+            const projectSizeMW = parseFloat(document.getElementById('projectSizeMWDisplay')?.textContent) || 0;
+
+            // Calculate allocated MW from module allocations
+            let allocatedMW = 0;
+            workingState.moduleAllocations.forEach(alloc => {
+                const watts = (alloc.wattage || 0) * (alloc.quantity || 0);
+                allocatedMW += watts / 1000000; // Convert to MW
+            });
+
+            // Update display
+            const allocatedDisplay = document.getElementById('allocatedMWDisplay');
+            const barFill = document.getElementById('allocationBarFill');
+            const statusEl = document.getElementById('allocationStatus');
+
+            if (allocatedDisplay) {
+                allocatedDisplay.textContent = allocatedMW.toFixed(2);
+            }
+
+            if (barFill && projectSizeMW > 0) {
+                const percentage = Math.min((allocatedMW / projectSizeMW) * 100, 100);
+                barFill.style.width = percentage + '%';
+
+                // Update bar color based on status
+                barFill.classList.remove('complete', 'over');
+                if (allocatedMW >= projectSizeMW * 0.999 && allocatedMW <= projectSizeMW * 1.001) {
+                    barFill.classList.add('complete');
+                } else if (allocatedMW > projectSizeMW) {
+                    barFill.classList.add('over');
+                }
+            }
+
+            if (statusEl) {
+                let statusClass = 'status-incomplete';
+                let statusText = 'Incomplete';
+
+                if (allocatedMW >= projectSizeMW * 0.999 && allocatedMW <= projectSizeMW * 1.001) {
+                    statusClass = 'status-complete';
+                    statusText = 'Complete';
+                } else if (allocatedMW > projectSizeMW) {
+                    statusClass = 'status-over';
+                    statusText = 'Over-allocated';
+                } else if (allocatedMW > 0) {
+                    const pct = ((allocatedMW / projectSizeMW) * 100).toFixed(0);
+                    statusText = pct + '% Allocated';
+                }
+
+                statusEl.innerHTML = `<span class="status-badge ${statusClass}">${statusText}</span>`;
+            }
+        }
+
+        // Save and navigate to logistics section
+        function saveAndContinueToLogistics() {
+            if (workingState.moduleAllocations.length === 0) {
+                showToast('Please add at least one module batch before continuing.', 'warning');
+                return;
+            }
+
+            // Check if there are unsaved changes
+            const saveBtn = document.querySelector('.save-btn, [onclick*="saveProjection"]');
+            const hasUnsavedChanges = saveBtn && (saveBtn.classList.contains('unsaved') || document.body.classList.contains('has-unsaved-changes'));
+
+            if (hasUnsavedChanges) {
+                // Save first, then navigate
+                // Since saveProjection does a page reload, we need to store the target section
+                sessionStorage.setItem('navigateToSection', 'logistics-plan');
+                saveProjection();
+            } else {
+                // No unsaved changes, just navigate
+                navigateToStep('logistics-plan');
+                const logisticsSection = document.querySelector('[data-section="logistics-plan"]');
+                if (logisticsSection) {
+                    setTimeout(() => {
+                        logisticsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 100);
+                }
+            }
+        }
+
+        // Check for stored navigation target on page load
+        function checkStoredNavigation() {
+            const targetSection = sessionStorage.getItem('navigateToSection');
+            if (targetSection) {
+                sessionStorage.removeItem('navigateToSection');
+                setTimeout(() => {
+                    navigateToStep(targetSection);
+                    const section = document.querySelector(`[data-section="${targetSection}"]`);
+                    if (section) {
+                        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                }, 300);
+            }
         }
 
         function escapeHtml(text) {
@@ -1462,11 +1652,1173 @@
             });
         }
 
-        // ==================== JOURNEY PLAN (NEW VISUAL) ====================
+        // ==================== FLOW CANVAS - JOURNEY PLAN REDESIGN ====================
+
+        // State for modal editing and drag-to-connect
+        let currentEditingNode = null;
+        let currentEditingLeg = null;
+        let currentAddStopParentId = null;
+        let branchConfigData = { branches: [], parentStopId: null };
+
+        // Drag-to-connect state
+        let isDraggingConnection = false;
+        let dragSourceStopId = null;
+        let dragSourcePort = null;
+
         function renderJourneyPlan() {
             syncPlanState();
             cleanupAutocompleteInstances();
 
+            // Render the new flow canvas
+            renderFlowCanvas();
+
+            // Update badges and stats
+            updateBadges();
+            updateStepperState();
+        }
+
+        function renderFlowCanvas() {
+            const container = document.getElementById('flowCanvas');
+            const svgContainer = document.getElementById('flowConnectionsSvg');
+            const emptyState = document.getElementById('flowCanvasEmpty');
+            const addStopFab = document.getElementById('flowAddStopFab');
+
+            if (!container) return;
+
+            const stops = workingState.stops || [];
+
+            if (stops.length < 2) {
+                container.innerHTML = '';
+                if (svgContainer) svgContainer.innerHTML = svgContainer.innerHTML.split('</defs>')[0] + '</defs>';
+                if (emptyState) emptyState.style.display = 'flex';
+                if (addStopFab) addStopFab.style.display = 'none';
+                return;
+            }
+
+            if (emptyState) emptyState.style.display = 'none';
+            if (addStopFab) addStopFab.style.display = 'flex';
+
+            // Build the flow tree structure
+            const flowTree = buildFlowTree(stops);
+
+            // Render nodes
+            let html = '';
+            html += renderFlowLevel(flowTree, 0);
+
+            container.innerHTML = html;
+
+            // Render SVG connections after DOM is updated
+            requestAnimationFrame(() => {
+                renderFlowConnections();
+                bindFlowCanvasListeners();
+                initializeAddressAutocompletes();
+            });
+        }
+
+        function buildFlowTree(stops) {
+            // For now, support linear flow with potential branch points
+            // Branch points are identified by stops with children array
+            // The tree structure will support future branching
+
+            const tree = {
+                levels: [],
+                connections: []
+            };
+
+            // Group stops into levels (for branching support)
+            // Currently linear: each stop is its own level
+            stops.forEach((stop, index) => {
+                const isOrigin = stop.stop_type === 'origin';
+                const isDestination = stop.stop_type === 'destination';
+
+                // Check if this stop has branches (children)
+                const branches = stop.branches || [];
+
+                if (branches.length > 0) {
+                    // This is a branch point
+                    tree.levels.push({
+                        type: 'branch-point',
+                        stop: stop,
+                        branches: branches
+                    });
+                } else {
+                    tree.levels.push({
+                        type: 'single',
+                        stop: stop
+                    });
+                }
+
+                // Add connection to next stop (if not last)
+                if (index < stops.length - 1) {
+                    const leg = getLegForStops(stop.id, stops[index + 1].id);
+                    tree.connections.push({
+                        from: stop.id,
+                        to: stops[index + 1].id,
+                        leg: leg
+                    });
+                }
+            });
+
+            return tree;
+        }
+
+        function renderFlowLevel(tree, depth) {
+            let html = '';
+
+            tree.levels.forEach((level, index) => {
+                const stop = level.stop;
+                const isFirst = index === 0;
+                const isLast = index === tree.levels.length - 1;
+
+                // Render the node
+                html += renderFlowNode(stop, isFirst, isLast, index);
+
+                // Render connection/leg indicator (if not last)
+                if (!isLast) {
+                    const connection = tree.connections[index];
+                    if (connection) {
+                        html += renderFlowLegSpacer(connection.leg, stop.id);
+                    }
+                }
+            });
+
+            return html;
+        }
+
+        function renderFlowNode(stop, isFirst, isLast, index) {
+            const isOrigin = stop.stop_type === 'origin';
+            const isDestination = stop.stop_type === 'destination';
+            const stopTypeClass = getStopTypeClass(stop.stop_type);
+
+            const totalFees = (stop.fees || []).reduce((sum, f) => sum + (parseFloat(f.estimated_cost) || 0), 0);
+            const feeCount = (stop.fees || []).length;
+            const locationName = stop.location_name || getDefaultLocationName(stop.stop_type);
+
+            // Meta info for the card
+            let metaHtml = '';
+            if (feeCount > 0 || totalFees > 0) {
+                metaHtml += `
+                    <div class="node-meta">
+                        ${feeCount > 0 ? `<span class="node-meta-item">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20m5-17H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H7"/></svg>
+                            ${feeCount} fee${feeCount !== 1 ? 's' : ''}
+                        </span>` : ''}
+                        ${totalFees > 0 ? `<span class="node-meta-item"><strong>$${totalFees.toLocaleString()}</strong></span>` : ''}
+                    </div>
+                `;
+            }
+
+            // Action buttons - simplified, just edit and delete
+            let actionsHtml = '';
+            if (canEdit) {
+                const showDelete = !isOrigin && !isDestination;
+
+                actionsHtml = `
+                    <div class="flow-node-actions">
+                        <button type="button" class="flow-node-action-btn edit" data-action="edit-node" data-stop-id="${stop.id}" title="Edit Stop">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        ${showDelete ? `<button type="button" class="flow-node-action-btn delete" data-action="delete-node" data-stop-id="${stop.id}" title="Remove Stop">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>` : ''}
+                    </div>
+                `;
+            }
+
+            // Connection ports - in port at top (except for origin), out port at bottom (except for destination)
+            const portInHtml = !isOrigin && canEdit ? `<div class="flow-node-port port-in" data-port="in" data-stop-id="${stop.id}"></div>` : '';
+            const portOutHtml = !isDestination && canEdit ? `<div class="flow-node-port port-out" data-port="out" data-stop-id="${stop.id}"></div>` : '';
+
+            return `
+                <div class="flow-level">
+                    <div class="flow-node" data-stop-id="${stop.id}" data-stop-type="${stop.stop_type}" data-index="${index}">
+                        ${portInHtml}
+                        <div class="flow-node-orb ${stopTypeClass}" data-action="edit-node" data-stop-id="${stop.id}">
+                            ${getStopTypeIcon(stop.stop_type)}
+                        </div>
+                        ${portOutHtml}
+                        <div class="flow-node-card">
+                            <h4>${escapeHtml(locationName)}</h4>
+                            <div class="node-type">${getStopTypeLabel(stop.stop_type)}</div>
+                            ${metaHtml}
+                        </div>
+                        ${actionsHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderFlowLegSpacer(leg, fromStopId) {
+            // Just a spacer - the connection badge is rendered by renderFlowConnections
+            return '<div class="flow-level-spacer"></div>';
+        }
+
+        function renderFlowConnections() {
+            const svgContainer = document.getElementById('flowConnectionsSvg');
+            const canvasContainer = document.querySelector('.flow-canvas-wrapper');
+            if (!svgContainer || !canvasContainer) return;
+
+            // Clear existing paths (keep defs)
+            const defsContent = svgContainer.querySelector('defs')?.outerHTML || '';
+            svgContainer.innerHTML = defsContent;
+
+            const stops = workingState.stops || [];
+            if (stops.length < 2) return;
+
+            // Remove existing connection badges
+            document.querySelectorAll('.flow-connection-badge').forEach(el => el.remove());
+
+            // Get all node elements
+            const nodes = document.querySelectorAll('.flow-node');
+            if (nodes.length < 2) return;
+
+            // Calculate positions and draw connections
+            const containerRect = canvasContainer.getBoundingClientRect();
+            const legs = workingState.legs || [];
+
+            for (let i = 0; i < nodes.length - 1; i++) {
+                const fromNode = nodes[i];
+                const toNode = nodes[i + 1];
+
+                const fromStopId = fromNode.dataset.stopId;
+                const toStopId = toNode.dataset.stopId;
+
+                const fromOrb = fromNode.querySelector('.flow-node-orb');
+                const toOrb = toNode.querySelector('.flow-node-orb');
+
+                if (!fromOrb || !toOrb) continue;
+
+                const fromRect = fromOrb.getBoundingClientRect();
+                const toRect = toOrb.getBoundingClientRect();
+
+                // Calculate center points relative to SVG container
+                const x1 = fromRect.left + fromRect.width / 2 - containerRect.left;
+                const y1 = fromRect.top + fromRect.height / 2 - containerRect.top;
+                const x2 = toRect.left + toRect.width / 2 - containerRect.left;
+                const y2 = toRect.top + toRect.height / 2 - containerRect.top;
+
+                // Find the leg for this connection
+                const leg = legs.find(l => l.from_stop_id == fromStopId && l.to_stop_id == toStopId);
+
+                // Create curved path
+                const startY = y1 + 36;
+                const endY = y2 - 36;
+                const midX = (x1 + x2) / 2;
+                const midY = (startY + endY) / 2;
+
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+
+                // Bezier curve for smooth connection
+                const d = `M ${x1} ${startY} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${endY}`;
+
+                path.setAttribute('d', d);
+                path.setAttribute('class', 'flow-connection-path');
+                path.setAttribute('data-leg-id', leg ? leg.id : '');
+                path.setAttribute('data-from-stop', fromStopId);
+                path.setAttribute('data-to-stop', toStopId);
+
+                svgContainer.appendChild(path);
+
+                // Create connection badge at midpoint
+                if (leg) {
+                    const badge = document.createElement('div');
+                    badge.className = 'flow-connection-badge';
+                    badge.dataset.legId = leg.id;
+
+                    const trucks = parseInt(leg.trucks_required, 10) || getTotalTrucks();
+                    const totalFreight = parseFloat(leg.total_freight_cost) || 0;
+                    const transportMode = leg.transport_mode || 'truck';
+
+                    badge.innerHTML = `
+                        ${getTransportIconSmall(transportMode)}
+                        <span>${trucks} truck${trucks !== 1 ? 's' : ''}</span>
+                        ${totalFreight > 0 ? `<span class="badge-cost">$${formatCompactNumber(totalFreight)}</span>` : '<span style="color: var(--gray-400);">Click to configure</span>'}
+                    `;
+
+                    badge.style.left = midX + 'px';
+                    badge.style.top = midY + 'px';
+
+                    canvasContainer.appendChild(badge);
+                }
+            }
+
+            // Update SVG size
+            svgContainer.style.height = canvasContainer.scrollHeight + 'px';
+        }
+
+        // Stats header removed - keeping function stub for compatibility
+        function updateFlowCanvasStats() {
+            // No longer displaying stats header
+        }
+
+        function bindFlowCanvasListeners() {
+            const container = document.getElementById('flowCanvas');
+            const wrapper = document.getElementById('flowCanvasWrapper');
+            const dragLine = document.getElementById('flowDragLine');
+            if (!container) return;
+
+            // Use event delegation for clicks
+            container.onclick = function(event) {
+                const target = event.target.closest('[data-action]');
+                if (!target) return;
+
+                const action = target.dataset.action;
+                const stopId = target.dataset.stopId;
+                const legId = target.dataset.legId;
+
+                event.stopPropagation();
+
+                switch (action) {
+                    case 'edit-node':
+                        openNodeEditor(stopId);
+                        break;
+                    case 'delete-node':
+                        confirmDeleteNode(stopId);
+                        break;
+                    case 'edit-leg':
+                        openLegEditor(legId);
+                        break;
+                }
+            };
+
+            // Click on connection paths to edit legs
+            document.querySelectorAll('.flow-connection-path').forEach(path => {
+                path.onclick = function(event) {
+                    event.stopPropagation();
+                    const legId = this.dataset.legId;
+                    if (legId) openLegEditor(legId);
+                };
+            });
+
+            // Click on connection badges to edit legs
+            document.querySelectorAll('.flow-connection-badge').forEach(badge => {
+                badge.onclick = function(event) {
+                    event.stopPropagation();
+                    const legId = this.dataset.legId;
+                    if (legId) openLegEditor(legId);
+                };
+            });
+
+            // ========== DRAG-TO-CONNECT FUNCTIONALITY ==========
+            if (!canEdit) return;
+
+            // Mouse down on output port starts drag
+            container.querySelectorAll('.flow-node-port.port-out').forEach(port => {
+                port.onmousedown = function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    isDraggingConnection = true;
+                    dragSourceStopId = this.dataset.stopId;
+                    dragSourcePort = this;
+
+                    // Mark the port as active
+                    this.classList.add('active');
+                    wrapper.classList.add('dragging');
+
+                    // Set the source node attribute
+                    const sourceNode = this.closest('.flow-node');
+                    if (sourceNode) sourceNode.setAttribute('data-is-source', 'true');
+
+                    // Get starting position
+                    const rect = this.getBoundingClientRect();
+                    const wrapperRect = wrapper.getBoundingClientRect();
+                    const startX = rect.left + rect.width / 2 - wrapperRect.left;
+                    const startY = rect.top + rect.height / 2 - wrapperRect.top;
+
+                    // Show and position drag line
+                    if (dragLine) {
+                        dragLine.setAttribute('x1', startX);
+                        dragLine.setAttribute('y1', startY);
+                        dragLine.setAttribute('x2', startX);
+                        dragLine.setAttribute('y2', startY);
+                        dragLine.style.display = 'block';
+                    }
+                };
+            });
+
+            // Mouse move updates drag line
+            if (wrapper) {
+                wrapper.onmousemove = function(event) {
+                    if (!isDraggingConnection || !dragLine) return;
+
+                    const wrapperRect = wrapper.getBoundingClientRect();
+                    const mouseX = event.clientX - wrapperRect.left;
+                    const mouseY = event.clientY - wrapperRect.top;
+
+                    dragLine.setAttribute('x2', mouseX);
+                    dragLine.setAttribute('y2', mouseY);
+
+                    // Check if hovering over an input port
+                    document.querySelectorAll('.flow-node-port.port-in').forEach(port => {
+                        const portStopId = port.dataset.stopId;
+                        if (portStopId === dragSourceStopId) return; // Can't connect to self
+
+                        const portRect = port.getBoundingClientRect();
+                        const portCenterX = portRect.left + portRect.width / 2;
+                        const portCenterY = portRect.top + portRect.height / 2;
+                        const distance = Math.sqrt(
+                            Math.pow(event.clientX - portCenterX, 2) +
+                            Math.pow(event.clientY - portCenterY, 2)
+                        );
+
+                        if (distance < 30) {
+                            port.classList.add('drop-target');
+                        } else {
+                            port.classList.remove('drop-target');
+                        }
+                    });
+                };
+
+                // Mouse up ends drag
+                wrapper.onmouseup = function(event) {
+                    if (!isDraggingConnection) return;
+
+                    // Find if we're over an input port
+                    let targetStopId = null;
+                    document.querySelectorAll('.flow-node-port.port-in.drop-target').forEach(port => {
+                        targetStopId = port.dataset.stopId;
+                    });
+
+                    // Clean up
+                    finishDrag();
+
+                    // If we have a valid target, create/update the connection
+                    if (targetStopId && targetStopId !== dragSourceStopId) {
+                        createOrUpdateConnection(dragSourceStopId, targetStopId);
+                    }
+                };
+
+                // Mouse leave cancels drag
+                wrapper.onmouseleave = function() {
+                    if (isDraggingConnection) {
+                        finishDrag();
+                    }
+                };
+            }
+
+            // Also handle mouseup on ports directly
+            container.querySelectorAll('.flow-node-port.port-in').forEach(port => {
+                port.onmouseup = function(event) {
+                    if (!isDraggingConnection) return;
+
+                    event.stopPropagation();
+                    const targetStopId = this.dataset.stopId;
+
+                    finishDrag();
+
+                    if (targetStopId && targetStopId !== dragSourceStopId) {
+                        createOrUpdateConnection(dragSourceStopId, targetStopId);
+                    }
+                };
+            });
+        }
+
+        function finishDrag() {
+            isDraggingConnection = false;
+            dragSourceStopId = null;
+
+            // Clean up visual state
+            const wrapper = document.getElementById('flowCanvasWrapper');
+            const dragLine = document.getElementById('flowDragLine');
+
+            if (wrapper) wrapper.classList.remove('dragging');
+            if (dragLine) dragLine.style.display = 'none';
+
+            document.querySelectorAll('.flow-node-port.active').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.flow-node-port.drop-target').forEach(p => p.classList.remove('drop-target'));
+            document.querySelectorAll('.flow-node[data-is-source]').forEach(n => n.removeAttribute('data-is-source'));
+        }
+
+        function createOrUpdateConnection(fromStopId, toStopId) {
+            // Check if connection already exists
+            let leg = workingState.legs.find(l => l.from_stop_id == fromStopId && l.to_stop_id == toStopId);
+
+            if (!leg) {
+                // Create new leg
+                leg = getLegForStops(fromStopId, toStopId);
+                markAsUnsaved();
+            }
+
+            // Re-render and open leg editor
+            renderJourneyPlan();
+            updateMapFromState();
+
+            // Open the leg editor modal
+            setTimeout(() => {
+                openLegEditor(leg.id);
+            }, 100);
+        }
+
+        function openQuickAddStop() {
+            // Add a stop before destination
+            const stops = workingState.stops || [];
+            if (stops.length < 2) return;
+
+            const lastIntermediateStop = stops[stops.length - 2];
+            addJourneyStop(lastIntermediateStop.id);
+        }
+
+        // ==================== HELPER FUNCTIONS ====================
+
+        function getStopTypeClass(stopType) {
+            switch (stopType) {
+                case 'origin': return 'origin';
+                case 'destination': return 'destination';
+                case 'port': return 'port';
+                case 'customs': return 'customs';
+                default: return 'warehouse';
+            }
+        }
+
+        function getStopTypeLabel(stopType) {
+            switch (stopType) {
+                case 'origin': return 'Origin / Manufacturer';
+                case 'destination': return 'Final Destination';
+                case 'port': return 'Port';
+                case 'customs': return 'Customs Facility';
+                default: return 'Warehouse';
+            }
+        }
+
+        function getDefaultLocationName(stopType) {
+            switch (stopType) {
+                case 'origin': return 'Manufacturer';
+                case 'destination': return 'Project Site';
+                case 'port': return 'Port Terminal';
+                case 'customs': return 'Customs Facility';
+                default: return 'Warehouse';
+            }
+        }
+
+        function getStopTypeIcon(stopType) {
+            switch (stopType) {
+                case 'origin':
+                    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>';
+                case 'destination':
+                    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>';
+                case 'port':
+                    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.6 2 5 2 2.4 0 2.4-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-9-4-9 4"/><path d="M12 10v4"/></svg>';
+                case 'customs':
+                    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
+                default: // warehouse
+                    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>';
+            }
+        }
+
+        function getTransportIconSmall(mode) {
+            switch (mode) {
+                case 'ocean':
+                    return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.6 2 5 2 2.4 0 2.4-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M12 10v4"/></svg>';
+                case 'rail':
+                    return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="16" rx="2"/><path d="M4 11h16"/></svg>';
+                case 'air':
+                    return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2"/></svg>';
+                default:
+                    return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>';
+            }
+        }
+
+        // ==================== NODE EDITOR MODAL ====================
+
+        function openNodeEditor(stopId) {
+            const stop = workingState.stops.find(s => s.id == stopId);
+            if (!stop) return;
+
+            currentEditingNode = stop;
+
+            const modal = document.getElementById('nodeEditorModal');
+            const title = document.getElementById('nodeModalTitle');
+            const subtitle = document.getElementById('nodeModalSubtitle');
+            const icon = document.getElementById('nodeModalIcon');
+            const body = document.getElementById('nodeModalBody');
+
+            const isOrigin = stop.stop_type === 'origin';
+            const isDestination = stop.stop_type === 'destination';
+            const isEditable = !isOrigin && !isDestination;
+
+            // Update header
+            title.textContent = isOrigin ? 'Origin Details' : (isDestination ? 'Destination Details' : 'Edit Stop');
+            subtitle.textContent = isOrigin ? 'Manufacturing location' : (isDestination ? 'Final delivery point' : 'Configure this stop');
+
+            // Update icon color based on type
+            icon.className = 'flow-modal-header-icon';
+            if (isOrigin) icon.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+            else if (isDestination) icon.style.background = 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
+            else icon.style.background = 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)';
+
+            // Build form content
+            let html = '';
+
+            if (isEditable) {
+                // Stop type selector
+                html += `
+                    <div class="stop-type-selector">
+                        <div class="stop-type-option ${stop.stop_type === 'warehouse' ? 'selected' : ''}" data-type="warehouse" onclick="selectStopType('warehouse')">
+                            <div class="type-icon warehouse"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/></svg></div>
+                            <span class="type-label">Warehouse</span>
+                        </div>
+                        <div class="stop-type-option ${stop.stop_type === 'port' ? 'selected' : ''}" data-type="port" onclick="selectStopType('port')">
+                            <div class="type-icon port"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.6 2 5 2"/><path d="M12 10v4"/></svg></div>
+                            <span class="type-label">Port</span>
+                        </div>
+                        <div class="stop-type-option ${stop.stop_type === 'customs' ? 'selected' : ''}" data-type="customs" onclick="selectStopType('customs')">
+                            <div class="type-icon customs"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div>
+                            <span class="type-label">Customs</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Location name
+            html += `
+                <div class="modal-form-group">
+                    <label class="modal-form-label">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                        Location Name
+                    </label>
+                    <input type="text" class="modal-form-input" id="nodeLocationName" value="${escapeHtml(stop.location_name || '')}" placeholder="${getDefaultLocationName(stop.stop_type)}" ${!isEditable ? 'readonly' : ''}>
+                </div>
+            `;
+
+            // Address
+            html += `
+                <div class="modal-form-group">
+                    <label class="modal-form-label">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/></svg>
+                        Address
+                    </label>
+                    <input type="text" class="modal-form-input address-autocomplete" id="nodeLocationAddress" data-stop-id="${stop.id}" value="${escapeHtml(stop.location_address || '')}" placeholder="Start typing to search..." ${isOrigin || isDestination ? 'readonly style="background: var(--gray-50);"' : ''}>
+                </div>
+            `;
+
+            // Fees section (only for warehouses/ports)
+            if (isEditable) {
+                const fees = stop.fees || [];
+                const totalFees = fees.reduce((sum, f) => sum + (parseFloat(f.estimated_cost) || 0), 0);
+
+                html += `
+                    <div class="modal-fees-section">
+                        <div class="modal-fees-header">
+                            <h4>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                                Location Fees
+                            </h4>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="addFeeToModal()">+ Add Fee</button>
+                        </div>
+                        <div id="modalFeesList">
+                            ${renderModalFees(fees)}
+                        </div>
+                        <div class="modal-total-row">
+                            <span class="modal-total-label">Estimated Total:</span>
+                            <span class="modal-total-value" id="modalFeesTotal">$${totalFees.toLocaleString()}</span>
+                        </div>
+                    </div>
+                `;
+
+                // Customs clearance checkbox
+                html += `
+                    <div class="modal-form-group" style="margin-top: 20px;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" id="nodeCustomsClearance" ${stop.is_customs_clearance ? 'checked' : ''}>
+                            <span>Customs clearance at this location</span>
+                        </label>
+                    </div>
+                `;
+            }
+
+            body.innerHTML = html;
+
+            // Initialize address autocomplete for modal
+            const addressInput = body.querySelector('.address-autocomplete');
+            if (addressInput && !isOrigin && !isDestination) {
+                initializeAddressAutocomplete(addressInput, (placeData) => {
+                    if (currentEditingNode) {
+                        currentEditingNode.location_address = placeData.address;
+                        currentEditingNode.latitude = placeData.latitude;
+                        currentEditingNode.longitude = placeData.longitude;
+                    }
+                });
+            }
+
+            // Show modal
+            modal.classList.add('active');
+        }
+
+        function renderModalFees(fees) {
+            if (!fees || fees.length === 0) {
+                return '<p style="color: var(--gray-500); font-size: 0.9em; text-align: center; padding: 16px;">No fees added yet</p>';
+            }
+
+            return fees.map((fee, index) => `
+                <div class="modal-fee-item" data-fee-index="${index}">
+                    <input type="text" class="modal-form-input" value="${escapeHtml(fee.fee_name || '')}" placeholder="Fee name" onchange="updateModalFee(${index}, 'fee_name', this.value)">
+                    <select class="modal-form-input" onchange="updateModalFee(${index}, 'fee_type', this.value)">
+                        <option value="receiving" ${fee.fee_type === 'receiving' ? 'selected' : ''}>On Entry</option>
+                        <option value="storage" ${fee.fee_type === 'storage' ? 'selected' : ''}>Monthly</option>
+                        <option value="outbound" ${fee.fee_type === 'outbound' ? 'selected' : ''}>On Exit</option>
+                        <option value="customs" ${fee.fee_type === 'customs' ? 'selected' : ''}>Customs</option>
+                        <option value="handling" ${fee.fee_type === 'handling' ? 'selected' : ''}>Handling</option>
+                    </select>
+                    <div class="modal-input-group">
+                        <input type="number" class="modal-form-input" value="${fee.rate || ''}" placeholder="0" step="0.01" onchange="updateModalFee(${index}, 'rate', this.value)">
+                        <select class="modal-input-suffix" style="border-left: 1px solid var(--gray-200); background: var(--gray-50);" onchange="updateModalFee(${index}, 'rate_unit', this.value)">
+                            <option value="per_pallet" ${fee.rate_unit === 'per_pallet' ? 'selected' : ''}>/pallet</option>
+                            <option value="per_truck" ${fee.rate_unit === 'per_truck' ? 'selected' : ''}>/truck</option>
+                            <option value="flat" ${fee.rate_unit === 'flat' ? 'selected' : ''}>flat</option>
+                        </select>
+                    </div>
+                    <button type="button" class="modal-fee-remove" onclick="removeModalFee(${index})">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function selectStopType(type) {
+            if (!currentEditingNode) return;
+            currentEditingNode.stop_type = type;
+
+            // Update UI
+            document.querySelectorAll('.stop-type-option').forEach(el => {
+                el.classList.toggle('selected', el.dataset.type === type);
+            });
+        }
+
+        function addFeeToModal() {
+            if (!currentEditingNode) return;
+            if (!Array.isArray(currentEditingNode.fees)) currentEditingNode.fees = [];
+
+            currentEditingNode.fees.push({
+                fee_type: 'storage',
+                fee_name: '',
+                rate: '',
+                rate_unit: 'per_pallet',
+                estimated_cost: 0
+            });
+
+            // Re-render fees list
+            const list = document.getElementById('modalFeesList');
+            if (list) list.innerHTML = renderModalFees(currentEditingNode.fees);
+
+            recalculateModalFees();
+        }
+
+        function removeModalFee(index) {
+            if (!currentEditingNode || !currentEditingNode.fees) return;
+            currentEditingNode.fees.splice(index, 1);
+
+            const list = document.getElementById('modalFeesList');
+            if (list) list.innerHTML = renderModalFees(currentEditingNode.fees);
+
+            recalculateModalFees();
+        }
+
+        function updateModalFee(index, field, value) {
+            if (!currentEditingNode || !currentEditingNode.fees || !currentEditingNode.fees[index]) return;
+            currentEditingNode.fees[index][field] = value;
+
+            // Recalculate fee estimate
+            currentEditingNode.fees[index].estimated_cost = calculateFeeEstimate(currentEditingNode.fees[index], currentEditingNode);
+
+            recalculateModalFees();
+        }
+
+        function recalculateModalFees() {
+            if (!currentEditingNode) return;
+            const fees = currentEditingNode.fees || [];
+            const totalFees = fees.reduce((sum, f) => sum + (parseFloat(f.estimated_cost) || 0), 0);
+
+            const totalEl = document.getElementById('modalFeesTotal');
+            if (totalEl) totalEl.textContent = '$' + totalFees.toLocaleString();
+        }
+
+        function closeNodeEditor() {
+            const modal = document.getElementById('nodeEditorModal');
+            modal.classList.remove('active');
+            currentEditingNode = null;
+        }
+
+        function saveNodeEditor() {
+            if (!currentEditingNode) {
+                closeNodeEditor();
+                return;
+            }
+
+            // Get values from form
+            const nameInput = document.getElementById('nodeLocationName');
+            const addressInput = document.getElementById('nodeLocationAddress');
+            const customsCheckbox = document.getElementById('nodeCustomsClearance');
+
+            if (nameInput) currentEditingNode.location_name = nameInput.value;
+            if (addressInput) currentEditingNode.location_address = addressInput.value;
+            if (customsCheckbox) currentEditingNode.is_customs_clearance = customsCheckbox.checked ? 1 : 0;
+
+            // Mark as saved
+            currentEditingNode.is_saved = true;
+
+            markAsUnsaved();
+            closeNodeEditor();
+            renderJourneyPlan();
+            updateMapFromState();
+            updateTimelineChart();
+
+            showToast('Stop updated successfully', 'success');
+        }
+
+        // ==================== LEG EDITOR MODAL ====================
+
+        function openLegEditor(legId) {
+            const leg = workingState.legs.find(l => l.id == legId);
+            if (!leg) return;
+
+            currentEditingLeg = leg;
+
+            const modal = document.getElementById('legEditorModal');
+            const title = document.getElementById('legModalTitle');
+            const subtitle = document.getElementById('legModalSubtitle');
+            const body = document.getElementById('legModalBody');
+
+            // Find from/to stops for context
+            const fromStop = workingState.stops.find(s => s.id == leg.from_stop_id);
+            const toStop = workingState.stops.find(s => s.id == leg.to_stop_id);
+
+            title.textContent = 'Configure Transport';
+            subtitle.textContent = `${fromStop?.location_name || 'Origin'} → ${toStop?.location_name || 'Destination'}`;
+
+            const maxTrucks = getTotalTrucks();
+            const trucks = parseInt(leg.trucks_required, 10) || maxTrucks;
+            const cadence = parseInt(leg.delivery_rate, 10) || 0;
+            const cadenceUnit = leg.delivery_rate_unit || 'per_week';
+
+            let html = `
+                <!-- Transport Mode -->
+                <div class="transport-mode-selector">
+                    <div class="transport-mode-option ${leg.transport_mode === 'truck' ? 'selected' : ''}" data-mode="truck" onclick="selectTransportMode('truck')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                        <span class="mode-label">Truck</span>
+                    </div>
+                    <div class="transport-mode-option ${leg.transport_mode === 'ocean' ? 'selected' : ''}" data-mode="ocean" onclick="selectTransportMode('ocean')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.6 2 5 2 2.4 0 2.4-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M12 10v4"/></svg>
+                        <span class="mode-label">Ocean</span>
+                    </div>
+                    <div class="transport-mode-option ${leg.transport_mode === 'rail' ? 'selected' : ''}" data-mode="rail" onclick="selectTransportMode('rail')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="16" rx="2"/><path d="M4 11h16"/></svg>
+                        <span class="mode-label">Rail</span>
+                    </div>
+                    <div class="transport-mode-option ${leg.transport_mode === 'air' ? 'selected' : ''}" data-mode="air" onclick="selectTransportMode('air')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2"/></svg>
+                        <span class="mode-label">Air</span>
+                    </div>
+                </div>
+
+                <div class="modal-form-row">
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/></svg>
+                            Trucks Required <span style="font-weight: 400; color: var(--gray-500);">(max ${maxTrucks})</span>
+                        </label>
+                        <input type="number" class="modal-form-input" id="legTrucks" value="${trucks}" min="1" max="${maxTrucks}">
+                    </div>
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            Start Date
+                        </label>
+                        <input type="text" class="modal-form-input flatpickr-date" id="legStartDate" value="${leg.start_date || ''}" placeholder="Select date">
+                    </div>
+                </div>
+
+                <div class="modal-form-row">
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                            Delivery Cadence
+                        </label>
+                        <div class="modal-input-group">
+                            <input type="number" class="modal-form-input" id="legCadence" value="${cadence}" min="1" placeholder="0">
+                            <select class="modal-input-suffix" id="legCadenceUnit" style="min-width: 80px;">
+                                <option value="per_week" ${cadenceUnit === 'per_week' ? 'selected' : ''}>/week</option>
+                                <option value="per_day" ${cadenceUnit === 'per_day' ? 'selected' : ''}>/day</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-form-group">
+                        <label class="modal-form-label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                            Freight Cost per Truck
+                        </label>
+                        <div class="modal-input-group">
+                            <span class="modal-input-suffix" style="border-radius: var(--radius-sm) 0 0 var(--radius-sm); border-right: none;">$</span>
+                            <input type="number" class="modal-form-input" id="legFreightCost" value="${leg.freight_cost_per_truck || ''}" step="0.01" placeholder="0.00" style="border-radius: 0 var(--radius-sm) var(--radius-sm) 0;">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-total-row" style="margin-top: 24px;">
+                    <span class="modal-total-label">Total Freight Cost:</span>
+                    <span class="modal-total-value" id="legTotalCost">$${(leg.total_freight_cost || 0).toLocaleString()}</span>
+                </div>
+            `;
+
+            body.innerHTML = html;
+
+            // Initialize date picker
+            const dateInput = body.querySelector('.flatpickr-date');
+            if (dateInput && typeof flatpickr !== 'undefined') {
+                flatpickr(dateInput, {
+                    dateFormat: 'Y-m-d',
+                    allowInput: true
+                });
+            }
+
+            // Add event listeners for real-time calculation
+            const trucksInput = document.getElementById('legTrucks');
+            const freightInput = document.getElementById('legFreightCost');
+
+            const updateTotal = () => {
+                const trucks = parseInt(trucksInput?.value, 10) || 0;
+                const freight = parseFloat(freightInput?.value) || 0;
+                const total = trucks * freight;
+                const totalEl = document.getElementById('legTotalCost');
+                if (totalEl) totalEl.textContent = '$' + total.toLocaleString();
+            };
+
+            trucksInput?.addEventListener('input', updateTotal);
+            freightInput?.addEventListener('input', updateTotal);
+
+            modal.classList.add('active');
+        }
+
+        function selectTransportMode(mode) {
+            if (!currentEditingLeg) return;
+            currentEditingLeg.transport_mode = mode;
+
+            document.querySelectorAll('.transport-mode-option').forEach(el => {
+                el.classList.toggle('selected', el.dataset.mode === mode);
+            });
+        }
+
+        function closeLegEditor() {
+            const modal = document.getElementById('legEditorModal');
+            modal.classList.remove('active');
+            currentEditingLeg = null;
+        }
+
+        function saveLegEditor() {
+            if (!currentEditingLeg) {
+                closeLegEditor();
+                return;
+            }
+
+            // Get values from form
+            const trucksInput = document.getElementById('legTrucks');
+            const startDateInput = document.getElementById('legStartDate');
+            const cadenceInput = document.getElementById('legCadence');
+            const cadenceUnitInput = document.getElementById('legCadenceUnit');
+            const freightInput = document.getElementById('legFreightCost');
+
+            if (trucksInput) currentEditingLeg.trucks_required = parseInt(trucksInput.value, 10) || getTotalTrucks();
+            if (startDateInput) currentEditingLeg.start_date = startDateInput.value;
+            if (cadenceInput) currentEditingLeg.delivery_rate = parseInt(cadenceInput.value, 10) || 0;
+            if (cadenceUnitInput) currentEditingLeg.delivery_rate_unit = cadenceUnitInput.value;
+            if (freightInput) currentEditingLeg.freight_cost_per_truck = parseFloat(freightInput.value) || 0;
+
+            // Recalculate totals
+            currentEditingLeg.total_freight_cost = (currentEditingLeg.trucks_required || 0) * (currentEditingLeg.freight_cost_per_truck || 0);
+
+            // Calculate end date
+            if (currentEditingLeg.start_date && currentEditingLeg.delivery_rate > 0) {
+                currentEditingLeg.end_date = calculateEndDate(
+                    currentEditingLeg.start_date,
+                    currentEditingLeg.delivery_rate,
+                    currentEditingLeg.delivery_rate_unit,
+                    currentEditingLeg.trucks_required
+                );
+            }
+
+            markAsUnsaved();
+            closeLegEditor();
+            renderJourneyPlan();
+            updateTimelineChart();
+
+            showToast('Transport configured successfully', 'success');
+        }
+
+        // ==================== ADD STOP MODAL ====================
+
+        function openAddStopModal(afterStopId) {
+            currentAddStopParentId = afterStopId;
+            const modal = document.getElementById('addStopModal');
+            const subtitle = document.getElementById('addStopSubtitle');
+
+            const stop = workingState.stops.find(s => s.id == afterStopId);
+            subtitle.textContent = `Adding after ${stop?.location_name || 'this stop'}`;
+
+            modal.classList.add('active');
+        }
+
+        function closeAddStopModal() {
+            const modal = document.getElementById('addStopModal');
+            modal.classList.remove('active');
+            currentAddStopParentId = null;
+        }
+
+        function addSingleStop() {
+            closeAddStopModal();
+
+            if (!currentAddStopParentId) return;
+
+            // Use existing addJourneyStop function
+            addJourneyStop(currentAddStopParentId);
+        }
+
+        function addBranchSplit() {
+            closeAddStopModal();
+            openBranchConfig();
+        }
+
+        // ==================== BRANCH CONFIGURATION MODAL ====================
+
+        function openBranchConfig() {
+            const modal = document.getElementById('branchConfigModal');
+            const totalTrucksEl = document.getElementById('branchTotalTrucks');
+            const listEl = document.getElementById('branchConfigList');
+
+            const totalTrucks = getTotalTrucks();
+            totalTrucksEl.textContent = totalTrucks;
+
+            // Initialize with 2 branches
+            branchConfigData = {
+                parentStopId: currentAddStopParentId,
+                branches: [
+                    { name: 'Branch A', trucks: Math.floor(totalTrucks / 2) },
+                    { name: 'Branch B', trucks: Math.ceil(totalTrucks / 2) }
+                ]
+            };
+
+            renderBranchConfigList();
+            updateBranchAllocation();
+
+            modal.classList.add('active');
+        }
+
+        function renderBranchConfigList() {
+            const listEl = document.getElementById('branchConfigList');
+            if (!listEl) return;
+
+            listEl.innerHTML = branchConfigData.branches.map((branch, index) => `
+                <div class="branch-config-item" data-branch-index="${index}">
+                    <input type="text" class="modal-form-input branch-name-input" value="${escapeHtml(branch.name)}" placeholder="Branch name" onchange="updateBranchName(${index}, this.value)">
+                    <input type="number" class="modal-form-input branch-trucks-input" value="${branch.trucks}" min="1" placeholder="Trucks" onchange="updateBranchTrucks(${index}, this.value)">
+                    ${branchConfigData.branches.length > 2 ? `
+                        <button type="button" class="branch-remove-btn" onclick="removeBranch(${index})">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    ` : '<div style="width: 32px;"></div>'}
+                </div>
+            `).join('');
+        }
+
+        function updateBranchName(index, value) {
+            if (branchConfigData.branches[index]) {
+                branchConfigData.branches[index].name = value;
+            }
+        }
+
+        function updateBranchTrucks(index, value) {
+            if (branchConfigData.branches[index]) {
+                branchConfigData.branches[index].trucks = parseInt(value, 10) || 0;
+                updateBranchAllocation();
+            }
+        }
+
+        function addAnotherBranch() {
+            branchConfigData.branches.push({
+                name: `Branch ${String.fromCharCode(65 + branchConfigData.branches.length)}`,
+                trucks: 0
+            });
+            renderBranchConfigList();
+            updateBranchAllocation();
+        }
+
+        function removeBranch(index) {
+            if (branchConfigData.branches.length <= 2) return;
+            branchConfigData.branches.splice(index, 1);
+            renderBranchConfigList();
+            updateBranchAllocation();
+        }
+
+        function updateBranchAllocation() {
+            const totalTrucks = getTotalTrucks();
+            const allocated = branchConfigData.branches.reduce((sum, b) => sum + (b.trucks || 0), 0);
+            const remaining = totalTrucks - allocated;
+            const percentage = Math.min((allocated / totalTrucks) * 100, 100);
+
+            const fillEl = document.getElementById('branchAllocationFill');
+            const statusEl = document.getElementById('branchAllocationStatus');
+            const saveBtn = document.getElementById('saveBranchBtn');
+
+            if (fillEl) fillEl.style.width = percentage + '%';
+            if (statusEl) {
+                statusEl.innerHTML = `
+                    <span class="allocated">${allocated} trucks allocated</span>
+                    <span class="remaining" style="color: ${remaining < 0 ? 'var(--danger)' : 'var(--gray-500)'};">${remaining >= 0 ? remaining + ' remaining' : Math.abs(remaining) + ' over!'}</span>
+                `;
+            }
+
+            // Disable save if allocation doesn't match
+            if (saveBtn) {
+                saveBtn.disabled = allocated !== totalTrucks;
+                saveBtn.style.opacity = allocated !== totalTrucks ? '0.5' : '1';
+            }
+        }
+
+        function closeBranchConfig() {
+            const modal = document.getElementById('branchConfigModal');
+            modal.classList.remove('active');
+            branchConfigData = { branches: [], parentStopId: null };
+        }
+
+        function saveBranchConfig() {
+            // For now, just add the first branch as a regular stop
+            // Full branching implementation would require data structure changes
+            closeBranchConfig();
+
+            showToast('Branch splitting is coming soon! Adding single stop for now.', 'info');
+
+            // Add single stop as fallback
+            if (branchConfigData.parentStopId) {
+                addJourneyStop(branchConfigData.parentStopId);
+            }
+        }
+
+        // ==================== MERGE MODAL ====================
+
+        function closeMergeModal() {
+            const modal = document.getElementById('mergeModal');
+            modal.classList.remove('active');
+        }
+
+        function confirmMerge() {
+            closeMergeModal();
+            showToast('Branches merged to destination', 'success');
+        }
+
+        // ==================== DELETE CONFIRMATION ====================
+
+        function confirmDeleteNode(stopId) {
+            const stop = workingState.stops.find(s => s.id == stopId);
+            if (!stop) return;
+
+            if (confirm(`Are you sure you want to remove "${stop.location_name || 'this stop'}" from the journey?`)) {
+                removeJourneyStop(stopId);
+                showToast('Stop removed from journey', 'success');
+            }
+        }
+
+        // Keep the old renderJourneyPlan container check for backwards compatibility
+        function renderJourneyPlanLegacy() {
             const container = document.getElementById('journeyFlow');
             const emptyState = document.getElementById('journeyEmpty');
             if (!container) return;
