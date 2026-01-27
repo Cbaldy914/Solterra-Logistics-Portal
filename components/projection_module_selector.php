@@ -230,14 +230,45 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
     </div>
 
     <?php if ($can_edit): ?>
-    <div class="module-selector-panel">
-        <button type="button" class="module-selector-toggle" onclick="toggleModuleSelectorPanel()" aria-expanded="false">
-            <span class="toggle-label">Add Modules</span>
-            <svg class="toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
+    <!-- Add Modules Button + Save & Continue -->
+    <div class="modules-section-actions" id="modulesSectionActions">
+        <button type="button" class="btn btn-secondary btn-add-modules" onclick="openAddModulesModal()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            <span>Add Modules</span>
+        </button>
+        <button type="button" class="btn btn-primary btn-save-continue" onclick="saveAndContinueToLogistics()">
+            <span>Save & Continue to Logistics</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9 18 15 12 9 6"/>
             </svg>
         </button>
-        <div class="module-selector-content" id="moduleSelectorContent">
+    </div>
+    <?php endif; ?>
+
+<!-- Add Modules Modal -->
+<div id="addModulesModal" class="modal" style="display: none;">
+    <div class="modal-overlay" onclick="closeAddModulesModal()"></div>
+    <div class="modal-content modal-lg add-modules-modal">
+        <div class="modal-header">
+            <h3>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                    <line x1="8" y1="21" x2="16" y2="21"/>
+                    <line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+                Add Modules to Projection
+            </h3>
+            <button type="button" class="modal-close" onclick="closeAddModulesModal()">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
             <div class="module-mode-tabs">
                 <button type="button" class="mode-tab <?php echo !empty($available_batches) ? 'active' : ''; ?>" data-mode="existing" onclick="switchModuleMode('existing')">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -288,8 +319,12 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                                 </div>
                                 <div class="batch-action">
                                     <button type="button" class="btn btn-sm btn-primary"
-                                            onclick="selectModuleBatch(<?php echo $batch['id']; ?>, '<?php echo implode(',', $batch['wattage_list']); ?>', <?php echo $batch['total_quantity']; ?>, <?php echo $batch['modules_per_pallet'] ?? 30; ?>, <?php echo $batch['pallets_per_truck'] ?? 20; ?>)">
-                                        Select
+                                            onclick="selectModuleBatchFromModal(<?php echo $batch['id']; ?>, '<?php echo implode(',', $batch['wattage_list']); ?>', <?php echo $batch['total_quantity']; ?>, <?php echo $batch['modules_per_pallet'] ?? 30; ?>, <?php echo $batch['pallets_per_truck'] ?? 20; ?>)">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <line x1="12" y1="5" x2="12" y2="19"/>
+                                            <line x1="5" y1="12" x2="19" y2="12"/>
+                                        </svg>
+                                        Add
                                     </button>
                                 </div>
                             </div>
@@ -420,30 +455,22 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                     </button>
                 </div>
 
-                <div class="btn-group">
-                    <button type="button" class="btn btn-primary" onclick="addManualModuleEntry()">
+                <div class="btn-group modal-actions">
+                    <button type="button" class="btn btn-primary" onclick="addManualModuleEntryFromModal()">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;">
                             <line x1="12" y1="5" x2="12" y2="19"/>
                             <line x1="5" y1="12" x2="19" y2="12"/>
                         </svg>
                         Add to Projection
                     </button>
+                    <button type="button" class="btn btn-secondary" onclick="closeAddModulesModal()">
+                        Cancel
+                    </button>
                 </div>
             </div>
         </div>
     </div>
-
-<!-- Save & Continue Button (only for editors) -->
-<?php if ($can_edit): ?>
-<div class="modules-section-actions" id="modulesSectionActions">
-    <button type="button" class="btn btn-primary btn-save-continue" onclick="saveAndContinueToLogistics()">
-        <span>Save & Continue to Logistics</span>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="9 18 15 12 9 6"/>
-        </svg>
-    </button>
 </div>
-<?php endif; ?>
 
 <!-- Wattage/Quantity Selection Sub-Modal -->
 <div id="wattageQuantityModal" class="modal" style="display: none;">
@@ -485,7 +512,6 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
         </div>
     </div>
 </div>
-<?php endif; ?>
 </div>
 
 <style>
@@ -1557,7 +1583,17 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 }
 
 .allocation-status .status-complete {
-    background: rgba(40, 167, 69, 0.1);
+    background: rgba(40, 167, 69, 0.15);
+    color: #28a745;
+    border: 1px solid rgba(40, 167, 69, 0.3);
+}
+
+.allocation-bar-fill.complete {
+    background: linear-gradient(90deg, #28a745 0%, #20923c 100%);
+    box-shadow: 0 0 12px rgba(40, 167, 69, 0.4);
+}
+
+.allocation-stat.complete .stat-value {
     color: #28a745;
 }
 
@@ -1570,10 +1606,84 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 .modules-section-actions {
     display: flex;
     justify-content: flex-end;
+    gap: 12px;
     padding: 20px 24px;
     border-top: 1px solid #e9ecef;
     background: #fafbfc;
     border-radius: 0 0 16px 16px;
+}
+
+.btn-add-modules {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: white;
+    border: 2px solid rgba(72, 140, 154, 0.3);
+    color: #488C9A;
+}
+
+.btn-add-modules:hover {
+    background: rgba(72, 140, 154, 0.05);
+    border-color: #488C9A;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(72, 140, 154, 0.15);
+}
+
+/* Add Modules Modal */
+.add-modules-modal {
+    max-width: 700px;
+    max-height: 85vh;
+}
+
+.add-modules-modal .modal-header h3 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.add-modules-modal .modal-header h3 svg {
+    color: #488C9A;
+}
+
+.add-modules-modal .modal-body {
+    max-height: calc(85vh - 120px);
+    overflow-y: auto;
+}
+
+.add-modules-modal .batch-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.add-modules-modal .batch-item {
+    padding: 14px 16px;
+}
+
+.add-modules-modal .batch-action .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.batch-item.just-added {
+    background: rgba(40, 167, 69, 0.05);
+    border-color: rgba(40, 167, 69, 0.3);
+}
+
+.batch-item.is-disabled .batch-action .btn {
+    background: #e9ecef;
+    color: #6c757d;
+    box-shadow: none;
+}
+
+.batch-item.is-disabled .batch-action .btn svg {
+    color: #28a745;
+}
+
+.modal-actions {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid #e9ecef;
 }
 
 .btn-save-continue {
@@ -1705,6 +1815,56 @@ function switchModuleMode(mode) {
     // Update panels
     document.getElementById('existing-batch-panel').classList.toggle('active', mode === 'existing');
     document.getElementById('manual-entry-panel').classList.toggle('active', mode === 'manual');
+}
+
+// Add Modules Modal Functions
+function openAddModulesModal() {
+    const modal = document.getElementById('addModulesModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        initializeManualLocationAutocomplete();
+        updateAvailableBatchStates();
+    }
+}
+
+function closeAddModulesModal() {
+    const modal = document.getElementById('addModulesModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function selectModuleBatchFromModal(batchId, wattages, totalQuantity, modsPerPallet, palletsPerTruck) {
+    // Call the main selectModuleBatch function
+    if (typeof window.selectModuleBatch === 'function') {
+        window.selectModuleBatch(batchId, wattages, totalQuantity, modsPerPallet, palletsPerTruck);
+    } else if (typeof selectModuleBatch === 'function') {
+        selectModuleBatch(batchId, wattages, totalQuantity, modsPerPallet, palletsPerTruck);
+    }
+
+    // Update batch states in modal
+    updateAvailableBatchStates();
+
+    // Keep modal open so user can add more batches
+    // Show success feedback in the batch item
+    const batchItem = document.querySelector(`.batch-item[data-batch-id="${batchId}"]`);
+    if (batchItem) {
+        batchItem.classList.add('is-disabled', 'just-added');
+        const btn = batchItem.querySelector('button');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Added';
+        }
+        setTimeout(() => batchItem.classList.remove('just-added'), 1500);
+    }
+}
+
+function addManualModuleEntryFromModal() {
+    // Call the main addManualModuleEntry function
+    addManualModuleEntry();
+
+    // Close modal after adding
+    closeAddModulesModal();
 }
 
 function toggleModuleSelectorPanel() {
