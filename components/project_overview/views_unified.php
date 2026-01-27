@@ -1151,9 +1151,7 @@ document.addEventListener('keydown', function(e) {
                 <div class="left-side">
                     <div class="cashflow-header">
                         <h2>Invoices and Cashflow Forecast</h2>
-                        <?php if (!empty($all_projection_weeks)): ?>
-                        <a href="javascript:void(0)" onclick="openCashflowDetailModal()" class="view-all-link">View All</a>
-                        <?php endif; ?>
+                        <a href="anticipated_deliveries.php?project_id=<?php echo $project_id; ?>&view=weekly-projections" class="view-all-link">View All</a>
                     </div>
                     <div class="table-responsive">
                         <table id="invoices-forecast-table">
