@@ -16,6 +16,35 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
 ?>
 
 <div class="module-selector-card">
+    <!-- Project Size vs Allocated Display -->
+    <div class="project-allocation-tracker" id="projectAllocationTracker">
+        <div class="allocation-tracker-header">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#488C9A" stroke-width="2">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+            <span>Project Allocation</span>
+        </div>
+        <div class="allocation-tracker-content">
+            <div class="allocation-bar-container">
+                <div class="allocation-bar-fill" id="allocationBarFill" style="width: 0%"></div>
+            </div>
+            <div class="allocation-stats">
+                <div class="allocation-stat">
+                    <span class="stat-value" id="allocatedMWDisplay">0</span>
+                    <span class="stat-label">MW Allocated</span>
+                </div>
+                <div class="allocation-divider">/</div>
+                <div class="allocation-stat">
+                    <span class="stat-value" id="projectSizeMWDisplay"><?php echo number_format($project_summary['mw'] ?? 0, 2); ?></span>
+                    <span class="stat-label">MW Committed</span>
+                </div>
+                <div class="allocation-status" id="allocationStatus">
+                    <span class="status-badge status-incomplete">Incomplete</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="module-list" id="moduleAllocationsList">
         <?php if (!empty($allocated_modules)): ?>
             <?php foreach ($allocated_modules as $alloc):
@@ -133,11 +162,20 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                                 </div>
                                 <?php if (!empty($milestones)): ?>
                                     <div class="milestones-list">
-                                        <?php foreach ($milestones as $milestone): ?>
+                                        <?php foreach ($milestones as $milestone):
+                                            // Map trigger codes to readable labels
+                                            $triggerLabels = [
+                                                'po_execution' => 'PO Execution',
+                                                'shipping' => 'Shipping',
+                                                'customs_cleared' => 'Customs Clearance',
+                                                'project_delivery' => 'Project Delivery'
+                                            ];
+                                            $triggerEvent = $milestone['trigger_event'] ?? '';
+                                            $displayLabel = $triggerLabels[$triggerEvent] ?? $milestone['milestone_name'] ?? $milestone['name'] ?? 'Milestone';
+                                        ?>
                                             <div class="milestone-row">
                                                 <div class="milestone-info">
-                                                    <span class="milestone-name"><?php echo htmlspecialchars($milestone['milestone_name'] ?? $milestone['name'] ?? 'Milestone'); ?></span>
-                                                    <span class="milestone-trigger"><?php echo htmlspecialchars($milestone['trigger_event'] ?? 'On trigger'); ?></span>
+                                                    <span class="milestone-name"><?php echo htmlspecialchars($displayLabel); ?></span>
                                                 </div>
                                                 <div class="milestone-amount">
                                                     <?php
@@ -351,18 +389,20 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
                 </div>
 
                 <div class="manual-milestones-section">
-                    <label class="form-label">Milestones (optional)</label>
+                    <label class="form-label">Payment Milestones (optional)</label>
                     <div id="manualMilestoneEntries">
-                        <div class="milestone-entry-row">
-                            <input type="text" class="form-input milestone-name-input" placeholder="Milestone name">
+                        <div class="milestone-entry-row-simple">
                             <select class="form-input milestone-trigger-input">
-                                <option value="">Trigger event</option>
+                                <option value="">Select trigger event</option>
                                 <option value="po_execution">PO Execution</option>
                                 <option value="shipping">Shipping</option>
                                 <option value="customs_cleared">Customs Clearance</option>
                                 <option value="project_delivery">Project Delivery</option>
                             </select>
-                            <input type="number" class="form-input milestone-percentage-input" placeholder="%" min="0" max="100" step="0.1">
+                            <div class="milestone-percentage-wrapper">
+                                <input type="number" class="form-input milestone-percentage-input" placeholder="0" min="0" max="100" step="0.1">
+                                <span class="percentage-suffix">%</span>
+                            </div>
                             <button type="button" class="btn-remove-milestone" onclick="removeManualMilestoneEntry(this)" style="display: none;">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="18" y1="6" x2="6" y2="18"/>
@@ -392,6 +432,18 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
             </div>
         </div>
     </div>
+
+<!-- Save & Continue Button (only for editors) -->
+<?php if ($can_edit): ?>
+<div class="modules-section-actions" id="modulesSectionActions">
+    <button type="button" class="btn btn-primary btn-save-continue" onclick="saveAndContinueToLogistics()">
+        <span>Save & Continue to Logistics</span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="9 18 15 12 9 6"/>
+        </svg>
+    </button>
+</div>
+<?php endif; ?>
 
 <!-- Wattage/Quantity Selection Sub-Modal -->
 <div id="wattageQuantityModal" class="modal" style="display: none;">
@@ -1406,6 +1458,193 @@ $manufacturer_location_map = $manufacturer_location_map ?? [];
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
 }
+
+/* Project Allocation Tracker */
+.project-allocation-tracker {
+    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+    border: 1px solid rgba(72, 140, 154, 0.15);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+}
+
+.allocation-tracker-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: #293E4C;
+    margin-bottom: 16px;
+    font-size: 0.95em;
+}
+
+.allocation-tracker-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.allocation-bar-container {
+    height: 12px;
+    background: #e9ecef;
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+}
+
+.allocation-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #488C9A 0%, #3A6E7F 100%);
+    border-radius: 6px;
+    transition: width 0.5s ease;
+    position: relative;
+}
+
+.allocation-bar-fill.complete {
+    background: linear-gradient(90deg, #28a745 0%, #20923c 100%);
+}
+
+.allocation-bar-fill.over {
+    background: linear-gradient(90deg, #ffc107 0%, #e0a800 100%);
+}
+
+.allocation-stats {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.allocation-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.allocation-stat .stat-value {
+    font-size: 1.4em;
+    font-weight: 700;
+    color: #488C9A;
+}
+
+.allocation-stat .stat-label {
+    font-size: 0.75em;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.allocation-divider {
+    font-size: 1.5em;
+    color: #dee2e6;
+    font-weight: 300;
+}
+
+.allocation-status {
+    margin-left: auto;
+}
+
+.allocation-status .status-badge {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+.allocation-status .status-incomplete {
+    background: rgba(108, 117, 125, 0.1);
+    color: #6c757d;
+}
+
+.allocation-status .status-complete {
+    background: rgba(40, 167, 69, 0.1);
+    color: #28a745;
+}
+
+.allocation-status .status-over {
+    background: rgba(255, 193, 7, 0.15);
+    color: #856404;
+}
+
+/* Modules Section Actions */
+.modules-section-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 20px 24px;
+    border-top: 1px solid #e9ecef;
+    background: #fafbfc;
+    border-radius: 0 0 16px 16px;
+}
+
+.btn-save-continue {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 28px;
+    font-size: 1em;
+    font-weight: 600;
+}
+
+.btn-save-continue svg {
+    transition: transform 0.2s ease;
+}
+
+.btn-save-continue:hover svg {
+    transform: translateX(4px);
+}
+
+/* Milestone Entry Row Simple (without name) */
+.milestone-entry-row-simple {
+    display: grid;
+    grid-template-columns: 2fr 1fr auto;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.milestone-percentage-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.milestone-percentage-wrapper .form-input {
+    padding-right: 30px;
+}
+
+.milestone-percentage-wrapper .percentage-suffix {
+    position: absolute;
+    right: 12px;
+    color: #6c757d;
+    font-weight: 500;
+    pointer-events: none;
+}
+
+@media (max-width: 600px) {
+    .allocation-stats {
+        justify-content: center;
+    }
+
+    .allocation-status {
+        margin-left: 0;
+        width: 100%;
+        text-align: center;
+        margin-top: 8px;
+    }
+
+    .milestone-entry-row-simple {
+        grid-template-columns: 1fr;
+    }
+
+    .modules-section-actions {
+        justify-content: stretch;
+    }
+
+    .btn-save-continue {
+        width: 100%;
+        justify-content: center;
+    }
+}
 </style>
 
 <script>
@@ -1584,16 +1823,18 @@ function addManualMilestoneEntry() {
     const container = document.getElementById('manualMilestoneEntries');
     if (!container) return;
     const entryHtml = `
-        <div class="milestone-entry-row">
-            <input type="text" class="form-input milestone-name-input" placeholder="Milestone name">
+        <div class="milestone-entry-row-simple">
             <select class="form-input milestone-trigger-input">
-                <option value="">Trigger event</option>
+                <option value="">Select trigger event</option>
                 <option value="po_execution">PO Execution</option>
                 <option value="shipping">Shipping</option>
                 <option value="customs_cleared">Customs Clearance</option>
                 <option value="project_delivery">Project Delivery</option>
             </select>
-            <input type="number" class="form-input milestone-percentage-input" placeholder="%" min="0" max="100" step="0.1">
+            <div class="milestone-percentage-wrapper">
+                <input type="number" class="form-input milestone-percentage-input" placeholder="0" min="0" max="100" step="0.1">
+                <span class="percentage-suffix">%</span>
+            </div>
             <button type="button" class="btn-remove-milestone" onclick="removeManualMilestoneEntry(this)">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="18" y1="6" x2="6" y2="18"/>
@@ -1612,7 +1853,7 @@ function removeManualMilestoneEntry(button) {
 }
 
 function updateMilestoneRemoveButtons() {
-    const rows = document.querySelectorAll('#manualMilestoneEntries .milestone-entry-row');
+    const rows = document.querySelectorAll('#manualMilestoneEntries .milestone-entry-row-simple');
     rows.forEach(row => {
         const removeBtn = row.querySelector('.btn-remove-milestone');
         if (removeBtn) {
@@ -1652,16 +1893,18 @@ function resetManualEntryForm() {
     const milestoneContainer = document.getElementById('manualMilestoneEntries');
     if (milestoneContainer) {
         milestoneContainer.innerHTML = `
-            <div class="milestone-entry-row">
-                <input type="text" class="form-input milestone-name-input" placeholder="Milestone name">
+            <div class="milestone-entry-row-simple">
                 <select class="form-input milestone-trigger-input">
-                    <option value="">Trigger event</option>
+                    <option value="">Select trigger event</option>
                     <option value="po_execution">PO Execution</option>
                     <option value="shipping">Shipping</option>
                     <option value="customs_cleared">Customs Clearance</option>
                     <option value="project_delivery">Project Delivery</option>
                 </select>
-                <input type="number" class="form-input milestone-percentage-input" placeholder="%" min="0" max="100" step="0.1">
+                <div class="milestone-percentage-wrapper">
+                    <input type="number" class="form-input milestone-percentage-input" placeholder="0" min="0" max="100" step="0.1">
+                    <span class="percentage-suffix">%</span>
+                </div>
                 <button type="button" class="btn-remove-milestone" onclick="removeManualMilestoneEntry(this)" style="display: none;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"/>
@@ -1706,15 +1949,21 @@ function addManualModuleEntry() {
         return;
     }
 
-    // Collect milestone entries
+    // Collect milestone entries (simplified - no name, just trigger and percentage)
     const milestones = [];
-    document.querySelectorAll('#manualMilestoneEntries .milestone-entry-row').forEach(row => {
-        const name = row.querySelector('.milestone-name-input')?.value.trim();
+    document.querySelectorAll('#manualMilestoneEntries .milestone-entry-row-simple').forEach(row => {
         const trigger = row.querySelector('.milestone-trigger-input')?.value;
         const percentage = parseFloat(row.querySelector('.milestone-percentage-input')?.value) || 0;
         if (trigger && percentage > 0) {
+            // Generate a default name from the trigger
+            const triggerLabels = {
+                'po_execution': 'PO Execution',
+                'shipping': 'Shipping',
+                'customs_cleared': 'Customs Clearance',
+                'project_delivery': 'Project Delivery'
+            };
             milestones.push({
-                milestone_name: name,
+                milestone_name: triggerLabels[trigger] || trigger,
                 trigger_event: trigger,
                 percentage: percentage
             });

@@ -475,29 +475,80 @@ if (!empty($project['account_id'])) {
                             </button>
                         </div>
 
-                        <!-- Journey View -->
+                        <!-- Journey View - Flow Canvas -->
                         <div class="logistics-view active" id="logistics-journey-view">
-                            <div class="journey-planner">
-                                <div class="journey-intro">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <div class="flow-canvas-container">
+                                <!-- Simple instruction hint -->
+                                <div class="flow-canvas-hint">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="12" cy="12" r="10"/>
                                         <path d="M12 16v-4"/>
                                         <path d="M12 8h.01"/>
                                     </svg>
-                                    <div>
-                                        <strong>Plan your delivery journey step by step</strong><br>
-                                        Define the route from manufacturer through warehouses/ports to the final destination. Each stop can have fees, and each leg can have transport details and costs.
-                                    </div>
+                                    <span>Click a node's <strong>connect port</strong> and drag to another node to create transport legs. Click <strong>+ Add Stop</strong> to insert warehouses.</span>
                                 </div>
-                                <div id="journeyFlow" class="journey-flow">
-                                    <!-- Journey nodes rendered by JavaScript -->
-                                </div>
-                                <div id="journeyEmpty" class="empty-state" style="display: none;">
-                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5">
-                                        <rect x="3" y="3" width="18" height="18" rx="2"/>
-                                        <path d="M7 12h10"/>
+
+                                <!-- Flow Canvas SVG for connections -->
+                                <div class="flow-canvas-wrapper" id="flowCanvasWrapper">
+                                    <svg class="flow-connections-svg" id="flowConnectionsSvg">
+                                        <defs>
+                                            <linearGradient id="connectionGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                                <stop offset="0%" style="stop-color:rgba(72,140,154,0.8)"/>
+                                                <stop offset="100%" style="stop-color:rgba(72,140,154,0.4)"/>
+                                            </linearGradient>
+                                            <linearGradient id="connectionGradientHover" x1="0%" y1="0%" x2="0%" y2="100%">
+                                                <stop offset="0%" style="stop-color:rgba(72,140,154,1)"/>
+                                                <stop offset="100%" style="stop-color:rgba(72,140,154,0.7)"/>
+                                            </linearGradient>
+                                            <filter id="glow">
+                                                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                                                <feMerge>
+                                                    <feMergeNode in="coloredBlur"/>
+                                                    <feMergeNode in="SourceGraphic"/>
+                                                </feMerge>
+                                            </filter>
+                                            <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                                                <polygon points="0 0, 8 3, 0 6" fill="rgba(72,140,154,0.7)"/>
+                                            </marker>
+                                            <marker id="arrowheadHover" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                                                <polygon points="0 0, 8 3, 0 6" fill="rgba(72,140,154,1)"/>
+                                            </marker>
+                                        </defs>
+                                        <!-- Dynamic paths rendered by JS -->
                                     </svg>
-                                    <p>Your delivery journey will appear here.</p>
+
+                                    <!-- Dragging line preview -->
+                                    <svg class="flow-drag-line-svg" id="flowDragLineSvg">
+                                        <line id="flowDragLine" x1="0" y1="0" x2="0" y2="0" stroke="rgba(72,140,154,0.6)" stroke-width="3" stroke-dasharray="8 4" style="display: none;"/>
+                                    </svg>
+
+                                    <!-- Flow Canvas Nodes Container -->
+                                    <div class="flow-canvas" id="flowCanvas">
+                                        <!-- Nodes rendered by JavaScript -->
+                                    </div>
+
+                                    <!-- Add Stop Button (floating) -->
+                                    <button type="button" class="flow-add-stop-fab" id="flowAddStopFab" onclick="openQuickAddStop()">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <line x1="12" y1="5" x2="12" y2="19"/>
+                                            <line x1="5" y1="12" x2="19" y2="12"/>
+                                        </svg>
+                                        Add Stop
+                                    </button>
+                                </div>
+
+                                <!-- Empty State -->
+                                <div id="flowCanvasEmpty" class="flow-empty-state" style="display: none;">
+                                    <div class="flow-empty-icon">
+                                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                            <circle cx="12" cy="5" r="2"/>
+                                            <circle cx="12" cy="19" r="2"/>
+                                            <path d="M12 7v10"/>
+                                            <path d="M7 12h10" stroke-dasharray="2 2"/>
+                                        </svg>
+                                    </div>
+                                    <h4>Build Your Delivery Flow</h4>
+                                    <p>Your journey from origin to destination will visualize here</p>
                                 </div>
                             </div>
                         </div>
@@ -749,6 +800,243 @@ if (!empty($project['account_id'])) {
     <div id="loadingOverlay" class="loading-overlay">
         <div class="loading-spinner"></div>
         <div class="loading-text">Loading...</div>
+    </div>
+
+    <!-- ==================== FLOW JOURNEY MODALS ==================== -->
+
+    <!-- Node Editor Modal -->
+    <div class="flow-modal-overlay" id="nodeEditorModal">
+        <div class="flow-modal">
+            <div class="flow-modal-header">
+                <div class="flow-modal-header-icon" id="nodeModalIcon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+                        <polyline points="9 22 9 12 15 12 15 22"/>
+                    </svg>
+                </div>
+                <div class="flow-modal-header-text">
+                    <h3 id="nodeModalTitle">Edit Stop</h3>
+                    <p id="nodeModalSubtitle">Configure this location</p>
+                </div>
+                <button type="button" class="flow-modal-close" onclick="closeNodeEditor()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="flow-modal-body" id="nodeModalBody">
+                <!-- Dynamic content -->
+            </div>
+            <div class="flow-modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeNodeEditor()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveNodeEditor()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leg Editor Modal -->
+    <div class="flow-modal-overlay" id="legEditorModal">
+        <div class="flow-modal flow-modal-wide">
+            <div class="flow-modal-header">
+                <div class="flow-modal-header-icon leg-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="1" y="3" width="15" height="13"/>
+                        <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                        <circle cx="5.5" cy="18.5" r="2.5"/>
+                        <circle cx="18.5" cy="18.5" r="2.5"/>
+                    </svg>
+                </div>
+                <div class="flow-modal-header-text">
+                    <h3 id="legModalTitle">Configure Transport</h3>
+                    <p id="legModalSubtitle">Set transport details for this leg</p>
+                </div>
+                <button type="button" class="flow-modal-close" onclick="closeLegEditor()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="flow-modal-body" id="legModalBody">
+                <!-- Dynamic content -->
+            </div>
+            <div class="flow-modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeLegEditor()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveLegEditor()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    Save Transport
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Stop Modal -->
+    <div class="flow-modal-overlay" id="addStopModal">
+        <div class="flow-modal flow-modal-compact">
+            <div class="flow-modal-header">
+                <div class="flow-modal-header-icon add-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="16"/>
+                        <line x1="8" y1="12" x2="16" y2="12"/>
+                    </svg>
+                </div>
+                <div class="flow-modal-header-text">
+                    <h3>Add to Journey</h3>
+                    <p id="addStopSubtitle">Choose what to add after this stop</p>
+                </div>
+                <button type="button" class="flow-modal-close" onclick="closeAddStopModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="flow-modal-body">
+                <div class="add-stop-options">
+                    <button type="button" class="add-stop-option" onclick="addSingleStop()">
+                        <div class="add-stop-option-icon warehouse">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+                                <polyline points="9 22 9 12 15 12 15 22"/>
+                            </svg>
+                        </div>
+                        <div class="add-stop-option-text">
+                            <strong>Add Single Stop</strong>
+                            <span>Warehouse, port, or storage facility</span>
+                        </div>
+                        <svg class="add-stop-option-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"/>
+                        </svg>
+                    </button>
+                    <button type="button" class="add-stop-option" onclick="addBranchSplit()">
+                        <div class="add-stop-option-icon branch">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="5" r="3"/>
+                                <circle cx="6" cy="19" r="3"/>
+                                <circle cx="18" cy="19" r="3"/>
+                                <path d="M12 8v4"/>
+                                <path d="M12 12l-6 4"/>
+                                <path d="M12 12l6 4"/>
+                            </svg>
+                        </div>
+                        <div class="add-stop-option-text">
+                            <strong>Split Into Branches</strong>
+                            <span>Send cargo to multiple destinations</span>
+                        </div>
+                        <svg class="add-stop-option-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Branch Split Configuration Modal -->
+    <div class="flow-modal-overlay" id="branchConfigModal">
+        <div class="flow-modal">
+            <div class="flow-modal-header">
+                <div class="flow-modal-header-icon branch-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="5" r="3"/>
+                        <circle cx="6" cy="19" r="3"/>
+                        <circle cx="18" cy="19" r="3"/>
+                        <path d="M12 8v4"/>
+                        <path d="M12 12l-6 4"/>
+                        <path d="M12 12l6 4"/>
+                    </svg>
+                </div>
+                <div class="flow-modal-header-text">
+                    <h3>Configure Branch Split</h3>
+                    <p>Divide your shipment between locations</p>
+                </div>
+                <button type="button" class="flow-modal-close" onclick="closeBranchConfig()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="flow-modal-body" id="branchConfigBody">
+                <div class="branch-split-info">
+                    <div class="branch-total-trucks">
+                        <span class="label">Total Trucks Available</span>
+                        <span class="value" id="branchTotalTrucks">0</span>
+                    </div>
+                </div>
+                <div class="branch-config-list" id="branchConfigList">
+                    <!-- Branch items populated by JS -->
+                </div>
+                <button type="button" class="add-branch-btn" id="addBranchBtn" onclick="addAnotherBranch()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"/>
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Add Another Branch
+                </button>
+                <div class="branch-allocation-bar">
+                    <div class="branch-allocation-fill" id="branchAllocationFill"></div>
+                </div>
+                <div class="branch-allocation-status" id="branchAllocationStatus">
+                    <span class="allocated">0 trucks allocated</span>
+                    <span class="remaining">0 remaining</span>
+                </div>
+            </div>
+            <div class="flow-modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeBranchConfig()">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveBranchBtn" onclick="saveBranchConfig()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    Create Branches
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Merge Branches Modal -->
+    <div class="flow-modal-overlay" id="mergeModal">
+        <div class="flow-modal flow-modal-compact">
+            <div class="flow-modal-header">
+                <div class="flow-modal-header-icon merge-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="6" cy="5" r="3"/>
+                        <circle cx="18" cy="5" r="3"/>
+                        <circle cx="12" cy="19" r="3"/>
+                        <path d="M6 8v4l6 4"/>
+                        <path d="M18 8v4l-6 4"/>
+                    </svg>
+                </div>
+                <div class="flow-modal-header-text">
+                    <h3>Merge Branches</h3>
+                    <p>Combine shipments back together</p>
+                </div>
+                <button type="button" class="flow-modal-close" onclick="closeMergeModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="flow-modal-body" id="mergeModalBody">
+                <div class="merge-branches-list" id="mergeBranchesList">
+                    <!-- Branches to merge -->
+                </div>
+            </div>
+            <div class="flow-modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeMergeModal()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="confirmMerge()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    Merge to Destination
+                </button>
+            </div>
+        </div>
     </div>
 
     <?php include 'components/anticipated_deliveries_scripts.php'; ?>
