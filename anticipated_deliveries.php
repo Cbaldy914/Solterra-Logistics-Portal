@@ -477,78 +477,102 @@ if (!empty($project['account_id'])) {
 
                         <!-- Journey View - Flow Canvas -->
                         <div class="logistics-view active" id="logistics-journey-view">
-                            <div class="flow-canvas-container">
-                                <!-- Simple instruction hint -->
-                                <div class="flow-canvas-hint">
+                            <div class="journey-flow-container">
+                                <!-- Instruction Banner -->
+                                <div class="journey-flow-hint">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="12" cy="12" r="10"/>
                                         <path d="M12 16v-4"/>
                                         <path d="M12 8h.01"/>
                                     </svg>
-                                    <span>Click a node's <strong>connect port</strong> and drag to another node to create transport legs. Click <strong>+ Add Stop</strong> to insert warehouses.</span>
+                                    <span>Click a location's <strong>connect button</strong> to draw a route to the next stop. Add warehouses or ports between origin and destination.</span>
                                 </div>
 
-                                <!-- Flow Canvas SVG for connections -->
-                                <div class="flow-canvas-wrapper" id="flowCanvasWrapper">
-                                    <svg class="flow-connections-svg" id="flowConnectionsSvg">
+                                <!-- Journey Flow Layout -->
+                                <div class="journey-flow-layout" id="journeyFlowLayout">
+                                    <!-- ORIGIN COLUMN (Manufacturers) -->
+                                    <div class="journey-column journey-origin-column">
+                                        <div class="column-header">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                                                <polyline points="9 22 9 12 15 12 15 22"/>
+                                            </svg>
+                                            <span>Origin</span>
+                                        </div>
+                                        <div class="journey-nodes" id="journeyOriginNodes">
+                                            <!-- Origin nodes rendered by JS -->
+                                        </div>
+                                    </div>
+
+                                    <!-- INTERMEDIATE STOPS (Warehouses/Ports) - Scrollable row -->
+                                    <div class="journey-column journey-stops-column">
+                                        <div class="column-header">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                                            </svg>
+                                            <span>Intermediate Stops</span>
+                                            <span class="column-subtext">(warehouses, ports, storage)</span>
+                                        </div>
+                                        <div class="journey-stops-wrapper">
+                                            <div class="journey-stops-scroll" id="journeyStopsScroll">
+                                                <!-- Stops rendered by JS, up to 5 -->
+                                            </div>
+                                            <button type="button" class="journey-add-stop-btn" id="journeyAddStopBtn" onclick="openAddStopModal()">
+                                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                    <line x1="12" y1="5" x2="12" y2="19"/>
+                                                    <line x1="5" y1="12" x2="19" y2="12"/>
+                                                </svg>
+                                                <span>Add Stop</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- DESTINATION COLUMN (Project Site) -->
+                                    <div class="journey-column journey-destination-column">
+                                        <div class="column-header">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                                                <circle cx="12" cy="10" r="3"/>
+                                            </svg>
+                                            <span>Destination</span>
+                                        </div>
+                                        <div class="journey-nodes" id="journeyDestinationNodes">
+                                            <!-- Destination node rendered by JS -->
+                                        </div>
+                                    </div>
+
+                                    <!-- SVG Overlay for Connection Lines -->
+                                    <svg class="journey-connections-svg" id="journeyConnectionsSvg">
                                         <defs>
-                                            <linearGradient id="connectionGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                                <stop offset="0%" style="stop-color:rgba(72,140,154,0.8)"/>
-                                                <stop offset="100%" style="stop-color:rgba(72,140,154,0.4)"/>
+                                            <linearGradient id="legGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                                <stop offset="0%" style="stop-color:rgba(72,140,154,0.9)"/>
+                                                <stop offset="100%" style="stop-color:rgba(72,140,154,0.5)"/>
                                             </linearGradient>
-                                            <linearGradient id="connectionGradientHover" x1="0%" y1="0%" x2="0%" y2="100%">
-                                                <stop offset="0%" style="stop-color:rgba(72,140,154,1)"/>
-                                                <stop offset="100%" style="stop-color:rgba(72,140,154,0.7)"/>
-                                            </linearGradient>
-                                            <filter id="glow">
-                                                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                                                <feMerge>
-                                                    <feMergeNode in="coloredBlur"/>
-                                                    <feMergeNode in="SourceGraphic"/>
-                                                </feMerge>
-                                            </filter>
-                                            <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                                                <polygon points="0 0, 8 3, 0 6" fill="rgba(72,140,154,0.7)"/>
-                                            </marker>
-                                            <marker id="arrowheadHover" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                                                <polygon points="0 0, 8 3, 0 6" fill="rgba(72,140,154,1)"/>
+                                            <marker id="legArrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                                                <polygon points="0 0, 10 4, 0 8" fill="rgba(72,140,154,0.8)"/>
                                             </marker>
                                         </defs>
-                                        <!-- Dynamic paths rendered by JS -->
+                                        <!-- Leg lines rendered by JS -->
                                     </svg>
 
-                                    <!-- Dragging line preview -->
-                                    <svg class="flow-drag-line-svg" id="flowDragLineSvg">
-                                        <line id="flowDragLine" x1="0" y1="0" x2="0" y2="0" stroke="rgba(72,140,154,0.6)" stroke-width="3" stroke-dasharray="8 4" style="display: none;"/>
+                                    <!-- Drag Preview Line -->
+                                    <svg class="journey-drag-preview" id="journeyDragPreview">
+                                        <line id="journeyDragLine" stroke="rgba(72,140,154,0.5)" stroke-width="3" stroke-dasharray="8 4"/>
                                     </svg>
-
-                                    <!-- Flow Canvas Nodes Container -->
-                                    <div class="flow-canvas" id="flowCanvas">
-                                        <!-- Nodes rendered by JavaScript -->
-                                    </div>
-
-                                    <!-- Add Stop Button (floating) -->
-                                    <button type="button" class="flow-add-stop-fab" id="flowAddStopFab" onclick="openQuickAddStop()">
-                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <line x1="12" y1="5" x2="12" y2="19"/>
-                                            <line x1="5" y1="12" x2="19" y2="12"/>
-                                        </svg>
-                                        Add Stop
-                                    </button>
                                 </div>
 
-                                <!-- Empty State -->
-                                <div id="flowCanvasEmpty" class="flow-empty-state" style="display: none;">
-                                    <div class="flow-empty-icon">
+                                <!-- Empty State (shown when no modules allocated) -->
+                                <div id="journeyEmptyState" class="journey-empty-state" style="display: none;">
+                                    <div class="journey-empty-icon">
                                         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                            <circle cx="12" cy="5" r="2"/>
-                                            <circle cx="12" cy="19" r="2"/>
-                                            <path d="M12 7v10"/>
-                                            <path d="M7 12h10" stroke-dasharray="2 2"/>
+                                            <rect x="1" y="3" width="15" height="13"/>
+                                            <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                                            <circle cx="5.5" cy="18.5" r="2.5"/>
+                                            <circle cx="18.5" cy="18.5" r="2.5"/>
                                         </svg>
                                     </div>
-                                    <h4>Build Your Delivery Flow</h4>
-                                    <p>Your journey from origin to destination will visualize here</p>
+                                    <h4>Add Modules First</h4>
+                                    <p>Add module batches in the Modules section to plan your delivery route.</p>
                                 </div>
                             </div>
                         </div>

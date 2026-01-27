@@ -1063,9 +1063,18 @@
             const allocatedDisplay = document.getElementById('allocatedMWDisplay');
             const barFill = document.getElementById('allocationBarFill');
             const statusEl = document.getElementById('allocationStatus');
+            const allocatedStat = allocatedDisplay?.closest('.allocation-stat');
+
+            const isComplete = allocatedMW >= projectSizeMW * 0.999 && allocatedMW <= projectSizeMW * 1.001;
+            const isOver = allocatedMW > projectSizeMW * 1.001;
 
             if (allocatedDisplay) {
                 allocatedDisplay.textContent = allocatedMW.toFixed(2);
+            }
+
+            // Add complete class to stat for green color
+            if (allocatedStat) {
+                allocatedStat.classList.toggle('complete', isComplete);
             }
 
             if (barFill && projectSizeMW > 0) {
@@ -1074,9 +1083,9 @@
 
                 // Update bar color based on status
                 barFill.classList.remove('complete', 'over');
-                if (allocatedMW >= projectSizeMW * 0.999 && allocatedMW <= projectSizeMW * 1.001) {
+                if (isComplete) {
                     barFill.classList.add('complete');
-                } else if (allocatedMW > projectSizeMW) {
+                } else if (isOver) {
                     barFill.classList.add('over');
                 }
             }
@@ -1085,10 +1094,10 @@
                 let statusClass = 'status-incomplete';
                 let statusText = 'Incomplete';
 
-                if (allocatedMW >= projectSizeMW * 0.999 && allocatedMW <= projectSizeMW * 1.001) {
+                if (isComplete) {
                     statusClass = 'status-complete';
-                    statusText = 'Complete';
-                } else if (allocatedMW > projectSizeMW) {
+                    statusText = '100% Allocated';
+                } else if (isOver) {
                     statusClass = 'status-over';
                     statusText = 'Over-allocated';
                 } else if (allocatedMW > 0) {
@@ -1325,6 +1334,13 @@
             updateMapFromState();
             updateTimelineChart();
             updateBadges();
+        }
+
+        // Alias for removeStop
+        function deleteStop(stopId) {
+            if (confirm('Are you sure you want to remove this stop? This will also remove any associated routes.')) {
+                removeStop(stopId);
+            }
         }
 
         // ==================== LEG MANAGEMENT ====================
@@ -1669,12 +1685,464 @@
             syncPlanState();
             cleanupAutocompleteInstances();
 
-            // Render the new flow canvas
-            renderFlowCanvas();
+            // Render the new journey flow layout
+            renderJourneyFlow();
 
             // Update badges and stats
             updateBadges();
             updateStepperState();
+        }
+
+        // ==================== NEW JOURNEY FLOW RENDERING ====================
+        function renderJourneyFlow() {
+            const layoutContainer = document.getElementById('journeyFlowLayout');
+            const originContainer = document.getElementById('journeyOriginNodes');
+            const stopsContainer = document.getElementById('journeyStopsScroll');
+            const destinationContainer = document.getElementById('journeyDestinationNodes');
+            const emptyState = document.getElementById('journeyEmptyState');
+            const addStopBtn = document.getElementById('journeyAddStopBtn');
+
+            if (!layoutContainer) {
+                // Fall back to old flow canvas if new layout not present
+                renderFlowCanvas();
+                return;
+            }
+
+            const stops = workingState.stops || [];
+            const allocations = workingState.moduleAllocations || [];
+            const legs = workingState.legs || [];
+
+            // Check if we should show empty state (no modules allocated)
+            if (allocations.length === 0) {
+                if (emptyState) emptyState.style.display = 'flex';
+                if (originContainer) originContainer.innerHTML = '';
+                if (stopsContainer) stopsContainer.innerHTML = '';
+                if (destinationContainer) destinationContainer.innerHTML = '';
+                return;
+            }
+
+            if (emptyState) emptyState.style.display = 'none';
+
+            // Get origin and destination stops
+            const originStop = stops.find(s => s.stop_type === 'origin');
+            const destinationStop = stops.find(s => s.stop_type === 'destination');
+            const intermediateStops = stops.filter(s => !['origin', 'destination'].includes(s.stop_type));
+
+            // Calculate total inventory at origin
+            const totalModules = allocations.reduce((sum, a) => sum + (a.quantity || 0), 0);
+            const avgModsPerPallet = allocations[0]?.modules_per_pallet || 30;
+            const avgPalletsPerTruck = allocations[0]?.pallets_per_truck || 20;
+            const totalPallets = Math.ceil(totalModules / avgModsPerPallet);
+            const totalTrucks = Math.ceil(totalPallets / avgPalletsPerTruck);
+
+            // Render origin node(s) - each manufacturer is shown separately
+            if (originContainer) {
+                let originHtml = '';
+                // Group allocations by manufacturer address
+                const manufacturers = {};
+                allocations.forEach(alloc => {
+                    const key = alloc.manufacturer_address || 'Unknown Location';
+                    if (!manufacturers[key]) {
+                        manufacturers[key] = {
+                            name: alloc.vendor_name || alloc.manufacturer_name || 'Manufacturer',
+                            address: key,
+                            modules: 0,
+                            pallets: 0
+                        };
+                    }
+                    const modsPerPallet = alloc.modules_per_pallet || 30;
+                    manufacturers[key].modules += alloc.quantity || 0;
+                    manufacturers[key].pallets += Math.ceil((alloc.quantity || 0) / modsPerPallet);
+                });
+
+                Object.values(manufacturers).forEach((mfg, idx) => {
+                    const trucks = Math.ceil(mfg.pallets / avgPalletsPerTruck);
+                    originHtml += renderJourneyNode({
+                        id: originStop?.id || `origin_${idx}`,
+                        type: 'origin',
+                        title: mfg.name,
+                        address: mfg.address,
+                        modules: mfg.modules,
+                        pallets: mfg.pallets,
+                        trucks: trucks,
+                        showConnect: canEdit
+                    });
+                });
+
+                originContainer.innerHTML = originHtml;
+            }
+
+            // Render intermediate stops
+            if (stopsContainer) {
+                let stopsHtml = '';
+                if (intermediateStops.length === 0) {
+                    stopsHtml = `
+                        <div class="journey-stops-empty">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                            </svg>
+                            <p>No intermediate stops configured.<br>Add warehouses or ports if needed.</p>
+                        </div>
+                    `;
+                } else {
+                    intermediateStops.slice(0, 5).forEach((stop, idx) => {
+                        // Calculate inventory at this stop based on incoming legs
+                        const incomingLegs = legs.filter(l => l.to_stop_id === stop.id);
+                        let stopModules = 0;
+                        let stopPallets = 0;
+                        incomingLegs.forEach(leg => {
+                            const trucksOnLeg = leg.trucks_required || 0;
+                            stopPallets += trucksOnLeg * avgPalletsPerTruck;
+                            stopModules += trucksOnLeg * avgPalletsPerTruck * avgModsPerPallet;
+                        });
+
+                        stopsHtml += `<div class="journey-stop-card">`;
+                        stopsHtml += renderJourneyNode({
+                            id: stop.id,
+                            type: 'stop',
+                            stopType: stop.stop_type,
+                            title: stop.location_name || getStopTypeLabel(stop.stop_type),
+                            address: stop.location_address || '',
+                            modules: stopModules,
+                            pallets: stopPallets,
+                            trucks: Math.ceil(stopPallets / avgPalletsPerTruck),
+                            fees: stop.fees || [],
+                            showConnect: canEdit,
+                            showReceive: canEdit,
+                            showDelete: canEdit
+                        });
+                        stopsHtml += `</div>`;
+                    });
+                }
+                stopsContainer.innerHTML = stopsHtml;
+
+                // Show/hide add stop button (max 5 stops)
+                if (addStopBtn) {
+                    addStopBtn.style.display = intermediateStops.length < 5 ? 'flex' : 'none';
+                }
+            }
+
+            // Render destination node
+            if (destinationContainer) {
+                // Calculate total delivered
+                const deliveredLegs = legs.filter(l => l.to_stop_id === destinationStop?.id);
+                let deliveredPallets = 0;
+                deliveredLegs.forEach(leg => {
+                    deliveredPallets += (leg.trucks_required || 0) * avgPalletsPerTruck;
+                });
+                const deliveredModules = deliveredPallets * avgModsPerPallet;
+
+                destinationContainer.innerHTML = renderJourneyNode({
+                    id: destinationStop?.id || 'destination',
+                    type: 'destination',
+                    title: projectInfo.name || 'Project Site',
+                    address: projectInfo.address || '',
+                    modules: deliveredModules,
+                    pallets: deliveredPallets,
+                    trucks: Math.ceil(deliveredPallets / avgPalletsPerTruck),
+                    showReceive: canEdit
+                });
+            }
+
+            // Render connections after DOM update
+            requestAnimationFrame(() => {
+                renderJourneyConnections();
+                bindJourneyFlowListeners();
+            });
+        }
+
+        function renderJourneyNode(config) {
+            const { id, type, stopType, title, address, modules, pallets, trucks, fees, showConnect, showReceive, showDelete } = config;
+
+            const typeClass = type === 'origin' ? 'origin-node' :
+                             type === 'destination' ? 'destination-node' : 'stop-node';
+
+            const icon = type === 'origin' ?
+                `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                    <polyline points="9 22 9 12 15 12 15 22"/>
+                </svg>` :
+                type === 'destination' ?
+                `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                    <circle cx="12" cy="10" r="3"/>
+                </svg>` :
+                stopType === 'port' ?
+                `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                </svg>` :
+                `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="1" y="3" width="15" height="13"/>
+                    <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                    <circle cx="5.5" cy="18.5" r="2.5"/>
+                    <circle cx="18.5" cy="18.5" r="2.5"/>
+                </svg>`;
+
+            // Fees display for stops
+            let feesHtml = '';
+            if (fees && fees.length > 0) {
+                const totalFees = fees.reduce((sum, f) => sum + (parseFloat(f.estimated_cost) || 0), 0);
+                feesHtml = `
+                    <div class="journey-node-fees">
+                        <span class="fee-badge">${fees.length} fee${fees.length > 1 ? 's' : ''} &bull; $${totalFees.toLocaleString()}</span>
+                    </div>
+                `;
+            }
+
+            // Actions
+            let actionsHtml = '';
+            if (canEdit && (type === 'stop' || type !== 'destination')) {
+                actionsHtml = `
+                    <div class="journey-node-actions">
+                        <button type="button" class="journey-node-action-btn edit-btn" data-action="edit" data-stop-id="${id}">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            </svg>
+                            Edit
+                        </button>
+                        ${showDelete ? `
+                            <button type="button" class="journey-node-action-btn delete-btn" data-action="delete" data-stop-id="${id}">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"/>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                </svg>
+                            </button>
+                        ` : ''}
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="journey-node ${typeClass}" data-stop-id="${id}" data-type="${type}">
+                    ${showReceive ? `<div class="journey-node-receive" data-stop-id="${id}" data-action="receive"></div>` : ''}
+                    <div class="journey-node-header">
+                        <div class="journey-node-icon">${icon}</div>
+                        <div class="journey-node-info">
+                            <div class="journey-node-title">${escapeHtml(title)}</div>
+                            ${address ? `<div class="journey-node-address">${escapeHtml(address)}</div>` : ''}
+                        </div>
+                    </div>
+                    <div class="journey-node-inventory">
+                        <div class="inventory-stat">
+                            <span class="inventory-stat-value">${(modules || 0).toLocaleString()}</span>
+                            <span class="inventory-stat-label">Modules</span>
+                        </div>
+                        <div class="inventory-stat">
+                            <span class="inventory-stat-value">${(pallets || 0).toLocaleString()}</span>
+                            <span class="inventory-stat-label">Pallets</span>
+                        </div>
+                        <div class="inventory-stat">
+                            <span class="inventory-stat-value">${(trucks || 0).toLocaleString()}</span>
+                            <span class="inventory-stat-label">Trucks</span>
+                        </div>
+                    </div>
+                    ${feesHtml}
+                    ${showConnect ? `
+                        <button type="button" class="journey-node-connect" data-stop-id="${id}" data-action="connect" title="Create route from here">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 12h14"/>
+                                <path d="M12 5l7 7-7 7"/>
+                            </svg>
+                        </button>
+                    ` : ''}
+                    ${actionsHtml}
+                </div>
+            `;
+        }
+
+        function renderJourneyConnections() {
+            const svgContainer = document.getElementById('journeyConnectionsSvg');
+            const layoutContainer = document.getElementById('journeyFlowLayout');
+            if (!svgContainer || !layoutContainer) return;
+
+            // Clear existing paths (keep defs)
+            const defsContent = svgContainer.querySelector('defs')?.outerHTML || '';
+            svgContainer.innerHTML = defsContent;
+
+            const legs = workingState.legs || [];
+            const stops = workingState.stops || [];
+
+            legs.forEach(leg => {
+                const fromNode = layoutContainer.querySelector(`[data-stop-id="${leg.from_stop_id}"]`);
+                const toNode = layoutContainer.querySelector(`[data-stop-id="${leg.to_stop_id}"]`);
+
+                if (!fromNode || !toNode) return;
+
+                const fromRect = fromNode.getBoundingClientRect();
+                const toRect = toNode.getBoundingClientRect();
+                const containerRect = layoutContainer.getBoundingClientRect();
+
+                // Calculate connection points
+                const fromX = fromRect.right - containerRect.left;
+                const fromY = fromRect.top + fromRect.height / 2 - containerRect.top;
+                const toX = toRect.left - containerRect.left;
+                const toY = toRect.top + toRect.height / 2 - containerRect.top;
+
+                // Create curved path
+                const midX = (fromX + toX) / 2;
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', `M${fromX},${fromY} C${midX},${fromY} ${midX},${toY} ${toX},${toY}`);
+                path.setAttribute('class', 'journey-leg-line');
+                path.setAttribute('data-leg-id', leg.id);
+                path.setAttribute('stroke', 'url(#legGradient)');
+                path.setAttribute('marker-end', 'url(#legArrow)');
+                path.style.cursor = 'pointer';
+                path.onclick = () => openLegEditorModal(leg.id);
+
+                svgContainer.appendChild(path);
+
+                // Add leg badge (truck info)
+                if (leg.trucks_required || leg.freight_cost_per_truck) {
+                    const badgeX = midX;
+                    const badgeY = (fromY + toY) / 2 - 15;
+
+                    const badge = document.createElement('div');
+                    badge.className = 'journey-leg-badge';
+                    badge.style.left = `${badgeX}px`;
+                    badge.style.top = `${badgeY}px`;
+                    badge.style.transform = 'translate(-50%, -50%)';
+                    badge.dataset.legId = leg.id;
+                    badge.onclick = () => openLegEditorModal(leg.id);
+
+                    const truckCount = leg.trucks_required || '?';
+                    const cost = leg.total_freight_cost ? `$${parseFloat(leg.total_freight_cost).toLocaleString()}` : '';
+
+                    badge.innerHTML = `
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="1" y="3" width="15" height="13"/>
+                            <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                            <circle cx="5.5" cy="18.5" r="2.5"/>
+                            <circle cx="18.5" cy="18.5" r="2.5"/>
+                        </svg>
+                        ${truckCount} truck${truckCount !== 1 ? 's' : ''} ${cost}
+                    `;
+
+                    layoutContainer.appendChild(badge);
+                }
+            });
+        }
+
+        function bindJourneyFlowListeners() {
+            const layoutContainer = document.getElementById('journeyFlowLayout');
+            if (!layoutContainer) return;
+
+            let isDragging = false;
+            let dragFromStopId = null;
+            let dragLine = document.getElementById('journeyDragLine');
+
+            // Connect button click - start dragging
+            layoutContainer.querySelectorAll('.journey-node-connect').forEach(btn => {
+                btn.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    isDragging = true;
+                    dragFromStopId = btn.dataset.stopId;
+                    layoutContainer.classList.add('dragging');
+                    btn.classList.add('connecting');
+
+                    // Highlight valid receive targets
+                    layoutContainer.querySelectorAll('.journey-node-receive').forEach(port => {
+                        const portStopId = port.dataset.stopId;
+                        if (portStopId !== dragFromStopId) {
+                            port.classList.add('can-receive');
+                        }
+                    });
+
+                    if (dragLine) {
+                        const rect = btn.getBoundingClientRect();
+                        const containerRect = layoutContainer.getBoundingClientRect();
+                        const startX = rect.left + rect.width / 2 - containerRect.left;
+                        const startY = rect.top + rect.height / 2 - containerRect.top;
+                        dragLine.setAttribute('x1', startX);
+                        dragLine.setAttribute('y1', startY);
+                        dragLine.setAttribute('x2', startX);
+                        dragLine.setAttribute('y2', startY);
+                        dragLine.style.display = 'block';
+                    }
+                });
+            });
+
+            // Mouse move - update drag line
+            layoutContainer.addEventListener('mousemove', (e) => {
+                if (!isDragging || !dragLine) return;
+                const containerRect = layoutContainer.getBoundingClientRect();
+                dragLine.setAttribute('x2', e.clientX - containerRect.left);
+                dragLine.setAttribute('y2', e.clientY - containerRect.top);
+            });
+
+            // Mouse up - complete connection or cancel
+            document.addEventListener('mouseup', (e) => {
+                if (!isDragging) return;
+
+                const targetReceive = e.target.closest('.journey-node-receive');
+                if (targetReceive && targetReceive.classList.contains('can-receive')) {
+                    const toStopId = targetReceive.dataset.stopId;
+                    // Create or edit leg
+                    createOrEditLeg(dragFromStopId, toStopId);
+                }
+
+                // Reset drag state
+                isDragging = false;
+                dragFromStopId = null;
+                layoutContainer.classList.remove('dragging');
+                layoutContainer.querySelectorAll('.journey-node-connect').forEach(btn => {
+                    btn.classList.remove('connecting');
+                });
+                layoutContainer.querySelectorAll('.journey-node-receive').forEach(port => {
+                    port.classList.remove('can-receive');
+                });
+                if (dragLine) {
+                    dragLine.style.display = 'none';
+                }
+            });
+
+            // Node action buttons
+            layoutContainer.querySelectorAll('.journey-node-action-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const action = btn.dataset.action;
+                    const stopId = btn.dataset.stopId;
+
+                    if (action === 'edit') {
+                        openStopEditorModal(stopId);
+                    } else if (action === 'delete') {
+                        deleteStop(stopId);
+                    }
+                });
+            });
+        }
+
+        function createOrEditLeg(fromStopId, toStopId) {
+            // Check if leg already exists
+            let existingLeg = (workingState.legs || []).find(l =>
+                l.from_stop_id == fromStopId && l.to_stop_id == toStopId
+            );
+
+            if (existingLeg) {
+                // Edit existing leg
+                openLegEditorModal(existingLeg.id);
+            } else {
+                // Create new leg
+                const newLeg = {
+                    id: 'leg_' + Date.now(),
+                    from_stop_id: fromStopId,
+                    to_stop_id: toStopId,
+                    transport_mode: 'truck',
+                    trucks_required: 0,
+                    freight_cost_per_truck: 0,
+                    total_freight_cost: 0
+                };
+
+                if (!workingState.legs) workingState.legs = [];
+                workingState.legs.push(newLeg);
+
+                markAsUnsaved();
+                renderJourneyFlow();
+
+                // Open editor for the new leg
+                setTimeout(() => openLegEditorModal(newLeg.id), 100);
+            }
         }
 
         function renderFlowCanvas() {
