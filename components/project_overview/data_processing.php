@@ -281,6 +281,145 @@ function getWeekStartingSunday($dateStr) {
     return $dt->format('Y-m-d');
 }
 
+/**
+ * Calculate anticipated deliveries from a projection's final leg to project site.
+ *
+ * @param array $projection The full projection with legs and module_allocations
+ * @param string $view_mode 'mw', 'modules', 'pallets', or 'trucks'
+ * @return array ['deliveries' => [date => quantity], 'total_quantity' => float]
+ */
+function calculateAnticipatedDeliveriesFromProjection($projection, $view_mode = 'mw') {
+    $result = ['deliveries' => [], 'total_quantity' => 0];
+
+    if (!$projection || empty($projection['legs'])) {
+        return $result;
+    }
+
+    // Find the final leg that delivers to the project (to_type = 'destination')
+    $final_leg = null;
+    foreach ($projection['legs'] as $leg) {
+        if (($leg['to_type'] ?? '') === 'destination') {
+            $final_leg = $leg;
+            break;
+        }
+    }
+
+    if (!$final_leg || empty($final_leg['start_date'])) {
+        return $result;
+    }
+
+    // Get delivery parameters from the leg
+    $start_date = new DateTime($final_leg['start_date']);
+    $delivery_rate = (float)($final_leg['delivery_rate'] ?? 0);
+    $delivery_rate_unit = $final_leg['delivery_rate_unit'] ?? 'per_week';
+    $trucks_required = (int)($final_leg['trucks_required'] ?? 0);
+
+    if ($delivery_rate <= 0 || $trucks_required <= 0) {
+        return $result;
+    }
+
+    // Calculate totals from module allocations for conversion
+    $total_pallets = 0;
+    $total_modules = 0;
+    $total_watts = 0;
+    $pallets_per_truck = 20; // default
+
+    if (!empty($projection['module_allocations'])) {
+        foreach ($projection['module_allocations'] as $alloc) {
+            $total_pallets += (int)($alloc['pallets'] ?? 0);
+            $total_modules += (int)($alloc['quantity'] ?? 0);
+            $total_watts += (float)($alloc['wattage'] ?? 0) * (int)($alloc['quantity'] ?? 0);
+            if (!empty($alloc['pallets_per_truck'])) {
+                $pallets_per_truck = (int)$alloc['pallets_per_truck'];
+            }
+        }
+    }
+
+    // Calculate modules per pallet (average)
+    $modules_per_pallet = $total_pallets > 0 ? $total_modules / $total_pallets : 30;
+
+    // Calculate what one truck delivers in the requested view_mode
+    $per_truck = 0;
+    switch ($view_mode) {
+        case 'mw':
+            // Total MW / total trucks
+            $per_truck = $trucks_required > 0 ? ($total_watts / 1000000) / $trucks_required : 0;
+            break;
+        case 'modules':
+            $per_truck = $trucks_required > 0 ? $total_modules / $trucks_required : 0;
+            break;
+        case 'pallets':
+            $per_truck = $trucks_required > 0 ? $total_pallets / $trucks_required : 0;
+            break;
+        case 'trucks':
+        default:
+            $per_truck = 1;
+            break;
+    }
+
+    // Calculate how many trucks per day based on delivery rate
+    $trucks_per_day = 0;
+    switch ($delivery_rate_unit) {
+        case 'per_day':
+            $trucks_per_day = $delivery_rate;
+            break;
+        case 'per_month':
+            $trucks_per_day = $delivery_rate / 30;
+            break;
+        case 'per_week':
+        default:
+            $trucks_per_day = $delivery_rate / 7;
+            break;
+    }
+
+    // Distribute deliveries over time starting from start_date
+    $remaining_trucks = $trucks_required;
+    $current_date = clone $start_date;
+    $deliveries = [];
+
+    while ($remaining_trucks > 0) {
+        // Calculate trucks delivered this day
+        $trucks_today = min($trucks_per_day, $remaining_trucks);
+        $quantity_today = $trucks_today * $per_truck;
+
+        // Get the week ending Sunday for this date
+        $week_end = getWeekEndingSunday($current_date->format('Y-m-d'));
+
+        if (!isset($deliveries[$week_end])) {
+            $deliveries[$week_end] = 0;
+        }
+        $deliveries[$week_end] += $quantity_today;
+
+        $remaining_trucks -= $trucks_today;
+        $current_date->modify('+1 day');
+
+        // Safety: prevent infinite loop (max 2 years of deliveries)
+        if ($current_date->diff($start_date)->days > 730) {
+            break;
+        }
+    }
+
+    // Calculate total
+    $total = 0;
+    switch ($view_mode) {
+        case 'mw':
+            $total = $total_watts / 1000000;
+            break;
+        case 'modules':
+            $total = $total_modules;
+            break;
+        case 'pallets':
+            $total = $total_pallets;
+            break;
+        case 'trucks':
+        default:
+            $total = $trucks_required;
+            break;
+    }
+
+    return ['deliveries' => $deliveries, 'total_quantity' => $total];
+}
+
 // --------------- Anticipated vs Actual Deliveries (line chart) ---------------
 function fetchDeliveriesByDate($conn, $project_id, $date_field, $status_filter = null) {
     // Build dynamic SQL allowing optional status filtering
@@ -302,41 +441,58 @@ function fetchDeliveriesByDate($conn, $project_id, $date_field, $status_filter =
     return $stmt->get_result();
 }
 
-// NEW: Check if anticipated delivery schedule exists - use it if available
-$schedule_data = generateAnticipatedDeliveriesFromSchedule($conn, $project_id);
-
-// Load primary delivery projection for financial forecasting
+// Load primary delivery projection for forecasting
 $primary_projection = get_primary_projection($conn, $project_id);
 $anticipated_deliveries = [];
 $date_labels = [];
+$using_projection_forecast = false;
 
-if ($schedule_data && !empty($schedule_data['dates'])) {
-    // Use schedule data - convert cumulative MW to non-cumulative (delta) values
-    $prev_cumulative = 0;
-    foreach ($schedule_data['dates'] as $idx => $date) {
-        $cumulative_mw = $schedule_data['cumulative_mw'][$idx];
-        $delta_mw = $cumulative_mw - $prev_cumulative;
-        
-        // Convert delta MW to view mode
-        if ($view_mode === 'modules') {
-            // Convert MW to modules using average wattage
-            $avg_wattage = getProjectAverageWattage($conn, $project_id);
-            $anticipated_deliveries[$date] = ($delta_mw * 1000000) / $avg_wattage;
-        } else {
-            // Keep as MW
-            $anticipated_deliveries[$date] = $delta_mw;
-        }
-        
-        if (!in_array($date, $date_labels)) {
-            $date_labels[] = $date;
-        }
-        
-        $prev_cumulative = $cumulative_mw;
+// PRIORITY 1: Use primary projection's final leg delivery schedule if available
+if ($primary_projection && !empty($primary_projection['legs'])) {
+    $projection_data = calculateAnticipatedDeliveriesFromProjection($primary_projection, $view_mode);
+
+    if (!empty($projection_data['deliveries'])) {
+        $anticipated_deliveries = $projection_data['deliveries'];
+        $date_labels = array_keys($anticipated_deliveries);
+        $using_projection_forecast = true;
     }
-} else {
-    // Fallback to old method - fetch from deliveries table
+}
+
+// PRIORITY 2: Fallback to anticipated delivery schedule if no projection forecast
+if (!$using_projection_forecast) {
+    $schedule_data = generateAnticipatedDeliveriesFromSchedule($conn, $project_id);
+
+    if ($schedule_data && !empty($schedule_data['dates'])) {
+        // Use schedule data - convert cumulative MW to non-cumulative (delta) values
+        $prev_cumulative = 0;
+        foreach ($schedule_data['dates'] as $idx => $date) {
+            $cumulative_mw = $schedule_data['cumulative_mw'][$idx];
+            $delta_mw = $cumulative_mw - $prev_cumulative;
+
+            // Convert delta MW to view mode
+            if ($view_mode === 'modules') {
+                // Convert MW to modules using average wattage
+                $avg_wattage = getProjectAverageWattage($conn, $project_id);
+                $anticipated_deliveries[$date] = ($delta_mw * 1000000) / $avg_wattage;
+            } else {
+                // Keep as MW
+                $anticipated_deliveries[$date] = $delta_mw;
+            }
+
+            if (!in_array($date, $date_labels)) {
+                $date_labels[] = $date;
+            }
+
+            $prev_cumulative = $cumulative_mw;
+        }
+        $using_projection_forecast = true;
+    }
+}
+
+// PRIORITY 3: Fallback to old method - fetch from deliveries table anticipated_delivery_date
+if (!$using_projection_forecast) {
     $anticipated_res = fetchDeliveriesByDate($conn, $project_id, 'anticipated_delivery_date');
-    
+
     while ($r = $anticipated_res->fetch_assoc()) {
         $w = (float)$r['wattage'];
         $dOriginal = $r['delivery_date'];
@@ -386,6 +542,62 @@ foreach ($actual_deliveries as $delivery_date => $qty) {
         $has_future_actual_deliveries = true;
         break;
     }
+}
+
+// Filter date_labels to only include dates with activity (anticipated > 0 OR actual > 0)
+// This ensures the chart starts from the first date with actual activity
+$filtered_date_labels = [];
+$first_activity_date = null;
+$last_activity_date = null;
+
+foreach ($date_labels as $dt) {
+    $has_anticipated = isset($anticipated_deliveries[$dt]) && $anticipated_deliveries[$dt] > 0;
+    $has_actual = isset($actual_deliveries[$dt]) && $actual_deliveries[$dt] > 0;
+
+    if ($has_anticipated || $has_actual) {
+        if ($first_activity_date === null) {
+            $first_activity_date = $dt;
+        }
+        $last_activity_date = $dt;
+    }
+}
+
+// Start one week before first activity so the first data point isn't pressed against Y-axis
+if ($first_activity_date !== null) {
+    $first_date_obj = new DateTime($first_activity_date);
+    $first_date_obj->modify('-7 days');
+    $week_before_first = $first_date_obj->format('Y-m-d');
+
+    // Add the week before with 0 values
+    if (!isset($anticipated_deliveries[$week_before_first])) {
+        $anticipated_deliveries[$week_before_first] = 0;
+    }
+    if (!isset($actual_deliveries[$week_before_first])) {
+        $actual_deliveries[$week_before_first] = 0;
+    }
+
+    // Add to date_labels if not already present
+    if (!in_array($week_before_first, $date_labels)) {
+        $date_labels[] = $week_before_first;
+        sort($date_labels);
+    }
+
+    // Use the week before as the start
+    $first_activity_date = $week_before_first;
+}
+
+// Include all dates from one week before first activity to last activity
+if ($first_activity_date !== null && $last_activity_date !== null) {
+    foreach ($date_labels as $dt) {
+        if ($dt >= $first_activity_date && $dt <= $last_activity_date) {
+            $filtered_date_labels[] = $dt;
+        }
+    }
+}
+
+// Use filtered labels if we have activity, otherwise keep original
+if (!empty($filtered_date_labels)) {
+    $date_labels = $filtered_date_labels;
 }
 
 $cumulative_ant = 0;
@@ -756,28 +968,44 @@ $anticipated_deliveries_by_lbl = [];
 foreach ($total_orders as $lbl => $info) {
     $anticipated_deliveries_by_lbl[$lbl] = [];
 }
-$stmt = $conn->prepare("
-    SELECT wattage, anticipated_delivery_date AS ddate, SUM(quantity) AS q
-    FROM deliveries
-    WHERE project_id=? AND anticipated_delivery_date IS NOT NULL
-    GROUP BY wattage, ddate
-");
-$stmt->bind_param("i", $project_id);
-$stmt->execute();
-$res2 = $stmt->get_result();
-while ($r2 = $res2->fetch_assoc()) {
-    $w   = (float)$r2['wattage'];
-    $lbl = $w . 'W';
-    $d   = $r2['ddate'];
-    $raw = (int)$r2['q'];
-    $qcalc = calculateQuantity($raw, $w, $view_mode);
 
-    if (!isset($anticipated_deliveries_by_lbl[$lbl][$d])) {
-        $anticipated_deliveries_by_lbl[$lbl][$d] = 0;
+// If using projection forecast, distribute anticipated deliveries proportionally by wattage
+if ($using_projection_forecast && !empty($anticipated_deliveries) && $total_order_combined > 0) {
+    // Calculate proportion for each wattage label based on total_order
+    foreach ($total_orders as $lbl => $info) {
+        $proportion = $info['total_order'] / $total_order_combined;
+        foreach ($anticipated_deliveries as $date => $qty) {
+            if (!isset($anticipated_deliveries_by_lbl[$lbl][$date])) {
+                $anticipated_deliveries_by_lbl[$lbl][$date] = 0;
+            }
+            $anticipated_deliveries_by_lbl[$lbl][$date] += $qty * $proportion;
+        }
     }
-    $anticipated_deliveries_by_lbl[$lbl][$d] += $qcalc;
+} else {
+    // Fallback to old method - fetch from deliveries table anticipated_delivery_date
+    $stmt = $conn->prepare("
+        SELECT wattage, anticipated_delivery_date AS ddate, SUM(quantity) AS q
+        FROM deliveries
+        WHERE project_id=? AND anticipated_delivery_date IS NOT NULL
+        GROUP BY wattage, ddate
+    ");
+    $stmt->bind_param("i", $project_id);
+    $stmt->execute();
+    $res2 = $stmt->get_result();
+    while ($r2 = $res2->fetch_assoc()) {
+        $w   = (float)$r2['wattage'];
+        $lbl = $w . 'W';
+        $d   = $r2['ddate'];
+        $raw = (int)$r2['q'];
+        $qcalc = calculateQuantity($raw, $w, $view_mode);
+
+        if (!isset($anticipated_deliveries_by_lbl[$lbl][$d])) {
+            $anticipated_deliveries_by_lbl[$lbl][$d] = 0;
+        }
+        $anticipated_deliveries_by_lbl[$lbl][$d] += $qcalc;
+    }
+    $stmt->close();
 }
-$stmt->close();
 
 // Populate
 foreach ($sub_rows as &$sr) {
