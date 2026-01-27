@@ -722,75 +722,165 @@
             workingState.moduleAllocations.forEach((alloc, index) => {
                 const pallets = alloc.pallets || Math.ceil(alloc.quantity / (alloc.modules_per_pallet || 30));
                 const contractValue = alloc.contract_value || 0;
-                const vendorName = alloc.vendor_name || alloc.manufacturer_name || 'Unknown';
-                const modsPerPallet = alloc.modules_per_pallet || '-';
-                const palletsPerTruck = alloc.pallets_per_truck || '-';
+                const vendorName = alloc.vendor_name || alloc.manufacturer_name || 'Unknown Manufacturer';
+                const modsPerPallet = alloc.modules_per_pallet || 30;
+                const palletsPerTruck = alloc.pallets_per_truck || 20;
+                const trucks = Math.ceil(pallets / palletsPerTruck);
+                const milestones = alloc.milestones || [];
 
-                html += `
-                    <div class="module-allocation-item" data-allocation-index="${index}">
-                        <div class="allocation-header" onclick="toggleAllocationExpand(${index})">
-                            <div class="allocation-summary">
-                                <span class="vendor-name">${escapeHtml(vendorName)}</span>
-                                <span class="summary-stat">${alloc.wattage}W</span>
-                                <span class="summary-divider">&bull;</span>
-                                <span class="summary-stat">${alloc.quantity.toLocaleString()} modules</span>
-                                <span class="summary-divider">&bull;</span>
-                                <span class="summary-stat">${pallets.toLocaleString()} pallets</span>
-                                ${palletsPerTruck !== '-' ? `
-                                    <span class="summary-divider">&bull;</span>
-                                    <span class="summary-stat">${palletsPerTruck} pallets/truck</span>
-                                ` : ''}
-                                <span class="summary-divider">&bull;</span>
-                                <span class="summary-stat contract-value">$${contractValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                // Trigger labels for milestones
+                const triggerLabels = {
+                    'po_execution': 'PO Execution',
+                    'shipping': 'Shipping',
+                    'customs_cleared': 'Customs Clearance',
+                    'project_delivery': 'Project Delivery'
+                };
+
+                // Build milestones HTML
+                let milestonesHtml = '';
+                if (milestones.length > 0) {
+                    const milestonesItems = milestones.map(m => {
+                        const label = triggerLabels[m.trigger_event] || m.milestone_name || m.name || 'Milestone';
+                        const pct = m.percentage || 0;
+                        const amount = contractValue * (pct / 100);
+                        return `
+                            <div class="milestone-item">
+                                <span class="milestone-trigger">${escapeHtml(label)}</span>
+                                <span class="milestone-pct">${pct}%</span>
+                                <span class="milestone-amount">$${amount.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}</span>
                             </div>
-                            <div class="allocation-toggle">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="6 9 12 15 18 9"/>
+                        `;
+                    }).join('');
+
+                    milestonesHtml = `
+                        <div class="allocation-milestones">
+                            <div class="milestones-header">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                    <polyline points="22 4 12 14.01 9 11.01"/>
                                 </svg>
+                                <span>Payment Milestones</span>
+                            </div>
+                            <div class="milestones-grid">
+                                ${milestonesItems}
                             </div>
                         </div>
-                        <div class="allocation-details" style="display: none;">
-                            <div class="module-info-grid">
-                                <div class="info-item">
-                                    <span class="info-label">Wattage</span>
-                                    <span class="info-value">${alloc.wattage}W</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">Modules</span>
-                                    <span class="info-value">${alloc.quantity.toLocaleString()}</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">Pallets</span>
-                                    <span class="info-value">${pallets.toLocaleString()}</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">Mods/Pallet</span>
-                                    <span class="info-value">${modsPerPallet}</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">Pallets/Truck</span>
-                                    <span class="info-value">${palletsPerTruck}</span>
-                                </div>
-                                <div class="info-item">
-                                    <span class="info-label">Contract Value</span>
-                                    <span class="info-value">$${contractValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-                                </div>
+                    `;
+                }
+
+                html += `
+                    <div class="module-allocation-card" data-allocation-index="${index}">
+                        <!-- Manufacturer Header -->
+                        <div class="allocation-card-header">
+                            <div class="manufacturer-icon">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                                    <polyline points="9 22 9 12 15 12 15 22"/>
+                                </svg>
                             </div>
-                            ${alloc.manufacturer_address ? `
-                                <div class="info-item full-width">
-                                    <span class="info-label">Location</span>
-                                    <span class="info-value">${escapeHtml(alloc.manufacturer_address)}</span>
-                                </div>
-                            ` : ''}
-                            <div class="allocation-actions">
-                                <button type="button" class="btn btn-sm btn-danger" onclick="removeAllocation(${alloc.id || index})">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="3 6 5 6 21 6"/>
-                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            <div class="manufacturer-info">
+                                <h4 class="manufacturer-name">${escapeHtml(vendorName)}</h4>
+                                ${alloc.manufacturer_address ? `
+                                    <p class="manufacturer-address">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                                            <circle cx="12" cy="10" r="3"/>
+                                        </svg>
+                                        ${escapeHtml(alloc.manufacturer_address)}
+                                    </p>
+                                ` : ''}
+                            </div>
+                            <div class="allocation-card-value">
+                                <span class="value-amount">$${contractValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                                <span class="value-label">Contract Value</span>
+                            </div>
+                        </div>
+
+                        <!-- Module Specs Grid -->
+                        <div class="allocation-specs-grid">
+                            <div class="spec-card spec-wattage">
+                                <div class="spec-icon">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                                     </svg>
-                                    Remove
-                                </button>
+                                </div>
+                                <div class="spec-content">
+                                    <span class="spec-value">${alloc.wattage}W</span>
+                                    <span class="spec-label">Wattage</span>
+                                </div>
                             </div>
+                            <div class="spec-card spec-modules">
+                                <div class="spec-icon">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                                        <line x1="8" y1="21" x2="16" y2="21"/>
+                                        <line x1="12" y1="17" x2="12" y2="21"/>
+                                    </svg>
+                                </div>
+                                <div class="spec-content">
+                                    <span class="spec-value">${alloc.quantity.toLocaleString()}</span>
+                                    <span class="spec-label">Modules</span>
+                                </div>
+                            </div>
+                            <div class="spec-card spec-pallets">
+                                <div class="spec-icon">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                                        <path d="M2 17l10 5 10-5"/>
+                                        <path d="M2 12l10 5 10-5"/>
+                                    </svg>
+                                </div>
+                                <div class="spec-content">
+                                    <span class="spec-value">${pallets.toLocaleString()}</span>
+                                    <span class="spec-label">Pallets</span>
+                                </div>
+                            </div>
+                            <div class="spec-card spec-trucks">
+                                <div class="spec-icon">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="1" y="3" width="15" height="13"/>
+                                        <polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                                        <circle cx="5.5" cy="18.5" r="2.5"/>
+                                        <circle cx="18.5" cy="18.5" r="2.5"/>
+                                    </svg>
+                                </div>
+                                <div class="spec-content">
+                                    <span class="spec-value">${trucks}</span>
+                                    <span class="spec-label">Trucks</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Packing Config -->
+                        <div class="allocation-packing">
+                            <div class="packing-item">
+                                <span class="packing-value">${modsPerPallet}</span>
+                                <span class="packing-label">mods/pallet</span>
+                            </div>
+                            <div class="packing-divider">×</div>
+                            <div class="packing-item">
+                                <span class="packing-value">${palletsPerTruck}</span>
+                                <span class="packing-label">pallets/truck</span>
+                            </div>
+                            <div class="packing-equals">=</div>
+                            <div class="packing-item packing-result">
+                                <span class="packing-value">${modsPerPallet * palletsPerTruck}</span>
+                                <span class="packing-label">mods/truck</span>
+                            </div>
+                        </div>
+
+                        <!-- Milestones Section -->
+                        ${milestonesHtml}
+
+                        <!-- Actions -->
+                        <div class="allocation-card-actions">
+                            <button type="button" class="btn-allocation-remove" onclick="removeAllocation('${alloc.id || alloc.module_id || index}')">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"/>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                </svg>
+                                Remove
+                            </button>
                         </div>
                     </div>
                 `;
@@ -1712,16 +1802,24 @@
             const allocations = workingState.moduleAllocations || [];
             const legs = workingState.legs || [];
 
+            // Debug log
+            console.log('renderJourneyFlow - allocations:', allocations.length, allocations);
+
             // Check if we should show empty state (no modules allocated)
-            if (allocations.length === 0) {
+            const hasModules = allocations && allocations.length > 0;
+
+            if (!hasModules) {
                 if (emptyState) emptyState.style.display = 'flex';
-                if (originContainer) originContainer.innerHTML = '';
+                if (layoutContainer) layoutContainer.style.opacity = '0.3';
+                if (originContainer) originContainer.innerHTML = '<div class="journey-node-placeholder">No modules yet</div>';
                 if (stopsContainer) stopsContainer.innerHTML = '';
-                if (destinationContainer) destinationContainer.innerHTML = '';
+                if (destinationContainer) destinationContainer.innerHTML = '<div class="journey-node-placeholder">Destination</div>';
                 return;
             }
 
+            // Hide empty state and show layout
             if (emptyState) emptyState.style.display = 'none';
+            if (layoutContainer) layoutContainer.style.opacity = '1';
 
             // Get origin and destination stops
             const originStop = stops.find(s => s.stop_type === 'origin');
