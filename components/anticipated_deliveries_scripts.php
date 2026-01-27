@@ -51,7 +51,45 @@
             const params = new URLSearchParams(window.location.search);
             const target = params.get('section');
             const tab = params.get('tab');
+            const view = params.get('view');
             const hash = window.location.hash.replace('#', '');
+
+            // Handle view=weekly-projections parameter (from project overview)
+            if (view === 'weekly-projections') {
+                // Open timeline section
+                const header = document.querySelector('[data-section="timeline"] .collapsible-header');
+                const content = document.getElementById('timeline-content');
+                if (header && content) {
+                    header.classList.remove('collapsed');
+                    content.classList.remove('collapsed');
+                }
+
+                // Switch to Monthly Forecast tab which contains the weekly projections table
+                setTimeout(() => {
+                    if (typeof switchTimelineTab === 'function') {
+                        switchTimelineTab('line-chart');
+                    }
+
+                    // Expand the weekly projections section
+                    const weeklySection = document.getElementById('weeklyProjectionsSection');
+                    const weeklyContent = document.getElementById('weeklyProjectionsContent');
+                    if (weeklySection && weeklyContent) {
+                        weeklySection.classList.remove('collapsed');
+                        weeklyContent.classList.remove('collapsed');
+                    }
+
+                    // Scroll to weekly projections
+                    setTimeout(() => {
+                        const weeklyTable = document.getElementById('weeklyProjectionsSection');
+                        if (weeklyTable) {
+                            weeklyTable.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                    }, 100);
+                }, 100);
+
+                return;
+            }
+
             if (target !== 'timeline' && hash !== 'timeline') {
                 return;
             }
